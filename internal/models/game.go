@@ -8,6 +8,7 @@ type Game struct {
 	MessageID           *int64
 	GameDate            time.Time
 	CourtsCount         int
+	Courts              string
 	NotifiedDayBefore   bool
 	Completed           bool
 	CreatedAt           time.Time

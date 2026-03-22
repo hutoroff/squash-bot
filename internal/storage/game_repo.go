@@ -19,20 +19,20 @@ func NewGameRepo(pool *pgxpool.Pool) *GameRepo {
 
 func (r *GameRepo) Create(ctx context.Context, game *models.Game) (*models.Game, error) {
 	const q = `
-		INSERT INTO games (chat_id, game_date, courts_count)
-		VALUES ($1, $2, $3)
-		RETURNING id, chat_id, message_id, game_date, courts_count,
+		INSERT INTO games (chat_id, game_date, courts_count, courts)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, chat_id, message_id, game_date, courts_count, courts,
 		          notified_day_before, completed, created_at`
 
 	slog.Debug("GameRepo.Create", "chat_id", game.ChatID, "game_date", game.GameDate)
 
-	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount)
+	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount, game.Courts)
 	return scanGame(row)
 }
 
 func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts,
 		       notified_day_before, completed, created_at
 		FROM games WHERE id = $1`
 
@@ -44,7 +44,7 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 
 func (r *GameRepo) GetUpcomingGames(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE completed = false AND game_date > now()
@@ -97,7 +97,7 @@ type scanner interface {
 func scanGame(s scanner) (*models.Game, error) {
 	var g models.Game
 	err := s.Scan(
-		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount,
+		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 	)
 	if err != nil {
