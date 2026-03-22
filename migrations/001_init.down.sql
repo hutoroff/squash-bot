@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS game_participations;
+DROP TABLE IF EXISTS players;
+DROP TABLE IF EXISTS games;
