@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vkhutorov/squash_bot/internal/models"
@@ -74,6 +75,63 @@ func (r *GameRepo) UpdateMessageID(ctx context.Context, gameID, messageID int64)
 	slog.Debug("GameRepo.UpdateMessageID", "game_id", gameID, "message_id", messageID)
 	_, err := r.pool.Exec(ctx, q, messageID, gameID)
 	return err
+}
+
+// GetGamesForDayBefore returns games scheduled in [from, to) where notified_day_before is false.
+func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE game_date >= $1 AND game_date < $2
+		  AND notified_day_before = false`
+
+	slog.Debug("GameRepo.GetGamesForDayBefore", "from", from, "to", to)
+
+	rows, err := r.pool.Query(ctx, q, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query day-before games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
+// GetGamesForDayAfter returns games scheduled in [from, to) where completed is false and message_id is set.
+func (r *GameRepo) GetGamesForDayAfter(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE game_date >= $1 AND game_date < $2
+		  AND completed = false
+		  AND message_id IS NOT NULL`
+
+	slog.Debug("GameRepo.GetGamesForDayAfter", "from", from, "to", to)
+
+	rows, err := r.pool.Query(ctx, q, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query day-after games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
 }
 
 func (r *GameRepo) MarkNotifiedDayBefore(ctx context.Context, gameID int64) error {

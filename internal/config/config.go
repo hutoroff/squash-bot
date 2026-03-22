@@ -10,6 +10,7 @@ type Config struct {
 	CronDayBefore    string `env:"CRON_DAY_BEFORE" envDefault:"0 20 * * *"`
 	CronDayAfter     string `env:"CRON_DAY_AFTER"  envDefault:"0 8 * * *"`
 	LogLevel         string `env:"LOG_LEVEL"        envDefault:"INFO"`
+	Timezone         string `env:"TIMEZONE"         envDefault:"Europe/Moscow"`
 }
 
 func Load() (*Config, error) {

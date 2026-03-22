@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -18,21 +17,14 @@ type Bot struct {
 	logger      *slog.Logger
 }
 
-func New(cfg *config.Config, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
-	if err != nil {
-		return nil, fmt.Errorf("create bot API: %w", err)
-	}
-
-	logger.Info("authorized on account", "username", api.Self.UserName)
-
+func New(api *tgbotapi.BotAPI, cfg *config.Config, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) *Bot {
 	return &Bot{
 		api:         api,
 		gameService: gameService,
 		partService: partService,
 		cfg:         cfg,
 		logger:      logger,
-	}, nil
+	}
 }
 
 // Start runs the long-polling update loop until ctx is cancelled.
