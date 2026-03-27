@@ -148,7 +148,7 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		return
 	}
 
-	text := formatCompletedMessage(game, participations)
+	text := formatCompletedMessage(game, participations, s.loc)
 	edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
 	// Empty keyboard explicitly removes the inline buttons
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
@@ -173,7 +173,7 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 }
 
 // formatCompletedMessage renders the final game message without interactive buttons.
-func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation) string {
+func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, loc *time.Location) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -183,9 +183,11 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 		}
 	}
 
+	localDate := game.GameDate.In(loc)
+
 	var sb strings.Builder
 	sb.WriteString("🏸 Squash Game\n\n")
-	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", schedulerFormatDate(game.GameDate), game.GameDate.Format("15:04")))
+	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", schedulerFormatDate(localDate), localDate.Format("15:04")))
 	sb.WriteString(fmt.Sprintf("🎾 Courts: %s (capacity: %d players)\n\n", game.Courts, capacity))
 	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", len(registered), capacity))
 
@@ -198,7 +200,7 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 }
 
 func schedulerFormatDate(t time.Time) string {
-	return fmt.Sprintf("%s, %s %d", t.Format("Monday"), t.Format("January"), t.Day())
+	return fmt.Sprintf("%s, %s %d", t.Weekday(), t.Format("January"), t.Day())
 }
 
 func schedulerPlayerName(p *models.Player) string {

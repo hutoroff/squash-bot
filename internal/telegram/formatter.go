@@ -9,7 +9,8 @@ import (
 )
 
 // FormatGameMessage produces the announcement text for a squash game.
-func FormatGameMessage(game *models.Game, participants []*models.GameParticipation) string {
+// loc is used to display the game date/time in the correct local timezone.
+func FormatGameMessage(game *models.Game, participants []*models.GameParticipation, loc *time.Location) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -19,9 +20,11 @@ func FormatGameMessage(game *models.Game, participants []*models.GameParticipati
 		}
 	}
 
+	localDate := game.GameDate.In(loc)
+
 	var sb strings.Builder
 	sb.WriteString("🏸 Squash Game\n\n")
-	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", formatGameDate(game.GameDate), game.GameDate.Format("15:04")))
+	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", formatGameDate(localDate), localDate.Format("15:04")))
 	sb.WriteString(fmt.Sprintf("🎾 Courts: %s (capacity: %d players)\n\n", game.Courts, capacity))
 	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", len(registered), capacity))
 
@@ -34,7 +37,7 @@ func FormatGameMessage(game *models.Game, participants []*models.GameParticipati
 }
 
 func formatGameDate(t time.Time) string {
-	return fmt.Sprintf("%s, %s %d", t.Format("Monday"), t.Format("January"), t.Day())
+	return fmt.Sprintf("%s, %s %d", t.Weekday(), t.Format("January"), t.Day())
 }
 
 func formatUpdatedAt(t time.Time) string {

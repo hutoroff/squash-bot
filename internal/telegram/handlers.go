@@ -33,7 +33,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	msgText := FormatGameMessage(game, nil)
+	msgText := FormatGameMessage(game, nil, b.loc)
 	keyboard := gameKeyboard(game.ID)
 
 	announcement := tgbotapi.NewMessage(b.cfg.GroupChatID, msgText)
@@ -138,7 +138,7 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 }
 
 func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation) {
-	msgText := FormatGameMessage(game, participations)
+	msgText := FormatGameMessage(game, participations, b.loc)
 	keyboard := gameKeyboard(game.ID)
 
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
