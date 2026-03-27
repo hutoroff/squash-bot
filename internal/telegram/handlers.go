@@ -20,7 +20,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	gameDate, courts, err := parseAdminCommand(msg.Text)
+	gameDate, courts, err := parseAdminCommand(msg.Text, b.loc)
 	if err != nil {
 		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\n2024-03-15 18:00\ncourts: 2,3,4")
 		return
@@ -173,13 +173,13 @@ func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-func parseAdminCommand(text string) (time.Time, string, error) {
+func parseAdminCommand(text string, loc *time.Location) (time.Time, string, error) {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	if len(lines) < 2 {
 		return time.Time{}, "", fmt.Errorf("expected 2 lines")
 	}
 
-	gameDate, err := time.ParseInLocation("2006-01-02 15:04", strings.TrimSpace(lines[0]), time.Local)
+	gameDate, err := time.ParseInLocation("2006-01-02 15:04", strings.TrimSpace(lines[0]), loc)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("parse date: %w", err)
 	}

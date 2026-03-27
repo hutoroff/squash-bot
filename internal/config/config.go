@@ -1,6 +1,10 @@
 package config
 
-import "github.com/caarlos0/env/v10"
+import (
+	"log/slog"
+	"github.com/caarlos0/env/v10"
+	"github.com/joho/godotenv"
+)
 
 type Config struct {
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
@@ -15,6 +19,10 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{}
+	err := godotenv.Load()
+	if err != nil {
+		slog.Debug("Error loading .env file")
+	}
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}

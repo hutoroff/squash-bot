@@ -85,7 +85,7 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "day_before", cfg.CronDayBefore, "day_after", cfg.CronDayAfter)
 
-	bot := telegram.New(api, cfg, gameService, partService, logger)
+	bot := telegram.New(api, cfg, loc, gameService, partService, logger)
 
 	slog.Info("Bot starting...")
 	bot.Start(ctx)

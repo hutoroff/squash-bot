@@ -41,6 +41,7 @@ func NewSchedulerService(
 
 // RunDayBeforeCheck checks tomorrow's games and sends notifications if player count != capacity.
 func (s *SchedulerService) RunDayBeforeCheck() {
+	s.logger.Info("day-before check started")
 	ctx := context.Background()
 
 	now := time.Now().In(s.loc)
@@ -53,6 +54,7 @@ func (s *SchedulerService) RunDayBeforeCheck() {
 		s.logger.Error("day-before check: query games", "err", err)
 		return
 	}
+	s.logger.Info("found games", "count", len(games))
 
 	for _, game := range games {
 		s.processDayBefore(ctx, game)

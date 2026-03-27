@@ -62,7 +62,7 @@ Edit `.env` and fill in the required values:
 
 ```env
 TELEGRAM_BOT_TOKEN=   # from @BotFather
-DATABASE_URL=postgres://squash_bot:squash_bot@postgres:5432/squash_bot?sslmode=disable
+DATABASE_URL=postgres://squash_bot:squash_bot@postgres:7432/squash_bot?sslmode=disable
 GROUP_CHAT_ID=        # your group's chat ID (negative number, e.g. -1001234567890)
 ADMIN_USER_ID=        # your Telegram user ID
 TIMEZONE=Europe/Moscow

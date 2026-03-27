@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/vkhutorov/squash_bot/internal/config"
@@ -14,15 +15,17 @@ type Bot struct {
 	gameService *service.GameService
 	partService *service.ParticipationService
 	cfg         *config.Config
+	loc         *time.Location
 	logger      *slog.Logger
 }
 
-func New(api *tgbotapi.BotAPI, cfg *config.Config, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) *Bot {
+func New(api *tgbotapi.BotAPI, cfg *config.Config, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) *Bot {
 	return &Bot{
 		api:         api,
 		gameService: gameService,
 		partService: partService,
 		cfg:         cfg,
+		loc:         loc,
 		logger:      logger,
 	}
 }
