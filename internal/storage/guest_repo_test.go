@@ -161,6 +161,77 @@ func TestGuestRepo_RemoveOnlyOwnGuests(t *testing.T) {
 	}
 }
 
+// --- DeleteByID (ownership constraint) ---
+
+func TestGuestRepo_DeleteByID_CorrectGame(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	guestRepo := storage.NewGuestRepo(testPool)
+
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500001})
+	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+
+	guests, _ := guestRepo.GetByGame(ctx, g.ID)
+	if len(guests) != 1 {
+		t.Fatalf("setup: expected 1 guest, got %d", len(guests))
+	}
+
+	removed, err := guestRepo.DeleteByID(ctx, g.ID, guests[0].ID)
+	if err != nil {
+		t.Fatalf("DeleteByID: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true when deleting with correct game_id")
+	}
+
+	remaining, _ := guestRepo.GetByGame(ctx, g.ID)
+	if len(remaining) != 0 {
+		t.Errorf("expected 0 guests after deletion, got %d", len(remaining))
+	}
+}
+
+// TestGuestRepo_DeleteByID_WrongGame verifies the game_id ownership constraint:
+// a tampered callback supplying a guestID from a different game must not delete it.
+func TestGuestRepo_DeleteByID_WrongGame(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	guestRepo := storage.NewGuestRepo(testPool)
+
+	gA, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
+	gB, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "2"))
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500002})
+	_ = guestRepo.AddGuest(ctx, gA.ID, p.ID)
+
+	guestsA, _ := guestRepo.GetByGame(ctx, gA.ID)
+	if len(guestsA) != 1 {
+		t.Fatalf("setup: expected 1 guest in game A, got %d", len(guestsA))
+	}
+
+	// Attempt to delete game A's guest while claiming it belongs to game B.
+	removed, err := guestRepo.DeleteByID(ctx, gB.ID, guestsA[0].ID)
+	if err != nil {
+		t.Fatalf("DeleteByID (wrong game): %v", err)
+	}
+	if removed {
+		t.Error("expected removed=false when game_id doesn't match guest's actual game")
+	}
+
+	// Guest must still be present in game A.
+	still, _ := guestRepo.GetByGame(ctx, gA.ID)
+	if len(still) != 1 {
+		t.Errorf("guest should still exist in game A, got %d guests", len(still))
+	}
+}
+
 func TestGuestRepo_GetCountByGame(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {

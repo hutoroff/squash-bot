@@ -30,13 +30,14 @@ type pendingGame struct {
 }
 
 type Bot struct {
-	api          *tgbotapi.BotAPI
-	gameService  *service.GameService
-	partService  *service.ParticipationService
-	groupRepo    *storage.GroupRepo
-	loc          *time.Location
-	logger       *slog.Logger
-	pendingGames sync.Map // map[pendingGameKey]*pendingGame
+	api               *tgbotapi.BotAPI
+	gameService       *service.GameService
+	partService       *service.ParticipationService
+	groupRepo         *storage.GroupRepo
+	loc               *time.Location
+	logger            *slog.Logger
+	pendingGames      sync.Map // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit sync.Map // map[chatID int64]gameID int64
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, logger *slog.Logger) *Bot {

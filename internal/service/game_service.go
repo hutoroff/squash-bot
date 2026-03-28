@@ -40,3 +40,22 @@ func (s *GameService) UpdateMessageID(ctx context.Context, gameID, messageID int
 func (s *GameService) GetByID(ctx context.Context, id int64) (*models.Game, error) {
 	return s.gameRepo.GetByID(ctx, id)
 }
+
+func (s *GameService) GetUpcomingGames(ctx context.Context) ([]*models.Game, error) {
+	return s.gameRepo.GetUpcomingGames(ctx)
+}
+
+func (s *GameService) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error) {
+	return s.gameRepo.GetUpcomingGamesByChatIDs(ctx, chatIDs)
+}
+
+// GetNextGameForTelegramUser returns the nearest upcoming game where the user is registered.
+// Returns nil, nil if the user has no upcoming registered games.
+func (s *GameService) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
+	return s.gameRepo.GetNextGameForTelegramUser(ctx, telegramID)
+}
+
+func (s *GameService) UpdateCourts(ctx context.Context, gameID int64, courts string) error {
+	courtsCount := len(strings.Split(courts, ","))
+	return s.gameRepo.UpdateCourts(ctx, gameID, courts, courtsCount)
+}

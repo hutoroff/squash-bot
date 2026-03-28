@@ -125,6 +125,79 @@ func TestParticipationRepo_GetByGame_WithPlayerData(t *testing.T) {
 	}
 }
 
+// --- DeleteByGameAndPlayer ---
+
+func TestParticipationRepo_DeleteByGameAndPlayer_Success(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	repo := storage.NewParticipationRepo(testPool)
+	gameID, playerID := seedGameAndPlayer(t, ctx)
+
+	_ = repo.Upsert(ctx, gameID, playerID, models.StatusRegistered)
+
+	removed, err := repo.DeleteByGameAndPlayer(ctx, gameID, playerID)
+	if err != nil {
+		t.Fatalf("DeleteByGameAndPlayer: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true")
+	}
+
+	count, _ := repo.GetRegisteredCount(ctx, gameID)
+	if count != 0 {
+		t.Errorf("registered count after deletion: got %d, want 0", count)
+	}
+}
+
+func TestParticipationRepo_DeleteByGameAndPlayer_NotInGame(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	repo := storage.NewParticipationRepo(testPool)
+	gameID, playerID := seedGameAndPlayer(t, ctx)
+
+	removed, err := repo.DeleteByGameAndPlayer(ctx, gameID, playerID)
+	if err != nil {
+		t.Fatalf("DeleteByGameAndPlayer (not in game): %v", err)
+	}
+	if removed {
+		t.Error("expected removed=false when player is not in the game")
+	}
+}
+
+func TestParticipationRepo_DeleteByGameAndPlayer_DoesNotAffectOtherPlayers(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
+	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 210001})
+	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 210002})
+
+	_ = partRepo.Upsert(ctx, g.ID, p1.ID, models.StatusRegistered)
+	_ = partRepo.Upsert(ctx, g.ID, p2.ID, models.StatusRegistered)
+
+	removed, err := partRepo.DeleteByGameAndPlayer(ctx, g.ID, p1.ID)
+	if err != nil {
+		t.Fatalf("DeleteByGameAndPlayer: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true")
+	}
+
+	count, _ := partRepo.GetRegisteredCount(ctx, g.ID)
+	if count != 1 {
+		t.Errorf("registered count: got %d, want 1 (p2 should remain)", count)
+	}
+}
+
 func TestParticipationRepo_GetRegisteredCount(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {

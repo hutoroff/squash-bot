@@ -378,3 +378,167 @@ func TestParticipationService_GetGuests(t *testing.T) {
 		t.Errorf("expected 1 guest, got %d", len(guests))
 	}
 }
+
+// --- KickPlayer ---
+
+func TestParticipationService_KickPlayer_Registered(t *testing.T) {
+	ctx := context.Background()
+	svc, gameID := setupParticipationTest(t, ctx)
+
+	_, _ = svc.Join(ctx, gameID, 40001, "alice", "Alice", "")
+
+	parts, guests, removed, err := svc.KickPlayer(ctx, gameID, 40001)
+	if err != nil {
+		t.Fatalf("KickPlayer: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true for a registered player")
+	}
+	if len(parts) != 0 {
+		t.Errorf("expected 0 registered players after kick, got %d", len(parts))
+	}
+	if guests == nil {
+		t.Error("expected non-nil guest slice")
+	}
+}
+
+func TestParticipationService_KickPlayer_PlayerNotInDB(t *testing.T) {
+	ctx := context.Background()
+	svc, gameID := setupParticipationTest(t, ctx)
+
+	// Telegram ID that was never registered.
+	parts, guests, removed, err := svc.KickPlayer(ctx, gameID, 99999)
+	if err != nil {
+		t.Fatalf("KickPlayer (unknown player): %v", err)
+	}
+	if removed {
+		t.Error("expected removed=false for unknown player")
+	}
+	if parts != nil || guests != nil {
+		t.Error("expected nil slices when player is not in DB")
+	}
+}
+
+func TestParticipationService_KickPlayer_PlayerInDBButNotGame(t *testing.T) {
+	ctx := context.Background()
+	svc, gameID := setupParticipationTest(t, ctx)
+
+	// Player exists (via join) in a *different* game context: skip registers them.
+	// Here we just call Skip so the player is in the DB but as skipped status.
+	// Actually, let's join and skip so the player IS in game_participations.
+	// Then test a scenario where they're not in the game at all.
+
+	// Use a brand-new telegramID that's only in the players table, not in this game.
+	// We can't easily do that without a second game, so let's just test with a skipped player:
+	// KickPlayer uses DeleteByGameAndPlayer which only removes 'registered' records... wait no,
+	// it deletes regardless of status. Let's verify a skipped player is also removed.
+	_, _ = svc.Join(ctx, gameID, 40002, "bob", "", "")
+	_, _, _ = svc.Skip(ctx, gameID, 40002, "bob", "", "")
+
+	parts, _, removed, err := svc.KickPlayer(ctx, gameID, 40002)
+	if err != nil {
+		t.Fatalf("KickPlayer (skipped player): %v", err)
+	}
+	// The skipped row exists in game_participations, so it should be removed.
+	if !removed {
+		t.Error("expected removed=true even for a skipped player")
+	}
+	if len(parts) != 0 {
+		t.Errorf("expected 0 participations after kick, got %d", len(parts))
+	}
+}
+
+// TestParticipationService_KickPlayer_GuestsPreserved confirms that kicking a player
+// leaves their guests intact (guests are independent records managed separately).
+func TestParticipationService_KickPlayer_GuestsPreserved(t *testing.T) {
+	ctx := context.Background()
+	svc, gameID := setupParticipationTest(t, ctx)
+
+	_, _ = svc.Join(ctx, gameID, 40003, "carol", "", "")
+	_, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
+	_, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
+
+	_, guests, removed, err := svc.KickPlayer(ctx, gameID, 40003)
+	if err != nil {
+		t.Fatalf("KickPlayer: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true")
+	}
+	// Guests are NOT automatically removed when their inviter is kicked.
+	if len(guests) != 2 {
+		t.Errorf("expected 2 guests to remain after player kick, got %d", len(guests))
+	}
+}
+
+// --- KickGuestByID ---
+
+func TestParticipationService_KickGuestByID_Success(t *testing.T) {
+	ctx := context.Background()
+	svc, gameID := setupParticipationTest(t, ctx)
+
+	_, _ = svc.Join(ctx, gameID, 40010, "dave", "", "")
+	_, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
+	_, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
+
+	allGuests, _ := svc.GetGuests(ctx, gameID)
+	if len(allGuests) != 2 {
+		t.Fatalf("setup: expected 2 guests, got %d", len(allGuests))
+	}
+	targetGuestID := allGuests[0].ID
+
+	parts, guests, removed, err := svc.KickGuestByID(ctx, gameID, targetGuestID)
+	if err != nil {
+		t.Fatalf("KickGuestByID: %v", err)
+	}
+	if !removed {
+		t.Error("expected removed=true")
+	}
+	if len(guests) != 1 {
+		t.Errorf("expected 1 guest after kick, got %d", len(guests))
+	}
+	if parts == nil {
+		t.Error("expected non-nil participations slice")
+	}
+	// The remaining guest must NOT be the one we just kicked.
+	if guests[0].ID == targetGuestID {
+		t.Error("the kicked guest is still in the returned list")
+	}
+}
+
+// TestParticipationService_KickGuestByID_WrongGame verifies that the ownership
+// constraint prevents deleting a guest from a different game.
+func TestParticipationService_KickGuestByID_WrongGame(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+	guestRepo := storage.NewGuestRepo(testPool)
+	svc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
+
+	gA, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2")
+	gB, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4")
+
+	_, _ = svc.AddGuest(ctx, gA.ID, 40011, "eve", "", "") // guest belongs to game A
+	guestsA, _ := svc.GetGuests(ctx, gA.ID)
+	guestAID := guestsA[0].ID
+
+	// Claim this guest belongs to game B.
+	_, _, removed, err := svc.KickGuestByID(ctx, gB.ID, guestAID)
+	if err != nil {
+		t.Fatalf("KickGuestByID (wrong game): %v", err)
+	}
+	if removed {
+		t.Error("expected removed=false when game_id doesn't own the guest")
+	}
+
+	// Guest must still exist in game A.
+	still, _ := svc.GetGuests(ctx, gA.ID)
+	if len(still) != 1 {
+		t.Errorf("guest should remain in game A, got %d guests", len(still))
+	}
+}

@@ -24,6 +24,24 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
+	// Slash commands always take priority in private chats.
+	// They also cancel any pending courts-edit state so an admin
+	// who clicks "Edit Courts" and then sends /help doesn't have
+	// the command text stored as court data.
+	if isPrivate && strings.HasPrefix(msg.Text, "/") {
+		b.pendingCourtsEdit.Delete(msg.Chat.ID)
+		b.handleCommand(ctx, msg)
+		return
+	}
+
+	// In private chats, check for a pending courts-edit.
+	if isPrivate {
+		if raw, ok := b.pendingCourtsEdit.LoadAndDelete(msg.Chat.ID); ok {
+			b.processCourtsEdit(ctx, msg, raw.(int64))
+			return
+		}
+	}
+
 	text := msg.Text
 
 	if isGroupMention {
@@ -206,6 +224,36 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	// manage_kick and manage_kick_guest carry two IDs: <gameID>:<targetID>.
+	// Handle them before the single-ID parse below.
+	if action == "manage_kick" || action == "manage_kick_guest" {
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			slog.Debug("invalid two-id callback format", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		gid, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			slog.Debug("invalid game_id in two-id callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		targetID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			slog.Debug("invalid target_id in two-id callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		switch action {
+		case "manage_kick":
+			b.handleManageKickPlayer(ctx, cb, gid, targetID)
+		case "manage_kick_guest":
+			b.handleManageKickGuest(ctx, cb, gid, targetID)
+		}
+		return
+	}
+
 	gameID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		slog.Debug("invalid game_id in callback", "data", cb.Data)
@@ -222,6 +270,14 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		b.handleGuestAdd(ctx, cb, gameID)
 	case "guest_remove":
 		b.handleGuestRemove(ctx, cb, gameID)
+	case "manage":
+		b.handleManage(ctx, cb, gameID)
+	case "manage_players":
+		b.handleManageShowPlayers(ctx, cb, gameID)
+	case "manage_guests":
+		b.handleManageShowGuests(ctx, cb, gameID)
+	case "manage_courts":
+		b.handleManageEditCourts(ctx, cb, gameID)
 	default:
 		slog.Debug("unknown callback action", "action", action)
 		b.answerCallback(cb.ID, "")
@@ -463,6 +519,235 @@ func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, origin pendingGameKe
 		))
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// checkManageAdmin fetches the game and verifies that cb.From is still an admin
+// of the game's group chat. Answers the callback and returns (nil, false) on any
+// failure so callers can simply do `if game, ok := ...; !ok { return }`.
+func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) (*models.Game, bool) {
+	game, err := b.gameService.GetByID(ctx, gameID)
+	if err != nil {
+		slog.Error("checkManageAdmin: get game", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Game not found")
+		return nil, false
+	}
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, game.ChatID)
+	if err != nil {
+		slog.Error("checkManageAdmin: check admin", "err", err, "user_id", cb.From.ID, "chat_id", game.ChatID)
+		b.answerCallback(cb.ID, "Failed to verify permissions")
+		return nil, false
+	}
+	if !isAdmin {
+		b.answerCallback(cb.ID, "You no longer have admin access to this group")
+		return nil, false
+	}
+
+	return game, true
+}
+
+// handleManage shows the management keyboard for a specific game.
+func (b *Bot) handleManage(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	if !ok {
+		return
+	}
+	b.answerCallback(cb.ID, "")
+	b.renderManageScreen(ctx, cb, game)
+}
+
+// renderManageScreen edits the callback message to show the management view for the given game.
+// The callback must be answered before calling this.
+func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery, game *models.Game) {
+	participations, err := b.partService.GetParticipations(ctx, game.ID)
+	if err != nil {
+		slog.Error("renderManageScreen: get participations", "err", err)
+		return
+	}
+	guests, err := b.partService.GetGuests(ctx, game.ID)
+	if err != nil {
+		slog.Error("renderManageScreen: get guests", "err", err)
+		return
+	}
+
+	registered := 0
+	for _, p := range participations {
+		if p.Status == models.StatusRegistered {
+			registered++
+		}
+	}
+
+	localDate := game.GameDate.In(b.loc)
+	text := fmt.Sprintf("*Manage game:*\n📅 %s · %s\n🎾 Courts: %s\nPlayers: %d/%d, Guests: %d",
+		formatGameDate(localDate), localDate.Format("15:04"),
+		game.Courts, registered, game.CourtsCount*2, len(guests))
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Kick Player", fmt.Sprintf("manage_players:%d", game.ID)),
+			tgbotapi.NewInlineKeyboardButtonData("Kick Guest", fmt.Sprintf("manage_guests:%d", game.ID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Edit Courts", fmt.Sprintf("manage_courts:%d", game.ID)),
+		),
+	)
+
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, text)
+	edit.ParseMode = "Markdown"
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// handleManageShowPlayers lists registered players as kick buttons.
+func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+		return
+	}
+
+	participations, err := b.partService.GetParticipations(ctx, gameID)
+	if err != nil {
+		slog.Error("handleManageShowPlayers: get participations", "err", err)
+		b.answerCallback(cb.ID, "Something went wrong")
+		return
+	}
+
+	var registered []*models.GameParticipation
+	for _, p := range participations {
+		if p.Status == models.StatusRegistered {
+			registered = append(registered, p)
+		}
+	}
+
+	if len(registered) == 0 {
+		b.answerCallback(cb.ID, "No registered players to kick")
+		return
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, p := range registered {
+		label := fmt.Sprintf("Kick %s", playerDisplayName(p.Player))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label,
+				fmt.Sprintf("manage_kick:%d:%d", gameID, p.Player.TelegramID)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("manage:%d", gameID)),
+	))
+
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Select a player to kick:")
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
+	b.answerCallback(cb.ID, "")
+}
+
+// handleManageKickPlayer removes a player from the game and updates the group message.
+func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, telegramID int64) {
+	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	if !ok {
+		return
+	}
+
+	participations, guests, removed, err := b.partService.KickPlayer(ctx, gameID, telegramID)
+	if err != nil {
+		slog.Error("handleManageKickPlayer: kick", "err", err)
+		b.answerCallback(cb.ID, "Something went wrong")
+		return
+	}
+	if !removed {
+		b.answerCallback(cb.ID, "Player not found in this game")
+		return
+	}
+
+	slog.Info("Admin kicked player", "admin", cb.From.ID, "target_telegram_id", telegramID, "game_id", gameID)
+
+	// Update the group announcement.
+	if game.MessageID != nil {
+		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests)
+	}
+
+	b.answerCallback(cb.ID, "Player kicked ✓")
+	b.renderManageScreen(ctx, cb, game)
+}
+
+// handleManageShowGuests lists guests as kick buttons.
+func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+		return
+	}
+
+	guests, err := b.partService.GetGuests(ctx, gameID)
+	if err != nil {
+		slog.Error("handleManageShowGuests: get guests", "err", err)
+		b.answerCallback(cb.ID, "Something went wrong")
+		return
+	}
+
+	if len(guests) == 0 {
+		b.answerCallback(cb.ID, "No guests to kick")
+		return
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, g := range guests {
+		label := fmt.Sprintf("Kick +1 (by %s)", playerDisplayName(g.InvitedBy))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label,
+				fmt.Sprintf("manage_kick_guest:%d:%d", gameID, g.ID)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("manage:%d", gameID)),
+	))
+
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Select a guest to kick:")
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
+	b.answerCallback(cb.ID, "")
+}
+
+// handleManageKickGuest removes a specific guest and updates the group message.
+func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, guestID int64) {
+	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	if !ok {
+		return
+	}
+
+	participations, guests, removed, err := b.partService.KickGuestByID(ctx, gameID, guestID)
+	if err != nil {
+		slog.Error("handleManageKickGuest: kick", "err", err)
+		b.answerCallback(cb.ID, "Something went wrong")
+		return
+	}
+	if !removed {
+		b.answerCallback(cb.ID, "Guest not found")
+		return
+	}
+
+	slog.Info("Admin kicked guest", "admin", cb.From.ID, "guest_id", guestID, "game_id", gameID)
+
+	// Update the group announcement.
+	if game.MessageID != nil {
+		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests)
+	}
+
+	b.answerCallback(cb.ID, "Guest kicked ✓")
+	b.renderManageScreen(ctx, cb, game)
+}
+
+// handleManageEditCourts stores a pending courts-edit and prompts the admin to type the new value.
+func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+		return
+	}
+
+	b.pendingCourtsEdit.Store(cb.Message.Chat.ID, gameID)
+	b.answerCallback(cb.ID, "")
+
+	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, "Send the new courts (e.g.: 2,3,4):")
+	b.api.Send(prompt) //nolint:errcheck
 }
 
 func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity) string {

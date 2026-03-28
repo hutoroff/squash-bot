@@ -64,6 +64,18 @@ func (r *ParticipationRepo) GetByGame(ctx context.Context, gameID int64) ([]*mod
 	return participations, rows.Err()
 }
 
+// DeleteByGameAndPlayer removes a player's participation record from a game.
+// Returns true if a row was deleted.
+func (r *ParticipationRepo) DeleteByGameAndPlayer(ctx context.Context, gameID, playerID int64) (bool, error) {
+	const q = `DELETE FROM game_participations WHERE game_id = $1 AND player_id = $2`
+	slog.Debug("ParticipationRepo.DeleteByGameAndPlayer", "game_id", gameID, "player_id", playerID)
+	result, err := r.pool.Exec(ctx, q, gameID, playerID)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
 func (r *ParticipationRepo) GetRegisteredCount(ctx context.Context, gameID int64) (int, error) {
 	const q = `
 		SELECT COUNT(*) FROM game_participations

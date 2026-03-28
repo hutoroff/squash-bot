@@ -238,3 +238,193 @@ func TestGameRepo_MarkCompleted(t *testing.T) {
 		t.Error("Completed should be true after marking")
 	}
 }
+
+// --- GetUpcomingGamesByChatIDs ---
+
+func TestGameRepo_GetUpcomingGamesByChatIDs_FiltersChats(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	future := time.Now().Add(48 * time.Hour)
+	g1, _ := repo.Create(ctx, newGame(-1001, future, "1"))
+	g2, _ := repo.Create(ctx, newGame(-1002, future, "2"))
+	_, _ = repo.Create(ctx, newGame(-1003, future, "3"))
+
+	games, err := repo.GetUpcomingGamesByChatIDs(ctx, []int64{-1001, -1002})
+	if err != nil {
+		t.Fatalf("GetUpcomingGamesByChatIDs: %v", err)
+	}
+	if len(games) != 2 {
+		t.Fatalf("got %d games, want 2", len(games))
+	}
+	ids := map[int64]bool{games[0].ID: true, games[1].ID: true}
+	if !ids[g1.ID] || !ids[g2.ID] {
+		t.Errorf("unexpected game IDs in result: %v", games)
+	}
+}
+
+func TestGameRepo_GetUpcomingGamesByChatIDs_ExcludesCompletedAndPast(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	future := time.Now().Add(48 * time.Hour)
+	past := time.Now().Add(-24 * time.Hour)
+
+	active, _ := repo.Create(ctx, newGame(-1001, future, "1"))
+	completed, _ := repo.Create(ctx, newGame(-1001, future, "2"))
+	_ = repo.MarkCompleted(ctx, completed.ID)
+	_, _ = repo.Create(ctx, newGame(-1001, past, "3"))
+
+	games, err := repo.GetUpcomingGamesByChatIDs(ctx, []int64{-1001})
+	if err != nil {
+		t.Fatalf("GetUpcomingGamesByChatIDs: %v", err)
+	}
+	if len(games) != 1 || games[0].ID != active.ID {
+		t.Errorf("got %d games (want 1 active), IDs: %v", len(games), games)
+	}
+}
+
+func TestGameRepo_GetUpcomingGamesByChatIDs_EmptySlice(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	_, _ = repo.Create(ctx, newGame(-1001, time.Now().Add(48*time.Hour), "1"))
+
+	games, err := repo.GetUpcomingGamesByChatIDs(ctx, []int64{})
+	if err != nil {
+		t.Fatalf("GetUpcomingGamesByChatIDs with empty list: %v", err)
+	}
+	if len(games) != 0 {
+		t.Errorf("got %d games for empty chatIDs, want 0", len(games))
+	}
+}
+
+// --- GetNextGameForTelegramUser ---
+
+func TestGameRepo_GetNextGameForTelegramUser_Registered(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900001})
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1,2"))
+	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
+
+	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900001)
+	if err != nil {
+		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a game, got nil")
+	}
+	if got.ID != g.ID {
+		t.Errorf("got game ID %d, want %d", got.ID, g.ID)
+	}
+}
+
+func TestGameRepo_GetNextGameForTelegramUser_NoGame(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	got, err := repo.GetNextGameForTelegramUser(ctx, 999999)
+	if err != nil {
+		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil game for unknown user, got game ID %d", got.ID)
+	}
+}
+
+func TestGameRepo_GetNextGameForTelegramUser_SkippedNotReturned(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900002})
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1"))
+	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusSkipped)
+
+	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900002)
+	if err != nil {
+		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+	}
+	if got != nil {
+		t.Errorf("skipped participation should not be returned, got game ID %d", got.ID)
+	}
+}
+
+func TestGameRepo_GetNextGameForTelegramUser_CompletedNotReturned(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900003})
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1"))
+	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
+	_ = gameRepo.MarkCompleted(ctx, g.ID)
+
+	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900003)
+	if err != nil {
+		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+	}
+	if got != nil {
+		t.Errorf("completed game should not be returned, got game ID %d", got.ID)
+	}
+}
+
+func TestGameRepo_GetNextGameForTelegramUser_ReturnsNearest(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900004})
+	near, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
+	far, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(96*time.Hour), "2"))
+	_ = partRepo.Upsert(ctx, near.ID, p.ID, models.StatusRegistered)
+	_ = partRepo.Upsert(ctx, far.ID, p.ID, models.StatusRegistered)
+
+	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900004)
+	if err != nil {
+		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected nearest game, got nil")
+	}
+	if got.ID != near.ID {
+		t.Errorf("got game ID %d (far), want %d (near)", got.ID, near.ID)
+	}
+}
+
+// --- UpdateCourts ---
+
+func TestGameRepo_UpdateCourts(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	g, _ := repo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
+
+	if err := repo.UpdateCourts(ctx, g.ID, "3,4,5", 3); err != nil {
+		t.Fatalf("UpdateCourts: %v", err)
+	}
+
+	updated, _ := repo.GetByID(ctx, g.ID)
+	if updated.Courts != "3,4,5" {
+		t.Errorf("Courts: got %q, want %q", updated.Courts, "3,4,5")
+	}
+	if updated.CourtsCount != 3 {
+		t.Errorf("CourtsCount: got %d, want 3", updated.CourtsCount)
+	}
+}

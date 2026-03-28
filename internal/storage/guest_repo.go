@@ -81,6 +81,20 @@ func (r *GuestRepo) GetByGame(ctx context.Context, gameID int64) ([]*models.Gues
 	return guests, rows.Err()
 }
 
+// DeleteByID removes a specific guest participation by primary key, scoped to the
+// given game. The game_id constraint prevents stale or tampered callback data from
+// deleting a guest belonging to a different game.
+// Returns true if a row was deleted.
+func (r *GuestRepo) DeleteByID(ctx context.Context, gameID, guestID int64) (bool, error) {
+	const q = `DELETE FROM guest_participations WHERE id = $1 AND game_id = $2`
+	slog.Debug("GuestRepo.DeleteByID", "guest_id", guestID, "game_id", gameID)
+	result, err := r.pool.Exec(ctx, q, guestID, gameID)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
 // GetCountByGame returns the total number of guests for a game.
 func (r *GuestRepo) GetCountByGame(ctx context.Context, gameID int64) (int, error) {
 	const q = `SELECT COUNT(*) FROM guest_participations WHERE game_id = $1`

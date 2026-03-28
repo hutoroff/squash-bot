@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
@@ -145,6 +147,70 @@ func (r *GameRepo) MarkCompleted(ctx context.Context, gameID int64) error {
 	const q = `UPDATE games SET completed = true WHERE id = $1`
 	slog.Debug("GameRepo.MarkCompleted", "game_id", gameID)
 	_, err := r.pool.Exec(ctx, q, gameID)
+	return err
+}
+
+// GetUpcomingGamesByChatIDs returns upcoming games for the given chat IDs.
+func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE completed = false AND game_date > now()
+		  AND chat_id = ANY($1)
+		ORDER BY game_date`
+
+	slog.Debug("GameRepo.GetUpcomingGamesByChatIDs", "chat_ids", chatIDs)
+
+	rows, err := r.pool.Query(ctx, q, chatIDs)
+	if err != nil {
+		return nil, fmt.Errorf("query upcoming games by chat ids: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
+// GetNextGameForTelegramUser returns the nearest upcoming game where the user is registered.
+// Returns nil, nil if the user has no upcoming registered games.
+func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
+	const q = `
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts,
+		       g.notified_day_before, g.completed, g.created_at
+		FROM games g
+		JOIN game_participations gp ON gp.game_id = g.id
+		JOIN players p ON p.id = gp.player_id
+		WHERE p.telegram_id = $1 AND gp.status = 'registered'
+		  AND g.completed = false AND g.game_date > now()
+		ORDER BY g.game_date
+		LIMIT 1`
+
+	slog.Debug("GameRepo.GetNextGameForTelegramUser", "telegram_id", telegramID)
+
+	row := r.pool.QueryRow(ctx, q, telegramID)
+	g, err := scanGame(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return g, nil
+}
+
+// UpdateCourts updates the courts and courts_count for a game.
+func (r *GameRepo) UpdateCourts(ctx context.Context, gameID int64, courts string, courtsCount int) error {
+	const q = `UPDATE games SET courts = $1, courts_count = $2 WHERE id = $3`
+	slog.Debug("GameRepo.UpdateCourts", "game_id", gameID, "courts", courts)
+	_, err := r.pool.Exec(ctx, q, courts, courtsCount, gameID)
 	return err
 }
 

@@ -159,9 +159,71 @@ func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, telegram
 	return true, parts, guests, nil
 }
 
+// GetParticipations returns all participations for the given game.
+func (s *ParticipationService) GetParticipations(ctx context.Context, gameID int64) ([]*models.GameParticipation, error) {
+	return s.participationRepo.GetByGame(ctx, gameID)
+}
+
 // GetGuests returns all guests for the given game.
 func (s *ParticipationService) GetGuests(ctx context.Context, gameID int64) ([]*models.GuestParticipation, error) {
 	return s.guestRepo.GetByGame(ctx, gameID)
+}
+
+// KickPlayer removes a player's participation from a game by their Telegram ID.
+// Returns the refreshed participant and guest lists.
+// Returns nil, nil, false, nil if the player is not in the database.
+func (s *ParticipationService) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	player, err := s.playerRepo.GetByTelegramID(ctx, telegramID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, fmt.Errorf("get player: %w", err)
+	}
+
+	removed, err := s.participationRepo.DeleteByGameAndPlayer(ctx, gameID, player.ID)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("delete participation: %w", err)
+	}
+	if !removed {
+		return nil, nil, false, nil
+	}
+
+	slog.Info("Player kicked", "telegram_id", telegramID, "game_id", gameID)
+
+	parts, err := s.participationRepo.GetByGame(ctx, gameID)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("get participations: %w", err)
+	}
+	guests, err := s.guestRepo.GetByGame(ctx, gameID)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("get guests: %w", err)
+	}
+	return parts, guests, true, nil
+}
+
+// KickGuestByID removes a specific guest participation by its ID.
+// Returns the refreshed participant and guest lists.
+func (s *ParticipationService) KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	removed, err := s.guestRepo.DeleteByID(ctx, gameID, guestID)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("delete guest: %w", err)
+	}
+	if !removed {
+		return nil, nil, false, nil
+	}
+
+	slog.Info("Guest kicked", "guest_id", guestID, "game_id", gameID)
+
+	parts, err := s.participationRepo.GetByGame(ctx, gameID)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("get participations: %w", err)
+	}
+	guests, err := s.guestRepo.GetByGame(ctx, gameID)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("get guests: %w", err)
+	}
+	return parts, guests, true, nil
 }
 
 func displayName(username, firstName, lastName string) string {
