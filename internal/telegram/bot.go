@@ -10,8 +10,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/service"
-	"github.com/vkhutorov/squash_bot/internal/storage"
+	"github.com/vkhutorov/squash_bot/internal/client"
 )
 
 // pendingGameKey uniquely identifies a pending group-selection request.
@@ -38,25 +37,19 @@ const maxConcurrentHandlers = 50
 
 type Bot struct {
 	api               *tgbotapi.BotAPI
-	gameService       *service.GameService
-	partService       *service.ParticipationService
-	groupRepo         *storage.GroupRepo
-	scheduler         *service.SchedulerService
+	client            *client.Client
 	serviceAdminIDs   map[int64]bool
 	loc               *time.Location
 	logger            *slog.Logger
-	pendingGames      sync.Map      // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit sync.Map      // map[chatID int64]gameID int64
+	pendingGames      sync.Map     // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit sync.Map     // map[chatID int64]gameID int64
 	handlerSem        chan struct{} // semaphore limiting concurrent update handlers
 }
 
-func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, scheduler *service.SchedulerService, serviceAdminIDs string, logger *slog.Logger) *Bot {
+func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient *client.Client, serviceAdminIDs string, logger *slog.Logger) *Bot {
 	return &Bot{
 		api:             api,
-		gameService:     gameService,
-		partService:     partService,
-		groupRepo:       groupRepo,
-		scheduler:       scheduler,
+		client:          mgmtClient,
 		serviceAdminIDs: parseServiceAdminIDs(serviceAdminIDs),
 		loc:             loc,
 		logger:          logger,
@@ -150,7 +143,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 
 	switch newStatus {
 	case "left", "kicked":
-		if err := b.groupRepo.Remove(ctx, chat.ID); err != nil {
+		if err := b.client.RemoveGroup(ctx, chat.ID); err != nil {
 			slog.Error("handleMyChatMember: remove group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot removed from group", "chat_id", chat.ID, "title", chat.Title)
@@ -158,7 +151,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 	case "member", "administrator":
 		isAdmin := newStatus == "administrator"
 
-		if err := b.groupRepo.Upsert(ctx, chat.ID, chat.Title, isAdmin); err != nil {
+		if err := b.client.UpsertGroup(ctx, chat.ID, chat.Title, isAdmin); err != nil {
 			slog.Error("handleMyChatMember: upsert group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot membership changed", "chat_id", chat.ID, "title", chat.Title,
@@ -179,7 +172,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 // the first message the bot receives from an unregistered group triggers a live
 // Telegram API call to fetch admin status and upsert the row.
 func (b *Bot) reconcileGroupIfUnknown(ctx context.Context, chat *tgbotapi.Chat) {
-	ok, err := b.groupRepo.Exists(ctx, chat.ID)
+	ok, err := b.client.GroupExists(ctx, chat.ID)
 	if err != nil {
 		slog.Error("reconcileGroup: existence check", "chat_id", chat.ID, "err", err)
 		return
@@ -203,7 +196,7 @@ func (b *Bot) reconcileGroupIfUnknown(ctx context.Context, chat *tgbotapi.Chat) 
 	if title == "" {
 		title = fmt.Sprintf("Group %d", chat.ID)
 	}
-	if err := b.groupRepo.Upsert(ctx, chat.ID, title, isAdmin); err != nil {
+	if err := b.client.UpsertGroup(ctx, chat.ID, title, isAdmin); err != nil {
 		slog.Error("reconcileGroup: upsert", "chat_id", chat.ID, "err", err)
 		return
 	}

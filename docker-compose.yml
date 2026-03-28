@@ -15,11 +15,35 @@ services:
     ports:
       - "7432:5432"
 
-  bot:
-    build: .
+  squash-games-management:
+    build:
+      context: .
+      dockerfile: Dockerfile.management
+    environment:
+      DATABASE_URL: postgres://squash_bot:squash_bot@postgres:5432/squash_bot?sslmode=disable
+      SERVER_PORT: "8080"
     env_file: .env
     depends_on:
       postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  telegram-squash-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+    env_file: .env
+    environment:
+      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+    depends_on:
+      squash-games-management:
         condition: service_healthy
     restart: unless-stopped
 

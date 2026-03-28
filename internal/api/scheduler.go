@@ -1,0 +1,33 @@
+package api
+
+import (
+	"log/slog"
+	"net/http"
+)
+
+// triggerScheduler handles POST /api/v1/scheduler/trigger/{event}
+// Runs the scheduled job asynchronously and returns 202 immediately.
+func (h *Handler) triggerScheduler(w http.ResponseWriter, r *http.Request) {
+	event := r.PathValue("event")
+
+	var job func()
+	switch event {
+	case "day_before":
+		job = h.scheduler.RunDayBeforeCheck
+	case "day_after":
+		job = h.scheduler.RunDayAfterCleanup
+	case "weekly_reminder":
+		job = h.scheduler.RunWeeklyReminder
+	default:
+		writeError(w, http.StatusBadRequest, "unknown event: "+event)
+		return
+	}
+
+	go func() {
+		slog.Info("manual trigger started", "event", event)
+		job()
+		slog.Info("manual trigger completed", "event", event)
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+}

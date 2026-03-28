@@ -10,7 +10,6 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/storage"
 )
 
 // handleCommand dispatches /command messages from private chats.
@@ -66,7 +65,7 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
-	game, err := b.gameService.GetNextGameForTelegramUser(ctx, msg.From.ID)
+	game, err := b.client.GetNextGameForTelegramUser(ctx, msg.From.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get next game", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch your next game. Please try again.")
@@ -78,13 +77,13 @@ func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	participations, err := b.partService.GetParticipations(ctx, game.ID)
+	participations, err := b.client.GetParticipations(ctx, game.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get participations", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch game details. Please try again.")
 		return
 	}
-	guests, err := b.partService.GetGuests(ctx, game.ID)
+	guests, err := b.client.GetGuests(ctx, game.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get guests", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch game details. Please try again.")
@@ -119,14 +118,14 @@ func (b *Bot) handleCommandGames(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	games, err := b.gameService.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
+	games, err := b.client.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
 	if err != nil {
 		slog.Error("handleCommandGames: get games", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch games. Please try again.")
 		return
 	}
 
-	groups, err := b.groupRepo.GetAll(ctx)
+	groups, err := b.client.GetGroups(ctx)
 	if err != nil {
 		slog.Error("handleCommandGames: get groups", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch group info. Please try again.")
@@ -240,7 +239,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	}
 
 	// Re-fetch the game to get the chat ID needed for the admin check.
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("processCourtsEdit: get game", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Game not found.")
@@ -259,7 +258,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 		return
 	}
 
-	if err := b.gameService.UpdateCourts(ctx, gameID, courts); err != nil {
+	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
 		slog.Error("processCourtsEdit: update courts", "err", err, "game_id", gameID)
 		b.reply(msg.Chat.ID, msg.MessageID, "Failed to update courts. Please try again.")
 		return
@@ -268,7 +267,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	slog.Info("Courts updated", "game_id", gameID, "courts", courts)
 
 	// Re-fetch the game to pick up the new courts value for the group message.
-	game, err = b.gameService.GetByID(ctx, gameID)
+	game, err = b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("processCourtsEdit: get game after update", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, "Courts updated, but failed to refresh the group message.")
@@ -276,11 +275,11 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	}
 
 	if game.MessageID != nil {
-		participations, err := b.partService.GetParticipations(ctx, gameID)
+		participations, err := b.client.GetParticipations(ctx, gameID)
 		if err != nil {
 			slog.Error("processCourtsEdit: get participations", "err", err)
 		} else {
-			guests, err := b.partService.GetGuests(ctx, gameID)
+			guests, err := b.client.GetGuests(ctx, gameID)
 			if err != nil {
 				slog.Error("processCourtsEdit: get guests", "err", err)
 			} else {
@@ -304,7 +303,7 @@ func superGroupMessageLink(chatID, messageID int64) string {
 }
 
 // formatGamesListMessage builds the text and keyboard for the /games admin view.
-func formatGamesListMessage(games []*models.Game, groups []storage.BotGroup, loc *time.Location) (string, tgbotapi.InlineKeyboardMarkup) {
+func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *time.Location) (string, tgbotapi.InlineKeyboardMarkup) {
 	groupTitles := make(map[int64]string, len(groups))
 	for _, g := range groups {
 		groupTitles[g.ChatID] = g.Title

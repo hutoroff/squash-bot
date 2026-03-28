@@ -1,32 +1,55 @@
 package config
 
 import (
+	"log/slog"
+
 	"github.com/caarlos0/env/v10"
 	"github.com/joho/godotenv"
-	"log/slog"
 )
 
-type Config struct {
-	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
-	DatabaseURL        string `env:"DATABASE_URL,required"`
-	CronDayBefore      string `env:"CRON_DAY_BEFORE"       envDefault:"0 20 * * *"`
-	CronDayAfter       string `env:"CRON_DAY_AFTER"        envDefault:"0 8 * * *"`
-	CronWeeklyReminder string `env:"CRON_WEEKLY_REMINDER"  envDefault:"0 10 * * 1"`
-	LogLevel           string `env:"LOG_LEVEL"        envDefault:"INFO"`
-	Timezone           string `env:"TIMEZONE"         envDefault:"UTC"`
+// TelegramConfig holds configuration for the telegram-squash-bot service.
+type TelegramConfig struct {
+	TelegramBotToken     string `env:"TELEGRAM_BOT_TOKEN,required"`
+	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL,required"`
+	LogLevel             string `env:"LOG_LEVEL"  envDefault:"INFO"`
+	Timezone             string `env:"TIMEZONE"   envDefault:"UTC"`
 	// ServiceAdminIDs is a comma-separated list of Telegram user IDs allowed to
 	// manually trigger scheduled events via /trigger.
 	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 }
 
-func Load() (*Config, error) {
-	cfg := &Config{}
-	err := godotenv.Load()
-	if err != nil {
-		slog.Debug("Error loading .env file")
-	}
+// ManagementConfig holds configuration for the squash-games-management service.
+type ManagementConfig struct {
+	DatabaseURL        string `env:"DATABASE_URL,required"`
+	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
+	ServerPort         string `env:"SERVER_PORT"           envDefault:"8080"`
+	CronDayBefore      string `env:"CRON_DAY_BEFORE"       envDefault:"0 20 * * *"`
+	CronDayAfter       string `env:"CRON_DAY_AFTER"        envDefault:"0 8 * * *"`
+	CronWeeklyReminder string `env:"CRON_WEEKLY_REMINDER"  envDefault:"0 10 * * 1"`
+	LogLevel           string `env:"LOG_LEVEL"             envDefault:"INFO"`
+	Timezone           string `env:"TIMEZONE"              envDefault:"UTC"`
+}
+
+func LoadTelegram() (*TelegramConfig, error) {
+	cfg := &TelegramConfig{}
+	loadDotenv()
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func LoadManagement() (*ManagementConfig, error) {
+	cfg := &ManagementConfig{}
+	loadDotenv()
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func loadDotenv() {
+	if err := godotenv.Load(); err != nil {
+		slog.Debug("Error loading .env file")
+	}
 }

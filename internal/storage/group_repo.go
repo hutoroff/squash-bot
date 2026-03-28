@@ -4,13 +4,8 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vkhutorov/squash_bot/internal/models"
 )
-
-type BotGroup struct {
-	ChatID     int64
-	Title      string
-	BotIsAdmin bool
-}
 
 type GroupRepo struct {
 	pool *pgxpool.Pool
@@ -47,15 +42,15 @@ func (r *GroupRepo) Exists(ctx context.Context, chatID int64) (bool, error) {
 }
 
 // GetAll returns all groups the bot is currently a member of.
-func (r *GroupRepo) GetAll(ctx context.Context) ([]BotGroup, error) {
+func (r *GroupRepo) GetAll(ctx context.Context) ([]models.Group, error) {
 	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin FROM bot_groups`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var groups []BotGroup
+	var groups []models.Group
 	for rows.Next() {
-		var g BotGroup
+		var g models.Group
 		if err := rows.Scan(&g.ChatID, &g.Title, &g.BotIsAdmin); err != nil {
 			return nil, err
 		}

@@ -17,13 +17,24 @@ A Telegram bot for managing squash game coordination among friends. The bot hand
 
 ### Core Architecture Pattern
 ```
-Telegram Handlers → Services → Storage → PostgreSQL
+telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
 ```
 
-- **telegram/**: Bot loop, callback handlers, slash commands, message formatting
+Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+
+**`squash-games-management`** (`cmd/squash-games-management/`)
+- **api/**: HTTP handlers (REST JSON API on port 8080)
 - **service/**: Business logic for games, participation, guests, scheduling
 - **storage/**: SQL repositories (games, players, participations, guests, groups)
-- **models/**: Game, Player, GameParticipation, GuestParticipation
+- Runs the cron scheduler; sends Telegram messages directly via `tgbotapi`
+
+**`telegram-squash-bot`** (`cmd/telegram-squash-bot/`)
+- **telegram/**: Bot loop, callback handlers, slash commands, message formatting
+- **client/**: Typed HTTP client that calls the management service API
+- No DB access; all data operations go through HTTP
+
+**Shared**
+- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags)
 
 ### Database Schema
 - `games`: id, chat_id, message_id, game_date, courts_count, courts, notified_day_before, completed, created_at
@@ -35,21 +46,25 @@ Telegram Handlers → Services → Storage → PostgreSQL
 ## Development Commands
 
 ```bash
-# Start development environment
+# Start full stack
+docker-compose up --build
+
+# Start only DB (for local dev)
 docker-compose up -d postgres
-go run cmd/bot/main.go
+
+# Run management service locally
+go run cmd/squash-games-management/main.go
+
+# Run telegram bot locally
+go run cmd/telegram-squash-bot/main.go
 
 # Testing
 go test ./...
-go test ./internal/service -v
-go test -run TestGameService_AddParticipant
 go test -tags integration -timeout 120s ./...
 
-# Build
-go build -o bin/squash_bot cmd/bot/main.go
-
-# Docker
-docker-compose up --build
+# Build both binaries
+go build ./cmd/squash-games-management/
+go build ./cmd/telegram-squash-bot/
 ```
 
 ## Key Business Logic Workflows
@@ -85,12 +100,23 @@ docker-compose up --build
 - "Game completed ✓" marker for finished games
 
 ## Environment Variables
+
+**`squash-games-management`:**
 ```
-TELEGRAM_BOT_TOKEN=          # required
 DATABASE_URL=                # required
+TELEGRAM_BOT_TOKEN=          # required (scheduler sends Telegram messages)
+SERVER_PORT=8080             # default 8080
 CRON_DAY_BEFORE=0 20 * * *  # default 8 PM daily
 CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
 CRON_WEEKLY_REMINDER=0 10 * * 1  # default Monday 10 AM
+LOG_LEVEL=INFO
+TIMEZONE=UTC
+```
+
+**`telegram-squash-bot`:**
+```
+TELEGRAM_BOT_TOKEN=          # required
+MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080)
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 SERVICE_ADMIN_IDS=           # optional; comma-separated Telegram user IDs for /trigger

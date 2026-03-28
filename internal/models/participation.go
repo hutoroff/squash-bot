@@ -10,10 +10,10 @@ const (
 )
 
 type GameParticipation struct {
-	ID        int64
-	GameID    int64
-	PlayerID  int64
-	Player    *Player
-	Status    ParticipationStatus
-	CreatedAt time.Time
+	ID        int64               `json:"id"`
+	GameID    int64               `json:"game_id"`
+	PlayerID  int64               `json:"player_id"`
+	Player    *Player             `json:"player"`
+	Status    ParticipationStatus `json:"status"`
+	CreatedAt time.Time           `json:"created_at"`
 }

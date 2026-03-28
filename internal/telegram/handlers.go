@@ -176,7 +176,7 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 }
 
 func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string) {
-	game, err := b.gameService.CreateGame(ctx, groupID, gameDate, courts)
+	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts)
 	if err != nil {
 		slog.Error("create game", "err", err)
 		b.reply(replyChatID, replyMsgID, "Failed to create game")
@@ -205,7 +205,7 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 		slog.Error("pin message", "err", err)
 	}
 
-	if err := b.gameService.UpdateMessageID(ctx, game.ID, int64(sent.MessageID)); err != nil {
+	if err := b.client.UpdateMessageID(ctx, game.ID, int64(sent.MessageID)); err != nil {
 		slog.Error("update message_id", "err", err)
 	}
 
@@ -328,21 +328,21 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 }
 
 func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	participations, err := b.partService.Join(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
+	participations, err := b.client.Join(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("join game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
 		return
 	}
 
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
 		return
 	}
 
-	guests, err := b.partService.GetGuests(ctx, gameID)
+	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("get guests", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -354,7 +354,7 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 }
 
 func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	participations, skipped, err := b.partService.Skip(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
+	participations, skipped, err := b.client.Skip(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("skip game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -366,14 +366,14 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 		return
 	}
 
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
 		return
 	}
 
-	guests, err := b.partService.GetGuests(ctx, gameID)
+	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("get guests", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -388,7 +388,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 	u := cb.From
 	// Capacity enforcement is done atomically inside AddGuest (DB advisory lock +
 	// transaction), so there is no TOCTOU race even under concurrent clicks.
-	added, participations, guests, err := b.partService.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
+	added, participations, guests, err := b.client.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
 	if err != nil {
 		slog.Error("add guest", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -399,7 +399,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 		return
 	}
 
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -411,7 +411,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 }
 
 func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	removed, participations, guests, err := b.partService.RemoveGuest(ctx, gameID, cb.From.ID)
+	removed, participations, guests, err := b.client.RemoveGuest(ctx, gameID, cb.From.ID)
 	if err != nil {
 		slog.Error("remove guest", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -423,7 +423,7 @@ func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
@@ -482,7 +482,7 @@ func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 // Groups that cannot be reached are logged and skipped so that one inaccessible
 // group does not disable the entire DM flow.
 func (b *Bot) adminGroups(userID int64) []int64 {
-	groups, err := b.groupRepo.GetAll(context.Background())
+	groups, err := b.client.GetGroups(context.Background())
 	if err != nil {
 		slog.Warn("adminGroups: failed to query groups", "err", err)
 		return nil
@@ -525,7 +525,7 @@ func (b *Bot) isKnownGroupMention(msg *tgbotapi.Message) bool {
 	if !b.isBotMentioned(msg) {
 		return false
 	}
-	groups, err := b.groupRepo.GetAll(context.Background())
+	groups, err := b.client.GetGroups(context.Background())
 	if err != nil {
 		return false
 	}
@@ -593,7 +593,7 @@ func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, origin pendingGameKe
 // of the game's group chat. Answers the callback and returns (nil, false) on any
 // failure so callers can simply do `if game, ok := ...; !ok { return }`.
 func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) (*models.Game, bool) {
-	game, err := b.gameService.GetByID(ctx, gameID)
+	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("checkManageAdmin: get game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Game not found")
@@ -627,12 +627,12 @@ func (b *Bot) handleManage(ctx context.Context, cb *tgbotapi.CallbackQuery, game
 // renderManageScreen edits the callback message to show the management view for the given game.
 // The callback must be answered before calling this.
 func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery, game *models.Game) {
-	participations, err := b.partService.GetParticipations(ctx, game.ID)
+	participations, err := b.client.GetParticipations(ctx, game.ID)
 	if err != nil {
 		slog.Error("renderManageScreen: get participations", "err", err)
 		return
 	}
-	guests, err := b.partService.GetGuests(ctx, game.ID)
+	guests, err := b.client.GetGuests(ctx, game.ID)
 	if err != nil {
 		slog.Error("renderManageScreen: get guests", "err", err)
 		return
@@ -675,7 +675,7 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 		return
 	}
 
-	participations, err := b.partService.GetParticipations(ctx, gameID)
+	participations, err := b.client.GetParticipations(ctx, gameID)
 	if err != nil {
 		slog.Error("handleManageShowPlayers: get participations", "err", err)
 		b.answerCallback(cb.ID, "Something went wrong")
@@ -720,7 +720,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 
-	participations, guests, removed, err := b.partService.KickPlayer(ctx, gameID, telegramID)
+	participations, guests, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
 		b.answerCallback(cb.ID, "Something went wrong")
@@ -748,7 +748,7 @@ func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 
-	guests, err := b.partService.GetGuests(ctx, gameID)
+	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("handleManageShowGuests: get guests", "err", err)
 		b.answerCallback(cb.ID, "Something went wrong")
@@ -786,7 +786,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	participations, guests, removed, err := b.partService.KickGuestByID(ctx, gameID, guestID)
+	participations, guests, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
 		b.answerCallback(cb.ID, "Something went wrong")
@@ -808,34 +808,36 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 	b.renderManageScreen(ctx, cb, game)
 }
 
-// handleTrigger runs a scheduled event on demand. Only users listed in
-// serviceAdminIDs are allowed; everyone else gets a "Not authorized" toast.
+// handleTrigger calls the management service to run a scheduled event on demand.
+// Only users listed in serviceAdminIDs are allowed.
 func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, event string) {
 	if !b.serviceAdminIDs[cb.From.ID] {
 		b.answerCallback(cb.ID, "Not authorized")
 		return
 	}
 
-	var job func()
 	switch event {
-	case "day_before":
-		job = b.scheduler.RunDayBeforeCheck
-	case "day_after":
-		job = b.scheduler.RunDayAfterCleanup
-	case "weekly_reminder":
-		job = b.scheduler.RunWeeklyReminder
+	case "day_before", "day_after", "weekly_reminder":
+		// valid events
 	default:
 		slog.Debug("handleTrigger: unknown event", "event", event)
 		b.answerCallback(cb.ID, "Unknown event")
 		return
 	}
 
-	// Answer immediately so Telegram doesn't time out waiting for the response
-	// while the job (which may make multiple network calls) is running.
-	b.answerCallback(cb.ID, "Triggered ✓")
+	// The trigger endpoint returns 202 immediately (job runs async on the
+	// management service), so this call should be fast. Only send a success
+	// callback and remove the keyboard after a confirmed successful response;
+	// on error, answer with a failure notice and leave the buttons intact so
+	// the admin can retry.
+	if err := b.client.TriggerScheduledEvent(ctx, event); err != nil {
+		slog.Error("handleTrigger: request failed", "event", event, "err", err)
+		b.answerCallback(cb.ID, "Failed to trigger — check service health")
+		return
+	}
+
 	slog.Info("Manual trigger", "event", event, "user_id", cb.From.ID)
-	job()
-	slog.Info("Manual trigger completed", "event", event, "user_id", cb.From.ID)
+	b.answerCallback(cb.ID, "Triggered ✓")
 
 	// Remove the keyboard so the same message cannot be used to fire the job
 	// again. This prevents accidental duplicate runs (especially relevant for
@@ -863,14 +865,14 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 		return
 	}
 
-	games, err := b.gameService.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
+	games, err := b.client.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
 	if err != nil {
 		slog.Error("handleManageClose: get games", "err", err)
 		fallback()
 		return
 	}
 
-	groups, err := b.groupRepo.GetAll(ctx)
+	groups, err := b.client.GetGroups(ctx)
 	if err != nil {
 		slog.Error("handleManageClose: get groups", "err", err)
 		fallback()

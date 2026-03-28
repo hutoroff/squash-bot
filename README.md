@@ -29,22 +29,13 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 ## Architecture
 
 ```
-Telegram (long-polling)
-        ↓
-  telegram/handlers.go      — parses messages & callbacks
-        ↓
-  service/                  — business logic
-        ↓
-  storage/                  — SQL repositories
-        ↓
-     PostgreSQL
+telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
 ```
 
-Three main packages under `internal/`:
+Two independently deployable binaries in one Go module:
 
-- **telegram** — bot loop, message/callback handlers, message formatting, slash commands
-- **service** — game creation, participation logic, guest management, scheduler tasks
-- **storage** — typed SQL repositories for games, players, participations, guests, groups
+- **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
+- **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
 
 ## Quick Start
 
@@ -64,9 +55,10 @@ Edit `.env` and fill in the required values:
 
 ```env
 TELEGRAM_BOT_TOKEN=   # from @BotFather
-DATABASE_URL=postgres://squash_bot:squash_bot@postgres:7432/squash_bot?sslmode=disable
 TIMEZONE=UTC
 ```
+
+`DATABASE_URL` is pre-configured in `docker-compose.yml` for the management service container and does not need to be in `.env` when running via Docker Compose.
 
 ### 2. Start
 
@@ -97,17 +89,20 @@ If you are an admin in multiple groups, the bot will ask you to pick a group.
 # Start only the database
 docker-compose up -d postgres
 
-# Run the bot
+# Run the management service (in one terminal)
 export PATH="/opt/homebrew/bin:$PATH"   # if Go installed via Homebrew on macOS
-go run cmd/bot/main.go
+DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
+  go run cmd/squash-games-management/main.go
+
+# Run the telegram bot (in another terminal)
+MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  go run cmd/telegram-squash-bot/main.go
 ```
 
 ## Testing
 
 ```bash
 go test ./...                                      # all tests
-go test ./internal/service -v                      # service tests with verbose output
-go test -run TestGameService_AddParticipant        # single test
 go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
 ```
 
@@ -130,16 +125,28 @@ Guest spots count toward capacity.
 
 ## Environment Variables
 
+### squash-games-management
+
 | Variable               | Required | Default           | Description                                         |
 |------------------------|----------|-------------------|-----------------------------------------------------|
-| `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather                           |
+| `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather (used by the scheduler to send messages) |
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
+| `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
 | `CRON_DAY_BEFORE`      | No       | `0 20 * * *`      | When to run day-before capacity check               |
 | `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
 | `CRON_WEEKLY_REMINDER` | No       | `0 10 * * 1`      | When to send weekly reminder to admins (Mon 10 AM)  |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SERVICE_ADMIN_IDS`    | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
+
+### telegram-squash-bot
+
+| Variable                 | Required | Default           | Description                                         |
+|--------------------------|----------|-------------------|-----------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
+| `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://squash-games-management:8080`) |
+| `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
+| `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
+| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
 
 ## Scheduled Tasks
 
@@ -163,12 +170,16 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 ## Project Structure
 
 ```
-cmd/bot/          — entry point
+cmd/
+  squash-games-management/  — management service entry point
+  telegram-squash-bot/      — telegram bot entry point
 internal/
-  config/         — env-based config
-  models/         — Game, Player, GameParticipation, GuestParticipation
+  config/         — env-based config (TelegramConfig + ManagementConfig)
+  models/         — Game, Player, GameParticipation, GuestParticipation, Group
   storage/        — SQL repositories (games, players, participations, guests, groups)
   service/        — business logic + scheduler
+  api/            — HTTP handlers for the management service REST API
+  client/         — typed HTTP client used by the telegram bot
   telegram/       — bot loop, handlers, commands, formatter
 migrations/       — embedded SQL migration files
 tests/            — integration and e2e tests

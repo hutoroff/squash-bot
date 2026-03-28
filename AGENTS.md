@@ -18,17 +18,22 @@ This file provides working instructions for coding agents in this repository.
 
 ## Architecture
 
-Primary flow:
+Two independently deployable binaries in one Go module:
 
-`telegram handlers -> service layer -> storage layer -> PostgreSQL`
+```
+telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
+```
 
 Key directories:
 
-- `cmd/bot` — application entry point
-- `internal/config` — environment-driven config
-- `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation)
+- `cmd/squash-games-management` — management service entry point
+- `cmd/telegram-squash-bot` — telegram bot entry point
+- `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig`)
+- `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group)
 - `internal/storage` — SQL repositories (games, players, participations, guests, groups)
 - `internal/service` — business logic and scheduled jobs
+- `internal/api` — HTTP handlers for the management service REST API
+- `internal/client` — typed HTTP client used by the telegram bot
 - `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
 - `migrations` — embedded SQL migrations
 - `tests` — integration and e2e tests
@@ -39,7 +44,7 @@ Key directories:
 
 - Keep changes minimal and consistent with the existing Go style.
 - Prefer fixing root causes over adding defensive patches around symptoms.
-- Preserve the current package boundaries: transport logic in `internal/telegram`, business rules in `internal/service`, persistence in `internal/storage`.
+- Preserve the current package boundaries: transport/bot logic in `internal/telegram`, HTTP API in `internal/api`, HTTP client in `internal/client`, business rules in `internal/service`, persistence in `internal/storage`.
 - Do not introduce new dependencies unless clearly necessary.
 - Use structured logging patterns already present in the codebase.
 - Avoid unrelated refactors while implementing a task.
@@ -54,7 +59,8 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- Required runtime values: `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`.
+- `squash-games-management` requires `TELEGRAM_BOT_TOKEN` and `DATABASE_URL`.
+- `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN` and `MANAGEMENT_SERVICE_URL`.
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
 
@@ -64,16 +70,21 @@ Key directories:
 # Start database only
 docker-compose up -d postgres
 
-# Run the bot locally
-go run cmd/bot/main.go
+# Run the management service locally
+DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
+  go run cmd/squash-games-management/main.go
+
+# Run the telegram bot locally
+MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  go run cmd/telegram-squash-bot/main.go
 
 # Run tests
 go test ./...
-go test ./internal/service -v
 go test -tags integration -timeout 120s ./...
 
-# Build binary
-go build -o bin/squash_bot cmd/bot/main.go
+# Build binaries
+go build ./cmd/squash-games-management/
+go build ./cmd/telegram-squash-bot/
 ```
 
 ## Testing Guidance
