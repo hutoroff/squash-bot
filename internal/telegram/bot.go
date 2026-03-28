@@ -2,14 +2,24 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/config"
 	"github.com/vkhutorov/squash_bot/internal/service"
+	"github.com/vkhutorov/squash_bot/internal/storage"
 )
+
+// pendingGameKey uniquely identifies a pending group-selection request.
+// Telegram message IDs are scoped per-chat, so using messageID alone as a key
+// allows two admins in different private chats to collide on the same ID.
+// Including chatID makes the pair globally unique.
+type pendingGameKey struct {
+	chatID    int64
+	messageID int
+}
 
 // pendingGame holds the parsed game details while the admin selects a target group.
 type pendingGame struct {
@@ -23,18 +33,18 @@ type Bot struct {
 	api          *tgbotapi.BotAPI
 	gameService  *service.GameService
 	partService  *service.ParticipationService
-	cfg          *config.Config
+	groupRepo    *storage.GroupRepo
 	loc          *time.Location
 	logger       *slog.Logger
-	pendingGames sync.Map // map[int64 (userID)] *pendingGame
+	pendingGames sync.Map // map[pendingGameKey]*pendingGame
 }
 
-func New(api *tgbotapi.BotAPI, cfg *config.Config, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) *Bot {
+func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, logger *slog.Logger) *Bot {
 	return &Bot{
 		api:         api,
 		gameService: gameService,
 		partService: partService,
-		cfg:         cfg,
+		groupRepo:   groupRepo,
 		loc:         loc,
 		logger:      logger,
 	}
@@ -44,6 +54,7 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config, loc *time.Location, gameServi
 func (b *Bot) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
+	u.AllowedUpdates = []string{"message", "callback_query", "my_chat_member"}
 
 	updates := b.api.GetUpdatesChan(u)
 
@@ -72,7 +83,72 @@ func (b *Bot) processUpdate(ctx context.Context, update tgbotapi.Update) {
 	case update.CallbackQuery != nil:
 		slog.Debug("incoming callback", "from", update.CallbackQuery.From.ID, "data", update.CallbackQuery.Data)
 		b.handleCallback(ctx, update.CallbackQuery)
+	case update.MyChatMember != nil:
+		slog.Debug("my_chat_member update", "chat", update.MyChatMember.Chat.ID, "new_status", update.MyChatMember.NewChatMember.Status)
+		b.handleMyChatMember(ctx, update.MyChatMember)
 	default:
 		slog.Debug("unhandled update type", "update_id", update.UpdateID)
+	}
+}
+
+func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMemberUpdated) {
+	chat := update.Chat
+	if chat.Type != "group" && chat.Type != "supergroup" {
+		return
+	}
+
+	newStatus := update.NewChatMember.Status
+	oldStatus := update.OldChatMember.Status
+
+	switch newStatus {
+	case "left", "kicked":
+		if err := b.groupRepo.Remove(ctx, chat.ID); err != nil {
+			slog.Error("handleMyChatMember: remove group", "chat_id", chat.ID, "err", err)
+		}
+		slog.Info("Bot removed from group", "chat_id", chat.ID, "title", chat.Title)
+
+	case "member", "administrator":
+		isAdmin := newStatus == "administrator"
+
+		if err := b.groupRepo.Upsert(ctx, chat.ID, chat.Title, isAdmin); err != nil {
+			slog.Error("handleMyChatMember: upsert group", "chat_id", chat.ID, "err", err)
+		}
+		slog.Info("Bot membership changed", "chat_id", chat.ID, "title", chat.Title,
+			"old_status", oldStatus, "new_status", newStatus)
+
+		if text := membershipNotifyText(oldStatus, newStatus, chat.Title); text != "" {
+			msg := tgbotapi.NewMessage(update.From.ID, text)
+			if _, err := b.api.Send(msg); err != nil {
+				slog.Error("handleMyChatMember: notify permission change", "user_id", update.From.ID, "err", err)
+			}
+		}
+	}
+}
+
+// membershipNotifyText returns the DM text to send to the person who triggered a
+// bot membership change, or an empty string when no notification is needed.
+// It is a pure function with no side effects so it can be tested without mocks.
+func membershipNotifyText(oldStatus, newStatus, chatTitle string) string {
+	// Only notify on transitions that land the bot in a non-admin member state.
+	if newStatus != "member" {
+		return ""
+	}
+	wasAbsent := oldStatus == "left" || oldStatus == "kicked"
+	wasAdmin := oldStatus == "administrator" || oldStatus == "creator"
+	switch {
+	case wasAbsent:
+		return fmt.Sprintf(
+			"I've been added to \"%s\" but I don't have administrator permissions.\n\n"+
+				"To pin game announcements, please grant me admin rights in that group.",
+			chatTitle,
+		)
+	case wasAdmin:
+		return fmt.Sprintf(
+			"I've lost administrator permissions in \"%s\".\n\n"+
+				"Without admin rights I can no longer pin game announcements.",
+			chatTitle,
+		)
+	default:
+		return ""
 	}
 }

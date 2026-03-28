@@ -17,7 +17,7 @@ type SchedulerService struct {
 	gameRepo  *storage.GameRepo
 	partRepo  *storage.ParticipationRepo
 	guestRepo *storage.GuestRepo
-	chatIDs   []int64
+	groupRepo *storage.GroupRepo
 	loc       *time.Location
 	logger    *slog.Logger
 }
@@ -27,7 +27,7 @@ func NewSchedulerService(
 	gameRepo *storage.GameRepo,
 	partRepo *storage.ParticipationRepo,
 	guestRepo *storage.GuestRepo,
-	chatIDs []int64,
+	groupRepo *storage.GroupRepo,
 	loc *time.Location,
 	logger *slog.Logger,
 ) *SchedulerService {
@@ -36,7 +36,7 @@ func NewSchedulerService(
 		gameRepo:  gameRepo,
 		partRepo:  partRepo,
 		guestRepo: guestRepo,
-		chatIDs:   chatIDs,
+		groupRepo: groupRepo,
 		loc:       loc,
 		logger:    logger,
 	}
@@ -210,10 +210,17 @@ func (s *SchedulerService) RunWeeklyReminder() {
 		}
 	}
 
+	groups, err := s.groupRepo.GetAll(ctx)
+	if err != nil {
+		s.logger.Error("weekly reminder: get groups", "err", err)
+		return
+	}
+
 	// Collect admins only from groups that have no game scheduled this week.
 	seen := make(map[int64]bool)
 	var allAdmins []tgbotapi.ChatMember
-	for _, chatID := range s.chatIDs {
+	for _, g := range groups {
+		chatID := g.ChatID
 		if chatIDsWithGame[chatID] {
 			s.logger.Info("weekly reminder: game already scheduled, skipping group", "chat_id", chatID)
 			continue

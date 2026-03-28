@@ -67,27 +67,36 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	// Admin manages multiple groups — ask which one to post to.
-	// The admin's original message ID is the per-request nonce: it is unique within
-	// the private chat and available without an extra API round-trip, so two
-	// concurrent creation commands from the same admin don't collide.
-	nonce := int64(msg.MessageID)
-	b.pendingGames.Store(nonce, &pendingGame{
+	// The key is (chatID, messageID): message IDs are unique only within a single
+	// chat, so using messageID alone would let two admins in different private chats
+	// collide and overwrite each other's pending game.
+	key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
+	b.pendingGames.Store(key, &pendingGame{
 		gameDate:    gameDate,
 		courts:      courts,
 		replyChatID: msg.Chat.ID,
 		replyMsgID:  msg.MessageID,
 	})
-	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, nonce)
+	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
 	selMsg := tgbotapi.NewMessage(msg.Chat.ID, "Which group should I post the game announcement in?")
 	selMsg.ReplyMarkup = keyboard
 	if _, err := b.api.Send(selMsg); err != nil {
 		slog.Error("send group selection keyboard", "err", err)
-		b.pendingGames.Delete(nonce)
+		b.pendingGames.Delete(key)
 	}
 }
 
-func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, nonce, groupID int64) {
-	raw, ok := b.pendingGames.LoadAndDelete(nonce)
+func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, key pendingGameKey, groupID int64) {
+	// Verify the callback originates from the same chat that created the request.
+	// A mismatch would indicate tampered callback data; drop it silently.
+	if cb.Message.Chat.ID != key.chatID {
+		slog.Warn("handleGroupSelection: origin chat mismatch",
+			"expected", key.chatID, "got", cb.Message.Chat.ID)
+		b.answerCallback(cb.ID, "")
+		return
+	}
+
+	raw, ok := b.pendingGames.LoadAndDelete(key)
 	if !ok {
 		b.answerCallback(cb.ID, "Session expired, please send the game details again")
 		return
@@ -166,26 +175,34 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	action, rawID := parts[0], parts[1]
 
 	if action == "select_group" {
-		// Format: select_group:<nonce>:<groupID>
-		subparts := strings.SplitN(rawID, ":", 2)
-		if len(subparts) != 2 {
+		// Format: select_group:<originChatID>:<originMessageID>:<groupID>
+		// Both chatID and messageID are needed because Telegram message IDs are
+		// unique only within a chat, not globally.
+		subparts := strings.SplitN(rawID, ":", 3)
+		if len(subparts) != 3 {
 			slog.Debug("invalid select_group callback format", "data", cb.Data)
 			b.answerCallback(cb.ID, "")
 			return
 		}
-		nonce, err := strconv.ParseInt(subparts[0], 10, 64)
+		originChatID, err := strconv.ParseInt(subparts[0], 10, 64)
 		if err != nil {
-			slog.Debug("invalid nonce in select_group callback", "data", cb.Data)
+			slog.Debug("invalid chat_id in select_group callback", "data", cb.Data)
 			b.answerCallback(cb.ID, "")
 			return
 		}
-		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		originMsgID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			slog.Debug("invalid message_id in select_group callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[2], 10, 64)
 		if err != nil {
 			slog.Debug("invalid group_id in select_group callback", "data", cb.Data)
 			b.answerCallback(cb.ID, "")
 			return
 		}
-		b.handleGroupSelection(ctx, cb, nonce, groupID)
+		b.handleGroupSelection(ctx, cb, pendingGameKey{chatID: originChatID, messageID: int(originMsgID)}, groupID)
 		return
 	}
 
@@ -356,19 +373,24 @@ func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-// adminGroups returns the IDs of configured groups where userID is an admin.
-// Groups that cannot be reached (e.g. bot was removed) are logged and skipped
-// so that one bad entry in GROUP_CHAT_IDS does not disable the entire DM flow.
+// adminGroups returns the IDs of all known groups where userID is an admin.
+// Groups that cannot be reached are logged and skipped so that one inaccessible
+// group does not disable the entire DM flow.
 func (b *Bot) adminGroups(userID int64) []int64 {
+	groups, err := b.groupRepo.GetAll(context.Background())
+	if err != nil {
+		slog.Warn("adminGroups: failed to query groups", "err", err)
+		return nil
+	}
 	var result []int64
-	for _, gid := range b.cfg.GroupChatIDs {
-		ok, err := b.isAdminInGroup(userID, gid)
+	for _, g := range groups {
+		ok, err := b.isAdminInGroup(userID, g.ChatID)
 		if err != nil {
-			slog.Warn("adminGroups: skipping inaccessible group", "group_id", gid, "err", err)
+			slog.Warn("adminGroups: skipping inaccessible group", "group_id", g.ChatID, "err", err)
 			continue
 		}
 		if ok {
-			result = append(result, gid)
+			result = append(result, g.ChatID)
 		}
 	}
 	return result
@@ -390,7 +412,7 @@ func (b *Bot) isAdminInGroup(userID, groupID int64) (bool, error) {
 	return false, nil
 }
 
-// isKnownGroupMention reports whether the message is a bot @mention in one of the configured groups.
+// isKnownGroupMention reports whether the message is a bot @mention in a known group.
 func (b *Bot) isKnownGroupMention(msg *tgbotapi.Message) bool {
 	if msg.Chat.Type != "group" && msg.Chat.Type != "supergroup" {
 		return false
@@ -398,8 +420,12 @@ func (b *Bot) isKnownGroupMention(msg *tgbotapi.Message) bool {
 	if !b.isBotMentioned(msg) {
 		return false
 	}
-	for _, gid := range b.cfg.GroupChatIDs {
-		if msg.Chat.ID == gid {
+	groups, err := b.groupRepo.GetAll(context.Background())
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if msg.Chat.ID == g.ChatID {
 			return true
 		}
 	}
@@ -419,9 +445,9 @@ func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
 }
 
 // buildGroupSelectionKeyboard creates one button per group labelled with its Telegram title.
-// nonce is the per-request identifier (admin's original message ID) embedded in each button's
-// callback data so that multiple concurrent selection dialogs don't interfere.
-func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, nonce int64) tgbotapi.InlineKeyboardMarkup {
+// origin is embedded in each button's callback data so the handler can look up
+// the correct pendingGame entry even when multiple admins have concurrent dialogs.
+func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, origin pendingGameKey) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, gid := range groupIDs {
 		title := fmt.Sprintf("Group %d", gid)
@@ -432,7 +458,8 @@ func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, nonce int64) tgbotap
 			title = chatInfo.Title
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("select_group:%d:%d", nonce, gid)),
+			tgbotapi.NewInlineKeyboardButtonData(title,
+				fmt.Sprintf("select_group:%d:%d:%d", origin.chatID, origin.messageID, gid)),
 		))
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
