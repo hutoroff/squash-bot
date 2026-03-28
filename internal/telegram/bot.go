@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,23 +41,46 @@ type Bot struct {
 	gameService       *service.GameService
 	partService       *service.ParticipationService
 	groupRepo         *storage.GroupRepo
+	scheduler         *service.SchedulerService
+	serviceAdminIDs   map[int64]bool
 	loc               *time.Location
 	logger            *slog.Logger
-	pendingGames      sync.Map    // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit sync.Map    // map[chatID int64]gameID int64
+	pendingGames      sync.Map      // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit sync.Map      // map[chatID int64]gameID int64
 	handlerSem        chan struct{} // semaphore limiting concurrent update handlers
 }
 
-func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, logger *slog.Logger) *Bot {
+func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, scheduler *service.SchedulerService, serviceAdminIDs string, logger *slog.Logger) *Bot {
 	return &Bot{
-		api:         api,
-		gameService: gameService,
-		partService: partService,
-		groupRepo:   groupRepo,
-		loc:         loc,
-		logger:      logger,
-		handlerSem:  make(chan struct{}, maxConcurrentHandlers),
+		api:             api,
+		gameService:     gameService,
+		partService:     partService,
+		groupRepo:       groupRepo,
+		scheduler:       scheduler,
+		serviceAdminIDs: parseServiceAdminIDs(serviceAdminIDs),
+		loc:             loc,
+		logger:          logger,
+		handlerSem:      make(chan struct{}, maxConcurrentHandlers),
 	}
+}
+
+// parseServiceAdminIDs converts a comma-separated string of Telegram user IDs
+// into a set for O(1) lookup. Invalid entries are logged and skipped.
+func parseServiceAdminIDs(s string) map[int64]bool {
+	ids := make(map[int64]bool)
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			slog.Warn("SERVICE_ADMIN_IDS: ignoring invalid entry", "value", part)
+			continue
+		}
+		ids[id] = true
+	}
+	return ids
 }
 
 // Start runs the long-polling update loop until ctx is cancelled.

@@ -113,13 +113,14 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 
 ## Bot Commands
 
-| Command     | Who can use | Description                                      |
-|-------------|-------------|--------------------------------------------------|
-| `/start`    | Anyone      | Show welcome message                             |
-| `/help`     | Anyone      | List available commands                          |
-| `/my_game`  | Anyone      | Show your next registered game with a link       |
-| `/games`    | Admins      | List upcoming games you manage; edit/manage them |
-| `/new_game` | Admins      | Create a new game for your group                 |
+| Command     | Who can use     | Description                                      |
+|-------------|-----------------|--------------------------------------------------|
+| `/start`    | Anyone          | Show welcome message                             |
+| `/help`     | Anyone          | List available commands                          |
+| `/my_game`  | Anyone          | Show your next registered game with a link       |
+| `/games`    | Group admins    | List upcoming games you manage; edit/manage them |
+| `/new_game` | Group admins    | Create a new game for your group                 |
+| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
 
 ## Guest Management
 
@@ -137,7 +138,8 @@ Guest spots count toward capacity.
 | `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
 | `CRON_WEEKLY_REMINDER` | No       | `0 10 * * 1`      | When to send weekly reminder to admins (Mon 10 AM)  |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
-| `TIMEZONE`             | No       | `UTC`   | Timezone for dates in messages                      |
+| `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
+| `SERVICE_ADMIN_IDS`    | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
 
 ## Scheduled Tasks
 

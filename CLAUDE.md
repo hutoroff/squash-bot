@@ -68,7 +68,8 @@ docker-compose up --build
 - **Weekly Reminder**: DM group admins on Monday morning if no game is scheduled within 7 days
 
 ### Admin & Group Management
-- Admin rights verified dynamically per group via `GetChatAdministrators` — no hardcoded admin IDs
+- **Group admin rights** are verified dynamically per group via `GetChatAdministrators` — no hardcoded IDs; this controls game creation, player/guest management, and all `/games` actions
+- **Service admin access** (`SERVICE_ADMIN_IDS` env var) is a separate, operator-configured set of Telegram user IDs that grants access to `/trigger` only; it is independent of group membership or Telegram admin status
 - `my_chat_member` events track when the bot is added/removed/promoted/demoted
 - If added without admin rights, bot DMs the user who added it
 
@@ -92,6 +93,7 @@ CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
 CRON_WEEKLY_REMINDER=0 10 * * 1  # default Monday 10 AM
 LOG_LEVEL=INFO
 TIMEZONE=UTC
+SERVICE_ADMIN_IDS=           # optional; comma-separated Telegram user IDs for /trigger
 ```
 
 ## Testing Approach

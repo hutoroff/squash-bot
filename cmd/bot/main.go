@@ -101,7 +101,7 @@ func main() {
 		"weekly_reminder", cfg.CronWeeklyReminder,
 	)
 
-	bot := telegram.New(api, loc, gameService, partService, groupRepo, logger)
+	bot := telegram.New(api, loc, gameService, partService, groupRepo, scheduler, cfg.ServiceAdminIDs, logger)
 
 	slog.Info("Bot starting...")
 	bot.Start(ctx)

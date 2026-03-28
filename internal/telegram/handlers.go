@@ -260,6 +260,11 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	if action == "trigger" {
+		b.handleTrigger(ctx, cb, rawID)
+		return
+	}
+
 	// manage_kick and manage_kick_guest carry two IDs: <gameID>:<targetID>.
 	// Handle them before the single-ID parse below.
 	if action == "manage_kick" || action == "manage_kick_guest" {
@@ -801,6 +806,43 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 
 	b.answerCallback(cb.ID, "Guest kicked ✓")
 	b.renderManageScreen(ctx, cb, game)
+}
+
+// handleTrigger runs a scheduled event on demand. Only users listed in
+// serviceAdminIDs are allowed; everyone else gets a "Not authorized" toast.
+func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, event string) {
+	if !b.serviceAdminIDs[cb.From.ID] {
+		b.answerCallback(cb.ID, "Not authorized")
+		return
+	}
+
+	var job func()
+	switch event {
+	case "day_before":
+		job = b.scheduler.RunDayBeforeCheck
+	case "day_after":
+		job = b.scheduler.RunDayAfterCleanup
+	case "weekly_reminder":
+		job = b.scheduler.RunWeeklyReminder
+	default:
+		slog.Debug("handleTrigger: unknown event", "event", event)
+		b.answerCallback(cb.ID, "Unknown event")
+		return
+	}
+
+	// Answer immediately so Telegram doesn't time out waiting for the response
+	// while the job (which may make multiple network calls) is running.
+	b.answerCallback(cb.ID, "Triggered ✓")
+	slog.Info("Manual trigger", "event", event, "user_id", cb.From.ID)
+	job()
+	slog.Info("Manual trigger completed", "event", event, "user_id", cb.From.ID)
+
+	// Remove the keyboard so the same message cannot be used to fire the job
+	// again. This prevents accidental duplicate runs (especially relevant for
+	// weekly_reminder which sends DMs). A fresh /trigger shows a new menu.
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
+	b.api.Send(edit) //nolint:errcheck
 }
 
 // handleManageClose restores the games-list view in the callback message so the

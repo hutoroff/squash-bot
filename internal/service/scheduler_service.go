@@ -122,18 +122,21 @@ func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Ga
 
 // RunDayAfterCleanup unpins and closes yesterday's games.
 func (s *SchedulerService) RunDayAfterCleanup() {
+	s.logger.Info("day-after check started")
 	ctx := context.Background()
 
 	now := time.Now().In(s.loc)
 	yesterday := now.AddDate(0, 0, -1)
 	from := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, s.loc)
 	to := from.AddDate(0, 0, 1)
+	s.logger.Debug("day-after dates", "from", from, "to", to)
 
 	games, err := s.gameRepo.GetGamesForDayAfter(ctx, from, to)
 	if err != nil {
 		s.logger.Error("day-after cleanup: query games", "err", err)
 		return
 	}
+	s.logger.Info("found games", "count", len(games))
 
 	for _, game := range games {
 		s.processDayAfter(ctx, game)

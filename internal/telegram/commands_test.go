@@ -147,24 +147,79 @@ func TestCourtsValidation_Invalid(t *testing.T) {
 	}
 }
 
-// --- pending courts-edit routing priority (command preempts edit state) ---
+// --- group command routing (regression: commands in groups were falling to parseAdminCommand) ---
 
-// TestCommandRoutingPreemptsEdit verifies that a slash-command message is recognised
-// as a command before the courts-edit path can consume it.  The routing predicate is
-// strings.HasPrefix(text, "/"), which is what handleMessage checks first.
-func TestCommandRoutingPreemptsEdit(t *testing.T) {
-	commands := []string{"/help", "/start", "/my_game", "/games", "/new_game"}
-	for _, cmd := range commands {
-		if !strings.HasPrefix(cmd, "/") {
-			t.Errorf("%q should be identified as a command", cmd)
-		}
+// TestIsBotMentioned_AddressedBotCommand verifies that isBotMentioned returns true
+// for a "/command@botname" bot_command entity so that isKnownGroupMention lets the
+// message through and the slash-command check in handleMessage routes it correctly.
+func TestIsBotMentioned_AddressedBotCommand(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	// "/help@testbot" is 13 UTF-16 code units (all ASCII).
+	text := "/help@testbot"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 13},
+		},
 	}
-	// A non-command message (e.g. courts input) must NOT be misidentified as a command.
-	nonCommands := []string{"2,3,4", "hello", "2026-01-01 18:00"}
-	for _, s := range nonCommands {
-		if strings.HasPrefix(s, "/") {
-			t.Errorf("%q should NOT be identified as a command", s)
-		}
+	if !bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected true for /command@botname bot_command entity")
+	}
+}
+
+// TestIsBotMentioned_BotCommandAddressedToOtherBot verifies that a bot_command
+// addressed to a different bot is not treated as a mention of this bot.
+func TestIsBotMentioned_BotCommandAddressedToOtherBot(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	text := "/help@otherbot"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 14},
+		},
+	}
+	if bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected false for /command@otherbot entity")
+	}
+}
+
+// TestIsBotMentioned_BotCommandWithoutBotName verifies that a bare "/help" (no @name)
+// is NOT treated as an addressed mention — bare commands in groups are ignored unless
+// the bot is explicitly addressed.
+func TestIsBotMentioned_BotCommandWithoutBotName(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	text := "/help"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 5},
+		},
+	}
+	if bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected false for bare /command without @botname")
+	}
+}
+
+// TestGroupMentionFirst_CommandStrippedAndRecognised is the regression test for the
+// "@bot /help" pattern (mention entity before the slash-command text).
+// isBotMentioned must detect the @mention so isKnownGroupMention lets the message
+// through; after stripBotMention the remaining text starts with "/" and must be
+// routed to handleCommand rather than parseAdminCommand.
+func TestGroupMentionFirst_CommandStrippedAndRecognised(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	// "@testbot" is at offset 0, length 8 (all ASCII).
+	text := "@testbot /help"
+	entities := []tgbotapi.MessageEntity{{Type: "mention", Offset: 0, Length: 8}}
+	msg := &tgbotapi.Message{Text: text, Entities: entities}
+
+	if !bot.isBotMentioned(msg) {
+		t.Fatal("isBotMentioned: expected true — @mention enables isKnownGroupMention")
+	}
+
+	stripped := strings.TrimSpace(stripBotMention(text, bot.api.Self.UserName, entities))
+	if !strings.HasPrefix(stripped, "/") {
+		t.Errorf("after stripping @mention, text %q should start with '/' to be "+
+			"routed as a command (got %q)", text, stripped)
 	}
 }
 

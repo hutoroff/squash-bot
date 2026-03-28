@@ -31,6 +31,8 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandGames(ctx, msg)
 	case "/new_game":
 		b.handleCommandNewGame(ctx, msg)
+	case "/trigger":
+		b.handleCommandTrigger(ctx, msg)
 	default:
 		b.reply(msg.Chat.ID, msg.MessageID, "Unknown command. Send /help to see available commands.")
 	}
@@ -49,6 +51,11 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message) {
 		sb.WriteString("\nAdmin commands:\n")
 		sb.WriteString("/new\\_game — Create a new game\n")
 		sb.WriteString("/games — Show and manage upcoming games\n")
+	}
+
+	if b.serviceAdminIDs[msg.From.ID] {
+		sb.WriteString("\nService admin commands:\n")
+		sb.WriteString("/trigger — Manually trigger a scheduled event\n")
 	}
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, sb.String())
@@ -183,6 +190,31 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 	if _, err := b.api.Send(selMsg); err != nil {
 		slog.Error("send group selection keyboard", "err", err)
 		b.pendingGames.Delete(key)
+	}
+}
+
+func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message) {
+	if !b.serviceAdminIDs[msg.From.ID] {
+		b.reply(msg.Chat.ID, msg.MessageID, "You are not authorized to use this command.")
+		return
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Day Before Check", "trigger:day_before"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Day After Cleanup", "trigger:day_after"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Weekly Reminder", "trigger:weekly_reminder"),
+		),
+	)
+
+	out := tgbotapi.NewMessage(msg.Chat.ID, "Select a scheduled event to trigger manually:")
+	out.ReplyMarkup = keyboard
+	if _, err := b.api.Send(out); err != nil {
+		slog.Error("handleCommandTrigger: send", "err", err)
 	}
 }
 
