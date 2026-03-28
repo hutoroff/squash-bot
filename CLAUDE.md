@@ -100,8 +100,7 @@ Only send notifications if participant count != courts*2. Use `notified_day_befo
 ```
 TELEGRAM_BOT_TOKEN=
 DATABASE_URL=
-GROUP_CHAT_ID=
-ADMIN_USER_ID=
+GROUP_CHAT_IDS=-1001234567890,-1009876543210  # comma-separated list of group chat IDs
 CRON_DAY_BEFORE=0 20 * * *  # 8 PM daily
 CRON_DAY_AFTER=0 8 * * *    # 8 AM daily
 LOG_LEVEL=INFO

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -10,13 +11,22 @@ import (
 	"github.com/vkhutorov/squash_bot/internal/service"
 )
 
+// pendingGame holds the parsed game details while the admin selects a target group.
+type pendingGame struct {
+	gameDate    time.Time
+	courts      string
+	replyChatID int64
+	replyMsgID  int
+}
+
 type Bot struct {
-	api         *tgbotapi.BotAPI
-	gameService *service.GameService
-	partService *service.ParticipationService
-	cfg         *config.Config
-	loc         *time.Location
-	logger      *slog.Logger
+	api          *tgbotapi.BotAPI
+	gameService  *service.GameService
+	partService  *service.ParticipationService
+	cfg          *config.Config
+	loc          *time.Location
+	logger       *slog.Logger
+	pendingGames sync.Map // map[int64 (userID)] *pendingGame
 }
 
 func New(api *tgbotapi.BotAPI, cfg *config.Config, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, logger *slog.Logger) *Bot {

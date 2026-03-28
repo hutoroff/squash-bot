@@ -71,7 +71,7 @@ func main() {
 
 	gameService := service.NewGameService(gameRepo)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
-	scheduler := service.NewSchedulerService(api, gameRepo, participationRepo, guestRepo, cfg.GroupChatID, loc, logger)
+	scheduler := service.NewSchedulerService(api, gameRepo, participationRepo, guestRepo, cfg.GroupChatIDs, loc, logger)
 
 	c := cron.New()
 	if _, err := c.AddFunc(cfg.CronDayBefore, scheduler.RunDayBeforeCheck); err != nil {

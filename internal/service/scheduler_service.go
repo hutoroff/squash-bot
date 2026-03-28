@@ -17,7 +17,7 @@ type SchedulerService struct {
 	gameRepo  *storage.GameRepo
 	partRepo  *storage.ParticipationRepo
 	guestRepo *storage.GuestRepo
-	chatID    int64
+	chatIDs   []int64
 	loc       *time.Location
 	logger    *slog.Logger
 }
@@ -27,7 +27,7 @@ func NewSchedulerService(
 	gameRepo *storage.GameRepo,
 	partRepo *storage.ParticipationRepo,
 	guestRepo *storage.GuestRepo,
-	chatID int64,
+	chatIDs []int64,
 	loc *time.Location,
 	logger *slog.Logger,
 ) *SchedulerService {
@@ -36,7 +36,7 @@ func NewSchedulerService(
 		gameRepo:  gameRepo,
 		partRepo:  partRepo,
 		guestRepo: guestRepo,
-		chatID:    chatID,
+		chatIDs:   chatIDs,
 		loc:       loc,
 		logger:    logger,
 	}
@@ -109,7 +109,7 @@ func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Ga
 		return
 	}
 
-	msg := tgbotapi.NewMessage(s.chatID, text)
+	msg := tgbotapi.NewMessage(game.ChatID, text)
 	if _, err := s.api.Send(msg); err != nil {
 		s.logger.Error("day-before check: send notification", "game_id", game.ID, "err", err)
 		return
@@ -194,38 +194,54 @@ func (s *SchedulerService) RunWeeklyReminder() {
 	s.logger.Info("weekly reminder check started")
 	ctx := context.Background()
 
-	// Check if a game is already scheduled in the next 7 days.
+	// Build a set of chat IDs that already have a game within the next 7 days.
 	now := time.Now().In(s.loc)
 	weekEnd := now.AddDate(0, 0, 7)
 
-	games, err := s.gameRepo.GetUpcomingGames(ctx)
+	upcomingGames, err := s.gameRepo.GetUpcomingGames(ctx)
 	if err != nil {
 		s.logger.Error("weekly reminder: query upcoming games", "err", err)
 		return
 	}
-	for _, g := range games {
+	chatIDsWithGame := make(map[int64]bool)
+	for _, g := range upcomingGames {
 		if g.GameDate.Before(weekEnd) {
-			s.logger.Info("weekly reminder: game already scheduled, skipping", "game_id", g.ID, "game_date", g.GameDate)
-			return
+			chatIDsWithGame[g.ChatID] = true
 		}
 	}
 
-	// No game this week — notify all group admins via DM.
-	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
-		ChatConfig: tgbotapi.ChatConfig{ChatID: s.chatID},
-	})
-	if err != nil {
-		s.logger.Error("weekly reminder: get chat administrators", "err", err)
+	// Collect admins only from groups that have no game scheduled this week.
+	seen := make(map[int64]bool)
+	var allAdmins []tgbotapi.ChatMember
+	for _, chatID := range s.chatIDs {
+		if chatIDsWithGame[chatID] {
+			s.logger.Info("weekly reminder: game already scheduled, skipping group", "chat_id", chatID)
+			continue
+		}
+		admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+			ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+		})
+		if err != nil {
+			s.logger.Error("weekly reminder: get chat administrators", "chat_id", chatID, "err", err)
+			continue
+		}
+		for _, admin := range admins {
+			if !admin.User.IsBot && !seen[admin.User.ID] {
+				seen[admin.User.ID] = true
+				allAdmins = append(allAdmins, admin)
+			}
+		}
+	}
+
+	if len(allAdmins) == 0 {
+		s.logger.Info("weekly reminder: all groups have games scheduled, no DMs needed")
 		return
 	}
 
 	text := "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!"
 
 	notified := 0
-	for _, admin := range admins {
-		if admin.User.IsBot {
-			continue
-		}
+	for _, admin := range allAdmins {
 		msg := tgbotapi.NewMessage(admin.User.ID, text)
 		if _, err := s.api.Send(msg); err != nil {
 			s.logger.Error("weekly reminder: send DM", "user_id", admin.User.ID, "username", admin.User.UserName, "err", err)

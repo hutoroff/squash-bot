@@ -18,27 +18,41 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	isPrivate := msg.Chat.Type == "private"
-	isGroupMention := (msg.Chat.Type == "group" || msg.Chat.Type == "supergroup") &&
-		msg.Chat.ID == b.cfg.GroupChatID && b.isBotMentioned(msg)
+	isGroupMention := b.isKnownGroupMention(msg)
 
 	if !isPrivate && !isGroupMention {
 		return
 	}
 
-	isAdmin, err := b.isGroupAdmin(msg.From.ID)
-	if err != nil {
-		slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to verify permissions")
-		return
-	}
-	if !isAdmin {
-		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+	text := msg.Text
+
+	if isGroupMention {
+		// Group mention: target group is determined by where the bot was @mentioned.
+		text = stripBotMention(text, b.api.Self.UserName, msg.Entities)
+		isAdmin, err := b.isAdminInGroup(msg.From.ID, msg.Chat.ID)
+		if err != nil {
+			slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
+			b.reply(msg.Chat.ID, msg.MessageID, "Failed to verify permissions")
+			return
+		}
+		if !isAdmin {
+			b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+			return
+		}
+		gameDate, courts, err := parseAdminCommand(text, b.loc)
+		if err != nil {
+			b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\n2024-03-15 18:00\ncourts: 2,3,4")
+			return
+		}
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, msg.Chat.ID, gameDate, courts)
 		return
 	}
 
-	text := msg.Text
-	if isGroupMention {
-		text = stripBotMention(text, b.api.Self.UserName, msg.Entities)
+	// Private message: discover which configured groups this user admins.
+	adminGroupIDs := b.adminGroups(msg.From.ID)
+	if len(adminGroupIDs) == 0 {
+		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+		return
 	}
 
 	gameDate, courts, err := parseAdminCommand(text, b.loc)
@@ -47,28 +61,80 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	game, err := b.gameService.CreateGame(ctx, b.cfg.GroupChatID, gameDate, courts)
+	if len(adminGroupIDs) == 1 {
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts)
+		return
+	}
+
+	// Admin manages multiple groups — ask which one to post to.
+	// The admin's original message ID is the per-request nonce: it is unique within
+	// the private chat and available without an extra API round-trip, so two
+	// concurrent creation commands from the same admin don't collide.
+	nonce := int64(msg.MessageID)
+	b.pendingGames.Store(nonce, &pendingGame{
+		gameDate:    gameDate,
+		courts:      courts,
+		replyChatID: msg.Chat.ID,
+		replyMsgID:  msg.MessageID,
+	})
+	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, nonce)
+	selMsg := tgbotapi.NewMessage(msg.Chat.ID, "Which group should I post the game announcement in?")
+	selMsg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(selMsg); err != nil {
+		slog.Error("send group selection keyboard", "err", err)
+		b.pendingGames.Delete(nonce)
+	}
+}
+
+func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, nonce, groupID int64) {
+	raw, ok := b.pendingGames.LoadAndDelete(nonce)
+	if !ok {
+		b.answerCallback(cb.ID, "Session expired, please send the game details again")
+		return
+	}
+	pg := raw.(*pendingGame)
+
+	// Re-verify admin status at callback time to prevent replay attacks.
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, "You are not an admin in that group")
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+
+	// Clear the selection keyboard.
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Creating game...")
+	editSel.ReplyMarkup = &emptyKeyboard
+	b.api.Send(editSel) //nolint:errcheck — best-effort UI update
+
+	b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts)
+}
+
+func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string) {
+	game, err := b.gameService.CreateGame(ctx, groupID, gameDate, courts)
 	if err != nil {
 		slog.Error("create game", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to create game")
+		b.reply(replyChatID, replyMsgID, "Failed to create game")
 		return
 	}
 
 	msgText := FormatGameMessage(game, nil, nil, b.loc)
 	keyboard := gameKeyboard(game.ID)
 
-	announcement := tgbotapi.NewMessage(b.cfg.GroupChatID, msgText)
+	announcement := tgbotapi.NewMessage(groupID, msgText)
 	announcement.ReplyMarkup = keyboard
 
 	sent, err := b.api.Send(announcement)
 	if err != nil {
 		slog.Error("send game message", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Game created but failed to send announcement")
+		b.reply(replyChatID, replyMsgID, "Game created but failed to send announcement")
 		return
 	}
 
 	pin := tgbotapi.PinChatMessageConfig{
-		ChatID:              b.cfg.GroupChatID,
+		ChatID:              groupID,
 		MessageID:           sent.MessageID,
 		DisableNotification: true,
 	}
@@ -80,8 +146,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		slog.Error("update message_id", "err", err)
 	}
 
-	slog.Info("Game created", "date", gameDate.Format(time.DateOnly), "courts", courts, "message_id", sent.MessageID)
-	b.reply(msg.Chat.ID, msg.MessageID, "Game created and pinned ✓")
+	slog.Info("Game created", "date", gameDate.Format(time.DateOnly), "courts", courts, "message_id", sent.MessageID, "group_id", groupID)
+	b.reply(replyChatID, replyMsgID, "Game created and pinned ✓")
 }
 
 func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
@@ -97,14 +163,40 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	gameID, err := strconv.ParseInt(parts[1], 10, 64)
+	action, rawID := parts[0], parts[1]
+
+	if action == "select_group" {
+		// Format: select_group:<nonce>:<groupID>
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			slog.Debug("invalid select_group callback format", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		nonce, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			slog.Debug("invalid nonce in select_group callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			slog.Debug("invalid group_id in select_group callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleGroupSelection(ctx, cb, nonce, groupID)
+		return
+	}
+
+	gameID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		slog.Debug("invalid game_id in callback", "data", cb.Data)
 		b.answerCallback(cb.ID, "")
 		return
 	}
 
-	switch parts[0] {
+	switch action {
 	case "join":
 		b.handleJoin(ctx, cb, gameID)
 	case "skip":
@@ -114,7 +206,7 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	case "guest_remove":
 		b.handleGuestRemove(ctx, cb, gameID)
 	default:
-		slog.Debug("unknown callback action", "action", parts[0])
+		slog.Debug("unknown callback action", "action", action)
 		b.answerCallback(cb.ID, "")
 	}
 }
@@ -264,9 +356,28 @@ func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-func (b *Bot) isGroupAdmin(userID int64) (bool, error) {
+// adminGroups returns the IDs of configured groups where userID is an admin.
+// Groups that cannot be reached (e.g. bot was removed) are logged and skipped
+// so that one bad entry in GROUP_CHAT_IDS does not disable the entire DM flow.
+func (b *Bot) adminGroups(userID int64) []int64 {
+	var result []int64
+	for _, gid := range b.cfg.GroupChatIDs {
+		ok, err := b.isAdminInGroup(userID, gid)
+		if err != nil {
+			slog.Warn("adminGroups: skipping inaccessible group", "group_id", gid, "err", err)
+			continue
+		}
+		if ok {
+			result = append(result, gid)
+		}
+	}
+	return result
+}
+
+// isAdminInGroup reports whether userID is an administrator of the given group.
+func (b *Bot) isAdminInGroup(userID, groupID int64) (bool, error) {
 	admins, err := b.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
-		ChatConfig: tgbotapi.ChatConfig{ChatID: b.cfg.GroupChatID},
+		ChatConfig: tgbotapi.ChatConfig{ChatID: groupID},
 	})
 	if err != nil {
 		return false, err
@@ -279,6 +390,22 @@ func (b *Bot) isGroupAdmin(userID int64) (bool, error) {
 	return false, nil
 }
 
+// isKnownGroupMention reports whether the message is a bot @mention in one of the configured groups.
+func (b *Bot) isKnownGroupMention(msg *tgbotapi.Message) bool {
+	if msg.Chat.Type != "group" && msg.Chat.Type != "supergroup" {
+		return false
+	}
+	if !b.isBotMentioned(msg) {
+		return false
+	}
+	for _, gid := range b.cfg.GroupChatIDs {
+		if msg.Chat.ID == gid {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
 	for _, entity := range msg.Entities {
 		if entity.Type == "mention" {
@@ -289,6 +416,26 @@ func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
 		}
 	}
 	return false
+}
+
+// buildGroupSelectionKeyboard creates one button per group labelled with its Telegram title.
+// nonce is the per-request identifier (admin's original message ID) embedded in each button's
+// callback data so that multiple concurrent selection dialogs don't interfere.
+func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, nonce int64) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, gid := range groupIDs {
+		title := fmt.Sprintf("Group %d", gid)
+		chatInfo, err := b.api.GetChat(tgbotapi.ChatInfoConfig{
+			ChatConfig: tgbotapi.ChatConfig{ChatID: gid},
+		})
+		if err == nil && chatInfo.Title != "" {
+			title = chatInfo.Title
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("select_group:%d:%d", nonce, gid)),
+		))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity) string {
