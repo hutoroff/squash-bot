@@ -37,6 +37,15 @@ func (r *GroupRepo) Remove(ctx context.Context, chatID int64) error {
 	return err
 }
 
+// Exists reports whether a group with the given chat ID is registered.
+func (r *GroupRepo) Exists(ctx context.Context, chatID int64) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM bot_groups WHERE chat_id = $1)`, chatID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // GetAll returns all groups the bot is currently a member of.
 func (r *GroupRepo) GetAll(ctx context.Context) ([]BotGroup, error) {
 	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin FROM bot_groups`)

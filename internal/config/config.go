@@ -9,12 +9,11 @@ import (
 type Config struct {
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	DatabaseURL      string `env:"DATABASE_URL,required"`
-	GroupChatIDs     []int64 `env:"GROUP_CHAT_IDS" envSeparator:","`
 	CronDayBefore      string `env:"CRON_DAY_BEFORE"       envDefault:"0 20 * * *"`
 	CronDayAfter       string `env:"CRON_DAY_AFTER"        envDefault:"0 8 * * *"`
 	CronWeeklyReminder string `env:"CRON_WEEKLY_REMINDER"  envDefault:"0 10 * * 1"`
 	LogLevel         string `env:"LOG_LEVEL"        envDefault:"INFO"`
-	Timezone         string `env:"TIMEZONE"         envDefault:"Europe/Moscow"`
+	Timezone         string `env:"TIMEZONE"         envDefault:"UTC"`
 }
 
 func Load() (*Config, error) {

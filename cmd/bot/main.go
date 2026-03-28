@@ -70,46 +70,10 @@ func main() {
 	guestRepo := storage.NewGuestRepo(pool)
 	groupRepo := storage.NewGroupRepo(pool)
 
-	// Seed groups from GROUP_CHAT_IDS config for backward compatibility.
-	// New groups are registered automatically via my_chat_member events.
-	// Telegram does not replay my_chat_member for groups the bot is already in,
-	// so this seeding is the only way to discover pre-existing memberships on upgrade.
-	for _, chatID := range cfg.GroupChatIDs {
-		// GetChatMember is the gate: if the bot cannot access the chat (stale ID,
-		// typo, group deleted, bot already removed) we skip entirely so we never
-		// persist a bogus row that no future my_chat_member event can clean up.
-		member, err := api.GetChatMember(tgbotapi.GetChatMemberConfig{
-			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{ChatID: chatID, UserID: api.Self.ID},
-		})
-		if err != nil {
-			slog.Warn("seed group: cannot access chat, skipping", "chat_id", chatID, "err", err)
-			continue
-		}
-		// Bot is no longer in this group — remove any stale row so it does not
-		// appear in group-selection keyboards or weekly reminders.
-		if member.Status == "left" || member.Status == "kicked" {
-			slog.Info("seed group: bot not in group, removing stale entry", "chat_id", chatID, "status", member.Status)
-			if err := groupRepo.Remove(ctx, chatID); err != nil {
-				slog.Warn("seed group: remove stale entry", "chat_id", chatID, "err", err)
-			}
-			continue
-		}
-		title := fmt.Sprintf("Group %d", chatID)
-		if chatInfo, err := api.GetChat(tgbotapi.ChatInfoConfig{ChatConfig: tgbotapi.ChatConfig{ChatID: chatID}}); err == nil && chatInfo.Title != "" {
-			title = chatInfo.Title
-		}
-		isAdmin := member.Status == "administrator" || member.Status == "creator"
-		if err := groupRepo.Upsert(ctx, chatID, title, isAdmin); err != nil {
-			slog.Warn("seed group from config", "chat_id", chatID, "err", err)
-		}
-	}
-
-	// Warn operators if no groups are known after seeding.
-	// This typically means GROUP_CHAT_IDS was not set on an upgraded deployment.
-	// Without this the bot cannot post game announcements anywhere.
+	// Warn operators if no groups are known yet.
+	// Without at least one group the bot cannot post game announcements anywhere.
 	if knownGroups, _ := groupRepo.GetAll(ctx); len(knownGroups) == 0 {
-		slog.Warn("No groups registered. Set GROUP_CHAT_IDS to seed existing memberships, " +
-			"or remove and re-add the bot to each group to register via Telegram events.")
+		slog.Warn("No groups registered. Add the bot to a Telegram group to register it via Telegram events.")
 	}
 
 	gameService := service.NewGameService(gameRepo)

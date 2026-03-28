@@ -99,6 +99,9 @@ func (b *Bot) processUpdate(ctx context.Context, update tgbotapi.Update) {
 	switch {
 	case update.Message != nil:
 		slog.Debug("incoming message", "from", update.Message.From.ID, "chat", update.Message.Chat.ID)
+		if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
+			b.reconcileGroupIfUnknown(ctx, update.Message.Chat)
+		}
 		b.handleMessage(ctx, update.Message)
 	case update.CallbackQuery != nil:
 		slog.Debug("incoming callback", "from", update.CallbackQuery.From.ID, "data", update.CallbackQuery.Data)
@@ -143,6 +146,44 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 			}
 		}
 	}
+}
+
+// reconcileGroupIfUnknown lazily registers a group the bot is already a member
+// of but has not yet stored in bot_groups. This handles the upgrade path where
+// Telegram does not replay my_chat_member events for pre-existing memberships:
+// the first message the bot receives from an unregistered group triggers a live
+// Telegram API call to fetch admin status and upsert the row.
+func (b *Bot) reconcileGroupIfUnknown(ctx context.Context, chat *tgbotapi.Chat) {
+	ok, err := b.groupRepo.Exists(ctx, chat.ID)
+	if err != nil {
+		slog.Error("reconcileGroup: existence check", "chat_id", chat.ID, "err", err)
+		return
+	}
+	if ok {
+		return
+	}
+
+	member, err := b.api.GetChatMember(tgbotapi.GetChatMemberConfig{
+		ChatConfigWithUser: tgbotapi.ChatConfigWithUser{ChatID: chat.ID, UserID: b.api.Self.ID},
+	})
+	if err != nil {
+		slog.Warn("reconcileGroup: GetChatMember failed", "chat_id", chat.ID, "err", err)
+		return
+	}
+	if member.Status == "left" || member.Status == "kicked" {
+		return
+	}
+	isAdmin := member.Status == "administrator" || member.Status == "creator"
+	title := chat.Title
+	if title == "" {
+		title = fmt.Sprintf("Group %d", chat.ID)
+	}
+	if err := b.groupRepo.Upsert(ctx, chat.ID, title, isAdmin); err != nil {
+		slog.Error("reconcileGroup: upsert", "chat_id", chat.ID, "err", err)
+		return
+	}
+	slog.Info("reconcileGroup: registered previously-unknown group",
+		"chat_id", chat.ID, "title", title, "bot_is_admin", isAdmin)
 }
 
 // membershipNotifyText returns the DM text to send to the person who triggered a

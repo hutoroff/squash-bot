@@ -68,7 +68,7 @@ func TestGroupRepo_Upsert_UpdateOnConflict(t *testing.T) {
 }
 
 // TestGroupRepo_Upsert_AdminFlagRoundTrips verifies every combination of the
-// bot_is_admin flag so a restart that seeds real status cannot silently corrupt it.
+// bot_is_admin flag so a re-upsert with a different status cannot silently corrupt it.
 func TestGroupRepo_Upsert_AdminFlagRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	repo := storage.NewGroupRepo(testPool)
@@ -199,8 +199,7 @@ func TestGroupRepo_GetAll_MultipleGroups(t *testing.T) {
 		}
 	}
 
-	// Verify backfill scenario: a second Upsert for the same IDs (simulating a
-	// restart with GROUP_CHAT_IDS set) must not duplicate rows.
+	// Verify idempotency: a second Upsert for the same IDs must not duplicate rows.
 	for _, s := range seed {
 		if err := repo.Upsert(ctx, s.chatID, s.title, s.isAdmin); err != nil {
 			t.Fatalf("re-Upsert %d: %v", s.chatID, err)
@@ -217,10 +216,9 @@ func TestGroupRepo_GetAll_MultipleGroups(t *testing.T) {
 }
 
 func TestGroupRepo_Backfill_PreservesCorrectAdminStatus(t *testing.T) {
-	// Simulates the startup backfill path: an existing group is already in the DB
-	// with bot_is_admin=true (set by a prior my_chat_member event). A restart
-	// that re-seeds from GROUP_CHAT_IDS must write the actual queried status, not
-	// always false. This test verifies the Upsert semantics that make that possible.
+	// Verifies that a re-upsert for an existing group writes the provided status,
+	// not silently ignoring it. An existing row with bot_is_admin=true must be
+	// updatable to false (and vice-versa) via Upsert.
 	ctx := context.Background()
 	mustTruncate(t)
 	repo := storage.NewGroupRepo(testPool)
@@ -230,9 +228,9 @@ func TestGroupRepo_Backfill_PreservesCorrectAdminStatus(t *testing.T) {
 		t.Fatalf("initial Upsert: %v", err)
 	}
 
-	// Simulate re-seed where real Telegram API returns administrator status.
+	// Re-upsert with admin=true must preserve the status.
 	if err := repo.Upsert(ctx, -100600, "Squash Club", true); err != nil {
-		t.Fatalf("re-seed Upsert (admin=true): %v", err)
+		t.Fatalf("re-upsert (admin=true): %v", err)
 	}
 	groups, err := repo.GetAll(ctx)
 	if err != nil {
@@ -242,9 +240,9 @@ func TestGroupRepo_Backfill_PreservesCorrectAdminStatus(t *testing.T) {
 		t.Error("admin status incorrectly downgraded to false during re-seed")
 	}
 
-	// Simulate re-seed where bot was demoted between restarts.
+	// Re-upsert with admin=false must update the status.
 	if err := repo.Upsert(ctx, -100600, "Squash Club", false); err != nil {
-		t.Fatalf("re-seed Upsert (admin=false): %v", err)
+		t.Fatalf("re-upsert (admin=false): %v", err)
 	}
 	groups, err = repo.GetAll(ctx)
 	if err != nil {

@@ -65,10 +65,8 @@ Edit `.env` and fill in the required values:
 ```env
 TELEGRAM_BOT_TOKEN=   # from @BotFather
 DATABASE_URL=postgres://squash_bot:squash_bot@postgres:7432/squash_bot?sslmode=disable
-TIMEZONE=Europe/Moscow
+TIMEZONE=UTC
 ```
-
-`GROUP_CHAT_IDS` is optional — the bot discovers and tracks groups automatically when it is added to them.
 
 ### 2. Start
 
@@ -135,12 +133,11 @@ Guest spots count toward capacity.
 |------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather                           |
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
-| `GROUP_CHAT_IDS`       | No       | —                 | Comma-separated group chat IDs for initial seeding  |
 | `CRON_DAY_BEFORE`      | No       | `0 20 * * *`      | When to run day-before capacity check               |
 | `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
 | `CRON_WEEKLY_REMINDER` | No       | `0 10 * * 1`      | When to send weekly reminder to admins (Mon 10 AM)  |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
-| `TIMEZONE`             | No       | `Europe/Moscow`   | Timezone for dates in messages                      |
+| `TIMEZONE`             | No       | `UTC`   | Timezone for dates in messages                      |
 
 ## Scheduled Tasks
 
@@ -161,8 +158,6 @@ The bot tracks which groups it belongs to in the database. When added to a group
 
 When the bot is promoted or demoted in a group, it updates its admin status accordingly. Groups are removed from the tracking table when the bot is kicked.
 
-`GROUP_CHAT_IDS` in the environment is only used for backward-compatible seeding on startup; the bot does not require it.
-
 ## Project Structure
 
 ```
@@ -174,7 +169,6 @@ internal/
   service/        — business logic + scheduler
   telegram/       — bot loop, handlers, commands, formatter
 migrations/       — embedded SQL migration files
-docs/             — operator guides and migration notes
 tests/            — integration and e2e tests
 .github/
   workflows/      — CI pipeline

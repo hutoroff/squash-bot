@@ -70,7 +70,6 @@ docker-compose up --build
 ### Admin & Group Management
 - Admin rights verified dynamically per group via `GetChatAdministrators` — no hardcoded admin IDs
 - `my_chat_member` events track when the bot is added/removed/promoted/demoted
-- Groups stored in `bot_groups` table; `GROUP_CHAT_IDS` env var is optional (seeding only)
 - If added without admin rights, bot DMs the user who added it
 
 ### Guest Management
@@ -88,12 +87,11 @@ docker-compose up --build
 ```
 TELEGRAM_BOT_TOKEN=          # required
 DATABASE_URL=                # required
-GROUP_CHAT_IDS=              # optional — comma-separated, for initial seeding
 CRON_DAY_BEFORE=0 20 * * *  # default 8 PM daily
 CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
 CRON_WEEKLY_REMINDER=0 10 * * 1  # default Monday 10 AM
 LOG_LEVEL=INFO
-TIMEZONE=Europe/Moscow
+TIMEZONE=UTC
 ```
 
 ## Testing Approach

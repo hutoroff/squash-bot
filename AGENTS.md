@@ -55,7 +55,6 @@ Key directories:
 
 - Main configuration is environment-variable based via `.env`.
 - Required runtime values: `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`.
-- `GROUP_CHAT_IDS` is **optional** — groups are discovered and tracked automatically when the bot is added to them.
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
 
