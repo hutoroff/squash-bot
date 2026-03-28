@@ -25,10 +25,10 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	// Slash commands always take priority in private chats.
-	// They also cancel any pending courts-edit state so an admin
-	// who clicks "Edit Courts" and then sends /help doesn't have
-	// the command text stored as court data.
+	// In private chats, slash commands take priority and cancel any pending
+	// courts-edit state (so an admin who clicked "Edit Courts" and then sends
+	// /help doesn't have the command text stored as court data).
+	// Group @mentions are handled below with their own per-command routing.
 	if isPrivate && strings.HasPrefix(msg.Text, "/") {
 		b.pendingCourtsEdit.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
@@ -48,6 +48,41 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	if isGroupMention {
 		// Group mention: target group is determined by where the bot was @mentioned.
 		text = stripBotMention(text, b.api.Self.UserName, msg.Entities)
+
+		if strings.HasPrefix(strings.TrimSpace(text), "/") {
+			// Slash command in a group @mention context.
+			// Only /help and /start are served from the group.
+			// /new_game is allowed when it carries game details in the body — treat it
+			// identically to a plain game-creation @mention for the current group.
+			// All other management commands belong in a private chat.
+			cmdText := strings.TrimSpace(text)
+			firstWord := strings.Fields(cmdText)[0]
+			if idx := strings.Index(firstWord, "@"); idx >= 0 {
+				firstWord = firstWord[:idx]
+			}
+			switch strings.ToLower(firstWord) {
+			case "/help", "/start":
+				stripped := *msg
+				stripped.Text = cmdText
+				b.handleCommand(ctx, &stripped)
+				return
+			case "/new_game":
+				lines := strings.SplitN(cmdText, "\n", 2)
+				if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
+					b.reply(msg.Chat.ID, msg.MessageID,
+						"Send game details after the command:\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+					return
+				}
+				text = strings.TrimSpace(lines[1])
+				// text is now the game-creation body; fall through to the
+				// admin check and createAndAnnounceGame call below.
+			default:
+				b.reply(msg.Chat.ID, msg.MessageID,
+					"Management commands work in private messages. Start a chat with me and use /help.")
+				return
+			}
+		}
+
 		isAdmin, err := b.isAdminInGroup(msg.From.ID, msg.Chat.ID)
 		if err != nil {
 			slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
@@ -279,6 +314,8 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		b.handleManageShowGuests(ctx, cb, gameID)
 	case "manage_courts":
 		b.handleManageEditCourts(ctx, cb, gameID)
+	case "manage_close":
+		b.handleManageClose(ctx, cb)
 	default:
 		slog.Debug("unknown callback action", "action", action)
 		b.answerCallback(cb.ID, "")
@@ -502,14 +539,24 @@ func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
 	// before the @mention correctly.
 	utf16Text := utf16.Encode([]rune(msg.Text))
 	for _, entity := range msg.Entities {
-		if entity.Type == "mention" {
-			start, end := entity.Offset, entity.Offset+entity.Length
-			if start < 0 || end > len(utf16Text) {
-				continue
-			}
-			mention := string(utf16.Decode(utf16Text[start:end]))
-			if mention == "@"+b.api.Self.UserName {
+		start, end := entity.Offset, entity.Offset+entity.Length
+		if start < 0 || end > len(utf16Text) {
+			continue
+		}
+		raw := string(utf16.Decode(utf16Text[start:end]))
+		switch entity.Type {
+		case "mention":
+			// "@botname" mention entity.
+			if raw == "@"+b.api.Self.UserName {
 				return true
+			}
+		case "bot_command":
+			// "/command@botname" — only treat as a mention when addressed to this bot.
+			// Telegram sends the full "/command@botname" text inside the entity.
+			if atIdx := strings.Index(raw, "@"); atIdx >= 0 {
+				if strings.EqualFold(raw[atIdx+1:], b.api.Self.UserName) {
+					return true
+				}
 			}
 		}
 	}
@@ -605,6 +652,9 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Edit Courts", fmt.Sprintf("manage_courts:%d", game.ID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✕ Close", fmt.Sprintf("manage_close:%d", game.ID)),
 		),
 	)
 
@@ -751,6 +801,53 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 
 	b.answerCallback(cb.ID, "Guest kicked ✓")
 	b.renderManageScreen(ctx, cb, game)
+}
+
+// handleManageClose restores the games-list view in the callback message so the
+// admin can continue managing other games without re-running /games.
+func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+	b.answerCallback(cb.ID, "")
+
+	// Shared fallback: remove the keyboard and leave the message text as-is.
+	fallback := func() {
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
+		b.api.Send(edit) //nolint:errcheck
+	}
+
+	adminGroupIDs := b.adminGroups(cb.From.ID)
+	if len(adminGroupIDs) == 0 {
+		fallback()
+		return
+	}
+
+	games, err := b.gameService.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
+	if err != nil {
+		slog.Error("handleManageClose: get games", "err", err)
+		fallback()
+		return
+	}
+
+	groups, err := b.groupRepo.GetAll(ctx)
+	if err != nil {
+		slog.Error("handleManageClose: get groups", "err", err)
+		fallback()
+		return
+	}
+
+	if len(games) == 0 {
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "No upcoming games in your groups.")
+		edit.ReplyMarkup = &emptyKeyboard
+		b.api.Send(edit) //nolint:errcheck
+		return
+	}
+
+	text, keyboard := formatGamesListMessage(games, groups, b.loc)
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, text)
+	edit.ParseMode = "Markdown"
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
 }
 
 // handleManageEditCourts stores a pending courts-edit and prompts the admin to type the new value.
