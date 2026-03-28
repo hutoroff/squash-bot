@@ -13,29 +13,32 @@ import (
 )
 
 type SchedulerService struct {
-	api      *tgbotapi.BotAPI
-	gameRepo *storage.GameRepo
-	partRepo *storage.ParticipationRepo
-	chatID   int64
-	loc      *time.Location
-	logger   *slog.Logger
+	api       *tgbotapi.BotAPI
+	gameRepo  *storage.GameRepo
+	partRepo  *storage.ParticipationRepo
+	guestRepo *storage.GuestRepo
+	chatID    int64
+	loc       *time.Location
+	logger    *slog.Logger
 }
 
 func NewSchedulerService(
 	api *tgbotapi.BotAPI,
 	gameRepo *storage.GameRepo,
 	partRepo *storage.ParticipationRepo,
+	guestRepo *storage.GuestRepo,
 	chatID int64,
 	loc *time.Location,
 	logger *slog.Logger,
 ) *SchedulerService {
 	return &SchedulerService{
-		api:      api,
-		gameRepo: gameRepo,
-		partRepo: partRepo,
-		chatID:   chatID,
-		loc:      loc,
-		logger:   logger,
+		api:       api,
+		gameRepo:  gameRepo,
+		partRepo:  partRepo,
+		guestRepo: guestRepo,
+		chatID:    chatID,
+		loc:       loc,
+		logger:    logger,
 	}
 }
 
@@ -62,12 +65,19 @@ func (s *SchedulerService) RunDayBeforeCheck() {
 }
 
 func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Game) {
-	count, err := s.partRepo.GetRegisteredCount(ctx, game.ID)
+	registeredCount, err := s.partRepo.GetRegisteredCount(ctx, game.ID)
 	if err != nil {
 		s.logger.Error("day-before check: get registered count", "game_id", game.ID, "err", err)
 		return
 	}
 
+	guestCount, err := s.guestRepo.GetCountByGame(ctx, game.ID)
+	if err != nil {
+		s.logger.Error("day-before check: get guest count", "game_id", game.ID, "err", err)
+		return
+	}
+
+	count := registeredCount + guestCount
 	capacity := game.CourtsCount * 2
 	var action, text string
 
@@ -148,7 +158,13 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		return
 	}
 
-	text := formatCompletedMessage(game, participations, s.loc)
+	guests, err := s.guestRepo.GetByGame(ctx, game.ID)
+	if err != nil {
+		s.logger.Error("day-after cleanup: get guests", "game_id", game.ID, "err", err)
+		return
+	}
+
+	text := formatCompletedMessage(game, participations, guests, s.loc)
 	edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
 	// Empty keyboard explicitly removes the inline buttons
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
@@ -222,7 +238,7 @@ func (s *SchedulerService) RunWeeklyReminder() {
 }
 
 // formatCompletedMessage renders the final game message without interactive buttons.
-func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, loc *time.Location) string {
+func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -232,16 +248,23 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 		}
 	}
 
+	totalCount := len(registered) + len(guests)
 	localDate := game.GameDate.In(loc)
 
 	var sb strings.Builder
 	sb.WriteString("🏸 Squash Game\n\n")
 	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", schedulerFormatDate(localDate), localDate.Format("15:04")))
 	sb.WriteString(fmt.Sprintf("🎾 Courts: %s (capacity: %d players)\n\n", game.Courts, capacity))
-	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", len(registered), capacity))
+	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", totalCount, capacity))
 
-	for i, p := range registered {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, schedulerPlayerName(p.Player)))
+	num := 1
+	for _, p := range registered {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", num, schedulerPlayerName(p.Player)))
+		num++
+	}
+	for _, g := range guests {
+		sb.WriteString(fmt.Sprintf("%d. +1 (by %s)\n", num, schedulerPlayerName(g.InvitedBy)))
+		num++
 	}
 
 	sb.WriteString("\nGame completed ✓")

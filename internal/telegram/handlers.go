@@ -54,7 +54,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	msgText := FormatGameMessage(game, nil, b.loc)
+	msgText := FormatGameMessage(game, nil, nil, b.loc)
 	keyboard := gameKeyboard(game.ID)
 
 	announcement := tgbotapi.NewMessage(b.cfg.GroupChatID, msgText)
@@ -109,6 +109,10 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		b.handleJoin(ctx, cb, gameID)
 	case "skip":
 		b.handleSkip(ctx, cb, gameID)
+	case "guest_add":
+		b.handleGuestAdd(ctx, cb, gameID)
+	case "guest_remove":
+		b.handleGuestRemove(ctx, cb, gameID)
 	default:
 		slog.Debug("unknown callback action", "action", parts[0])
 		b.answerCallback(cb.ID, "")
@@ -130,7 +134,14 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations)
+	guests, err := b.partService.GetGuests(ctx, gameID)
+	if err != nil {
+		slog.Error("get guests", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
 	b.answerCallback(cb.ID, "")
 }
 
@@ -154,12 +165,63 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations)
+	guests, err := b.partService.GetGuests(ctx, gameID)
+	if err != nil {
+		slog.Error("get guests", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
 	b.answerCallback(cb.ID, "")
 }
 
-func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation) {
-	msgText := FormatGameMessage(game, participations, b.loc)
+func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	u := cb.From
+	participations, guests, err := b.partService.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
+	if err != nil {
+		slog.Error("add guest", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	game, err := b.gameService.GetByID(ctx, gameID)
+	if err != nil {
+		slog.Error("get game", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	b.answerCallback(cb.ID, "")
+}
+
+func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	removed, participations, guests, err := b.partService.RemoveGuest(ctx, gameID, cb.From.ID)
+	if err != nil {
+		slog.Error("remove guest", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	if !removed {
+		b.answerCallback(cb.ID, "You haven't invited any guests")
+		return
+	}
+
+	game, err := b.gameService.GetByID(ctx, gameID)
+	if err != nil {
+		slog.Error("get game", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	b.answerCallback(cb.ID, "")
+}
+
+func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation) {
+	msgText := FormatGameMessage(game, participations, guests, b.loc)
 	keyboard := gameKeyboard(game.ID)
 
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
@@ -185,11 +247,19 @@ func (b *Bot) answerCallback(callbackID, text string) {
 	}
 }
 
+// gameKeyboard builds the inline keyboard for a game announcement.
+// Row 1: "I'm in" / "I'll skip" — register or remove yourself.
+// Row 2: "+1" / "-1" — add or remove a guest you are bringing.
+// Only the player who added a guest can remove it via "-1".
 func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("I'm in", fmt.Sprintf("join:%d", gameID)),
 			tgbotapi.NewInlineKeyboardButtonData("I'll skip", fmt.Sprintf("skip:%d", gameID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("+1", fmt.Sprintf("guest_add:%d", gameID)),
+			tgbotapi.NewInlineKeyboardButtonData("-1", fmt.Sprintf("guest_remove:%d", gameID)),
 		),
 	)
 }

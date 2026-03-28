@@ -108,7 +108,7 @@ func TestEnvironmentStartup(t *testing.T) {
 
 	// --- Verify schema: all expected tables exist ---
 	t.Run("schema_tables_exist", func(t *testing.T) {
-		for _, table := range []string{"games", "players", "game_participations"} {
+		for _, table := range []string{"games", "players", "game_participations", "guest_participations"} {
 			var exists bool
 			err := pool.QueryRow(ctx,
 				"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table,
@@ -131,8 +131,9 @@ func TestEnvironmentStartup(t *testing.T) {
 		gameRepo := storage.NewGameRepo(pool)
 		playerRepo := storage.NewPlayerRepo(pool)
 		partRepo := storage.NewParticipationRepo(pool)
+		guestRepo := storage.NewGuestRepo(pool)
 		gameSvc := service.NewGameService(gameRepo)
-		partSvc := service.NewParticipationService(playerRepo, partRepo)
+		partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
 
 		// 1. Create a game (2 courts → capacity 4)
 		gameDate := time.Now().Add(48 * time.Hour)

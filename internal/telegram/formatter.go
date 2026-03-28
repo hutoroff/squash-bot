@@ -10,7 +10,8 @@ import (
 
 // FormatGameMessage produces the announcement text for a squash game.
 // loc is used to display the game date/time in the correct local timezone.
-func FormatGameMessage(game *models.Game, participants []*models.GameParticipation, loc *time.Location) string {
+// guests are shown after the registered player list and count toward the total.
+func FormatGameMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -20,16 +21,23 @@ func FormatGameMessage(game *models.Game, participants []*models.GameParticipati
 		}
 	}
 
+	totalCount := len(registered) + len(guests)
 	localDate := game.GameDate.In(loc)
 
 	var sb strings.Builder
 	sb.WriteString("🏸 Squash Game\n\n")
 	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", formatGameDate(localDate), localDate.Format("15:04")))
 	sb.WriteString(fmt.Sprintf("🎾 Courts: %s (capacity: %d players)\n\n", game.Courts, capacity))
-	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", len(registered), capacity))
+	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", totalCount, capacity))
 
-	for i, p := range registered {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, playerDisplayName(p.Player)))
+	num := 1
+	for _, p := range registered {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", num, playerDisplayName(p.Player)))
+		num++
+	}
+	for _, g := range guests {
+		sb.WriteString(fmt.Sprintf("%d. +1 (by %s)\n", num, playerDisplayName(g.InvitedBy)))
+		num++
 	}
 
 	sb.WriteString(fmt.Sprintf("\nLast updated: %s", formatUpdatedAt(time.Now())))

@@ -67,10 +67,11 @@ func main() {
 	gameRepo := storage.NewGameRepo(pool)
 	playerRepo := storage.NewPlayerRepo(pool)
 	participationRepo := storage.NewParticipationRepo(pool)
+	guestRepo := storage.NewGuestRepo(pool)
 
 	gameService := service.NewGameService(gameRepo)
-	partService := service.NewParticipationService(playerRepo, participationRepo)
-	scheduler := service.NewSchedulerService(api, gameRepo, participationRepo, cfg.GroupChatID, loc, logger)
+	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
+	scheduler := service.NewSchedulerService(api, gameRepo, participationRepo, guestRepo, cfg.GroupChatID, loc, logger)
 
 	c := cron.New()
 	if _, err := c.AddFunc(cfg.CronDayBefore, scheduler.RunDayBeforeCheck); err != nil {
