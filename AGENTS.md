@@ -4,7 +4,7 @@ This file provides working instructions for coding agents in this repository.
 
 ## Project Overview
 
-`squash_bot` is a Go-based Telegram bot for coordinating squash games. It creates and updates pinned game announcements in a group chat, tracks participation, runs scheduled checks, and cleans up completed games.
+`squash_bot` is a Go-based Telegram bot for coordinating squash games. It creates and updates pinned game announcements in a group chat, tracks participation (including guests), runs scheduled checks, manages bot group membership dynamically, and cleans up completed games.
 
 ## Stack
 
@@ -26,12 +26,14 @@ Key directories:
 
 - `cmd/bot` — application entry point
 - `internal/config` — environment-driven config
-- `internal/models` — core domain models
-- `internal/storage` — SQL repositories
+- `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation)
+- `internal/storage` — SQL repositories (games, players, participations, guests, groups)
 - `internal/service` — business logic and scheduled jobs
-- `internal/telegram` — bot handlers, callbacks, message formatting
-- `migrations` — database migrations and migration runner
-- `tests` — integration or higher-level tests
+- `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
+- `migrations` — embedded SQL migrations
+- `tests` — integration and e2e tests
+- `.github/workflows` — CI pipeline and automated documentation updates
+- `.github/scripts` — helper scripts used by workflows
 
 ## Working Conventions
 
@@ -52,7 +54,9 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- Required runtime values include `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `GROUP_CHAT_ID`, and `ADMIN_USER_ID`.
+- Required runtime values: `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`.
+- `GROUP_CHAT_IDS` is **optional** — groups are discovered and tracked automatically when the bot is added to them.
+- There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
 
 ## Common Commands
@@ -64,13 +68,10 @@ docker-compose up -d postgres
 # Run the bot locally
 go run cmd/bot/main.go
 
-# Run migrations
-go run migrations/migrate.go up
-go run migrations/migrate.go down 1
-
 # Run tests
 go test ./...
 go test ./internal/service -v
+go test -tags integration -timeout 120s ./...
 
 # Build binary
 go build -o bin/squash_bot cmd/bot/main.go
@@ -84,5 +85,17 @@ go build -o bin/squash_bot cmd/bot/main.go
 
 ## Documentation Guidance
 
-- Update `README.md` when setup steps, commands, configuration, or behavior visible to operators changes.
-- Keep documentation concise and operationally useful.
+Update documentation as part of the same task whenever code changes affect any of the following:
+
+| What changed | Update |
+|---|---|
+| New or removed feature, command, or bot behavior | `README.md` |
+| Setup steps, env variables, or operator-facing config | `README.md` |
+| Package structure, architectural decisions, or working conventions | `AGENTS.md` |
+| Business logic, DB schema, callback format, or key workflows | `CLAUDE.md` |
+
+Rules:
+- Only edit sections that are actually affected — do not rewrite correct sections.
+- Keep prose concise and operationally useful.
+- Update tables and lists in place; preserve existing formatting.
+- If a doc section becomes inaccurate because of your change, it is your responsibility to fix it before finishing the task.

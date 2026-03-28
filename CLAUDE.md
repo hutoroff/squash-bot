@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Telegram bot for managing squash game coordination among friends. The bot handles game announcements, player registration via buttons ("I'm in"/"I'll skip"), capacity validation, and automated cleanup.
+A Telegram bot for managing squash game coordination among friends. The bot handles game announcements, player registration via inline buttons ("I'm in"/"I'll skip"), guest management, capacity validation, dynamic group tracking, and automated cleanup.
 
 ## Architecture
 
 ### Technology Stack
 - **Go 1.21+** with `github.com/go-telegram-bot-api/telegram-bot-api/v5`
 - **PostgreSQL 15+** with `github.com/jackc/pgx/v5`
-- **Scheduling**: `github.com/robfig/cron/v3` for day-before/after tasks
-- **Logging**: `slog` (structured logging with INFO for business events, DEBUG for technical details)
+- **Scheduling**: `github.com/robfig/cron/v3`
+- **Logging**: `slog` (INFO for business events, DEBUG for technical details)
 - **Config**: Environment-based with `github.com/caarlos0/env/v10`
 
 ### Core Architecture Pattern
@@ -20,16 +20,17 @@ This is a Telegram bot for managing squash game coordination among friends. The 
 Telegram Handlers → Services → Storage → PostgreSQL
 ```
 
-- **telegram/**: Handles bot API interactions, callback queries, message formatting
-- **service/**: Business logic for games, players, participation, scheduling
-- **storage/**: Database repositories with type-safe SQL operations
-- **models/**: Core entities (Game, Player, GameParticipation)
+- **telegram/**: Bot loop, callback handlers, slash commands, message formatting
+- **service/**: Business logic for games, participation, guests, scheduling
+- **storage/**: SQL repositories (games, players, participations, guests, groups)
+- **models/**: Game, Player, GameParticipation, GuestParticipation
 
 ### Database Schema
-Three core tables with clear relationships:
-- `games`: stores game info, message_id, chat_id, courts_count, scheduling flags
-- `players`: telegram user data (telegram_id, username, names)
-- `game_participations`: many-to-many link with status (registered/skipped)
+- `games`: id, chat_id, message_id, game_date, courts_count, courts, notified_day_before, completed, created_at
+- `players`: id, telegram_id (UNIQUE), username, first_name, last_name, created_at
+- `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
+- `guest_participations`: id, game_id, invited_by_player_id, created_at
+- `bot_groups`: chat_id PK, title, bot_is_admin, added_at
 
 ## Development Commands
 
@@ -38,79 +39,77 @@ Three core tables with clear relationships:
 docker-compose up -d postgres
 go run cmd/bot/main.go
 
-# Run with live reload during development
-air # if using cosmtrek/air
-
-# Database operations
-go run migrations/migrate.go up
-go run migrations/migrate.go down 1
-
 # Testing
 go test ./...
 go test ./internal/service -v
 go test -run TestGameService_AddParticipant
+go test -tags integration -timeout 120s ./...
 
 # Build
 go build -o bin/squash_bot cmd/bot/main.go
 
-# Docker development
+# Docker
 docker-compose up --build
 ```
 
 ## Key Business Logic Workflows
 
-### Button Click Flow (Critical)
-1. Parse callback data to extract game_id and action
-2. Update `game_participations` table (add/remove player)
-3. Query current participants for the game
+### Button Click Flow
+1. Parse callback data (`action:game_id`, e.g. `join:123`, `skip:123`)
+2. Update `game_participations` table (upsert player, add/remove guest)
+3. Query current participants and guests for the game
 4. Format message with updated participant list + "Last updated" footer
-5. Edit Telegram message with new text (preserving buttons)
+5. Edit Telegram message in place (preserving buttons and pin status)
 6. Log action at INFO level
 
 ### Scheduled Tasks (Cron-based)
-- **Day Before Game**: Check participant count vs courts*2, send notifications if needed
-- **Day After Game**: Unpin message, remove buttons (edit message to remove InlineKeyboardMarkup), mark game complete
+- **Day Before Game**: Check participant count vs courts×2; notify if off; use `notified_day_before` flag to prevent duplicates
+- **Day After Game**: Unpin message, remove InlineKeyboardMarkup, mark game complete
+- **Weekly Reminder**: DM group admins on Monday morning if no game is scheduled within 7 days
 
-### Message Formatting Pattern
-Game messages include:
-- Game date/time and court info
-- Numbered participant list
+### Admin & Group Management
+- Admin rights verified dynamically per group via `GetChatAdministrators` — no hardcoded admin IDs
+- `my_chat_member` events track when the bot is added/removed/promoted/demoted
+- Groups stored in `bot_groups` table; `GROUP_CHAT_IDS` env var is optional (seeding only)
+- If added without admin rights, bot DMs the user who added it
+
+### Guest Management
+- Players can add guests (+1) linked to their player record
+- Players can remove their own most-recently-added guest
+- Admins can remove any guest via the `/games` management menu
+
+### Message Formatting
+- Emoji header, game date/time, court list, numbered player list, guest list
+- Capacity line: `courts_count × 2`
 - "Last updated: [timestamp]" footer
-- Inline keyboard with "I'm in" / "I'll skip" buttons
+- "Game completed ✓" marker for finished games
 
-## Important Implementation Notes
-
-### Callback Data Format
-Use format like `action:game_id` (e.g., "join:123", "skip:123") for button callbacks.
-
-### Message Updates
-Always use `EditMessageText` to update existing messages - never send new ones. This preserves the message thread and pin status.
-
-### Logging Strategy
-- **INFO**: Button clicks, game creation, participant changes, day-before notifications, cleanup actions
-- **DEBUG**: Database queries, Telegram API calls, message IDs, SQL parameters
-
-### Error Handling
-Focus on graceful degradation - if message edit fails, log error but don't crash. Bot should continue processing other requests.
-
-### Day-Before Logic
-Only send notifications if participant count != courts*2. Use `notified_day_before` flag to prevent duplicate notifications.
-
-## Environment Variables Required
+## Environment Variables
 ```
-TELEGRAM_BOT_TOKEN=
-DATABASE_URL=
-GROUP_CHAT_IDS=-1001234567890,-1009876543210  # comma-separated list of group chat IDs
-CRON_DAY_BEFORE=0 20 * * *  # 8 PM daily
-CRON_DAY_AFTER=0 8 * * *    # 8 AM daily
+TELEGRAM_BOT_TOKEN=          # required
+DATABASE_URL=                # required
+GROUP_CHAT_IDS=              # optional — comma-separated, for initial seeding
+CRON_DAY_BEFORE=0 20 * * *  # default 8 PM daily
+CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
+CRON_WEEKLY_REMINDER=0 10 * * 1  # default Monday 10 AM
 LOG_LEVEL=INFO
+TIMEZONE=Europe/Moscow
 ```
 
 ## Testing Approach
-- Unit tests for services (business logic, message formatting)
-- Integration tests for storage layer with test database
-- Manual Telegram testing in development group
-- Mock Telegram API for automated testing
+- Unit tests for services and message formatting
+- Integration tests for storage layer (requires test DB via `docker-compose.test.yml`)
+- `go test -tags integration` flag gates integration tests
 
-## Docker Setup
-Use multi-stage build: builder stage for dependencies, final stage with minimal runtime. Include health checks for both bot and database in docker-compose.yml.
+## Documentation Responsibility
+
+When you make code changes, update the affected documentation **in the same task**:
+
+| What changed | Update |
+|---|---|
+| New feature, command, or user-visible behavior | `README.md` |
+| Env variables, setup, operator-facing config | `README.md` |
+| Architecture, packages, working conventions | `AGENTS.md` |
+| Business logic, DB schema, callback format, key workflows | `CLAUDE.md` (this file) |
+
+Only edit sections that are affected. Do not rewrite correct sections.

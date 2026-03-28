@@ -4,11 +4,13 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 
 ## What It Does
 
-- Admin sends a message to the bot with game details (date, time, courts)
+- Admin creates a game via `/new_game` in private chat or by @mentioning the bot in the group
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
+- Players can add guests (+1) linked to their name
 - The night before the game the bot notifies if the headcount is off (too few or too many players)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
+- The bot sends a weekly reminder to admins if no game is scheduled for the upcoming week
 
 ## Tech Stack
 
@@ -19,7 +21,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 | Telegram API  | go-telegram-bot-api v5                        |
 | DB Driver     | pgx v5 (connection pool)                      |
 | Scheduling    | robfig/cron v3                                |
-| Migrations    | golang-migrate                                |
+| Migrations    | golang-migrate (embedded SQL)                 |
 | Config        | caarlos0/env (env vars → struct)              |
 | Logging       | slog (structured, levelled)                   |
 | Deployment    | Docker + Docker Compose                       |
@@ -40,9 +42,9 @@ Telegram (long-polling)
 
 Three main packages under `internal/`:
 
-- **telegram** — bot loop, message/callback handlers, message formatting
-- **service** — game creation, participation logic, scheduler tasks
-- **storage** — typed SQL repositories for games, players, participations
+- **telegram** — bot loop, message/callback handlers, message formatting, slash commands
+- **service** — game creation, participation logic, guest management, scheduler tasks
+- **storage** — typed SQL repositories for games, players, participations, guests, groups
 
 ## Quick Start
 
@@ -63,12 +65,10 @@ Edit `.env` and fill in the required values:
 ```env
 TELEGRAM_BOT_TOKEN=   # from @BotFather
 DATABASE_URL=postgres://squash_bot:squash_bot@postgres:7432/squash_bot?sslmode=disable
-GROUP_CHAT_ID=        # your group's chat ID (negative number, e.g. -1001234567890)
-ADMIN_USER_ID=        # your Telegram user ID
 TIMEZONE=Europe/Moscow
 ```
 
-To find your `GROUP_CHAT_ID`, add [@userinfobot](https://t.me/userinfobot) or [@RawDataBot](https://t.me/RawDataBot) to the group.
+`GROUP_CHAT_IDS` is optional — the bot discovers and tracks groups automatically when it is added to them.
 
 ### 2. Start
 
@@ -78,16 +78,20 @@ docker-compose up --build
 
 Migrations run automatically on startup.
 
-### 3. Create a game
+### 3. Add the bot to your group
 
-Send a private message to your bot in this exact format:
+Add the bot to a Telegram group and grant it admin rights (required for pinning messages). The bot will register the group automatically and start accepting game creation requests from group admins.
+
+### 4. Create a game
+
+In private chat with the bot, run `/new_game` and follow the prompt, or send the date/time and courts directly:
 
 ```
 2025-06-15 18:00
 courts: 2,3,4
 ```
 
-The bot will post and pin the announcement in the group.
+If you are an admin in multiple groups, the bot will ask you to pick a group.
 
 ## Running Locally (without Docker)
 
@@ -100,42 +104,64 @@ export PATH="/opt/homebrew/bin:$PATH"   # if Go installed via Homebrew on macOS
 go run cmd/bot/main.go
 ```
 
-### Database migrations
-
-```bash
-go run migrations/migrate.go up       # apply all pending migrations
-go run migrations/migrate.go down 1   # roll back one migration
-```
-
 ## Testing
 
 ```bash
 go test ./...                                      # all tests
 go test ./internal/service -v                      # service tests with verbose output
 go test -run TestGameService_AddParticipant        # single test
+go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
 ```
+
+## Bot Commands
+
+| Command     | Who can use | Description                                      |
+|-------------|-------------|--------------------------------------------------|
+| `/start`    | Anyone      | Show welcome message                             |
+| `/help`     | Anyone      | List available commands                          |
+| `/my_game`  | Anyone      | Show your next registered game with a link       |
+| `/games`    | Admins      | List upcoming games you manage; edit/manage them |
+| `/new_game` | Admins      | Create a new game for your group                 |
+
+## Guest Management
+
+Any group member can add a guest to a game by tapping the "+1 Guest" button. Each guest entry is linked to the player who invited them and is displayed as "+1 (invited by @username)". Players can remove their own most-recently-added guest. Admins can remove any specific guest via the `/games` management menu.
+
+Guest spots count toward capacity.
 
 ## Environment Variables
 
-| Variable          | Required | Default          | Description                              |
-|-------------------|----------|------------------|------------------------------------------|
-| `TELEGRAM_BOT_TOKEN` | Yes   | —                | Bot token from @BotFather                |
-| `DATABASE_URL`    | Yes      | —                | PostgreSQL connection string             |
-| `GROUP_CHAT_ID`   | Yes      | —                | Telegram group where games are announced |
-| `ADMIN_USER_ID`   | Yes      | —                | Telegram user ID allowed to create games |
-| `CRON_DAY_BEFORE` | No       | `0 20 * * *`     | When to run day-before capacity check    |
-| `CRON_DAY_AFTER`  | No       | `0 8 * * *`      | When to run post-game cleanup            |
-| `LOG_LEVEL`       | No       | `INFO`           | `INFO` or `DEBUG`                        |
-| `TIMEZONE`        | No       | `Europe/Moscow`  | Timezone for dates in messages           |
+| Variable               | Required | Default           | Description                                         |
+|------------------------|----------|-------------------|-----------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather                           |
+| `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
+| `GROUP_CHAT_IDS`       | No       | —                 | Comma-separated group chat IDs for initial seeding  |
+| `CRON_DAY_BEFORE`      | No       | `0 20 * * *`      | When to run day-before capacity check               |
+| `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
+| `CRON_WEEKLY_REMINDER` | No       | `0 10 * * 1`      | When to send weekly reminder to admins (Mon 10 AM)  |
+| `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
+| `TIMEZONE`             | No       | `Europe/Moscow`   | Timezone for dates in messages                      |
 
 ## Scheduled Tasks
 
-| Task             | Default time | What it does                                             |
-|------------------|--------------|----------------------------------------------------------|
-| Day-before check | 8 PM daily   | Checks if player count matches court capacity, notifies if not |
-| Day-after cleanup | 8 AM daily  | Unpins message, removes buttons, marks game complete     |
+| Task              | Default time    | What it does                                                      |
+|-------------------|-----------------|-------------------------------------------------------------------|
+| Day-before check  | 8 PM daily      | Checks if player count matches court capacity, notifies if not    |
+| Day-after cleanup | 8 AM daily      | Unpins message, removes buttons, marks game complete              |
+| Weekly reminder   | Monday 10 AM    | DMs group admins if no game is scheduled within the next 7 days   |
 
 Capacity per game = `courts_count × 2`.
+
+## Group Management
+
+The bot tracks which groups it belongs to in the database. When added to a group:
+
+- If it has admin rights, it is immediately ready for use.
+- If it does **not** have admin rights, it DMs the user who added it with instructions.
+
+When the bot is promoted or demoted in a group, it updates its admin status accordingly. Groups are removed from the tracking table when the bot is kicked.
+
+`GROUP_CHAT_IDS` in the environment is only used for backward-compatible seeding on startup; the bot does not require it.
 
 ## Project Structure
 
@@ -143,9 +169,13 @@ Capacity per game = `courts_count × 2`.
 cmd/bot/          — entry point
 internal/
   config/         — env-based config
-  models/         — Game, Player, GameParticipation
-  storage/        — SQL repositories
+  models/         — Game, Player, GameParticipation, GuestParticipation
+  storage/        — SQL repositories (games, players, participations, guests, groups)
   service/        — business logic + scheduler
-  telegram/       — bot loop, handlers, formatter
-migrations/       — SQL migration files
+  telegram/       — bot loop, handlers, commands, formatter
+migrations/       — embedded SQL migration files
+docs/             — operator guides and migration notes
+tests/            — integration and e2e tests
+.github/
+  workflows/      — CI pipeline
 ```
