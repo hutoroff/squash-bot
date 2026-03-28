@@ -13,14 +13,35 @@ import (
 )
 
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
-	if msg.From == nil || msg.From.ID != b.cfg.AdminUserID {
-		return
-	}
-	if msg.Chat.Type != "private" || msg.Text == "" {
+	if msg.From == nil || msg.Text == "" {
 		return
 	}
 
-	gameDate, courts, err := parseAdminCommand(msg.Text, b.loc)
+	isPrivate := msg.Chat.Type == "private"
+	isGroupMention := (msg.Chat.Type == "group" || msg.Chat.Type == "supergroup") &&
+		msg.Chat.ID == b.cfg.GroupChatID && b.isBotMentioned(msg)
+
+	if !isPrivate && !isGroupMention {
+		return
+	}
+
+	isAdmin, err := b.isGroupAdmin(msg.From.ID)
+	if err != nil {
+		slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
+		b.reply(msg.Chat.ID, msg.MessageID, "Failed to verify permissions")
+		return
+	}
+	if !isAdmin {
+		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+		return
+	}
+
+	text := msg.Text
+	if isGroupMention {
+		text = stripBotMention(text, b.api.Self.UserName, msg.Entities)
+	}
+
+	gameDate, courts, err := parseAdminCommand(text, b.loc)
 	if err != nil {
 		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\n2024-03-15 18:00\ncourts: 2,3,4")
 		return
@@ -171,6 +192,37 @@ func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("I'll skip", fmt.Sprintf("skip:%d", gameID)),
 		),
 	)
+}
+
+func (b *Bot) isGroupAdmin(userID int64) (bool, error) {
+	admins, err := b.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: b.cfg.GroupChatID},
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, admin := range admins {
+		if admin.User.ID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
+	for _, entity := range msg.Entities {
+		if entity.Type == "mention" {
+			mention := msg.Text[entity.Offset : entity.Offset+entity.Length]
+			if mention == "@"+b.api.Self.UserName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity) string {
+	return strings.TrimSpace(strings.ReplaceAll(text, "@"+botUsername, ""))
 }
 
 func parseAdminCommand(text string, loc *time.Location) (time.Time, string, error) {
