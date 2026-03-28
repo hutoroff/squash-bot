@@ -172,6 +172,55 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 	)
 }
 
+// RunWeeklyReminder sends a DM to every non-bot group admin if no game is scheduled in the next 7 days.
+// NOTE: Telegram only allows bots to DM users who have previously started a private chat with the bot.
+func (s *SchedulerService) RunWeeklyReminder() {
+	s.logger.Info("weekly reminder check started")
+	ctx := context.Background()
+
+	// Check if a game is already scheduled in the next 7 days.
+	now := time.Now().In(s.loc)
+	weekEnd := now.AddDate(0, 0, 7)
+
+	games, err := s.gameRepo.GetUpcomingGames(ctx)
+	if err != nil {
+		s.logger.Error("weekly reminder: query upcoming games", "err", err)
+		return
+	}
+	for _, g := range games {
+		if g.GameDate.Before(weekEnd) {
+			s.logger.Info("weekly reminder: game already scheduled, skipping", "game_id", g.ID, "game_date", g.GameDate)
+			return
+		}
+	}
+
+	// No game this week — notify all group admins via DM.
+	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: s.chatID},
+	})
+	if err != nil {
+		s.logger.Error("weekly reminder: get chat administrators", "err", err)
+		return
+	}
+
+	text := "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!"
+
+	notified := 0
+	for _, admin := range admins {
+		if admin.User.IsBot {
+			continue
+		}
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		if _, err := s.api.Send(msg); err != nil {
+			s.logger.Error("weekly reminder: send DM", "user_id", admin.User.ID, "username", admin.User.UserName, "err", err)
+			continue
+		}
+		s.logger.Info("weekly reminder: DM sent", "user_id", admin.User.ID, "username", admin.User.UserName)
+		notified++
+	}
+	s.logger.Info("weekly reminder done", "admins_notified", notified)
+}
+
 // formatCompletedMessage renders the final game message without interactive buttons.
 func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, loc *time.Location) string {
 	capacity := game.CourtsCount * 2

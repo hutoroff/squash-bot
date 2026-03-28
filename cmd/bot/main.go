@@ -81,9 +81,17 @@ func main() {
 		slog.Error("add day-after cron", "spec", cfg.CronDayAfter, "err", err)
 		os.Exit(1)
 	}
+	if _, err := c.AddFunc(cfg.CronWeeklyReminder, scheduler.RunWeeklyReminder); err != nil {
+		slog.Error("add weekly-reminder cron", "spec", cfg.CronWeeklyReminder, "err", err)
+		os.Exit(1)
+	}
 	c.Start()
 	defer c.Stop()
-	slog.Info("cron scheduler started", "day_before", cfg.CronDayBefore, "day_after", cfg.CronDayAfter)
+	slog.Info("cron scheduler started",
+		"day_before", cfg.CronDayBefore,
+		"day_after", cfg.CronDayAfter,
+		"weekly_reminder", cfg.CronWeeklyReminder,
+	)
 
 	bot := telegram.New(api, cfg, loc, gameService, partService, logger)
 
