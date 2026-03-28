@@ -54,7 +54,8 @@ cp .env.example .env
 Edit `.env` and fill in the required values:
 
 ```env
-TELEGRAM_BOT_TOKEN=   # from @BotFather
+TELEGRAM_BOT_TOKEN=     # from @BotFather
+INTERNAL_API_SECRET=    # shared secret between the two services — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
 
@@ -92,10 +93,14 @@ docker-compose up -d postgres
 # Run the management service (in one terminal)
 export PATH="/opt/homebrew/bin:$PATH"   # if Go installed via Homebrew on macOS
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
   go run cmd/squash-games-management/main.go
 
 # Run the telegram bot (in another terminal)
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 ```
 
@@ -131,6 +136,7 @@ Guest spots count toward capacity.
 |------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather (used by the scheduler to send messages) |
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
+| `INTERNAL_API_SECRET`  | Yes      | —                 | Shared secret for authenticating calls from the telegram bot; generate with `openssl rand -hex 32` |
 | `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
 | `CRON_DAY_BEFORE`      | No       | `0 20 * * *`      | When to run day-before capacity check               |
 | `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
@@ -144,6 +150,7 @@ Guest spots count toward capacity.
 |--------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
 | `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://squash-games-management:8080`) |
+| `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service  |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
 | `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |

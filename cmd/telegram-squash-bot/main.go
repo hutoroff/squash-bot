@@ -45,7 +45,7 @@ func main() {
 	}
 	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
 
-	mgmtClient := client.New(cfg.ManagementServiceURL)
+	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, cfg.ServiceAdminIDs, logger)
 

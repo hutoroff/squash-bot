@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -69,16 +70,36 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // NewServer builds an http.Server with the handler's routes registered.
-func NewServer(addr string, h *Handler) *http.Server {
+// secret is the shared bearer token; all routes except /health require it.
+func NewServer(addr string, h *Handler, secret string) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      requireBearer(secret, mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// requireBearer is middleware that validates the Authorization: Bearer <secret> header.
+// The /health endpoint is exempt so container health checks work without credentials.
+// Comparison is constant-time to prevent timing-based secret oracle attacks.
+func requireBearer(secret string, next http.Handler) http.Handler {
+	expected := []byte("Bearer " + secret)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := []byte(r.Header.Get("Authorization"))
+		if subtle.ConstantTimeCompare(got, expected) != 1 {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {

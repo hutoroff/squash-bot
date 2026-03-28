@@ -59,8 +59,9 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- `squash-games-management` requires `TELEGRAM_BOT_TOKEN` and `DATABASE_URL`.
-- `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN` and `MANAGEMENT_SERVICE_URL`.
+- `squash-games-management` requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
+- `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
+- `INTERNAL_API_SECRET` is a shared secret used to authenticate all HTTP requests between the two services (bearer token in `Authorization` header). Both services must be configured with the same value.
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
 
@@ -72,10 +73,14 @@ docker-compose up -d postgres
 
 # Run the management service locally
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
   go run cmd/squash-games-management/main.go
 
 # Run the telegram bot locally
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 
 # Run tests

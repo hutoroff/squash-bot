@@ -18,13 +18,16 @@ import (
 // Client wraps all HTTP calls to the squash-games-management service.
 type Client struct {
 	baseURL    string
+	apiSecret  string
 	httpClient *http.Client
 }
 
 // New creates a new Client targeting baseURL (e.g. "http://squash-games-management:8080").
-func New(baseURL string) *Client {
+// apiSecret is sent as a Bearer token in every request.
+func New(baseURL, apiSecret string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		apiSecret: apiSecret,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -272,6 +275,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

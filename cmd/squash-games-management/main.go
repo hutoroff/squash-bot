@@ -96,7 +96,7 @@ func main() {
 	)
 
 	h := api.NewHandler(gameService, partService, groupRepo, scheduler, logger)
-	srv := api.NewServer(":"+cfg.ServerPort, h)
+	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("squash-games-management starting", "port", cfg.ServerPort)
 	if err := api.Run(ctx, srv, logger); err != nil {

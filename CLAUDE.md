@@ -53,10 +53,16 @@ docker-compose up --build
 docker-compose up -d postgres
 
 # Run management service locally
-go run cmd/squash-games-management/main.go
+DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
+  go run cmd/squash-games-management/main.go
 
 # Run telegram bot locally
-go run cmd/telegram-squash-bot/main.go
+MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  TELEGRAM_BOT_TOKEN=<token> \
+  INTERNAL_API_SECRET=<secret> \
+  go run cmd/telegram-squash-bot/main.go
 
 # Testing
 go test ./...
@@ -105,6 +111,7 @@ go build ./cmd/telegram-squash-bot/
 ```
 DATABASE_URL=                # required
 TELEGRAM_BOT_TOKEN=          # required (scheduler sends Telegram messages)
+INTERNAL_API_SECRET=         # required; shared bearer token for service-to-service auth
 SERVER_PORT=8080             # default 8080
 CRON_DAY_BEFORE=0 20 * * *  # default 8 PM daily
 CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
@@ -117,6 +124,7 @@ TIMEZONE=UTC
 ```
 TELEGRAM_BOT_TOKEN=          # required
 MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080)
+INTERNAL_API_SECRET=         # required; shared bearer token for service-to-service auth
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 SERVICE_ADMIN_IDS=           # optional; comma-separated Telegram user IDs for /trigger

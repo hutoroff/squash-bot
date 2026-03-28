@@ -11,8 +11,10 @@ import (
 type TelegramConfig struct {
 	TelegramBotToken     string `env:"TELEGRAM_BOT_TOKEN,required"`
 	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL,required"`
-	LogLevel             string `env:"LOG_LEVEL"  envDefault:"INFO"`
-	Timezone             string `env:"TIMEZONE"   envDefault:"UTC"`
+	// InternalAPISecret is the shared secret used to authenticate requests to squash-games-management.
+	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
+	LogLevel          string `env:"LOG_LEVEL"  envDefault:"INFO"`
+	Timezone          string `env:"TIMEZONE"   envDefault:"UTC"`
 	// ServiceAdminIDs is a comma-separated list of Telegram user IDs allowed to
 	// manually trigger scheduled events via /trigger.
 	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
@@ -22,6 +24,8 @@ type TelegramConfig struct {
 type ManagementConfig struct {
 	DatabaseURL        string `env:"DATABASE_URL,required"`
 	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
+	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
+	InternalAPISecret  string `env:"INTERNAL_API_SECRET,required"`
 	ServerPort         string `env:"SERVER_PORT"           envDefault:"8080"`
 	CronDayBefore      string `env:"CRON_DAY_BEFORE"       envDefault:"0 20 * * *"`
 	CronDayAfter       string `env:"CRON_DAY_AFTER"        envDefault:"0 8 * * *"`
