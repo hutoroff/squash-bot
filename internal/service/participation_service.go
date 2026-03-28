@@ -92,7 +92,8 @@ func (s *ParticipationService) Skip(ctx context.Context, gameID, telegramID int6
 // AddGuest records a +1 for the given Telegram user and returns the refreshed
 // participant and guest lists for message update. Any group member may add guests
 // regardless of their own registration status; guests are managed independently.
-func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, []*models.GuestParticipation, error) {
+// Returns (false, nil, nil, nil) when the game is already at full capacity.
+func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
 	player := &models.Player{TelegramID: telegramID}
 	if username != "" {
 		player.Username = &username
@@ -106,24 +107,28 @@ func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID 
 
 	saved, err := s.playerRepo.Upsert(ctx, player)
 	if err != nil {
-		return nil, nil, fmt.Errorf("upsert player: %w", err)
+		return false, nil, nil, fmt.Errorf("upsert player: %w", err)
 	}
 
-	if err := s.guestRepo.AddGuest(ctx, gameID, saved.ID); err != nil {
-		return nil, nil, fmt.Errorf("add guest: %w", err)
+	added, err := s.guestRepo.AddGuest(ctx, gameID, saved.ID)
+	if err != nil {
+		return false, nil, nil, fmt.Errorf("add guest: %w", err)
+	}
+	if !added {
+		return false, nil, nil, nil
 	}
 
 	slog.Info("Guest added", "inviter", displayName(username, firstName, lastName), "game_id", gameID)
 
 	parts, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get participations: %w", err)
+		return false, nil, nil, fmt.Errorf("get participations: %w", err)
 	}
 	guests, err := s.guestRepo.GetByGame(ctx, gameID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get guests: %w", err)
+		return false, nil, nil, fmt.Errorf("get guests: %w", err)
 	}
-	return parts, guests, nil
+	return true, parts, guests, nil
 }
 
 // RemoveGuest removes the most recently added guest for the given Telegram user.
@@ -167,6 +172,16 @@ func (s *ParticipationService) GetParticipations(ctx context.Context, gameID int
 // GetGuests returns all guests for the given game.
 func (s *ParticipationService) GetGuests(ctx context.Context, gameID int64) ([]*models.GuestParticipation, error) {
 	return s.guestRepo.GetByGame(ctx, gameID)
+}
+
+// GetRegisteredCount returns the number of registered (non-skipped) players for the given game.
+func (s *ParticipationService) GetRegisteredCount(ctx context.Context, gameID int64) (int, error) {
+	return s.participationRepo.GetRegisteredCount(ctx, gameID)
+}
+
+// GetGuestCount returns the total number of guests for the given game.
+func (s *ParticipationService) GetGuestCount(ctx context.Context, gameID int64) (int, error) {
+	return s.guestRepo.GetCountByGame(ctx, gameID)
 }
 
 // KickPlayer removes a player's participation from a game by their Telegram ID.

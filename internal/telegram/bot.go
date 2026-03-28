@@ -29,6 +29,11 @@ type pendingGame struct {
 	replyMsgID  int
 }
 
+// maxConcurrentHandlers caps the number of update goroutines running in parallel.
+// This prevents memory exhaustion if Telegram delivers a burst of updates while
+// the DB or network is slow.
+const maxConcurrentHandlers = 50
+
 type Bot struct {
 	api               *tgbotapi.BotAPI
 	gameService       *service.GameService
@@ -36,8 +41,9 @@ type Bot struct {
 	groupRepo         *storage.GroupRepo
 	loc               *time.Location
 	logger            *slog.Logger
-	pendingGames      sync.Map // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit sync.Map // map[chatID int64]gameID int64
+	pendingGames      sync.Map    // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit sync.Map    // map[chatID int64]gameID int64
+	handlerSem        chan struct{} // semaphore limiting concurrent update handlers
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameService, partService *service.ParticipationService, groupRepo *storage.GroupRepo, logger *slog.Logger) *Bot {
@@ -48,6 +54,7 @@ func New(api *tgbotapi.BotAPI, loc *time.Location, gameService *service.GameServ
 		groupRepo:   groupRepo,
 		loc:         loc,
 		logger:      logger,
+		handlerSem:  make(chan struct{}, maxConcurrentHandlers),
 	}
 }
 
@@ -65,7 +72,19 @@ func (b *Bot) Start(ctx context.Context) {
 			b.api.StopReceivingUpdates()
 			return
 		case update := <-updates:
-			go b.processUpdate(ctx, update)
+			// Block until a handler slot is free, but still honour context cancellation.
+			// This provides backpressure rather than silently dropping updates; Telegram
+			// will buffer additional updates server-side while we are busy.
+			select {
+			case b.handlerSem <- struct{}{}:
+			case <-ctx.Done():
+				b.api.StopReceivingUpdates()
+				return
+			}
+			go func() {
+				defer func() { <-b.handlerSem }()
+				b.processUpdate(ctx, update)
+			}()
 		}
 	}
 }

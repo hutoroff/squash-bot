@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/vkhutorov/squash_bot/internal/models"
@@ -59,7 +60,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		gameDate, courts, err := parseAdminCommand(text, b.loc)
 		if err != nil {
-			b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\n2024-03-15 18:00\ncourts: 2,3,4")
+			b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
 			return
 		}
 		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, msg.Chat.ID, gameDate, courts)
@@ -75,7 +76,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	gameDate, courts, err := parseAdminCommand(text, b.loc)
 	if err != nil {
-		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\n2024-03-15 18:00\ncourts: 2,3,4")
+		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
 		return
 	}
 
@@ -343,10 +344,16 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 
 func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	u := cb.From
-	participations, guests, err := b.partService.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
+	// Capacity enforcement is done atomically inside AddGuest (DB advisory lock +
+	// transaction), so there is no TOCTOU race even under concurrent clicks.
+	added, participations, guests, err := b.partService.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
 	if err != nil {
 		slog.Error("add guest", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		return
+	}
+	if !added {
+		b.answerCallback(cb.ID, "Game is already at full capacity")
 		return
 	}
 
@@ -489,9 +496,18 @@ func (b *Bot) isKnownGroupMention(msg *tgbotapi.Message) bool {
 }
 
 func (b *Bot) isBotMentioned(msg *tgbotapi.Message) bool {
+	// Telegram entity offsets are UTF-16 code unit indices, not UTF-8 byte indices.
+	// Convert the message text to UTF-16 once and slice from there, then decode back
+	// to a Go string. This handles emoji and other non-BMP characters that appear
+	// before the @mention correctly.
+	utf16Text := utf16.Encode([]rune(msg.Text))
 	for _, entity := range msg.Entities {
 		if entity.Type == "mention" {
-			mention := msg.Text[entity.Offset : entity.Offset+entity.Length]
+			start, end := entity.Offset, entity.Offset+entity.Length
+			if start < 0 || end > len(utf16Text) {
+				continue
+			}
+			mention := string(utf16.Decode(utf16Text[start:end]))
 			if mention == "@"+b.api.Self.UserName {
 				return true
 			}
@@ -580,7 +596,7 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 	localDate := game.GameDate.In(b.loc)
 	text := fmt.Sprintf("*Manage game:*\n📅 %s · %s\n🎾 Courts: %s\nPlayers: %d/%d, Guests: %d",
 		formatGameDate(localDate), localDate.Format("15:04"),
-		game.Courts, registered, game.CourtsCount*2, len(guests))
+		escapeMarkdown(game.Courts), registered, game.CourtsCount*2, len(guests))
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -754,6 +770,8 @@ func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity
 	return strings.TrimSpace(strings.ReplaceAll(text, "@"+botUsername, ""))
 }
 
+const maxCourtsLen = 100
+
 func parseAdminCommand(text string, loc *time.Location) (time.Time, string, error) {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	if len(lines) < 2 {
@@ -764,11 +782,17 @@ func parseAdminCommand(text string, loc *time.Location) (time.Time, string, erro
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("parse date: %w", err)
 	}
+	if !gameDate.After(time.Now().In(loc)) {
+		return time.Time{}, "", fmt.Errorf("game date must be in the future")
+	}
 
 	courtsLine := strings.TrimPrefix(strings.TrimSpace(lines[1]), "courts:")
 	courts := strings.ReplaceAll(strings.TrimSpace(courtsLine), " ", "")
 	if courts == "" {
 		return time.Time{}, "", fmt.Errorf("empty courts")
+	}
+	if len(courts) > maxCourtsLen {
+		return time.Time{}, "", fmt.Errorf("courts string too long (max %d chars)", maxCourtsLen)
 	}
 
 	return gameDate, courts, nil

@@ -17,12 +17,53 @@ func NewGuestRepo(pool *pgxpool.Pool) *GuestRepo {
 	return &GuestRepo{pool: pool}
 }
 
-// AddGuest inserts a new guest invited by the given player for the given game.
-func (r *GuestRepo) AddGuest(ctx context.Context, gameID, invitedByPlayerID int64) error {
-	const q = `INSERT INTO guest_participations (game_id, invited_by_player_id) VALUES ($1, $2)`
+// AddGuest inserts a new guest if the game still has capacity.
+// Capacity enforcement is atomic: an advisory lock on the game ID serialises
+// concurrent "+1" callbacks so that the read-check-write cannot race.
+// Returns (true, nil) on success and (false, nil) when the game is already full.
+func (r *GuestRepo) AddGuest(ctx context.Context, gameID, invitedByPlayerID int64) (bool, error) {
 	slog.Debug("GuestRepo.AddGuest", "game_id", gameID, "invited_by_player_id", invitedByPlayerID)
-	_, err := r.pool.Exec(ctx, q, gameID, invitedByPlayerID)
-	return err
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Serialise all concurrent AddGuest calls for the same game. The lock is
+	// automatically released when the transaction commits or rolls back.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, gameID); err != nil {
+		return false, fmt.Errorf("advisory lock: %w", err)
+	}
+
+	// Read the game's capacity and current occupancy in one query.
+	const countQ = `
+		SELECT g.courts_count * 2,
+		       (SELECT COUNT(*) FROM game_participations WHERE game_id = $1 AND status = 'registered') +
+		       (SELECT COUNT(*) FROM guest_participations  WHERE game_id = $1)
+		FROM games g
+		WHERE g.id = $1`
+
+	var capacity, occupancy int
+	if err := tx.QueryRow(ctx, countQ, gameID).Scan(&capacity, &occupancy); err != nil {
+		return false, fmt.Errorf("read capacity: %w", err)
+	}
+
+	if occupancy >= capacity {
+		return false, nil // tx.Rollback releases the advisory lock
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO guest_participations (game_id, invited_by_player_id) VALUES ($1, $2)`,
+		gameID, invitedByPlayerID,
+	); err != nil {
+		return false, fmt.Errorf("insert guest: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return true, nil
 }
 
 // RemoveLatestGuest deletes the most recently added guest that was invited by

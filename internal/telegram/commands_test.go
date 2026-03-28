@@ -1,12 +1,14 @@
 package telegram
 
-// White-box unit tests for pure functions in commands.go.
+// White-box unit tests for pure functions in commands.go and handlers.go.
 // No database or Telegram API is needed.
 
 import (
 	"strings"
 	"testing"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // --- superGroupMessageLink ---
@@ -163,5 +165,105 @@ func TestCommandRoutingPreemptsEdit(t *testing.T) {
 		if strings.HasPrefix(s, "/") {
 			t.Errorf("%q should NOT be identified as a command", s)
 		}
+	}
+}
+
+// --- parseAdminCommand security validations ---
+
+// TestParseAdminCommand_PastDate ensures a date in the past is rejected with an
+// error mentioning "future", which matches the message shown to admins.
+func TestParseAdminCommand_PastDate(t *testing.T) {
+	loc := time.UTC
+	raw := "2020-01-01 18:00\ncourts: 1,2"
+	_, _, err := parseAdminCommand(raw, loc)
+	if err == nil {
+		t.Fatal("expected error for past date, got nil")
+	}
+	if !strings.Contains(err.Error(), "future") {
+		t.Errorf("error message should mention 'future', got %q", err.Error())
+	}
+}
+
+// TestParseAdminCommand_CourtsLengthLimit ensures courts strings longer than
+// maxCourtsLen are rejected before reaching the database.
+func TestParseAdminCommand_CourtsLengthLimit(t *testing.T) {
+	loc := time.UTC
+	longCourts := strings.Repeat("1,", 60) // 120 chars — well above the 100-char cap
+	raw := "2030-01-01 18:00\ncourts: " + longCourts
+	_, _, err := parseAdminCommand(raw, loc)
+	if err == nil {
+		t.Fatal("expected error for courts string exceeding maxCourtsLen, got nil")
+	}
+}
+
+// --- isBotMentioned UTF-16 offset correctness ---
+
+// newMinimalBot returns a Bot with only the api.Self.UserName field set, which is
+// all isBotMentioned needs.
+func newMinimalBot(username string) *Bot {
+	return &Bot{
+		api: &tgbotapi.BotAPI{Self: tgbotapi.User{UserName: username}},
+	}
+}
+
+// TestIsBotMentioned_EmojiBeforeMention is the key regression test for the UTF-16
+// offset fix. 👋 (U+1F44B) occupies 2 UTF-16 code units (surrogate pair) but 4
+// UTF-8 bytes. Telegram reports the @mention offset in UTF-16 units, so the old
+// byte-index approach would extract the wrong slice and miss the mention.
+func TestIsBotMentioned_EmojiBeforeMention(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	// UTF-16 layout: [0xD83D, 0xDC4B] [0x20] [0x40 't' 'e' 's' 't' 'b' 'o' 't'] ...
+	// emoji = 2 units, space = 1 unit → @testbot starts at UTF-16 offset 3, length 8.
+	text := "👋 @testbot are you here?"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "mention", Offset: 3, Length: 8},
+		},
+	}
+	if !bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected true for @mention after emoji, got false")
+	}
+}
+
+func TestIsBotMentioned_NoMention(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	msg := &tgbotapi.Message{
+		Text:     "hello there, no mention at all",
+		Entities: []tgbotapi.MessageEntity{},
+	}
+	if bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected false for message without any mention entity")
+	}
+}
+
+func TestIsBotMentioned_DifferentBot(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	// @otherbot is at offset 0, length 9.
+	text := "@otherbot hello"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "mention", Offset: 0, Length: 9},
+		},
+	}
+	if bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected false for mention of a different bot")
+	}
+}
+
+func TestIsBotMentioned_AsciiNoEmoji(t *testing.T) {
+	bot := newMinimalBot("testbot")
+	// Plain ASCII: UTF-16 offsets == rune indices == byte indices, so the baseline
+	// case must also work correctly.
+	text := "hey @testbot come play"
+	msg := &tgbotapi.Message{
+		Text: text,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "mention", Offset: 4, Length: 8},
+		},
+	}
+	if !bot.isBotMentioned(msg) {
+		t.Error("isBotMentioned: expected true for plain-ASCII @mention")
 	}
 }

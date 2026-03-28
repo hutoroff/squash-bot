@@ -152,7 +152,7 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 	lines := strings.SplitN(text, "\n", 2)
 	if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
 		b.reply(msg.Chat.ID, msg.MessageID,
-			"Send the game details after the command:\n\n/new\\_game\n2024-03-15 18:00\ncourts: 2,3,4")
+			"Send the game details after the command:\n\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
 		return
 	}
 	body := strings.TrimSpace(lines[1])
@@ -160,7 +160,7 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 	gameDate, courts, err := parseAdminCommand(body, b.loc)
 	if err != nil {
 		b.reply(msg.Chat.ID, msg.MessageID,
-			"Invalid format. Use:\n\n/new\\_game\n2024-03-15 18:00\ncourts: 2,3,4")
+			"Invalid format. Use:\n\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
 		return
 	}
 
@@ -194,7 +194,11 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 		return
 	}
 
-	// Validate: must be non-empty comma-separated values.
+	// Validate: must be non-empty comma-separated values within length limit.
+	if len(courts) > maxCourtsLen {
+		b.reply(msg.Chat.ID, msg.MessageID, fmt.Sprintf("Courts string too long (max %d chars)", maxCourtsLen))
+		return
+	}
 	parts := strings.Split(courts, ",")
 	for _, p := range parts {
 		if strings.TrimSpace(p) == "" {
@@ -288,7 +292,7 @@ func formatGamesListMessage(games []*models.Game, groups []storage.BotGroup, loc
 		sb.WriteString(fmt.Sprintf("📅 %s · %s\n",
 			formatGameDate(localDate), localDate.Format("15:04")))
 		sb.WriteString(fmt.Sprintf("🎾 Courts: %s — capacity %d\n",
-			game.Courts, game.CourtsCount*2))
+			escapeMarkdown(game.Courts), game.CourtsCount*2))
 		sb.WriteString(fmt.Sprintf("Group: %s\n\n", escapeMarkdown(title)))
 
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(

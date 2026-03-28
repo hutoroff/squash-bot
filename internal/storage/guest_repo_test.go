@@ -25,7 +25,7 @@ func TestGuestRepo_AddAndGet(t *testing.T) {
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
 	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400001, Username: strPtr("inviter")})
 
-	if err := guestRepo.AddGuest(ctx, g.ID, p.ID); err != nil {
+	if _, err := guestRepo.AddGuest(ctx, g.ID, p.ID); err != nil {
 		t.Fatalf("AddGuest: %v", err)
 	}
 
@@ -60,9 +60,9 @@ func TestGuestRepo_MultipleGuestsSameInviter(t *testing.T) {
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
 	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400002, Username: strPtr("multi_inviter")})
 
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 
 	guests, err := guestRepo.GetByGame(ctx, g.ID)
 	if err != nil {
@@ -86,8 +86,8 @@ func TestGuestRepo_RemoveLatestGuest_Success(t *testing.T) {
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
 	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400003})
 
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 
 	removed, err := guestRepo.RemoveLatestGuest(ctx, g.ID, p.ID)
 	if err != nil {
@@ -139,8 +139,8 @@ func TestGuestRepo_RemoveOnlyOwnGuests(t *testing.T) {
 	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400005, Username: strPtr("owner")})
 	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400006, Username: strPtr("other")})
 
-	_ = guestRepo.AddGuest(ctx, g.ID, p1.ID)
-	_ = guestRepo.AddGuest(ctx, g.ID, p2.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p1.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p2.ID)
 
 	// p2 removes their own guest
 	removed, err := guestRepo.RemoveLatestGuest(ctx, g.ID, p2.ID)
@@ -174,7 +174,7 @@ func TestGuestRepo_DeleteByID_CorrectGame(t *testing.T) {
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
 	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500001})
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 
 	guests, _ := guestRepo.GetByGame(ctx, g.ID)
 	if len(guests) != 1 {
@@ -209,7 +209,7 @@ func TestGuestRepo_DeleteByID_WrongGame(t *testing.T) {
 	gA, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
 	gB, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "2"))
 	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500002})
-	_ = guestRepo.AddGuest(ctx, gA.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, gA.ID, p.ID)
 
 	guestsA, _ := guestRepo.GetByGame(ctx, gA.ID)
 	if len(guestsA) != 1 {
@@ -232,6 +232,60 @@ func TestGuestRepo_DeleteByID_WrongGame(t *testing.T) {
 	}
 }
 
+// TestGuestRepo_AddGuest_AtCapacity verifies the atomic capacity enforcement:
+// once the game is full, AddGuest must return (false, nil) and leave the DB
+// unchanged even under concurrent-like calls.
+func TestGuestRepo_AddGuest_AtCapacity(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	guestRepo := storage.NewGuestRepo(testPool)
+
+	// 1 court → capacity 2.
+	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
+	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600001})
+	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600002})
+	p3, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600003})
+
+	added1, err := guestRepo.AddGuest(ctx, g.ID, p1.ID)
+	if err != nil {
+		t.Fatalf("AddGuest (1st): %v", err)
+	}
+	if !added1 {
+		t.Fatal("AddGuest (1st): expected added=true (1/2 capacity)")
+	}
+
+	added2, err := guestRepo.AddGuest(ctx, g.ID, p2.ID)
+	if err != nil {
+		t.Fatalf("AddGuest (2nd): %v", err)
+	}
+	if !added2 {
+		t.Fatal("AddGuest (2nd): expected added=true (2/2 capacity)")
+	}
+
+	// Game is now full — third add must be rejected.
+	added3, err := guestRepo.AddGuest(ctx, g.ID, p3.ID)
+	if err != nil {
+		t.Fatalf("AddGuest (3rd): %v", err)
+	}
+	if added3 {
+		t.Error("AddGuest (3rd): expected added=false when game is at capacity")
+	}
+
+	// Exactly 2 guests must be present.
+	guests, err := guestRepo.GetByGame(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetByGame: %v", err)
+	}
+	if len(guests) != 2 {
+		t.Errorf("expected 2 guests in DB after capacity rejection, got %d", len(guests))
+	}
+}
+
 func TestGuestRepo_GetCountByGame(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
@@ -250,8 +304,8 @@ func TestGuestRepo_GetCountByGame(t *testing.T) {
 		t.Errorf("count before adding: got %d, want 0", count)
 	}
 
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
-	_ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
+	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 
 	count, err := guestRepo.GetCountByGame(ctx, g.ID)
 	if err != nil {

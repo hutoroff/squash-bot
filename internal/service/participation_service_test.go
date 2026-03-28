@@ -180,9 +180,12 @@ func TestParticipationService_AddGuest(t *testing.T) {
 	svc, gameID := setupParticipationTest(t, ctx)
 
 	// Any group member can add a guest regardless of their own registration status.
-	parts, guests, err := svc.AddGuest(ctx, gameID, 30001, "alice", "Alice", "")
+	added, parts, guests, err := svc.AddGuest(ctx, gameID, 30001, "alice", "Alice", "")
 	if err != nil {
 		t.Fatalf("AddGuest: %v", err)
+	}
+	if !added {
+		t.Fatal("AddGuest: expected added=true")
 	}
 	if len(parts) != 0 {
 		t.Errorf("expected 0 participations (inviter not registered), got %d", len(parts))
@@ -203,7 +206,7 @@ func TestParticipationService_AddGuest_WithoutJoining(t *testing.T) {
 	svc, gameID := setupParticipationTest(t, ctx)
 
 	// A player who has not joined can still add a guest.
-	_, guests, err := svc.AddGuest(ctx, gameID, 30008, "nonmember", "", "")
+	_, _, guests, err := svc.AddGuest(ctx, gameID, 30008, "nonmember", "", "")
 	if err != nil {
 		t.Fatalf("AddGuest without joining: %v", err)
 	}
@@ -220,7 +223,7 @@ func TestParticipationService_AddGuest_AfterSkipping(t *testing.T) {
 	_, _ = svc.Join(ctx, gameID, 30009, "skipper", "", "")
 	_, _, _ = svc.Skip(ctx, gameID, 30009, "skipper", "", "")
 
-	_, guests, err := svc.AddGuest(ctx, gameID, 30009, "skipper", "", "")
+	_, _, guests, err := svc.AddGuest(ctx, gameID, 30009, "skipper", "", "")
 	if err != nil {
 		t.Fatalf("AddGuest after skip: %v", err)
 	}
@@ -233,8 +236,8 @@ func TestParticipationService_AddGuest_Multiple(t *testing.T) {
 	ctx := context.Background()
 	svc, gameID := setupParticipationTest(t, ctx)
 
-	_, guests1, _ := svc.AddGuest(ctx, gameID, 30002, "bob", "", "")
-	_, guests2, err := svc.AddGuest(ctx, gameID, 30002, "bob", "", "")
+	_, _, guests1, _ := svc.AddGuest(ctx, gameID, 30002, "bob", "", "")
+	_, _, guests2, err := svc.AddGuest(ctx, gameID, 30002, "bob", "", "")
 	if err != nil {
 		t.Fatalf("second AddGuest: %v", err)
 	}
@@ -255,11 +258,11 @@ func TestParticipationService_Skip_DoesNotAffectGuests(t *testing.T) {
 
 	// Alice joins and adds two guests.
 	_, _ = svc.Join(ctx, gameID, 30010, "alice", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 30010, "alice", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 30010, "alice", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30010, "alice", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30010, "alice", "", "")
 
 	// Bob adds a guest independently.
-	_, _ = svc.AddGuest(ctx, gameID, 30011, "bob", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30011, "bob", "", "")
 
 	guestsBefore, _ := svc.GetGuests(ctx, gameID)
 	if len(guestsBefore) != 3 {
@@ -288,8 +291,8 @@ func TestParticipationService_RemoveGuest_Success(t *testing.T) {
 	ctx := context.Background()
 	svc, gameID := setupParticipationTest(t, ctx)
 
-	_, _ = svc.AddGuest(ctx, gameID, 30003, "carol", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 30003, "carol", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30003, "carol", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30003, "carol", "", "")
 
 	removed, _, guests, err := svc.RemoveGuest(ctx, gameID, 30003)
 	if err != nil {
@@ -337,8 +340,8 @@ func TestParticipationService_RemoveGuest_OnlyOwnGuests(t *testing.T) {
 	ctx := context.Background()
 	svc, gameID := setupParticipationTest(t, ctx)
 
-	_, _ = svc.AddGuest(ctx, gameID, 30005, "eve", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 30006, "frank", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30005, "eve", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30006, "frank", "", "")
 
 	// frank removes his guest — eve's guest should remain
 	removed, _, guests, err := svc.RemoveGuest(ctx, gameID, 30006)
@@ -368,7 +371,7 @@ func TestParticipationService_GetGuests(t *testing.T) {
 		t.Errorf("expected 0 guests initially, got %d", len(guests))
 	}
 
-	_, _ = svc.AddGuest(ctx, gameID, 30007, "grace", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 30007, "grace", "", "")
 
 	guests, err = svc.GetGuests(ctx, gameID)
 	if err != nil {
@@ -376,6 +379,59 @@ func TestParticipationService_GetGuests(t *testing.T) {
 	}
 	if len(guests) != 1 {
 		t.Errorf("expected 1 guest, got %d", len(guests))
+	}
+}
+
+// TestParticipationService_AddGuest_AtCapacity verifies that the service propagates
+// the repo-level capacity rejection: once slots are full, AddGuest returns
+// (false, nil, nil, nil) without writing anything to the database.
+func TestParticipationService_AddGuest_AtCapacity(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+	guestRepo := storage.NewGuestRepo(testPool)
+	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
+	gameSvc := service.NewGameService(gameRepo)
+
+	// 1 court → capacity 2.
+	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1")
+	if err != nil {
+		t.Fatalf("create game: %v", err)
+	}
+
+	added1, _, _, err := partSvc.AddGuest(ctx, game.ID, 50001, "u1", "", "")
+	if err != nil || !added1 {
+		t.Fatalf("AddGuest (1st): added=%v err=%v", added1, err)
+	}
+	added2, _, _, err := partSvc.AddGuest(ctx, game.ID, 50002, "u2", "", "")
+	if err != nil || !added2 {
+		t.Fatalf("AddGuest (2nd): added=%v err=%v", added2, err)
+	}
+
+	// Game is now at capacity — third must be rejected.
+	added3, parts, guests, err := partSvc.AddGuest(ctx, game.ID, 50003, "u3", "", "")
+	if err != nil {
+		t.Fatalf("AddGuest (3rd): %v", err)
+	}
+	if added3 {
+		t.Error("AddGuest (3rd): expected added=false when game is at capacity")
+	}
+	if parts != nil || guests != nil {
+		t.Error("AddGuest (3rd): parts and guests must be nil when not added")
+	}
+
+	// Confirm no third guest snuck into the DB.
+	allGuests, err := partSvc.GetGuests(ctx, game.ID)
+	if err != nil {
+		t.Fatalf("GetGuests: %v", err)
+	}
+	if len(allGuests) != 2 {
+		t.Errorf("expected 2 guests in DB, got %d", len(allGuests))
 	}
 }
 
@@ -455,8 +511,8 @@ func TestParticipationService_KickPlayer_GuestsPreserved(t *testing.T) {
 	svc, gameID := setupParticipationTest(t, ctx)
 
 	_, _ = svc.Join(ctx, gameID, 40003, "carol", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 40003, "carol", "", "")
 
 	_, guests, removed, err := svc.KickPlayer(ctx, gameID, 40003)
 	if err != nil {
@@ -478,8 +534,8 @@ func TestParticipationService_KickGuestByID_Success(t *testing.T) {
 	svc, gameID := setupParticipationTest(t, ctx)
 
 	_, _ = svc.Join(ctx, gameID, 40010, "dave", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
-	_, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
+	_, _, _, _ = svc.AddGuest(ctx, gameID, 40010, "dave", "", "")
 
 	allGuests, _ := svc.GetGuests(ctx, gameID)
 	if len(allGuests) != 2 {
@@ -523,7 +579,7 @@ func TestParticipationService_KickGuestByID_WrongGame(t *testing.T) {
 	gA, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2")
 	gB, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4")
 
-	_, _ = svc.AddGuest(ctx, gA.ID, 40011, "eve", "", "") // guest belongs to game A
+	_, _, _, _ = svc.AddGuest(ctx, gA.ID, 40011, "eve", "", "") // guest belongs to game A
 	guestsA, _ := svc.GetGuests(ctx, gA.ID)
 	guestAID := guestsA[0].ID
 
