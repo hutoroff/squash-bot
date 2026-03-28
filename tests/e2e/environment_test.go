@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	testDSN            = "postgres://squash_test:squash_test@localhost:5433/squash_test?sslmode=disable"
+	testDSN            = "postgres://squash_test:squash_test@localhost:8433/squash_test?sslmode=disable"
 	composeFile        = "../../docker-compose.test.yml"
 	composeServiceName = "postgres-test"
 	startupTimeout     = 60 * time.Second

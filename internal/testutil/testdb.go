@@ -21,7 +21,7 @@ import (
 func SetupTestDB(ctx context.Context) (pool *pgxpool.Pool, cleanup func(), err error) {
 	req := testcontainers.ContainerRequest{
 		Image:        "postgres:15-alpine",
-		ExposedPorts: []string{"8433/tcp"},
+		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_DB":       "squash_test",
 			"POSTGRES_USER":     "squash_test",
@@ -46,7 +46,7 @@ func SetupTestDB(ctx context.Context) (pool *pgxpool.Pool, cleanup func(), err e
 		return nil, nil, fmt.Errorf("get container host: %w", hostErr)
 	}
 
-	port, portErr := container.MappedPort(ctx, "8433")
+	port, portErr := container.MappedPort(ctx, "5432")
 	if portErr != nil {
 		_ = container.Terminate(ctx)
 		return nil, nil, fmt.Errorf("get container port: %w", portErr)

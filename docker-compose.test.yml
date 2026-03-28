@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: squash_test
       POSTGRES_PASSWORD: squash_test
     ports:
-      - "8433:5432"
+      - "8433:5433"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U squash_test -d squash_test"]
       interval: 2s

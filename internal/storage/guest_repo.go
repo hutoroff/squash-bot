@@ -106,7 +106,7 @@ func (r *GuestRepo) GetByGame(ctx context.Context, gameID int64) ([]*models.Gues
 	}
 	defer rows.Close()
 
-	var guests []*models.GuestParticipation
+	guests := make([]*models.GuestParticipation, 0)
 	for rows.Next() {
 		var g models.GuestParticipation
 		var p models.Player
