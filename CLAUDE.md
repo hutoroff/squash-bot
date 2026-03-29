@@ -106,25 +106,25 @@ State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`) and `pendingVen
 ### New Game Wizard (`/newGame`)
 Works in **private chat only**. Group @mentions are redirected to private chat.
 
-**With venues configured (single-group admin):**
-1. Admin sends `/newGame` → date-picker keyboard (today + next 13 days).
-2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → venue picker shown (one button per venue + "No venue / manual").
+At least one venue must be configured per group before creating a game. `/newGame` fails immediately (or at group-selection time for multi-group admins) if no venues exist.
+
+**Single-group admin:**
+1. Admin sends `/newGame` → checked for venues immediately; date-picker keyboard shown (today + next 13 days).
+2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → if 1 venue: auto-select + court toggle; if 2+: venue picker shown.
 3. Admin selects a venue → callback `ng_venue:<venueID>` → court toggle buttons (one per court, ✓ when selected) + Confirm button.
 4. Admin toggles courts (`ng_court_toggle:<court>`) and confirms (`ng_court_confirm:_`) → time slot buttons (one per slot + "Custom time").
 5. Admin selects a slot (`ng_timeslot:<HH:MM>`) or "Custom time" (`ng_time_custom:_`, reverts to free-text) → game created.
-6. Admin selects "No venue / manual" → falls back to the manual flow below.
 
-**Without venues (or multi-group admin):**
+**Multi-group admin:**
 1. Admin sends `/newGame` → date-picker keyboard.
-2. Admin taps a date → bot prompts for time (free text).
-3. Admin types time (`HH:MM`) → validated; if past, user is asked to retry. Bot prompts for courts.
-4. Admin types courts (any delimiter: comma, space, semicolon, slash is normalised to commas) → `normalizeCourts` cleans the input.
-5. If admin is in one group → game is created immediately. If multiple groups → group-selection inline keyboard shown.
-6. Sending any slash command at any step cancels the wizard (`pendingNewGameWizard.Delete`).
+2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → group picker shown (`ng_group:<groupID>` buttons).
+3. Admin selects a group → callback `ng_group:<groupID>` → venues fetched for that group; if 0: error (fail); if 1: auto-select + court toggle; if 2+: venue picker.
+4. From here, same as single-group admin steps 3–5.
+5. Sending any slash command at any step cancels the wizard (`pendingNewGameWizard.Delete`).
 
 State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*newGameWizard`.
-Wizard steps: `wizardStepVenue` (venue picker), `wizardStepCourtPick` (court toggle), `wizardStepTime` (time input), `wizardStepCourts` (courts free text).
-New game callbacks: `ng_date`, `ng_venue`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`.
+Wizard steps: `wizardStepGroup` (group picker, multi-group only), `wizardStepVenue` (venue picker), `wizardStepCourtPick` (court toggle), `wizardStepTime` (time input), `wizardStepCourts` (courts free text).
+New game callbacks: `ng_date`, `ng_group`, `ng_venue`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`.
 
 ### Button Click Flow
 1. Parse callback data (`action:game_id`, e.g. `join:123`, `skip:123`)

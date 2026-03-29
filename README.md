@@ -4,7 +4,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 
 ## What It Does
 
-- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → venue/time → courts)
+- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → group → venue → courts → time)
 - Admin manages venues (courts, time slots, address) for their group via `/venues`
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
@@ -74,26 +74,28 @@ Migrations run automatically on startup.
 
 Add the bot to a Telegram group and grant it admin rights (required for pinning messages). The bot will register the group automatically and start accepting game creation requests from group admins.
 
-### 4. (Optional) Configure venues
+### 4. Configure venues
 
-In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores a name, available court numbers, and preset time slots. Once venues are configured, the game creation wizard uses them to offer guided selections.
+In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores a name, available court numbers, and preset time slots. **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
 
 ### 5. Create a game
 
 In private chat with the bot, run `/newgame`. The bot will guide you through a wizard:
 
-**With venues configured:**
+**Single-group admin:**
 1. **Pick a date** — tap one of the date buttons (today + next 13 days)
-2. **Select a venue** — or "No venue / manual" to enter courts and time manually
+2. **Select a venue** — skipped automatically if only one venue exists
 3. **Toggle courts** — tap courts to select/deselect, then confirm
 4. **Select a time slot** — or tap "Custom time" to type a time manually
 
-**Without venues:**
+**Multi-group admin:**
 1. **Pick a date** — tap one of the date buttons
-2. **Enter the time** — type the time in `HH:MM` format (e.g. `19:30`)
-3. **Enter the courts** — type the court numbers (e.g. `2,3,4` or `2 3 4`)
+2. **Pick a group** — choose which group to post the game in
+3. **Select a venue** — skipped automatically if only one venue exists for that group
+4. **Toggle courts** — tap courts to select/deselect, then confirm
+5. **Select a time slot** — or tap "Custom time" to type a time manually
 
-If you are an admin in multiple groups, the bot will ask you to pick a group after the courts step.
+If the selected group has no venues configured, the wizard shows an error and you can pick a different group or add venues first via `/venues`.
 
 ## Running Locally (without Docker)
 

@@ -36,7 +36,8 @@ type pendingGame struct {
 type wizardStep int
 
 const (
-	wizardStepVenue     wizardStep = iota // waiting for venue selection (button)
+	wizardStepGroup     wizardStep = iota // waiting for group selection (multi-group admin)
+	wizardStepVenue                       // waiting for venue selection (button)
 	wizardStepCourtPick                   // waiting for court toggle + confirm (buttons)
 	wizardStepTime                        // waiting for time text input or slot button
 	wizardStepCourts                      // waiting for courts text input (no-venue path)
@@ -45,6 +46,7 @@ const (
 // newGameWizard holds the in-progress state for the /newGame wizard.
 // Keyed by private chat ID in pendingNewGameWizard.
 type newGameWizard struct {
+	groupID        int64     // set for multi-group admins after group is selected
 	gameDate       time.Time // date only (midnight) at venue/time step; full datetime at courts step
 	step           wizardStep
 	venueID        *int64          // set when a venue is selected

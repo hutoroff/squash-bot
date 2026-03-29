@@ -298,6 +298,11 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	if action == "ng_group" {
+		b.handleNewGameGroup(ctx, cb, rawID)
+		return
+	}
+
 	// Venue management callbacks
 	if action == "venue_list" {
 		groupID, err := strconv.ParseInt(rawID, 10, 64)
@@ -1253,18 +1258,114 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
-	// Multiple groups → proceed with manual time entry (venue checked at group-selection time).
+	// Multiple groups → ask which group to create the game in first.
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
 		gameDate: date,
-		step:     wizardStepTime,
+		step:     wizardStepGroup,
 	})
 	b.answerCallback(cb.ID, "")
 
-	localDate := date.In(b.loc)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, gid := range adminGroupIDs {
+		title := fmt.Sprintf("Group %d", gid)
+		chatInfo, err := b.api.GetChat(tgbotapi.ChatInfoConfig{
+			ChatConfig: tgbotapi.ChatConfig{ChatID: gid},
+		})
+		if err == nil && chatInfo.Title != "" {
+			title = chatInfo.Title
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("ng_group:%d", gid)),
+		))
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	prompt := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
-		lz.Tf(i18n.MsgNewGameEnterTime, lz.FormatGameDate(localDate)))
-	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	prompt.ReplyMarkup = &emptyKeyboard
+		lz.T(i18n.MsgWhichGroup))
+	prompt.ReplyMarkup = &keyboard
+	b.api.Send(prompt) //nolint:errcheck
+}
+
+// handleNewGameGroup handles ng_group:<groupID> callbacks.
+// It is used by multi-group admins who have selected a date and are now picking
+// which group the game should be posted in.
+func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wizard := raw.(*newGameWizard)
+
+	// Reject out-of-order callbacks — only valid when the wizard is waiting for group input.
+	if wizard.step != wizardStepGroup {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+
+	groupID, err := parseInt64(rawID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	// Re-verify admin status at callback time to prevent replay attacks.
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNotAdminInGroup))
+		return // wizard intact — keyboard still usable
+	}
+
+	// Venue is required for each group. Fail if none configured for the selected group.
+	venues, err := b.client.GetVenuesByGroup(ctx, groupID)
+	if err != nil {
+		slog.Error("handleNewGameGroup: fetch venues", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return // wizard intact — keyboard still usable
+	}
+	if len(venues) == 0 {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
+		return // wizard intact — keyboard still usable (admin can pick a different group)
+	}
+
+	wizard.groupID = groupID
+	b.answerCallback(cb.ID, "")
+
+	if len(venues) == 1 {
+		// Auto-select the only venue — skip the picker entirely.
+		v := venues[0]
+		venueID := v.ID
+		wizard.venueID = &venueID
+		wizard.venueCourts = splitCSV(v.Courts)
+		wizard.selectedCourts = make(map[string]bool)
+		wizard.timeSlots = splitCSV(v.TimeSlots)
+		wizard.step = wizardStepCourtPick
+		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
+		b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+		return
+	}
+
+	// Multiple venues — show venue picker.
+	// Clear any stale venue-specific state so a forged ng_venue callback cannot
+	// reuse data from a previously visited group.
+	wizard.step = wizardStepVenue
+	wizard.venueID = nil
+	wizard.venueCourts = nil
+	wizard.selectedCourts = nil
+	wizard.timeSlots = nil
+	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
+	localDate := wizard.gameDate.In(b.loc)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, v := range venues {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(v.Name, fmt.Sprintf("ng_venue:%d", v.ID)),
+		))
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	prompt := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
+		lz.Tf(i18n.MsgNewGameSelectVenue, lz.FormatGameDate(localDate)))
+	prompt.ReplyMarkup = &keyboard
 	b.api.Send(prompt) //nolint:errcheck
 }
 
@@ -1276,7 +1377,7 @@ func (b *Bot) processNewGameWizard(ctx context.Context, msg *tgbotapi.Message, w
 		b.processNewGameWizardTime(ctx, msg, wizard, lz)
 	case wizardStepCourts:
 		b.processNewGameWizardCourts(ctx, msg, wizard, lz)
-	case wizardStepVenue, wizardStepCourtPick:
+	case wizardStepGroup, wizardStepVenue, wizardStepCourtPick:
 		// These steps use inline keyboard callbacks; text input is ignored.
 	}
 }
@@ -1317,6 +1418,21 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 		return
 	}
 
+	// If the group was already chosen during the wizard (multi-group admin flow),
+	// re-verify admin status before consuming the wizard state and creating the game.
+	// Group membership is dynamic, so the admin could have been removed since the
+	// group was selected.
+	if wizard.groupID != 0 {
+		isAdmin, err := b.isAdminInGroup(msg.From.ID, wizard.groupID)
+		if err != nil || !isAdmin {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNotAdminInGroup))
+			return // wizard intact — user can retry courts input
+		}
+		b.pendingNewGameWizard.Delete(msg.Chat.ID)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, wizard.gameDate, courts, wizard.venueID, lz)
+		return
+	}
+
 	b.pendingNewGameWizard.Delete(msg.Chat.ID)
 
 	adminGroupIDs := b.adminGroups(msg.From.ID)
@@ -1330,7 +1446,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 		return
 	}
 
-	// Admin manages multiple groups — ask which one to post to.
+	// Admin manages multiple groups with no pre-selection — ask which one to post to.
 	key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
 	b.pendingGames.Store(key, &pendingGame{
 		gameDate:    wizard.gameDate,

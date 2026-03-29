@@ -415,6 +415,12 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 	wizard := raw.(*newGameWizard)
 
+	// Reject out-of-order callbacks — only valid when the wizard is waiting for venue input.
+	if wizard.step != wizardStepVenue {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+
 	venueID, err := parseInt64(rawID)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -424,6 +430,12 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 	venue, err := b.client.GetVenueByID(ctx, venueID)
 	if err != nil {
 		slog.Error("handleNewGameVenue: get venue", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+
+	// If a group was pre-selected (multi-group admin flow), verify the venue belongs to it.
+	if wizard.groupID != 0 && venue.GroupID != wizard.groupID {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
 		return
 	}
@@ -563,10 +575,31 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 	}
 
 	wizard.gameDate = gameDate
+	courts := selectedCourtsString(wizard)
+
+	// If the group was already chosen during the wizard (multi-group admin flow),
+	// re-verify admin status before consuming the wizard state and creating the game.
+	// Group membership is dynamic, so the admin could have been removed since the
+	// group was selected. Check here, while the wizard/keyboard are still intact,
+	// so a failure can surface as a toast without leaving the UI in a broken state.
+	if wizard.groupID != 0 {
+		isAdmin, err := b.isAdminInGroup(cb.From.ID, wizard.groupID)
+		if err != nil || !isAdmin {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgNotAdminInGroup))
+			return // wizard intact — keyboard still usable
+		}
+		b.pendingNewGameWizard.Delete(cb.Message.Chat.ID)
+		b.answerCallback(cb.ID, "")
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
+		edit.ReplyMarkup = &emptyKeyboard
+		b.api.Send(edit) //nolint:errcheck
+		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, lz)
+		return
+	}
+
 	b.pendingNewGameWizard.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
-
-	courts := selectedCourtsString(wizard)
 
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
 	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
@@ -584,7 +617,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	// Multiple groups — ask which one.
+	// Multiple groups with no pre-selection — ask which one.
 	key := pendingGameKey{chatID: cb.Message.Chat.ID, messageID: cb.Message.MessageID}
 	b.pendingGames.Store(key, &pendingGame{
 		gameDate:    gameDate,
