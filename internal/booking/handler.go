@@ -22,6 +22,7 @@ type eversportsClient interface {
 	CreateBooking(ctx context.Context, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*eversports.BookingResult, error)
 	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
 	GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]eversports.Slot, error)
+	GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID string) ([]eversports.Court, error)
 }
 
 // Handler wires all HTTP routes for the sports-booking-service.
@@ -33,9 +34,13 @@ type Handler struct {
 	courtIDs     []string
 	facilityUUID string
 	sportUUID    string
+	facilitySlug string
+	sportID      string
+	sportSlug    string
+	sportName    string
 }
 
-func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID string, courtIDs []string, facilityUUID, sportUUID string) *Handler {
+func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID string, courtIDs []string, facilityUUID, sportUUID, facilitySlug, sportID, sportSlug, sportName string) *Handler {
 	return &Handler{
 		eversports:   es,
 		logger:       logger,
@@ -44,6 +49,10 @@ func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID 
 		courtIDs:     courtIDs,
 		facilityUUID: facilityUUID,
 		sportUUID:    sportUUID,
+		facilitySlug: facilitySlug,
+		sportID:      sportID,
+		sportSlug:    sportSlug,
+		sportName:    sportName,
 	}
 }
 
@@ -56,6 +65,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
+	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v1/eversports/debug-page", h.debugPage)
 }
 
@@ -267,6 +277,24 @@ func filterSlots(slots []eversports.Slot, date, startTime, endTime string, myFil
 		out = append(out, s)
 	}
 	return out
+}
+
+// getCourts returns the list of courts at the configured facility by
+// parsing the Eversports booking calendar HTML.
+// Requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID,
+// and EVERSPORTS_SPORT_UUID to be configured.
+func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
+	if h.facilityID == "" || h.facilitySlug == "" || h.sportID == "" || h.sportUUID == "" {
+		writeError(w, http.StatusInternalServerError, "courts endpoint requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and EVERSPORTS_SPORT_UUID to be configured")
+		return
+	}
+	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, h.sportID, h.sportSlug, h.sportName, h.sportUUID)
+	if err != nil {
+		h.logger.Error("eversports get courts failed", "err", err)
+		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, courts)
 }
 
 // debugPage fetches the configured bookings page and returns diagnostic

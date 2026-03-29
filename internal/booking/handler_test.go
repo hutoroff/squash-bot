@@ -42,6 +42,8 @@ type mockClient struct {
 	slots         []eversports.Slot
 	slotsErr      error
 	lastSlotsDate string // records the startDate passed to GetSlots
+	courts        []eversports.Court
+	courtsErr     error
 }
 
 func (m *mockClient) GetBookings(_ context.Context) ([]eversports.Booking, error) {
@@ -72,6 +74,10 @@ func (m *mockClient) FetchPageDebugInfo(_ context.Context) (*eversports.PageDebu
 func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date string) ([]eversports.Slot, error) {
 	m.lastSlotsDate = date
 	return m.slots, m.slotsErr
+}
+
+func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _ string) ([]eversports.Court, error) {
+	return m.courts, m.courtsErr
 }
 
 // newTestHandler creates a Handler backed by the given mock.
@@ -768,5 +774,89 @@ func TestGetCourtBookings_FilterByTimeRange(t *testing.T) {
 	}
 	if got[0].Start != "1830" || got[1].Start != "2000" {
 		t.Errorf("unexpected starts: %v", []string{got[0].Start, got[1].Start})
+	}
+}
+
+// ─── GET /api/v1/eversports/courts ───────────────────────────────────────────
+
+func newCourtsHandler(mock *mockClient) *Handler {
+	return &Handler{
+		eversports:   mock,
+		logger:       testLogger,
+		version:      "test-version",
+		facilityID:   "76443",
+		facilitySlug: "squash-house-berlin-03",
+		sportID:      "496",
+		sportSlug:    "squash",
+		sportName:    "Squash",
+		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
+	}
+}
+
+func TestGetCourts_NotConfigured(t *testing.T) {
+	// Missing required fields — should return 500.
+	for _, h := range []*Handler{
+		{eversports: &mockClient{}, logger: testLogger},                                                         // all missing
+		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s", sportID: "1", sportUUID: "u"},        // facilityID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", sportID: "1", sportUUID: "u"},      // facilitySlug missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportUUID: "u"}, // sportID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportID: "1"},   // sportUUID missing
+	} {
+		srv := serve(h)
+		resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("want 500 when config incomplete, got %d", resp.StatusCode)
+		}
+	}
+}
+
+func TestGetCourts_Success(t *testing.T) {
+	courts := []eversports.Court{
+		{ID: "77385", UUID: "32ef2369-cf50-427f-8bdf-d380189584e8", Name: "Court 1"},
+		{ID: "77386", UUID: "aa2a1234-0000-0000-0000-000000000001", Name: "Court 2"},
+	}
+	mock := &mockClient{courts: courts}
+	srv := serve(newCourtsHandler(mock))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got []eversports.Court
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("courts count: want 2, got %d", len(got))
+	}
+	if got[0].ID != "77385" || got[0].Name != "Court 1" || got[0].UUID != "32ef2369-cf50-427f-8bdf-d380189584e8" {
+		t.Errorf("first court: unexpected value %+v", got[0])
+	}
+}
+
+func TestGetCourts_Error(t *testing.T) {
+	mock := &mockClient{courtsErr: errors.New("parse failed")}
+	srv := serve(newCourtsHandler(mock))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502, got %d", resp.StatusCode)
 	}
 }

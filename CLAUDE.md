@@ -261,10 +261,14 @@ EVERSPORTS_EMAIL=            # required; Eversports account email
 EVERSPORTS_PASSWORD=         # required; Eversports account password
 INTERNAL_API_SECRET=         # required; bearer token for authenticating callers
 SERVER_PORT=8081             # default 8081
-EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for /slots endpoint
-EVERSPORTS_COURT_IDS=        # optional; comma-separated numeric court IDs required for /slots endpoint
+EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for /games and /courts endpoints
+EVERSPORTS_COURT_IDS=        # optional; comma-separated numeric court IDs required for /games endpoint
 EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
-EVERSPORTS_SPORT_UUID=       # optional; UUID of the sport for booking creation (default: squash UUID b388b6e6-69de-11e8-bdc6-02bd505aa7b2)
+EVERSPORTS_SPORT_UUID=       # optional; UUID of the sport for booking creation and /courts endpoint (default: squash UUID b388b6e6-69de-11e8-bdc6-02bd505aa7b2)
+EVERSPORTS_FACILITY_SLUG=    # optional; facility slug from venue URL (e.g. "squash-house-berlin-03"); required for /courts endpoint
+EVERSPORTS_SPORT_ID=         # optional; numeric sport ID from booking calendar (e.g. "496" for squash); required for /courts endpoint
+EVERSPORTS_SPORT_SLUG=squash # default; sport slug used in /courts request
+EVERSPORTS_SPORT_NAME=Squash # default; sport display name used in /courts request
 EVERSPORTS_BOOKINGS_PATH=/user/bookings  # default; used only by the debug-page endpoint
 LOG_LEVEL=INFO
 TIMEZONE=UTC
@@ -305,6 +309,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - `GetBookings(ctx) ([]Booking, error)` — auto-logins if needed, calls activities endpoint, parses HTML; retries once on HTTP 401
 - `GetMatchByID(ctx, matchID string) (*Booking, error)` — auto-logins if needed, single match via GraphQL; retries once on HTTP 401
 - `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — auto-logins if needed; retries once on HTTP 401
+- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update`, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401
 - `FetchPageDebugInfo(ctx) (*PageDebugInfo, error)` — auto-logins if needed; retries once on login-page redirect
 
 ### HTTP endpoints
@@ -321,6 +326,7 @@ Authentication with Eversports is handled automatically: the service logs in on 
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
 | `DELETE` | `/api/v1/eversports/matches/{id}` | Cancel a booking by UUID; returns `{id, state, relativeLink}` |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID` + `EVERSPORTS_COURT_IDS` |
+| `GET`  | `/api/v1/eversports/courts` | List courts at the facility; returns `[{id, uuid, name}]`. Parses `POST /api/booking/calendar/update` HTML. Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, `EVERSPORTS_SPORT_UUID` |
 | `GET`  | `/api/v1/eversports/debug-page` | Diagnostic: fetch bookings page and return `__NEXT_DATA__` |
 
 ## Testing Approach

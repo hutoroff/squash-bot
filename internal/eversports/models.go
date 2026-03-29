@@ -160,6 +160,16 @@ type gqlMatchResponse struct {
 	} `json:"errors"`
 }
 
+// ─── Court ───────────────────────────────────────────────────────────────────
+
+// Court represents a bookable court at the facility, as returned by the
+// booking calendar update endpoint.
+type Court struct {
+	ID   string `json:"id"`   // numeric court ID, e.g. "77385"
+	UUID string `json:"uuid"` // court UUID, e.g. "32ef2369-cf50-427f-8bdf-d380189584e8"
+	Name string `json:"name"` // display name, e.g. "Court 1"
+}
+
 // ─── Slot (court availability) ───────────────────────────────────────────────
 
 // Slot represents a single available court time slot returned by the
