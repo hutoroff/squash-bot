@@ -20,6 +20,7 @@ type Handler struct {
 	groupRepo    *storage.GroupRepo
 	scheduler    *service.SchedulerService
 	logger       *slog.Logger
+	version      string
 }
 
 func NewHandler(
@@ -29,6 +30,7 @@ func NewHandler(
 	groupRepo *storage.GroupRepo,
 	scheduler *service.SchedulerService,
 	logger *slog.Logger,
+	version string,
 ) *Handler {
 	return &Handler{
 		gameService:  gameService,
@@ -37,11 +39,13 @@ func NewHandler(
 		groupRepo:    groupRepo,
 		scheduler:    scheduler,
 		logger:       logger,
+		version:      version,
 	}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
+	mux.HandleFunc("GET /version", h.getVersion)
 
 	// Games
 	mux.HandleFunc("POST /api/v1/games", h.createGame)
@@ -116,6 +120,10 @@ func requireBearer(secret string, next http.Handler) http.Handler {
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok")) //nolint:errcheck
+}
+
+func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
 }
 
 // writeJSON serialises v as JSON and writes it with the given status code.

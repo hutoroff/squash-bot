@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 	"github.com/vkhutorov/squash_bot/internal/config"
 	"github.com/vkhutorov/squash_bot/internal/telegram"
 )
+
+// Version is set at build time via -ldflags "-X main.Version=x.y.z".
+var Version = "dev"
 
 func main() {
 	cfg, err := config.LoadTelegram()
@@ -47,11 +51,30 @@ func main() {
 
 	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
 
+	mgmtVersion, err := mgmtClient.GetVersion(ctx)
+	if err != nil {
+		slog.Error("check management service version", "err", err)
+		os.Exit(1)
+	}
+	if majorPart(Version) != majorPart(mgmtVersion) {
+		slog.Error("management service major version mismatch",
+			"bot_version", Version, "management_version", mgmtVersion)
+		os.Exit(1)
+	}
+	slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
+
 	bot := telegram.New(tgAPI, loc, mgmtClient, cfg.ServiceAdminIDs, logger)
 
-	slog.Info("telegram-squash-bot starting...")
+	slog.Info("telegram-squash-bot starting", "version", Version)
 	bot.Start(ctx)
 	slog.Info("telegram-squash-bot stopped")
+}
+
+func majorPart(v string) string {
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		return v[:i]
+	}
+	return v
 }
 
 func loadTimezone(name string) (*time.Location, error) {

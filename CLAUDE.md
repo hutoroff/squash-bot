@@ -73,6 +73,45 @@ go test -tags integration -timeout 120s ./...
 # Build both binaries
 go build ./cmd/squash-games-management/
 go build ./cmd/telegram-squash-bot/
+
+# Build with explicit version (mirrors what Docker does)
+go build -ldflags="-X main.Version=1.2.3" ./cmd/squash-games-management/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram-squash-bot/
+```
+
+## Versioning & Release
+
+Each service has its own independent version stored in a plain-text file:
+- `cmd/squash-games-management/VERSION`
+- `cmd/telegram-squash-bot/VERSION`
+
+Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
+
+Version is injected at build time via `-ldflags "-X main.Version=<ver>"` and logged on startup. The management service exposes `GET /version` (unauthenticated, like `/health`) returning `{"version": "1.0.33"}`.
+
+**API compatibility rule**: services are compatible within the same major version. The telegram bot calls `GET /version` on the management service at startup and exits with an error if the major versions differ.
+
+### Releasing a service
+
+Trigger the relevant GitHub Actions workflow manually:
+- **Actions → Release Management Service** for `squash-games-management`
+- **Actions → Release Telegram Bot** for `telegram-squash-bot`
+
+Select bump type (`patch` / `minor` / `major`). The workflow will:
+1. Verify the CI job `build-and-test` passed for the exact HEAD commit (fails immediately otherwise).
+2. Bump the `VERSION` file.
+3. Build and push Docker images tagged `<version>` and `latest` to both Docker Hub and GHCR.
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z` or `telegram/vX.Y.Z`).
+
+**Required GitHub configuration (one-time setup):**
+- Variable `DOCKERHUB_USERNAME` — Docker Hub org or username for image names.
+- Secret `DOCKERHUB_TOKEN` — Docker Hub access token with push rights.
+- `GITHUB_TOKEN` is used automatically for GHCR pushes and the check-runs API.
+
+Image names follow the pattern:
+```
+<DOCKERHUB_USERNAME>/squash-games-management:<version>
+ghcr.io/<github_owner>/squash-games-management:<version>
 ```
 
 ## Key Business Logic Workflows

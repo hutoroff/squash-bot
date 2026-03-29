@@ -1,0 +1,92 @@
+name: Release Telegram Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify CI passed for this commit
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "Checking CI status for commit ${SHA}"
+          CONCLUSION=$(gh api \
+            "/repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "build-and-test")] | .[0].conclusion // "not_found"')
+          echo "CI conclusion: ${CONCLUSION}"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "ERROR: CI job 'build-and-test' has not successfully completed for commit ${SHA} (found: ${CONCLUSION})"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version
+        id: bump
+        run: |
+          VERSION=$(cat cmd/telegram-squash-bot/VERSION)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "$NEW_VERSION" > cmd/telegram-squash-bot/VERSION
+          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Bumped ${VERSION} → ${NEW_VERSION}"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.telegram
+          push: true
+          build-args: VERSION=${{ steps.bump.outputs.version }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/telegram-squash-bot:${{ steps.bump.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/telegram-squash-bot:latest
+            ghcr.io/${{ github.repository_owner }}/telegram-squash-bot:${{ steps.bump.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/telegram-squash-bot:latest
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cmd/telegram-squash-bot/VERSION
+          git commit -m "chore: release telegram-squash-bot v${{ steps.bump.outputs.version }}"
+          git tag "telegram/v${{ steps.bump.outputs.version }}"
+          git push
+          git push origin "telegram/v${{ steps.bump.outputs.version }}"

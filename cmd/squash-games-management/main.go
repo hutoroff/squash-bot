@@ -21,6 +21,9 @@ import (
 	"github.com/vkhutorov/squash_bot/migrations"
 )
 
+// Version is set at build time via -ldflags "-X main.Version=x.y.z".
+var Version = "dev"
+
 func main() {
 	cfg, err := config.LoadManagement()
 	if err != nil {
@@ -97,10 +100,10 @@ func main() {
 		"weekly_reminder", cfg.CronWeeklyReminder,
 	)
 
-	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger)
+	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
-	slog.Info("squash-games-management starting", "port", cfg.ServerPort)
+	slog.Info("squash-games-management starting", "port", cfg.ServerPort, "version", Version)
 	if err := api.Run(ctx, srv, logger); err != nil {
 		slog.Error("HTTP server error", "err", err)
 		os.Exit(1)

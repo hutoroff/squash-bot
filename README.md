@@ -124,6 +124,43 @@ go test ./...                                      # all tests
 go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
 ```
 
+## Versioning & Releases
+
+Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
+- `cmd/squash-games-management/VERSION`
+- `cmd/telegram-squash-bot/VERSION`
+
+The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. The management service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot calls this endpoint at startup and refuses to start if the management service's major version differs from its own.
+
+### Releasing a service
+
+Trigger the relevant workflow from **GitHub Actions → Run workflow**:
+
+- **Release Management Service** — for `squash-games-management`
+- **Release Telegram Bot** — for `telegram-squash-bot`
+
+Select the bump type (`patch` / `minor` / `major`). The workflow will:
+
+1. Verify the `build-and-test` CI job passed for the exact commit being released (fails immediately otherwise).
+2. Bump the `VERSION` file.
+3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z` or `telegram/vX.Y.Z`).
+
+### One-time GitHub setup
+
+| Type     | Name                | Value                                              |
+|----------|---------------------|----------------------------------------------------|
+| Variable | `DOCKERHUB_USERNAME`| Docker Hub org or username for image names         |
+| Secret   | `DOCKERHUB_TOKEN`   | Docker Hub access token with push rights           |
+
+`GITHUB_TOKEN` is provided automatically and is used for GHCR pushes and CI status checks.
+
+Published image names:
+```
+<DOCKERHUB_USERNAME>/squash-games-management:<version>
+ghcr.io/<github_owner>/squash-games-management:<version>
+```
+
 ## Bot Commands
 
 | Command      | Who can use     | Description                                      |
@@ -216,5 +253,5 @@ internal/
 migrations/       — embedded SQL migration files
 tests/            — integration and e2e tests
 .github/
-  workflows/      — CI pipeline
+  workflows/      — CI pipeline and release workflows
 ```

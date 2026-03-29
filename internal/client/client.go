@@ -333,6 +333,19 @@ func (c *Client) DeleteVenue(ctx context.Context, id, groupID int64) error {
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// ── Version ───────────────────────────────────────────────────────────────────
+
+// GetVersion returns the version string reported by the management service.
+func (c *Client) GetVersion(ctx context.Context) (string, error) {
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/version", nil, &v); err != nil {
+		return "", err
+	}
+	return v.Version, nil
+}
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 // TriggerScheduledEvent fires the named event (day_before, day_after, weekly_reminder)
