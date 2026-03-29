@@ -66,7 +66,7 @@ Key directories:
 - Main configuration is environment-variable based via `.env`.
 - `squash-games-management` requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
 - `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
-- `sports-booking-service` requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, `EVERSPORTS_USER_ID`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
+- `sports-booking-service` requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar. The legacy numeric user ID is fetched automatically from `GET /u/self` after login.
 - `INTERNAL_API_SECRET` is a shared secret used to authenticate all HTTP requests between services (bearer token in `Authorization` header).
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
@@ -92,7 +92,6 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
 # Run the sports-booking-service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
-  EVERSPORTS_USER_ID=<numeric_id> \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/sports-booking-service/main.go
 

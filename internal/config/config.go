@@ -62,10 +62,6 @@ type BookingConfig struct {
 	// query for availability via GET /api/v1/eversports/games.
 	// Find them in the courts[]= parameters of the /api/slot network request in browser DevTools.
 	EversportsCourtIDs string `env:"EVERSPORTS_COURT_IDS"`
-	// EversportsUserID is the legacy numeric user ID used by the /api/user/activities
-	// endpoint (e.g. 4802620). Find it by logging into eversports.de and inspecting
-	// the network request to /api/user/activities in browser DevTools.
-	EversportsUserID string `env:"EVERSPORTS_USER_ID,required"`
 	// EversportsBookingsPath is the URL path of the user's bookings page on
 	// Eversports. Used only by the GET /api/v1/eversports/debug-page diagnostic
 	// endpoint. Adjust if your account uses a locale prefix like /de/user/bookings.

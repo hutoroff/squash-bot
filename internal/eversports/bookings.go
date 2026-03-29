@@ -102,12 +102,14 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 const activitiesEndpoint = "/api/user/activities"
 
 // GetBookings returns all upcoming bookings for the authenticated user.
-// It calls GET /api/user/activities?userId=<activitiesUserID>&past=false and
+// It calls GET /api/user/activities?userId=<numericUserID>&past=false and
 // parses the HTML fragment returned in the response body.
 // It logs in automatically if no session is held, and retries once on HTTP 401.
+// The numeric user ID is fetched lazily from GET /u/self on the first call.
 func (c *Client) GetBookings(ctx context.Context) ([]Booking, error) {
 	do := func() ([]Booking, error) {
-		rawURL := fmt.Sprintf("%s%s?userId=%s&past=false", baseURL, activitiesEndpoint, c.activitiesUserID)
+		userID, _ := c.activitiesUserID.Load().(string)
+		rawURL := fmt.Sprintf("%s%s?userId=%s&past=false", baseURL, activitiesEndpoint, userID)
 		resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("eversports: GetBookings request: %w", err)
@@ -140,6 +142,14 @@ func (c *Client) GetBookings(ctx context.Context) ([]Booking, error) {
 
 	if err := c.EnsureLoggedIn(ctx); err != nil {
 		return nil, err
+	}
+	// Fetch the numeric user ID lazily on the first GetBookings call.
+	// Keeping this out of Login() means unrelated endpoints are not affected
+	// if /u/self is unavailable.
+	if userID, _ := c.activitiesUserID.Load().(string); userID == "" {
+		if err := c.fetchSelfUserID(ctx); err != nil {
+			return nil, fmt.Errorf("eversports: GetBookings fetch user ID: %w", err)
+		}
 	}
 	bookings, err := do()
 	if err != nil && errors.Is(err, errUnauthorized) {

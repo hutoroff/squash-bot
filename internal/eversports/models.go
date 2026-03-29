@@ -43,6 +43,19 @@ type activitiesResponse struct {
 	HTML   string `json:"html"`
 }
 
+// ─── Self endpoint ────────────────────────────────────────────────────────────
+
+// selfResponse is the JSON envelope returned by GET /u/self.
+// The numeric user ID is the legacy ID required by the /api/user/activities endpoint.
+type selfResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		User struct {
+			ID int `json:"id"`
+		} `json:"user"`
+	} `json:"data"`
+}
+
 // ─── GraphQL request envelope ─────────────────────────────────────────────────
 
 // gqlRequest is the generic GraphQL request body sent to /api/checkout.

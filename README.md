@@ -232,7 +232,6 @@ Guest spots count toward capacity.
 |-----------------------------|----------|-------------------|----------------------------------------------------------------|
 | `EVERSPORTS_EMAIL`          | Yes      | —                 | Eversports account email                                       |
 | `EVERSPORTS_PASSWORD`       | Yes      | —                 | Eversports account password                                    |
-| `EVERSPORTS_USER_ID`        | Yes      | —                 | Legacy numeric user ID for the bookings list endpoint. Find it by logging into eversports.de and checking the `userId=` parameter in the `/api/user/activities` network request in browser DevTools. |
 | `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric facility ID required for `GET /api/v1/eversports/games`. Find it in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). |
 | `EVERSPORTS_COURT_IDS`      | No       | _(empty)_         | Comma-separated numeric court IDs required for `GET /api/v1/eversports/games`. Find them in the `courts[]=` parameters of the `/api/slot` network request in browser DevTools. |
 | `EVERSPORTS_FACILITY_UUID`  | No       | `6266968c-…`      | UUID of the facility used when creating bookings via `POST /api/v1/eversports/matches`. Find it in the `facilityUuid` field of the `/checkout/api/payableitem/courtbooking` request body in browser DevTools. |
@@ -285,9 +284,9 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Yes | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means the slot is already reserved. Optionally filter by time window (inclusive) and/or by whether the authenticated user owns the reservation (`my=true\|false`). Requires `EVERSPORTS_FACILITY_ID` and `EVERSPORTS_COURT_IDS`. |
 | `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
 
-Authentication with Eversports is handled automatically: the service logs in on the first request and re-authenticates if the session expires. Login POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout` and stores the resulting `et` session cookie in an in-memory jar.
+Authentication with Eversports is handled automatically: the service logs in on the first request and re-authenticates if the session expires. Login POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout`, stores the resulting `et` session cookie in an in-memory jar, then calls `GET /u/self` to retrieve the authenticated user's legacy numeric ID.
 
-Bookings are fetched from `GET https://www.eversports.de/api/user/activities?userId=<EVERSPORTS_USER_ID>&past=false`, which returns an HTML fragment. The service parses that HTML to extract each booking's match UUID, start/end times, sport, venue name, and court. Because the activities endpoint does not include a timezone, returned times carry a UTC location as a placeholder; use `GET /api/v1/eversports/matches/{id}` for the accurate RFC 3339 timestamp with the correct offset.
+Bookings are fetched from `GET https://www.eversports.de/api/user/activities?userId=<numericID>&past=false`, where the numeric user ID is obtained automatically from `GET /u/self` after login. The response is an HTML fragment; the service parses it to extract each booking's match UUID, start/end times, sport, venue name, and court. Because the activities endpoint does not include a timezone, returned times carry a UTC location as a placeholder; use `GET /api/v1/eversports/matches/{id}` for the accurate RFC 3339 timestamp with the correct offset.
 
 All endpoints except `/health` and `/version` require `Authorization: Bearer <INTERNAL_API_SECRET>`.
 
@@ -296,7 +295,6 @@ To run locally:
 ```bash
 EVERSPORTS_EMAIL=you@example.com \
   EVERSPORTS_PASSWORD=secret \
-  EVERSPORTS_USER_ID=4802620 \
   INTERNAL_API_SECRET=test \
   go run cmd/sports-booking-service/main.go
 
