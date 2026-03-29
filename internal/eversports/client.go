@@ -1,0 +1,241 @@
+package eversports
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"sync/atomic"
+	"time"
+)
+
+const (
+	baseURL = "https://www.eversports.de"
+
+	// graphqlEndpoint is the single GraphQL gateway used by the Eversports frontend.
+	graphqlEndpoint = "/api/checkout"
+
+	// loginMutation is the GraphQL mutation captured from browser DevTools.
+	loginMutation = `mutation LoginCredentialLogin($params: AuthParamsInput!, $credentials: CredentialLoginInput!) {
+  credentialLogin(params: $params, credentials: $credentials) {
+    ... on AuthResult {
+      apiToken
+      user {
+        id
+        __typename
+      }
+      __typename
+    }
+    ... on ExpectedErrors {
+      errors {
+        id
+        message
+        path
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}`
+)
+
+// browserHeaders are sent with every request to mimic a real browser and pass
+// Cloudflare's bot-detection checks.
+var browserHeaders = map[string]string{
+	"User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Accept":          "application/json, text/plain, */*",
+	"Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+	"Referer":         baseURL + "/",
+	"Origin":          baseURL,
+}
+
+// htmlAccept is the Accept header a browser sends when navigating to a page
+// (as opposed to an XHR/fetch request). Using the correct value avoids servers
+// returning JSON or a redirect instead of the rendered HTML.
+const htmlAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+
+// Client interacts with the Eversports website via its internal GraphQL API
+// and HTML pages. Authentication is cookie-based: after login the `et` session
+// cookie is stored in the http.Client's CookieJar and sent automatically.
+type Client struct {
+	http         *http.Client
+	email        string
+	password     string
+	bookingsPath string // path for the SSR bookings page (used by debug-page endpoint)
+	// activitiesUserID is the legacy numeric user ID for GET /api/user/activities.
+	activitiesUserID string
+
+	loggedIn atomic.Bool
+	userID   atomic.Value // string — GraphQL UUID from login response
+
+	logger *slog.Logger
+}
+
+// New creates a new Eversports client.
+// bookingsPath is the URL path to the user's bookings page (e.g. "/user/bookings"),
+// used only by the debug-page diagnostic endpoint.
+// activitiesUserID is the legacy numeric user ID for the bookings list endpoint.
+func New(email, password, bookingsPath, activitiesUserID string, logger *slog.Logger) *Client {
+	jar, _ := cookiejar.New(nil) // never errors with nil options
+	return &Client{
+		http: &http.Client{
+			Jar:     jar,
+			Timeout: 30 * time.Second,
+		},
+		email:            email,
+		password:         password,
+		bookingsPath:     bookingsPath,
+		activitiesUserID: activitiesUserID,
+		logger:           logger,
+	}
+}
+
+// Login authenticates with Eversports via the GraphQL login mutation.
+// On success, the `et` session cookie is stored in the client's cookie jar
+// and all subsequent requests will be authenticated automatically.
+func (c *Client) Login(ctx context.Context) error {
+	payload := gqlRequest{
+		OperationName: "LoginCredentialLogin",
+		Variables: map[string]any{
+			"credentials": map[string]any{
+				"email":    c.email,
+				"password": c.password,
+			},
+			"params": map[string]any{
+				"origin":                   "ORIGIN_MARKETPLACE",
+				"corporatePartner":         nil,
+				"corporateInvitationToken": nil,
+				"queryString":              "?origin=eversport&redirectPath=%2F",
+				"region":                   "DE",
+			},
+		},
+		Query: loginMutation,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("eversports: marshal login payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("eversports: create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	setBrowserHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("eversports: login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("eversports: login HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// The response body may be empty; the session is established via the `et`
+	// cookie that the CookieJar stores automatically. We parse the body only
+	// when present to surface any GraphQL-level errors (e.g. wrong password).
+	respBody, _ := io.ReadAll(resp.Body)
+	if len(respBody) > 0 {
+		var gqlResp gqlLoginResponse
+		if err := json.Unmarshal(respBody, &gqlResp); err == nil {
+			cl := gqlResp.Data.CredentialLogin
+			if len(cl.Errors) > 0 {
+				return fmt.Errorf("eversports: login error: %s", cl.Errors[0].Message)
+			}
+			if len(gqlResp.Errors) > 0 {
+				return fmt.Errorf("eversports: graphql error: %s", gqlResp.Errors[0].Message)
+			}
+			if cl.User.ID != "" {
+				c.userID.Store(cl.User.ID)
+			}
+		}
+	}
+
+	// Confirm that the `et` cookie was actually set by the server.
+	if !c.hasCookie("et") {
+		return fmt.Errorf("eversports: login succeeded HTTP-wise but no 'et' session cookie was returned")
+	}
+
+	c.loggedIn.Store(true)
+	c.logger.Info("eversports login successful")
+	return nil
+}
+
+// IsLoggedIn returns true if the client holds a valid session cookie.
+func (c *Client) IsLoggedIn() bool {
+	return c.loggedIn.Load()
+}
+
+// doAuthed executes an authenticated JSON/XHR request. The CookieJar carries
+// the `et` session cookie automatically; no Authorization header is needed.
+// When body is non-nil, Content-Type is set to application/json.
+func (c *Client) doAuthed(ctx context.Context, method, rawURL string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	setBrowserHeaders(req)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return c.http.Do(req)
+}
+
+// doAuthedPage fetches an HTML page with the session cookie. It uses a
+// browser-style Accept header so the server returns rendered HTML rather than
+// JSON or a redirect. It also detects silent redirects: if the final URL after
+// following redirects differs from the requested URL, an error is returned so
+// callers can surface a clear "session expired / wrong path" message.
+func (c *Client) doAuthedPage(ctx context.Context, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	setBrowserHeaders(req)
+	req.Header.Set("Accept", htmlAccept)
+	// Page navigation does not set Origin/X-Requested-With.
+	req.Header.Del("Origin")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Detect silent redirect: http.Client follows 3xx automatically, so by the
+	// time we see the response it is always 200. We compare the final URL to
+	// the original to catch login-page redirects.
+	if finalURL := resp.Request.URL.String(); finalURL != rawURL {
+		resp.Body.Close()
+		return nil, fmt.Errorf("redirected from %s to %s — session may have expired or EVERSPORTS_BOOKINGS_PATH is wrong", rawURL, finalURL)
+	}
+
+	return resp, nil
+}
+
+// hasCookie returns true if the CookieJar holds a cookie with the given name
+// for the base Eversports URL.
+func (c *Client) hasCookie(name string) bool {
+	u, _ := url.Parse(baseURL)
+	for _, ck := range c.http.Jar.Cookies(u) {
+		if ck.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func setBrowserHeaders(req *http.Request) {
+	for k, v := range browserHeaders {
+		req.Header.Set(k, v)
+	}
+}

@@ -18,9 +18,10 @@ A Telegram bot for managing squash game coordination among friends. The bot hand
 ### Core Architecture Pattern
 ```
 telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
+sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
 **`squash-games-management`** (`cmd/squash-games-management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
@@ -32,6 +33,11 @@ Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - **telegram/**: Bot loop, callback handlers, slash commands, message formatting
 - **client/**: Typed HTTP client that calls the management service API
 - No DB access; all data operations go through HTTP
+
+**`sports-booking-service`** (`cmd/sports-booking-service/`)
+- **eversports/**: Reverse-engineered Eversports HTTP client (login, bookings list, single match)
+- **booking/**: REST API wrapping the Eversports client (port 8081)
+- No DB access; stateless except for the in-memory cookie jar that holds the session
 
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags)
@@ -66,17 +72,26 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 
+# Run sports-booking-service locally
+EVERSPORTS_EMAIL=<email> \
+  EVERSPORTS_PASSWORD=<password> \
+  EVERSPORTS_USER_ID=<numeric_id> \
+  INTERNAL_API_SECRET=<secret> \
+  go run cmd/sports-booking-service/main.go
+
 # Testing
 go test ./...
 go test -tags integration -timeout 120s ./...
 
-# Build both binaries
+# Build all binaries
 go build ./cmd/squash-games-management/
 go build ./cmd/telegram-squash-bot/
+go build ./cmd/sports-booking-service/
 
 # Build with explicit version (mirrors what Docker does)
 go build -ldflags="-X main.Version=1.2.3" ./cmd/squash-games-management/
 go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram-squash-bot/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/sports-booking-service/
 ```
 
 ## Versioning & Release
@@ -84,6 +99,7 @@ go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram-squash-bot/
 Each service has its own independent version stored in a plain-text file:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
+- `cmd/sports-booking-service/VERSION`
 
 Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
 
@@ -239,6 +255,60 @@ LOG_LEVEL=INFO
 TIMEZONE=UTC
 SERVICE_ADMIN_IDS=           # optional; comma-separated Telegram user IDs for /trigger
 ```
+
+**`sports-booking-service`:**
+```
+EVERSPORTS_EMAIL=            # required; Eversports account email
+EVERSPORTS_PASSWORD=         # required; Eversports account password
+EVERSPORTS_USER_ID=          # required; legacy numeric user ID (find via /api/user/activities?userId= in DevTools)
+INTERNAL_API_SECRET=         # required; bearer token for authenticating callers
+SERVER_PORT=8081             # default 8081
+EVERSPORTS_FACILITY_ID=      # optional; not used yet (reserved for court availability)
+EVERSPORTS_BOOKINGS_PATH=/user/bookings  # default; used only by the debug-page endpoint
+LOG_LEVEL=INFO
+TIMEZONE=UTC
+```
+
+## Sports Booking Service
+
+A standalone HTTP service (port 8081) that wraps the reverse-engineered Eversports.de internal API. All endpoints except `/health` and `/version` require `Authorization: Bearer <INTERNAL_API_SECRET>`.
+
+### Eversports API (reverse-engineered)
+
+**Login** — `POST https://www.eversports.de/api/checkout`
+- GraphQL mutation `LoginCredentialLogin` with `credentials: {email, password}` and `params: {origin, region, ...}`
+- Session established via the `et` cookie (UUID, 30 days, httpOnly, secure, SameSite=None) set in the response
+- Response body may be empty; cookie presence in the jar is the success signal
+
+**Bookings list** — `GET https://www.eversports.de/api/user/activities?userId=<numericID>&past=false`
+- Response: `{"status":"success","html":"<ul class=\"past-activities\"><li>...</li></ul>"}`
+- HTML fragment parsed with regex; each `<li>` contains:
+  - `data-match-relative-link="/match/<uuid>"` — match UUID (absent on some booking types)
+  - `<input id="google-calendar-start" value="YYYYMMDDTHHmmss">` / `google-calendar-end` — local venue time, no TZ
+  - `<input id="booking-sport" value="Squash">` / `facility-name`
+  - `<span class="session-info-value">Court 9</span>` — court name
+- `userId` is a **legacy numeric ID**, not the GraphQL UUID — supplied via `EVERSPORTS_USER_ID`
+
+**Single match** — `POST https://www.eversports.de/api/checkout` (GraphQL `Match` query by UUID)
+- Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
+
+**Client API** (`internal/eversports`):
+- `New(email, password, bookingsPath, activitiesUserID string, logger) *Client`
+- `Login(ctx) error` — stores `et` cookie; `IsLoggedIn() bool` checks cookie presence
+- `GetBookings(ctx) ([]Booking, error)` — calls activities endpoint, parses HTML
+- `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL
+- `FetchPageDebugInfo(ctx) (*PageDebugInfo, error)` — fetches `bookingsPath`, extracts `__NEXT_DATA__`
+
+### HTTP endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/health` | Liveness probe (no auth) |
+| `GET`  | `/version` | Service version (no auth) |
+| `POST` | `/api/v1/eversports/login` | Authenticate with Eversports |
+| `GET`  | `/api/v1/eversports/bookings` | List upcoming bookings |
+| `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
+| `GET`  | `/api/v1/eversports/debug-page` | Diagnostic: fetch bookings page and return `__NEXT_DATA__` |
 
 ## Testing Approach
 - Unit tests for services and message formatting

@@ -7,6 +7,7 @@ bin/
 *.dylib
 /squash-games-management
 /telegram-squash-bot
+/sports-booking-service
 
 # Test artifacts
 *.test

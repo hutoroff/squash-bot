@@ -31,12 +31,14 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 
 ```
 telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
+                                  →  sports-booking-service   →  eversports.de
 ```
 
-Two independently deployable binaries in one Go module:
+Three independently deployable binaries in one Go module:
 
 - **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
 - **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
+- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; handles login and fetching the user's court bookings
 
 ## Quick Start
 
@@ -134,8 +136,9 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
+- `cmd/sports-booking-service/VERSION`
 
-The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. The management service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot calls this endpoint at startup and refuses to start if the management service's major version differs from its own.
+The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. Each service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot additionally calls `GET /version` on the management service at startup and refuses to start if the major versions differ.
 
 ### Releasing a service
 
@@ -143,13 +146,14 @@ Trigger the relevant workflow from **GitHub Actions → Run workflow**:
 
 - **Release Management Service** — for `squash-games-management`
 - **Release Telegram Bot** — for `telegram-squash-bot`
+- **Release Booking Service** — for `sports-booking-service`
 
 Select the bump type (`patch` / `minor` / `major`). The workflow will:
 
 1. Verify the `build-and-test` CI job passed for the exact commit being released (fails immediately otherwise).
 2. Bump the `VERSION` file.
 3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
-4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z` or `telegram/vX.Y.Z`).
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, or `booking/vX.Y.Z`).
 
 ### One-time GitHub setup
 
@@ -164,6 +168,9 @@ Published image names:
 ```
 <DOCKERHUB_USERNAME>/squash-games-management:<version>
 ghcr.io/<github_owner>/squash-games-management:<version>
+
+<DOCKERHUB_USERNAME>/sports-booking-service:<version>
+ghcr.io/<github_owner>/sports-booking-service:<version>
 ```
 
 ## Bot Commands
@@ -219,6 +226,20 @@ Guest spots count toward capacity.
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
 | `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
 
+### sports-booking-service
+
+| Variable                    | Required | Default           | Description                                                    |
+|-----------------------------|----------|-------------------|----------------------------------------------------------------|
+| `EVERSPORTS_EMAIL`          | Yes      | —                 | Eversports account email                                       |
+| `EVERSPORTS_PASSWORD`       | Yes      | —                 | Eversports account password                                    |
+| `EVERSPORTS_USER_ID`        | Yes      | —                 | Legacy numeric user ID for the bookings list endpoint. Find it by logging into eversports.de and checking the `userId=` parameter in the `/api/user/activities` network request in browser DevTools. |
+| `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric ID visible in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). Not used yet; reserved for a future iteration for court availability checking. |
+| `EVERSPORTS_BOOKINGS_PATH`  | No       | `/user/bookings`  | URL path used by the `GET /api/v1/eversports/debug-page` diagnostic endpoint; change if your locale uses a prefix like `/de/user/bookings` |
+| `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
+| `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
+| `LOG_LEVEL`                 | No       | `INFO`            | `INFO` or `DEBUG`                                              |
+| `TIMEZONE`                  | No       | `UTC`             | Timezone for log timestamps                                    |
+
 ## Scheduled Tasks
 
 A single 5-minute poll (configured via `CRON_POLL`) runs three tasks, each using per-group timezone and per-venue configuration:
@@ -246,14 +267,53 @@ The bot tracks which groups it belongs to in the database. When added to a group
 
 When the bot is promoted or demoted in a group, it updates its admin status accordingly. Groups are removed from the tracking table when the bot is kicked.
 
+## Sports Booking Service
+
+**sports-booking-service** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account.
+
+| Method | Path                                  | Auth | Description                                                    |
+|--------|---------------------------------------|------|----------------------------------------------------------------|
+| `GET`  | `/health`                             | No   | Liveness probe                                                 |
+| `GET`  | `/version`                            | No   | Service version                                                |
+| `POST` | `/api/v1/eversports/login`            | Yes  | Authenticate with Eversports (stores the session cookie)       |
+| `GET`  | `/api/v1/eversports/bookings`         | Yes  | List the authenticated user's upcoming court bookings          |
+| `GET`  | `/api/v1/eversports/matches/{id}`     | Yes  | Fetch a single booking by its UUID with full detail            |
+| `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
+
+Authentication with Eversports is cookie-based. The service POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout` and stores the resulting `et` session cookie in an in-memory jar.
+
+Bookings are fetched from `GET https://www.eversports.de/api/user/activities?userId=<EVERSPORTS_USER_ID>&past=false`, which returns an HTML fragment. The service parses that HTML to extract each booking's match UUID, start/end times, sport, venue name, and court. Because the activities endpoint does not include a timezone, returned times carry a UTC location as a placeholder; use `GET /api/v1/eversports/matches/{id}` for the accurate RFC 3339 timestamp with the correct offset.
+
+All endpoints except `/health` and `/version` require `Authorization: Bearer <INTERNAL_API_SECRET>`.
+
+To run locally:
+
+```bash
+EVERSPORTS_EMAIL=you@example.com \
+  EVERSPORTS_PASSWORD=secret \
+  EVERSPORTS_USER_ID=4802620 \
+  INTERNAL_API_SECRET=test \
+  go run cmd/sports-booking-service/main.go
+
+# Trigger login
+curl -X POST -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/login
+
+# Fetch bookings
+curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/bookings
+
+# Fetch single booking detail (UUID from bookings list)
+curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/matches/<uuid>
+```
+
 ## Project Structure
 
 ```
 cmd/
   squash-games-management/  — management service entry point
   telegram-squash-bot/      — telegram bot entry point
+  sports-booking-service/   — Eversports booking service entry point
 internal/
-  config/         — env-based config (TelegramConfig + ManagementConfig)
+  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
   models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
   storage/        — SQL repositories (games, players, participations, guests, groups)
@@ -261,6 +321,8 @@ internal/
   api/            — HTTP handlers for the management service REST API
   client/         — typed HTTP client used by the telegram bot
   telegram/       — bot loop, handlers, commands, formatter
+  eversports/     — Eversports HTTP client (GraphQL login, HTML scraping for bookings)
+  booking/        — HTTP server wrapping the Eversports client
 migrations/       — embedded SQL migration files
 tests/            — integration and e2e tests
 .github/

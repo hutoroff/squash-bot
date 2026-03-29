@@ -50,6 +50,38 @@ func LoadManagement() (*ManagementConfig, error) {
 	return cfg, nil
 }
 
+// BookingConfig holds configuration for the sports-booking-service.
+type BookingConfig struct {
+	EversportsEmail    string `env:"EVERSPORTS_EMAIL,required"`
+	EversportsPassword string `env:"EVERSPORTS_PASSWORD,required"`
+	// EversportsFacilityID is the numeric Eversports facility ID (visible in the
+	// venue page URL, e.g. eversports.de/s/venue-name-76443). Not used yet in
+	// this iteration; will be required for court availability checking.
+	EversportsFacilityID string `env:"EVERSPORTS_FACILITY_ID"`
+	// EversportsUserID is the legacy numeric user ID used by the /api/user/activities
+	// endpoint (e.g. 4802620). Find it by logging into eversports.de and inspecting
+	// the network request to /api/user/activities in browser DevTools.
+	EversportsUserID string `env:"EVERSPORTS_USER_ID,required"`
+	// EversportsBookingsPath is the URL path of the user's bookings page on
+	// Eversports. Used only by the GET /api/v1/eversports/debug-page diagnostic
+	// endpoint. Adjust if your account uses a locale prefix like /de/user/bookings.
+	EversportsBookingsPath string `env:"EVERSPORTS_BOOKINGS_PATH" envDefault:"/user/bookings"`
+	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
+	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
+	ServerPort        string `env:"SERVER_PORT"           envDefault:"8081"`
+	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
+	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
+}
+
+func LoadBooking() (*BookingConfig, error) {
+	cfg := &BookingConfig{}
+	loadDotenv()
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func loadDotenv() {
 	if err := godotenv.Load(); err != nil {
 		slog.Debug("Error loading .env file")
