@@ -1,15 +1,26 @@
 package booking
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/vkhutorov/squash_bot/internal/eversports"
 )
 
+// eversportsClient is the subset of *eversports.Client methods used by Handler.
+// Defined as an interface to allow test doubles.
+type eversportsClient interface {
+	Login(ctx context.Context) error
+	IsLoggedIn() bool
+	GetBookings(ctx context.Context) ([]eversports.Booking, error)
+	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
+	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
+}
+
 // Handler wires all HTTP routes for the sports-booking-service.
 type Handler struct {
-	eversports *eversports.Client
+	eversports eversportsClient
 	logger     *slog.Logger
 	version    string
 }
