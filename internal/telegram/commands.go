@@ -90,7 +90,7 @@ func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	text := "Your next game:\n\n" + FormatGameMessage(game, participations, guests, b.loc)
+	text := "Your next game:\n\n" + FormatGameMessage(game, participations, guests, b.loc, time.Now())
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, text)
 

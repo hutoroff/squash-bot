@@ -172,6 +172,38 @@ func TestGameRepo_GetGamesForDayBefore(t *testing.T) {
 	}
 }
 
+// TestGameRepo_GetGamesForDayBefore_ExcludesCompleted is a regression test for the
+// bug where GetGamesForDayBefore was missing "AND completed = false", causing the
+// day-before notification to fire for games that were already completed (e.g. via
+// a manual day_after trigger).
+func TestGameRepo_GetGamesForDayBefore_ExcludesCompleted(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	repo := storage.NewGameRepo(testPool)
+
+	tomorrow := time.Now().Add(24 * time.Hour)
+	from := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 1)
+
+	// Active game: should appear in results.
+	active, _ := repo.Create(ctx, newGame(-1, from.Add(18*time.Hour), "1"))
+
+	// Completed game in same time range: must NOT appear even though notified_day_before is false.
+	completed, _ := repo.Create(ctx, newGame(-1, from.Add(19*time.Hour), "2"))
+	_ = repo.MarkCompleted(ctx, completed.ID)
+
+	games, err := repo.GetGamesForDayBefore(ctx, from, to)
+	if err != nil {
+		t.Fatalf("GetGamesForDayBefore: %v", err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("got %d games, want 1 (completed game must be excluded)", len(games))
+	}
+	if games[0].ID != active.ID {
+		t.Errorf("got game ID %d, want active game ID %d", games[0].ID, active.ID)
+	}
+}
+
 func TestGameRepo_MarkNotifiedDayBefore(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)

@@ -251,6 +251,66 @@ func TestParseAdminCommand_CourtsLengthLimit(t *testing.T) {
 	}
 }
 
+// TestParseAdminCommand_MissingCourtsPrefix is a regression test for the bug where
+// `strings.TrimPrefix` was used unconditionally, so bare court numbers like "2,3,4"
+// (without the "courts:" prefix) were silently accepted and stored.
+func TestParseAdminCommand_MissingCourtsPrefix(t *testing.T) {
+	loc := time.UTC
+	cases := []string{
+		"2030-01-01 18:00\n2,3,4",         // bare numbers
+		"2030-01-01 18:00\n court: 2,3,4", // wrong keyword
+		"2030-01-01 18:00\nCourts: 2,3,4", // wrong case (prefix match is case-sensitive)
+	}
+	for _, raw := range cases {
+		_, _, err := parseAdminCommand(raw, loc)
+		if err == nil {
+			t.Errorf("parseAdminCommand(%q): expected error for missing 'courts:' prefix, got nil", raw)
+		}
+	}
+}
+
+// TestParseAdminCommand_TrailingComma is a regression test for the inconsistency
+// where processCourtsEdit rejects "2," but parseAdminCommand used to accept it,
+// producing a spurious empty court entry and an inflated courts_count.
+func TestParseAdminCommand_TrailingComma(t *testing.T) {
+	loc := time.UTC
+	cases := []string{
+		"2030-01-01 18:00\ncourts: 2,",
+		"2030-01-01 18:00\ncourts: ,3",
+		"2030-01-01 18:00\ncourts: 1,,2",
+		"2030-01-01 18:00\ncourts: ,",
+	}
+	for _, raw := range cases {
+		_, _, err := parseAdminCommand(raw, loc)
+		if err == nil {
+			t.Errorf("parseAdminCommand(%q): expected error for empty court part, got nil", raw)
+		}
+	}
+}
+
+// TestParseAdminCommand_ValidCourts ensures well-formed inputs still pass.
+func TestParseAdminCommand_ValidCourts(t *testing.T) {
+	loc := time.UTC
+	cases := []struct {
+		input  string
+		courts string
+	}{
+		{"2030-01-01 18:00\ncourts: 2,3,4", "2,3,4"},
+		{"2030-01-01 18:00\ncourts: 5", "5"},
+		{"2030-01-01 18:00\ncourts: 10,11", "10,11"},
+	}
+	for _, tc := range cases {
+		_, courts, err := parseAdminCommand(tc.input, loc)
+		if err != nil {
+			t.Errorf("parseAdminCommand(%q): unexpected error: %v", tc.input, err)
+			continue
+		}
+		if courts != tc.courts {
+			t.Errorf("parseAdminCommand(%q): got courts %q, want %q", tc.input, courts, tc.courts)
+		}
+	}
+}
+
 // --- isBotMentioned UTF-16 offset correctness ---
 
 // newMinimalBot returns a Bot with only the api.Self.UserName field set, which is

@@ -74,7 +74,7 @@ func main() {
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
 	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 
-	c := cron.New()
+	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronDayBefore, scheduler.RunDayBeforeCheck); err != nil {
 		slog.Error("add day-before cron", "spec", cfg.CronDayBefore, "err", err)
 		os.Exit(1)

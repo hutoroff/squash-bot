@@ -183,7 +183,7 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 		return
 	}
 
-	msgText := FormatGameMessage(game, nil, nil, b.loc)
+	msgText := FormatGameMessage(game, nil, nil, b.loc, time.Now())
 	keyboard := gameKeyboard(game.ID)
 
 	announcement := tgbotapi.NewMessage(groupID, msgText)
@@ -435,7 +435,7 @@ func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery,
 }
 
 func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation) {
-	msgText := FormatGameMessage(game, participations, guests, b.loc)
+	msgText := FormatGameMessage(game, participations, guests, b.loc, time.Now())
 	keyboard := gameKeyboard(game.ID)
 
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
@@ -927,13 +927,21 @@ func parseAdminCommand(text string, loc *time.Location) (time.Time, string, erro
 		return time.Time{}, "", fmt.Errorf("game date must be in the future")
 	}
 
-	courtsLine := strings.TrimPrefix(strings.TrimSpace(lines[1]), "courts:")
-	courts := strings.ReplaceAll(strings.TrimSpace(courtsLine), " ", "")
+	trimmedLine := strings.TrimSpace(lines[1])
+	if !strings.HasPrefix(trimmedLine, "courts:") {
+		return time.Time{}, "", fmt.Errorf("second line must start with 'courts:'")
+	}
+	courts := strings.ReplaceAll(strings.TrimSpace(strings.TrimPrefix(trimmedLine, "courts:")), " ", "")
 	if courts == "" {
 		return time.Time{}, "", fmt.Errorf("empty courts")
 	}
 	if len(courts) > maxCourtsLen {
 		return time.Time{}, "", fmt.Errorf("courts string too long (max %d chars)", maxCourtsLen)
+	}
+	for _, p := range strings.Split(courts, ",") {
+		if p == "" {
+			return time.Time{}, "", fmt.Errorf("invalid courts: empty part (use format like 2,3,4)")
+		}
 	}
 
 	return gameDate, courts, nil

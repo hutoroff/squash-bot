@@ -10,8 +10,9 @@ import (
 
 // FormatGameMessage produces the announcement text for a squash game.
 // loc is used to display the game date/time in the correct local timezone.
+// now is used for the "Last updated" footer; callers pass time.Now().
 // guests are shown after the registered player list and count toward the total.
-func FormatGameMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location) string {
+func FormatGameMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location, now time.Time) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -40,7 +41,7 @@ func FormatGameMessage(game *models.Game, participants []*models.GameParticipati
 		num++
 	}
 
-	sb.WriteString(fmt.Sprintf("\nLast updated: %s", formatUpdatedAt(time.Now())))
+	sb.WriteString(fmt.Sprintf("\nLast updated: %s", formatUpdatedAt(now.In(loc))))
 	return sb.String()
 }
 

@@ -86,7 +86,8 @@ func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time)
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE game_date >= $1 AND game_date < $2
-		  AND notified_day_before = false`
+		  AND notified_day_before = false
+		  AND completed = false`
 
 	slog.Debug("GameRepo.GetGamesForDayBefore", "from", from, "to", to)
 
