@@ -5,8 +5,8 @@ bin/
 *.dll
 *.so
 *.dylib
-squash-games-management
-telegram-squash-bot
+/squash-games-management
+/telegram-squash-bot
 
 # Test artifacts
 *.test

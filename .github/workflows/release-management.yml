@@ -23,9 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Use a token that can push to protected branches if needed.
-          # The default GITHUB_TOKEN works for unprotected main branches.
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Verify CI passed for this commit
         run: |
@@ -56,6 +55,20 @@ jobs:
           echo "$NEW_VERSION" > cmd/squash-games-management/VERSION
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Bumped ${VERSION} → ${NEW_VERSION}"
+
+      - name: Generate changelog
+        run: |
+          PREV_TAG=$(git tag --list "management/v*" --sort=-version:refname | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s (%h)" | head -30 > /tmp/changelog.md
+          else
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" > /tmp/changelog.md
+          fi
+          if [ ! -s /tmp/changelog.md ]; then
+            echo "No changes recorded." > /tmp/changelog.md
+          fi
+          echo "Changelog:"
+          cat /tmp/changelog.md
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -92,3 +105,11 @@ jobs:
           git tag "management/v${{ steps.bump.outputs.version }}"
           git push
           git push origin "management/v${{ steps.bump.outputs.version }}"
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "management/v${{ steps.bump.outputs.version }}" \
+            --title "Management Service v${{ steps.bump.outputs.version }}" \
+            --notes-file /tmp/changelog.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
