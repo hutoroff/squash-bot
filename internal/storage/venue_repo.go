@@ -19,19 +19,24 @@ func NewVenueRepo(pool *pgxpool.Pool) *VenueRepo {
 
 func (r *VenueRepo) Create(ctx context.Context, venue *models.Venue) (*models.Venue, error) {
 	const q = `
-		INSERT INTO venues (group_id, name, courts, time_slots, address)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at`
+		INSERT INTO venues (group_id, name, courts, time_slots, address, grace_period_hours, game_days, booking_opens_days)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
+		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at`
 
 	slog.Debug("VenueRepo.Create", "group_id", venue.GroupID, "name", venue.Name)
 
-	row := r.pool.QueryRow(ctx, q, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, nullableText(venue.Address))
+	row := r.pool.QueryRow(ctx, q,
+		venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, nullableText(venue.Address),
+		venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays,
+	)
 	return scanVenue(row)
 }
 
 func (r *VenueRepo) GetByID(ctx context.Context, id int64) (*models.Venue, error) {
 	const q = `
-		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at
+		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at
 		FROM venues WHERE id = $1`
 
 	slog.Debug("VenueRepo.GetByID", "id", id)
@@ -43,7 +48,8 @@ func (r *VenueRepo) GetByID(ctx context.Context, id int64) (*models.Venue, error
 // GetByIDAndGroupID fetches a venue only if it belongs to the given group (ownership check).
 func (r *VenueRepo) GetByIDAndGroupID(ctx context.Context, id, groupID int64) (*models.Venue, error) {
 	const q = `
-		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at
+		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at
 		FROM venues WHERE id = $1 AND group_id = $2`
 
 	slog.Debug("VenueRepo.GetByIDAndGroupID", "id", id, "group_id", groupID)
@@ -54,7 +60,8 @@ func (r *VenueRepo) GetByIDAndGroupID(ctx context.Context, id, groupID int64) (*
 
 func (r *VenueRepo) GetByGroupID(ctx context.Context, groupID int64) ([]*models.Venue, error) {
 	const q = `
-		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at
+		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at
 		FROM venues WHERE group_id = $1 ORDER BY name`
 
 	slog.Debug("VenueRepo.GetByGroupID", "group_id", groupID)
@@ -79,14 +86,17 @@ func (r *VenueRepo) GetByGroupID(ctx context.Context, groupID int64) ([]*models.
 func (r *VenueRepo) Update(ctx context.Context, venue *models.Venue) (*models.Venue, error) {
 	const q = `
 		UPDATE venues
-		SET name = $1, courts = $2, time_slots = $3, address = $4
-		WHERE id = $5 AND group_id = $6
-		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at`
+		SET name = $1, courts = $2, time_slots = $3, address = $4,
+		    grace_period_hours = $5, game_days = $6, booking_opens_days = $7
+		WHERE id = $8 AND group_id = $9
+		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
+		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at`
 
 	slog.Debug("VenueRepo.Update", "id", venue.ID, "group_id", venue.GroupID)
 
 	row := r.pool.QueryRow(ctx, q,
 		venue.Name, venue.Courts, venue.TimeSlots, nullableText(venue.Address),
+		venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays,
 		venue.ID, venue.GroupID,
 	)
 	return scanVenue(row)
@@ -106,10 +116,19 @@ func (r *VenueRepo) Delete(ctx context.Context, id, groupID int64) error {
 	return nil
 }
 
+// SetLastBookingReminderAt marks the booking reminder as sent now for a venue.
+func (r *VenueRepo) SetLastBookingReminderAt(ctx context.Context, venueID int64) error {
+	const q = `UPDATE venues SET last_booking_reminder_at = now() WHERE id = $1`
+	slog.Debug("VenueRepo.SetLastBookingReminderAt", "venue_id", venueID)
+	_, err := r.pool.Exec(ctx, q, venueID)
+	return err
+}
+
 func scanVenue(s scanner) (*models.Venue, error) {
 	var v models.Venue
 	err := s.Scan(
 		&v.ID, &v.GroupID, &v.Name, &v.Courts, &v.TimeSlots, &v.Address, &v.CreatedAt,
+		&v.GracePeriodHours, &v.GameDays, &v.BookingOpensDays, &v.LastBookingReminderAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan venue: %w", err)

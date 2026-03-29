@@ -22,16 +22,14 @@ type TelegramConfig struct {
 
 // ManagementConfig holds configuration for the squash-games-management service.
 type ManagementConfig struct {
-	DatabaseURL        string `env:"DATABASE_URL,required"`
-	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
+	DatabaseURL      string `env:"DATABASE_URL,required"`
+	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
-	InternalAPISecret  string `env:"INTERNAL_API_SECRET,required"`
-	ServerPort         string `env:"SERVER_PORT"           envDefault:"8080"`
-	CronDayBefore      string `env:"CRON_DAY_BEFORE"       envDefault:"0 20 * * *"`
-	CronDayAfter       string `env:"CRON_DAY_AFTER"        envDefault:"0 8 * * *"`
-	CronWeeklyReminder string `env:"CRON_WEEKLY_REMINDER"  envDefault:"0 10 * * 1"`
-	LogLevel           string `env:"LOG_LEVEL"             envDefault:"INFO"`
-	Timezone           string `env:"TIMEZONE"              envDefault:"UTC"`
+	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
+	ServerPort        string `env:"SERVER_PORT"           envDefault:"8080"`
+	CronPoll          string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
+	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
+	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {

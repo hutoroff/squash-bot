@@ -245,13 +245,13 @@ func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, l
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayBefore), "trigger:day_before"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnCancellationReminder), "trigger:cancellation_reminder"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayAfter), "trigger:day_after"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayAfterCleanup), "trigger:day_after_cleanup"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnWeeklyReminder), "trigger:weekly_reminder"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBookingReminder), "trigger:booking_reminder"),
 		),
 	)
 

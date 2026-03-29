@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,13 +15,15 @@ import (
 )
 
 type SchedulerService struct {
-	api       *tgbotapi.BotAPI
-	gameRepo  *storage.GameRepo
-	partRepo  *storage.ParticipationRepo
-	guestRepo *storage.GuestRepo
-	groupRepo *storage.GroupRepo
-	loc       *time.Location
-	logger    *slog.Logger
+	api        *tgbotapi.BotAPI
+	gameRepo   *storage.GameRepo
+	partRepo   *storage.ParticipationRepo
+	guestRepo  *storage.GuestRepo
+	groupRepo  *storage.GroupRepo
+	venueRepo  *storage.VenueRepo
+	loc        *time.Location
+	logger     *slog.Logger
+	pollWindow time.Duration // half the configured poll interval; used as timing gate for reminders
 }
 
 func NewSchedulerService(
@@ -29,18 +32,30 @@ func NewSchedulerService(
 	partRepo *storage.ParticipationRepo,
 	guestRepo *storage.GuestRepo,
 	groupRepo *storage.GroupRepo,
+	venueRepo *storage.VenueRepo,
 	loc *time.Location,
 	logger *slog.Logger,
+	pollWindow time.Duration,
 ) *SchedulerService {
 	return &SchedulerService{
-		api:       api,
-		gameRepo:  gameRepo,
-		partRepo:  partRepo,
-		guestRepo: guestRepo,
-		groupRepo: groupRepo,
-		loc:       loc,
-		logger:    logger,
+		api:        api,
+		gameRepo:   gameRepo,
+		partRepo:   partRepo,
+		guestRepo:  guestRepo,
+		groupRepo:  groupRepo,
+		venueRepo:  venueRepo,
+		loc:        loc,
+		logger:     logger,
+		pollWindow: pollWindow,
 	}
+}
+
+// RunScheduledTasks is called by the single poll cron (default every 5 minutes).
+// It dispatches to all three scheduler tasks.
+func (s *SchedulerService) RunScheduledTasks() {
+	s.RunCancellationReminders()
+	s.RunBookingReminders()
+	s.RunDayAfterCleanup()
 }
 
 // groupLang returns a Localizer for the given chatID's stored language.
@@ -53,38 +68,63 @@ func (s *SchedulerService) groupLang(ctx context.Context, chatID int64) *i18n.Lo
 	return i18n.New(i18n.Normalize(group.Language))
 }
 
-// RunDayBeforeCheck checks tomorrow's games and sends notifications if player count != capacity.
-func (s *SchedulerService) RunDayBeforeCheck() {
-	s.logger.Info("day-before check started")
-	ctx := context.Background()
-
-	now := time.Now().In(s.loc)
-	tomorrow := now.AddDate(0, 0, 1)
-	from := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, s.loc)
-	to := from.AddDate(0, 0, 1)
-
-	games, err := s.gameRepo.GetGamesForDayBefore(ctx, from, to)
+// groupTimezone loads the IANA timezone for a group, falling back to the service default.
+func (s *SchedulerService) groupTimezone(group *models.Group) *time.Location {
+	if group.Timezone == "" {
+		return s.loc
+	}
+	loc, err := time.LoadLocation(group.Timezone)
 	if err != nil {
-		s.logger.Error("day-before check: query games", "err", err)
+		s.logger.Warn("invalid group timezone, using service default", "timezone", group.Timezone, "chat_id", group.ChatID)
+		return s.loc
+	}
+	return loc
+}
+
+// RunCancellationReminders fires capacity notifications 6 hours before the cancellation
+// grace period ends for each upcoming game. The grace period is configured per venue
+// (default 24 hours). The reminder fires when:
+//
+//	now ≈ game_date − grace_period_hours − 6h  (within ±pollWindow)
+func (s *SchedulerService) RunCancellationReminders() {
+	s.logger.Info("cancellation reminder check started")
+	ctx := context.Background()
+	now := time.Now()
+
+	games, err := s.gameRepo.GetUpcomingUnnotifiedGames(ctx)
+	if err != nil {
+		s.logger.Error("cancellation reminder: query games", "err", err)
 		return
 	}
-	s.logger.Info("found games", "count", len(games))
+	s.logger.Info("upcoming unnotified games", "count", len(games))
 
 	for _, game := range games {
-		s.processDayBefore(ctx, game)
+		gracePeriodHours := 24
+		if game.Venue != nil {
+			gracePeriodHours = game.Venue.GracePeriodHours
+		}
+		reminderAt := game.GameDate.Add(-time.Duration(gracePeriodHours+6) * time.Hour)
+		diff := now.Sub(reminderAt)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > s.pollWindow {
+			continue
+		}
+		s.processCancellationReminder(ctx, game)
 	}
 }
 
-func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Game) {
+func (s *SchedulerService) processCancellationReminder(ctx context.Context, game *models.Game) {
 	registeredCount, err := s.partRepo.GetRegisteredCount(ctx, game.ID)
 	if err != nil {
-		s.logger.Error("day-before check: get registered count", "game_id", game.ID, "err", err)
+		s.logger.Error("cancellation reminder: get registered count", "game_id", game.ID, "err", err)
 		return
 	}
 
 	guestCount, err := s.guestRepo.GetCountByGame(ctx, game.ID)
 	if err != nil {
-		s.logger.Error("day-before check: get guest count", "game_id", game.ID, "err", err)
+		s.logger.Error("cancellation reminder: get guest count", "game_id", game.ID, "err", err)
 		return
 	}
 
@@ -105,7 +145,7 @@ func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Ga
 		action = "skipped"
 	}
 
-	s.logger.Info("Day-before check",
+	s.logger.Info("cancellation reminder",
 		"game_id", game.ID,
 		"players", count,
 		"capacity", capacity,
@@ -118,39 +158,150 @@ func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Ga
 
 	msg := tgbotapi.NewMessage(game.ChatID, text)
 	if _, err := s.api.Send(msg); err != nil {
-		s.logger.Error("day-before check: send notification", "game_id", game.ID, "err", err)
+		s.logger.Error("cancellation reminder: send notification", "game_id", game.ID, "err", err)
 		return
 	}
 
 	if err := s.gameRepo.MarkNotifiedDayBefore(ctx, game.ID); err != nil {
-		s.logger.Error("day-before check: mark notified", "game_id", game.ID, "err", err)
+		s.logger.Error("cancellation reminder: mark notified", "game_id", game.ID, "err", err)
 	}
+}
+
+// RunBookingReminders sends a DM to each group admin when court booking opens for a venue.
+// Fires at 10:00–10:05 in the group's timezone on each configured game day of the week.
+// NOTE: Telegram only allows bots to DM users who have previously started a private chat with the bot.
+func (s *SchedulerService) RunBookingReminders() {
+	s.logger.Info("booking reminder check started")
+	ctx := context.Background()
+	now := time.Now()
+
+	groups, err := s.groupRepo.GetAll(ctx)
+	if err != nil {
+		s.logger.Error("booking reminder: get groups", "err", err)
+		return
+	}
+
+	notified := 0
+	for _, g := range groups {
+		groupTZ := s.groupTimezone(&g)
+		localNow := now.In(groupTZ)
+
+		// Only fire in the [10:00, 10:05) window in the group's local time.
+		if localNow.Hour() != 10 || localNow.Minute() >= 5 {
+			continue
+		}
+
+		venues, err := s.venueRepo.GetByGroupID(ctx, g.ChatID)
+		if err != nil {
+			s.logger.Error("booking reminder: get venues", "chat_id", g.ChatID, "err", err)
+			continue
+		}
+
+		todayWd := int(localNow.Weekday())
+		todayStr := localNow.Format("2006-01-02")
+		lz := i18n.New(i18n.Normalize(g.Language))
+
+		for _, venue := range venues {
+			if venue.GameDays == "" {
+				continue
+			}
+			if !containsDay(venue.GameDays, todayWd) {
+				continue
+			}
+			// Dedup: skip if already sent today in this group's timezone.
+			if venue.LastBookingReminderAt != nil &&
+				venue.LastBookingReminderAt.In(groupTZ).Format("2006-01-02") == todayStr {
+				s.logger.Info("booking reminder: already sent today", "venue_id", venue.ID)
+				continue
+			}
+
+			if s.sendBookingReminderToAdmins(ctx, g.ChatID, venue, lz) {
+				if err := s.venueRepo.SetLastBookingReminderAt(ctx, venue.ID); err != nil {
+					s.logger.Error("booking reminder: update last sent", "venue_id", venue.ID, "err", err)
+				}
+				notified++
+			}
+		}
+	}
+	s.logger.Info("booking reminder done", "venues_notified", notified)
+}
+
+// sendBookingReminderToAdmins DMs all non-bot group admins with the booking
+// reminder. Returns true if at least one message was delivered successfully.
+// SetLastBookingReminderAt should only be called when this returns true so that
+// a total delivery failure (e.g. network error) does not suppress retries within
+// the same scheduling window.
+func (s *SchedulerService) sendBookingReminderToAdmins(ctx context.Context, chatID int64, venue *models.Venue, lz *i18n.Localizer) bool {
+	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		s.logger.Error("booking reminder: get chat administrators", "chat_id", chatID, "err", err)
+		return false
+	}
+
+	text := lz.Tf(i18n.SchedBookingReminder, venue.Name, venue.BookingOpensDays)
+	seen := make(map[int64]bool)
+	sent := 0
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		if _, err := s.api.Send(msg); err != nil {
+			s.logger.Error("booking reminder: send DM", "user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+			continue
+		}
+		s.logger.Info("booking reminder: DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+		sent++
+	}
+	return sent > 0
 }
 
 // RunDayAfterCleanup unpins and closes yesterday's games.
+// Runs at 03:00–03:05 in each group's local timezone.
 func (s *SchedulerService) RunDayAfterCleanup() {
-	s.logger.Info("day-after check started")
+	s.logger.Info("day-after cleanup check started")
 	ctx := context.Background()
+	now := time.Now()
 
-	now := time.Now().In(s.loc)
-	yesterday := now.AddDate(0, 0, -1)
-	from := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, s.loc)
-	to := from.AddDate(0, 0, 1)
-	s.logger.Debug("day-after dates", "from", from, "to", to)
-
-	games, err := s.gameRepo.GetGamesForDayAfter(ctx, from, to)
+	groups, err := s.groupRepo.GetAll(ctx)
 	if err != nil {
-		s.logger.Error("day-after cleanup: query games", "err", err)
+		s.logger.Error("day-after cleanup: get groups", "err", err)
 		return
 	}
-	s.logger.Info("found games", "count", len(games))
 
-	for _, game := range games {
-		s.processDayAfter(ctx, game)
+	processed := 0
+	for _, g := range groups {
+		groupTZ := s.groupTimezone(&g)
+		localNow := now.In(groupTZ)
+
+		// Only fire in the [03:00, 03:05) window in the group's local time.
+		if localNow.Hour() != 3 || localNow.Minute() >= 5 {
+			continue
+		}
+
+		yesterday := localNow.AddDate(0, 0, -1)
+		from := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, groupTZ)
+		to := from.AddDate(0, 0, 1)
+
+		games, err := s.gameRepo.GetUncompletedGamesByGroupAndDay(ctx, g.ChatID, from, to)
+		if err != nil {
+			s.logger.Error("day-after cleanup: query games", "chat_id", g.ChatID, "err", err)
+			continue
+		}
+		s.logger.Info("day-after cleanup: found games", "chat_id", g.ChatID, "count", len(games))
+
+		for _, game := range games {
+			s.processDayAfter(ctx, game, groupTZ)
+			processed++
+		}
 	}
+	s.logger.Info("day-after cleanup done", "games_processed", processed)
 }
 
-func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Game) {
+func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Game, groupTZ *time.Location) {
 	messageID := int(*game.MessageID)
 
 	unpin := tgbotapi.UnpinChatMessageConfig{
@@ -175,7 +326,7 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 	}
 
 	lz := s.groupLang(ctx, game.ChatID)
-	text := formatCompletedMessage(game, participations, guests, s.loc, lz)
+	text := formatCompletedMessage(game, participations, guests, groupTZ, lz)
 	edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
 	// Empty keyboard explicitly removes the inline buttons
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
@@ -191,7 +342,7 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		return
 	}
 
-	s.logger.Info("Day-after cleanup",
+	s.logger.Info("day-after cleanup",
 		"game_id", game.ID,
 		"message_id", messageID,
 		"unpinned", true,
@@ -199,83 +350,15 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 	)
 }
 
-// adminEntry pairs a chat member with the localizer for their group.
-type adminEntry struct {
-	member tgbotapi.ChatMember
-	lang   *i18n.Localizer
-}
-
-// RunWeeklyReminder sends a DM to every non-bot group admin if no game is scheduled in the next 7 days.
-// NOTE: Telegram only allows bots to DM users who have previously started a private chat with the bot.
-func (s *SchedulerService) RunWeeklyReminder() {
-	s.logger.Info("weekly reminder check started")
-	ctx := context.Background()
-
-	// Build a set of chat IDs that already have a game within the next 7 days.
-	now := time.Now().In(s.loc)
-	weekEnd := now.AddDate(0, 0, 7)
-
-	upcomingGames, err := s.gameRepo.GetUpcomingGames(ctx)
-	if err != nil {
-		s.logger.Error("weekly reminder: query upcoming games", "err", err)
-		return
-	}
-	chatIDsWithGame := make(map[int64]bool)
-	for _, g := range upcomingGames {
-		if g.GameDate.Before(weekEnd) {
-			chatIDsWithGame[g.ChatID] = true
+// containsDay reports whether the comma-separated weekday string contains the given day number.
+func containsDay(gameDays string, day int) bool {
+	dayStr := strconv.Itoa(day)
+	for _, part := range strings.Split(gameDays, ",") {
+		if strings.TrimSpace(part) == dayStr {
+			return true
 		}
 	}
-
-	groups, err := s.groupRepo.GetAll(ctx)
-	if err != nil {
-		s.logger.Error("weekly reminder: get groups", "err", err)
-		return
-	}
-
-	// Collect admins only from groups that have no game scheduled this week.
-	// Each admin is DM'd once, using the language of the first group they're found in.
-	seen := make(map[int64]bool)
-	var allAdmins []adminEntry
-	for _, g := range groups {
-		chatID := g.ChatID
-		if chatIDsWithGame[chatID] {
-			s.logger.Info("weekly reminder: game already scheduled, skipping group", "chat_id", chatID)
-			continue
-		}
-		lz := i18n.New(i18n.Normalize(g.Language))
-		admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
-			ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
-		})
-		if err != nil {
-			s.logger.Error("weekly reminder: get chat administrators", "chat_id", chatID, "err", err)
-			continue
-		}
-		for _, admin := range admins {
-			if !admin.User.IsBot && !seen[admin.User.ID] {
-				seen[admin.User.ID] = true
-				allAdmins = append(allAdmins, adminEntry{member: admin, lang: lz})
-			}
-		}
-	}
-
-	if len(allAdmins) == 0 {
-		s.logger.Info("weekly reminder: all groups have games scheduled, no DMs needed")
-		return
-	}
-
-	notified := 0
-	for _, entry := range allAdmins {
-		text := entry.lang.T(i18n.SchedWeeklyReminder)
-		msg := tgbotapi.NewMessage(entry.member.User.ID, text)
-		if _, err := s.api.Send(msg); err != nil {
-			s.logger.Error("weekly reminder: send DM", "user_id", entry.member.User.ID, "username", entry.member.User.UserName, "err", err)
-			continue
-		}
-		s.logger.Info("weekly reminder: DM sent", "user_id", entry.member.User.ID, "username", entry.member.User.UserName)
-		notified++
-	}
-	s.logger.Info("weekly reminder done", "admins_notified", notified)
+	return false
 }
 
 // formatCompletedMessage renders the final game message without interactive buttons.

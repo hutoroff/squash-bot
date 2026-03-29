@@ -63,15 +63,20 @@ const (
 	venueStepCourts
 	venueStepTimeSlots
 	venueStepAddress
+	venueStepGameDays
+	venueStepGracePeriod
 )
 
 // venueWizard holds state for the add-venue multi-step dialog.
 type venueWizard struct {
-	groupID   int64
-	step      venueWizardStep
-	name      string
-	courts    string
-	timeSlots string
+	groupID     int64
+	step        venueWizardStep
+	name        string
+	courts      string
+	timeSlots   string
+	address     string
+	gameDays    []int // weekday ints (0=Sun..6=Sat)
+	gracePeriod int   // hours, 0 means use default (24)
 }
 
 // venueEditField identifies which venue field is being edited.
@@ -82,6 +87,8 @@ const (
 	venueEditFieldCourts
 	venueEditFieldTimeSlots
 	venueEditFieldAddress
+	venueEditFieldGameDays
+	venueEditFieldGracePeriod
 )
 
 // venueEditState tracks an in-progress single-field edit for an existing venue.
@@ -89,6 +96,14 @@ type venueEditState struct {
 	venueID int64
 	groupID int64
 	field   venueEditField
+}
+
+// venueGameDaysEditState holds the toggle state when editing game days for an existing venue.
+type venueGameDaysEditState struct {
+	venueID      int64
+	groupID      int64
+	selectedDays []int
+	msgID        int
 }
 
 // groupVenuePickState holds game creation data for a multi-group admin who has
@@ -128,6 +143,7 @@ type Bot struct {
 	pendingNewGameWizard      sync.Map      // map[chatID int64]*newGameWizard
 	pendingVenueWizard        sync.Map      // map[chatID int64]*venueWizard
 	pendingVenueEdit          sync.Map      // map[chatID int64]*venueEditState
+	pendingVenueGameDaysEdit  sync.Map      // map[chatID int64]*venueGameDaysEditState
 	pendingGroupVenuePick     sync.Map      // map[chatID int64]*groupVenuePickState
 	handlerSem                chan struct{} // semaphore limiting concurrent update handlers
 }

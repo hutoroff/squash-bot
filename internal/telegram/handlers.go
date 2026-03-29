@@ -33,6 +33,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 		b.pendingVenueEdit.Delete(msg.Chat.ID)
+		b.pendingVenueGameDaysEdit.Delete(msg.Chat.ID)
 		b.pendingGroupVenuePick.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
 		return
@@ -333,7 +334,8 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	if action == "venue_edit_name" || action == "venue_edit_courts" ||
-		action == "venue_edit_slots" || action == "venue_edit_addr" {
+		action == "venue_edit_slots" || action == "venue_edit_addr" ||
+		action == "venue_edit_gamedays" || action == "venue_edit_graceperiod" {
 		// format: venueID:groupID
 		subparts := strings.SplitN(rawID, ":", 2)
 		if len(subparts) != 2 {
@@ -358,6 +360,10 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 			field = venueEditFieldCourts
 		case "venue_edit_slots":
 			field = venueEditFieldTimeSlots
+		case "venue_edit_gamedays":
+			field = venueEditFieldGameDays
+		case "venue_edit_graceperiod":
+			field = venueEditFieldGracePeriod
 		default:
 			field = venueEditFieldAddress
 		}
@@ -402,6 +408,16 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 			return
 		}
 		b.handleVenueDelete(ctx, cb, venueID, groupID)
+		return
+	}
+
+	// venue game-days toggle callbacks
+	if action == "venue_day_toggle" {
+		b.handleVenueDayToggle(ctx, cb, rawID)
+		return
+	}
+	if action == "venue_day_confirm" {
+		b.handleVenueDayConfirm(ctx, cb)
 		return
 	}
 
@@ -474,6 +490,38 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 			return
 		}
 		b.handleSetLang(ctx, cb, subparts[0], groupID)
+		return
+	}
+
+	// set_tz_pick:<groupID> — show timezone selection for that group
+	if action == "set_tz_pick" {
+		groupID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			slog.Debug("invalid group_id in set_tz_pick callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleSetTzPick(ctx, cb, groupID)
+		return
+	}
+
+	// set_tz:<groupID>:<tz> — apply the chosen timezone to the group
+	if action == "set_tz" {
+		// rawID is "<groupID>:<tz>" where tz may contain "/"
+		colonIdx := strings.Index(rawID, ":")
+		if colonIdx < 0 {
+			slog.Debug("invalid set_tz callback format", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(rawID[:colonIdx], 10, 64)
+		if err != nil {
+			slog.Debug("invalid group_id in set_tz callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		tz := rawID[colonIdx+1:]
+		b.handleSetTz(ctx, cb, tz, groupID)
 		return
 	}
 
@@ -1048,7 +1096,7 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 	}
 
 	switch event {
-	case "day_before", "day_after", "weekly_reminder":
+	case "cancellation_reminder", "day_after_cleanup", "booking_reminder":
 		// valid events
 	default:
 		slog.Debug("handleTrigger: unknown event", "event", event)
@@ -1364,6 +1412,9 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangRu), fmt.Sprintf("set_lang:ru:%d", groupID)),
 		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSetTimezone), fmt.Sprintf("set_tz_pick:%d", groupID)),
+		),
 	)
 
 	if messageID != 0 {
@@ -1375,6 +1426,85 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 		msg.ReplyMarkup = keyboard
 		b.api.Send(msg) //nolint:errcheck
 	}
+}
+
+// handleSetTzPick shows the timezone selection keyboard for a specific group.
+func (b *Bot) handleSetTzPick(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderTimezoneKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+}
+
+// handleSetTz applies the chosen timezone to the group.
+func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz string, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	if err := b.client.SetGroupTimezone(ctx, groupID, tz); err != nil {
+		slog.Error("handleSetTz: set timezone", "err", err, "group_id", groupID, "tz", tz)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Group timezone updated", "group_id", groupID, "tz", tz, "by_user", cb.From.ID)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgTimezoneSet))
+
+	// Remove the keyboard from the timezone-selection message.
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// renderTimezoneKeyboard edits a message with a curated timezone selection keyboard.
+func (b *Bot) renderTimezoneKeyboard(chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	// Curated list of common IANA timezones, displayed 2 per row.
+	tzPairs := [][2]string{
+		{"UTC", "UTC"},
+		{"Europe/London", "London"},
+		{"Europe/Berlin", "Berlin"},
+		{"Europe/Paris", "Paris"},
+		{"Europe/Moscow", "Moscow"},
+		{"America/New_York", "New York"},
+		{"America/Chicago", "Chicago"},
+		{"America/Denver", "Denver"},
+		{"America/Los_Angeles", "Los Angeles"},
+		{"America/Sao_Paulo", "São Paulo"},
+		{"Asia/Dubai", "Dubai"},
+		{"Asia/Kolkata", "Kolkata"},
+		{"Asia/Bangkok", "Bangkok"},
+		{"Asia/Singapore", "Singapore"},
+		{"Asia/Tokyo", "Tokyo"},
+		{"Asia/Seoul", "Seoul"},
+		{"Australia/Sydney", "Sydney"},
+		{"Pacific/Auckland", "Auckland"},
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i := 0; i < len(tzPairs); i += 2 {
+		row := tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(tzPairs[i][1], fmt.Sprintf("set_tz:%d:%s", groupID, tzPairs[i][0])),
+		)
+		if i+1 < len(tzPairs) {
+			row = append(row, tgbotapi.NewInlineKeyboardButtonData(tzPairs[i+1][1], fmt.Sprintf("set_tz:%d:%s", groupID, tzPairs[i+1][0])))
+		}
+		rows = append(rows, row)
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgSelectTimezone))
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
 }
 
 // handleNewGameDate handles the ng_date:<YYYY-MM-DD> callback from the date picker.

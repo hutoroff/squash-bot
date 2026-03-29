@@ -37,7 +37,8 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 	const q = `
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE g.id = $1`
@@ -189,7 +190,8 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 	const q = `
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
 		JOIN players p ON p.id = gp.player_id
@@ -210,6 +212,71 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 		return nil, err
 	}
 	return g, nil
+}
+
+// GetUpcomingUnnotifiedGames returns all future uncompleted games where notified_day_before is false,
+// with their venue data joined. Used by the cancellation reminder scheduler.
+func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Game, error) {
+	const q = `
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		       g.notified_day_before, g.completed, g.created_at,
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
+		FROM games g
+		LEFT JOIN venues v ON v.id = g.venue_id
+		WHERE g.completed = false
+		  AND g.notified_day_before = false
+		  AND g.game_date > now()
+		ORDER BY g.game_date`
+
+	slog.Debug("GameRepo.GetUpcomingUnnotifiedGames")
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("query upcoming unnotified games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGameWithVenue(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
+// GetUncompletedGamesByGroupAndDay returns uncompleted games for a specific group within a day range.
+// Used by the per-group day-after cleanup scheduler.
+func (r *GameRepo) GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE chat_id = $1
+		  AND game_date >= $2 AND game_date < $3
+		  AND completed = false
+		  AND message_id IS NOT NULL`
+
+	slog.Debug("GameRepo.GetUncompletedGamesByGroupAndDay", "chat_id", chatID, "from", from, "to", to)
+
+	rows, err := r.pool.Query(ctx, q, chatID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query group day games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
 }
 
 // UpdateCourts updates the courts and courts_count for a game.
@@ -241,18 +308,23 @@ func scanGame(s scanner) (*models.Game, error) {
 func scanGameWithVenue(s scanner) (*models.Game, error) {
 	var g models.Game
 	var (
-		venueID      *int64
-		venueGroupID *int64
-		venueName    *string
-		venueCourts  *string
-		venueSlots   *string
-		venueAddr    *string
-		venueCreated *time.Time
+		venueID                  *int64
+		venueGroupID             *int64
+		venueName                *string
+		venueCourts              *string
+		venueSlots               *string
+		venueAddr                *string
+		venueCreated             *time.Time
+		venueGracePeriodHours    *int
+		venueGameDays            *string
+		venueBookingOpensDays    *int
+		venueLastBookingReminder *time.Time
 	)
 	err := s.Scan(
 		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 		&venueID, &venueGroupID, &venueName, &venueCourts, &venueSlots, &venueAddr, &venueCreated,
+		&venueGracePeriodHours, &venueGameDays, &venueBookingOpensDays, &venueLastBookingReminder,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan game: %w", err)
@@ -266,14 +338,30 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 		if venueCreated != nil {
 			createdAt = *venueCreated
 		}
+		gracePeriod := 24
+		if venueGracePeriodHours != nil {
+			gracePeriod = *venueGracePeriodHours
+		}
+		gameDays := ""
+		if venueGameDays != nil {
+			gameDays = *venueGameDays
+		}
+		bookingDays := 14
+		if venueBookingOpensDays != nil {
+			bookingDays = *venueBookingOpensDays
+		}
 		g.Venue = &models.Venue{
-			ID:        *venueID,
-			GroupID:   *venueGroupID,
-			Name:      *venueName,
-			Courts:    *venueCourts,
-			TimeSlots: *venueSlots,
-			Address:   addr,
-			CreatedAt: createdAt,
+			ID:                    *venueID,
+			GroupID:               *venueGroupID,
+			Name:                  *venueName,
+			Courts:                *venueCourts,
+			TimeSlots:             *venueSlots,
+			Address:               addr,
+			CreatedAt:             createdAt,
+			GracePeriodHours:      gracePeriod,
+			GameDays:              gameDays,
+			BookingOpensDays:      bookingDays,
+			LastBookingReminderAt: venueLastBookingReminder,
 		}
 	}
 	return &g, nil

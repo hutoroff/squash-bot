@@ -9,11 +9,14 @@ import (
 // createVenue handles POST /api/v1/venues
 func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		GroupID   int64  `json:"group_id"`
-		Name      string `json:"name"`
-		Courts    string `json:"courts"`
-		TimeSlots string `json:"time_slots"`
-		Address   string `json:"address"`
+		GroupID          int64  `json:"group_id"`
+		Name             string `json:"name"`
+		Courts           string `json:"courts"`
+		TimeSlots        string `json:"time_slots"`
+		Address          string `json:"address"`
+		GracePeriodHours int    `json:"grace_period_hours"`
+		GameDays         string `json:"game_days"`
+		BookingOpensDays int    `json:"booking_opens_days"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -23,8 +26,17 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
+	if req.GracePeriodHours == 0 {
+		req.GracePeriodHours = 24
+	}
+	if req.BookingOpensDays == 0 {
+		req.BookingOpensDays = 14
+	}
 
-	venue, err := h.venueService.CreateVenue(r.Context(), req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address)
+	venue, err := h.venueService.CreateVenue(r.Context(),
+		req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
+		req.GracePeriodHours, req.GameDays, req.BookingOpensDays,
+	)
 	if err != nil {
 		h.logger.Error("createVenue", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -82,11 +94,14 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		GroupID   int64  `json:"group_id"`
-		Name      string `json:"name"`
-		Courts    string `json:"courts"`
-		TimeSlots string `json:"time_slots"`
-		Address   string `json:"address"`
+		GroupID          int64  `json:"group_id"`
+		Name             string `json:"name"`
+		Courts           string `json:"courts"`
+		TimeSlots        string `json:"time_slots"`
+		Address          string `json:"address"`
+		GracePeriodHours int    `json:"grace_period_hours"`
+		GameDays         string `json:"game_days"`
+		BookingOpensDays int    `json:"booking_opens_days"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -96,8 +111,17 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
+	if req.GracePeriodHours == 0 {
+		req.GracePeriodHours = 24
+	}
+	if req.BookingOpensDays == 0 {
+		req.BookingOpensDays = 14
+	}
 
-	venue, err := h.venueService.UpdateVenue(r.Context(), id, req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address)
+	venue, err := h.venueService.UpdateVenue(r.Context(),
+		id, req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
+		req.GracePeriodHours, req.GameDays, req.BookingOpensDays,
+	)
 	if err != nil {
 		h.logger.Error("updateVenue", "err", err, "id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())

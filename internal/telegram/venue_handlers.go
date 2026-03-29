@@ -13,6 +13,13 @@ import (
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
+// gameDaysDisplayOrder is the order weekdays appear in the game-day picker keyboard.
+var gameDaysDisplayOrder = []time.Weekday{
+	time.Monday, time.Tuesday, time.Wednesday,
+	time.Thursday, time.Friday, time.Saturday,
+	time.Sunday,
+}
+
 // ── /venues command ───────────────────────────────────────────────────────────
 
 func (b *Bot) handleCommandVenues(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
@@ -175,13 +182,30 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskAddress))
 
 	case venueStepAddress:
-		address := ""
 		if text != lz.T(i18n.MsgVenueSkipAddress) && text != "-" {
-			address = text
+			wiz.address = text
 		}
+		wiz.step = venueStepGameDays
+		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+		// Send game-days toggle keyboard.
+		keyboard := renderGameDaysKeyboard(wiz.gameDays, lz)
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueAskGameDays), &keyboard)
+
+	case venueStepGracePeriod:
+		gracePeriod := 0
+		if text != "-" && text != "" {
+			n, err := strconv.Atoi(text)
+			if err != nil || n <= 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			gracePeriod = n
+		}
+		wiz.gracePeriod = gracePeriod
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, address)
+		gameDaysStr := gameDaysToString(wiz.gameDays)
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -241,6 +265,10 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAddress), fmt.Sprintf("venue_edit_addr:%d:%d", venue.ID, venue.GroupID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGameDays), fmt.Sprintf("venue_edit_gamedays:%d:%d", venue.ID, venue.GroupID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGracePeriod), fmt.Sprintf("venue_edit_graceperiod:%d:%d", venue.ID, venue.GroupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_list:%d", venue.GroupID)),
 		),
 	)
@@ -265,12 +293,27 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 
+	b.answerCallback(cb.ID, "")
+
+	// Game days editing uses a toggle keyboard (no free text state needed).
+	if field == venueEditFieldGameDays {
+		selectedDays := gameDaysFromString(venue.GameDays)
+		b.pendingVenueGameDaysEdit.Store(cb.Message.Chat.ID, &venueGameDaysEditState{
+			venueID:      venueID,
+			groupID:      groupID,
+			selectedDays: selectedDays,
+			msgID:        cb.Message.MessageID,
+		})
+		keyboard := renderGameDaysKeyboard(selectedDays, lz)
+		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskGameDays), &keyboard)
+		return
+	}
+
 	b.pendingVenueEdit.Store(cb.Message.Chat.ID, &venueEditState{
 		venueID: venueID,
 		groupID: groupID,
 		field:   field,
 	})
-	b.answerCallback(cb.ID, "")
 
 	var prompt string
 	switch field {
@@ -282,6 +325,8 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		prompt = lz.T(i18n.MsgVenueAskTimeSlots)
 	case venueEditFieldAddress:
 		prompt = lz.T(i18n.MsgVenueAskAddress)
+	case venueEditFieldGracePeriod:
+		prompt = lz.T(i18n.MsgVenueAskGracePeriod)
 	}
 	b.sendText(cb.Message.Chat.ID, prompt, nil)
 }
@@ -331,11 +376,22 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 		} else {
 			venue.Address = text
 		}
+	case venueEditFieldGracePeriod:
+		if text == "-" || text == "" {
+			venue.GracePeriodHours = 24
+		} else {
+			n, err := strconv.Atoi(text)
+			if err != nil || n <= 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			venue.GracePeriodHours = n
+		}
 	}
 
 	b.pendingVenueEdit.Delete(msg.Chat.ID)
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays)
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -401,6 +457,154 @@ func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery,
 	slog.Info("Venue deleted", "venue_id", venueID, "group_id", groupID, "by_user", cb.From.ID)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueDeleted))
 	b.sendVenueList(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+}
+
+// ── Game days toggle callbacks ────────────────────────────────────────────────
+
+// handleVenueDayToggle handles venue_day_toggle:<day> callbacks.
+// Works for both the venue wizard (venueStepGameDays) and the edit game-days flow.
+func (b *Bot) handleVenueDayToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawDay string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	day, err := strconv.Atoi(rawDay)
+	if err != nil || day < 0 || day > 6 {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	b.answerCallback(cb.ID, "")
+
+	// Check wizard first.
+	if raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID); ok {
+		wiz := raw.(*venueWizard)
+		if wiz.step == venueStepGameDays {
+			wiz.gameDays = toggleDay(wiz.gameDays, day)
+			b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
+			keyboard := renderGameDaysKeyboard(wiz.gameDays, lz)
+			b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskGameDays), &keyboard)
+			return
+		}
+	}
+
+	// Check edit state.
+	if raw, ok := b.pendingVenueGameDaysEdit.Load(cb.Message.Chat.ID); ok {
+		state := raw.(*venueGameDaysEditState)
+		state.selectedDays = toggleDay(state.selectedDays, day)
+		b.pendingVenueGameDaysEdit.Store(cb.Message.Chat.ID, state)
+		keyboard := renderGameDaysKeyboard(state.selectedDays, lz)
+		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskGameDays), &keyboard)
+	}
+}
+
+// handleVenueDayConfirm handles venue_day_confirm:_ callbacks.
+func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	b.answerCallback(cb.ID, "")
+
+	// Check wizard first.
+	if raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID); ok {
+		wiz := raw.(*venueWizard)
+		if wiz.step == venueStepGameDays {
+			wiz.step = venueStepGracePeriod
+			b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
+			emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+			edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskGracePeriod))
+			edit.ReplyMarkup = &emptyKeyboard
+			b.api.Send(edit) //nolint:errcheck
+			return
+		}
+	}
+
+	// Check edit state.
+	if raw, ok := b.pendingVenueGameDaysEdit.Load(cb.Message.Chat.ID); ok {
+		state := raw.(*venueGameDaysEditState)
+		b.pendingVenueGameDaysEdit.Delete(cb.Message.Chat.ID)
+
+		venue, err := b.client.GetVenueByID(ctx, state.venueID)
+		if err != nil {
+			slog.Error("handleVenueDayConfirm: get venue", "err", err)
+			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			return
+		}
+
+		venue.GameDays = gameDaysToString(state.selectedDays)
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays)
+		if err != nil {
+			slog.Error("handleVenueDayConfirm: update venue", "err", err)
+			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			return
+		}
+
+		slog.Info("Venue game days updated", "venue_id", updated.ID, "game_days", updated.GameDays)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgVenueUpdated), nil)
+		b.sendVenueList(ctx, cb.Message.Chat.ID, 0, state.groupID, lz)
+	}
+}
+
+// renderGameDaysKeyboard builds a toggle keyboard for weekday selection.
+// selectedDays is a slice of time.Weekday int values (0=Sun..6=Sat).
+func renderGameDaysKeyboard(selectedDays []int, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+	selected := make(map[int]bool)
+	for _, d := range selectedDays {
+		selected[d] = true
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+	for i, wd := range gameDaysDisplayOrder {
+		label := lz.ShortWeekday(wd)
+		if selected[int(wd)] {
+			label = "✓ " + label
+		}
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_day_toggle:%d", int(wd))))
+		if len(row) == 3 || i == len(gameDaysDisplayOrder)-1 {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(row...))
+			row = nil
+		}
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.MsgVenueConfirmDays), "venue_day_confirm:_"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// toggleDay toggles a day int in/out of a slice (returns new slice).
+func toggleDay(days []int, day int) []int {
+	for i, d := range days {
+		if d == day {
+			return append(days[:i], days[i+1:]...)
+		}
+	}
+	return append(days, day)
+}
+
+// gameDaysToString converts a slice of weekday ints to a comma-separated string.
+func gameDaysToString(days []int) string {
+	if len(days) == 0 {
+		return ""
+	}
+	parts := make([]string, len(days))
+	for i, d := range days {
+		parts[i] = strconv.Itoa(d)
+	}
+	return strings.Join(parts, ",")
+}
+
+// gameDaysFromString parses a comma-separated weekday int string back to a slice.
+func gameDaysFromString(s string) []int {
+	if s == "" {
+		return nil
+	}
+	var days []int
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if d, err := strconv.Atoi(p); err == nil && d >= 0 && d <= 6 {
+			days = append(days, d)
+		}
+	}
+	return days
 }
 
 // ── New game wizard: venue, courts, timeslot callbacks ────────────────────────

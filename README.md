@@ -76,7 +76,12 @@ Add the bot to a Telegram group and grant it admin rights (required for pinning 
 
 ### 4. Configure venues
 
-In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores a name, available court numbers, and preset time slots. **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
+In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores:
+- **Name**, **courts** (comma-separated), **time slots** (preset HH:MM options), **address** (optional)
+- **Game days** — weekdays when games are played (toggle keyboard). Used for the booking reminder.
+- **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
+
+**At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
 
 ### 5. Create a game
 
@@ -199,9 +204,7 @@ Guest spots count toward capacity.
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
 | `INTERNAL_API_SECRET`  | Yes      | —                 | Shared secret for authenticating calls from the telegram bot; generate with `openssl rand -hex 32` |
 | `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
-| `CRON_DAY_BEFORE`      | No       | `0 20 * * *`      | When to run day-before capacity check               |
-| `CRON_DAY_AFTER`       | No       | `0 8 * * *`       | When to run post-game cleanup                       |
-| `CRON_WEEKLY_REMINDER` | No       | `0 10 * * 1`      | When to send weekly reminder to admins (Mon 10 AM)  |
+| `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
 
@@ -218,11 +221,19 @@ Guest spots count toward capacity.
 
 ## Scheduled Tasks
 
-| Task              | Default time    | What it does                                                      |
-|-------------------|-----------------|-------------------------------------------------------------------|
-| Day-before check  | 8 PM daily      | Checks if player count matches court capacity, notifies if not    |
-| Day-after cleanup | 8 AM daily      | Unpins message, removes buttons, marks game complete              |
-| Weekly reminder   | Monday 10 AM    | DMs group admins if no game is scheduled within the next 7 days   |
+A single 5-minute poll (configured via `CRON_POLL`) runs three tasks, each using per-group timezone and per-venue configuration:
+
+| Task                       | Trigger window      | What it does                                                                    |
+|----------------------------|---------------------|---------------------------------------------------------------------------------|
+| Cancellation reminder      | Any time (±2m30s)   | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.    |
+| Booking reminder           | 10:00–10:05 (group TZ) | DMs group admins on configured game days with booking opening info.          |
+| Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.           |
+
+**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag.
+
+**Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). Message includes venue name and `venue.booking_opens_days`.
+
+**Timezone**: set per group via `/language` → "🕐 Set Timezone" → select from curated list of 18 IANA timezones. Default is UTC.
 
 Capacity per game = `courts_count × 2`.
 

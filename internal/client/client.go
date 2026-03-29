@@ -283,18 +283,30 @@ func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language st
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/language", body, nil)
 }
 
+// SetGroupTimezone sets the IANA timezone for a group.
+func (c *Client) SetGroupTimezone(ctx context.Context, chatID int64, timezone string) error {
+	body := map[string]string{"timezone": timezone}
+	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/timezone", body, nil)
+}
+
 // ── Venues ────────────────────────────────────────────────────────────────────
 
 type venueBody struct {
-	GroupID   int64  `json:"group_id"`
-	Name      string `json:"name"`
-	Courts    string `json:"courts"`
-	TimeSlots string `json:"time_slots"`
-	Address   string `json:"address,omitempty"`
+	GroupID          int64  `json:"group_id"`
+	Name             string `json:"name"`
+	Courts           string `json:"courts"`
+	TimeSlots        string `json:"time_slots"`
+	Address          string `json:"address,omitempty"`
+	GracePeriodHours int    `json:"grace_period_hours"`
+	GameDays         string `json:"game_days"`
+	BookingOpensDays int    `json:"booking_opens_days"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
-	body := venueBody{GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address}
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
+	body := venueBody{
+		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
+		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
+	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
 		return nil, err
@@ -319,8 +331,11 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
-	body := venueBody{GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address}
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
+	body := venueBody{
+		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
+		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
+	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {
 		return nil, err

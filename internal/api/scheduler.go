@@ -12,12 +12,12 @@ func (h *Handler) triggerScheduler(w http.ResponseWriter, r *http.Request) {
 
 	var job func()
 	switch event {
-	case "day_before":
-		job = h.scheduler.RunDayBeforeCheck
-	case "day_after":
+	case "cancellation_reminder":
+		job = h.scheduler.RunCancellationReminders
+	case "day_after_cleanup":
 		job = h.scheduler.RunDayAfterCleanup
-	case "weekly_reminder":
-		job = h.scheduler.RunWeeklyReminder
+	case "booking_reminder":
+		job = h.scheduler.RunBookingReminders
 	default:
 		writeError(w, http.StatusBadRequest, "unknown event: "+event)
 		return

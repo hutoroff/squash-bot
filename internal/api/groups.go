@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vkhutorov/squash_bot/internal/models"
@@ -57,6 +58,36 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "group not found")
 		} else {
 			h.logger.Error("setGroupLanguage", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setGroupTimezone handles PATCH /api/v1/groups/{chatID}/timezone
+func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		Timezone string `json:"timezone"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, err := time.LoadLocation(req.Timezone); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid IANA timezone")
+		return
+	}
+	if err := h.groupRepo.SetTimezone(r.Context(), chatID, req.Timezone); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupTimezone", "err", err, "chat_id", chatID)
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
 		return

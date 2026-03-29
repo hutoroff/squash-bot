@@ -16,13 +16,16 @@ func NewVenueService(repo *storage.VenueRepo) *VenueService {
 	return &VenueService{repo: repo}
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
+func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
 	venue := &models.Venue{
-		GroupID:   groupID,
-		Name:      name,
-		Courts:    courts,
-		TimeSlots: timeSlots,
-		Address:   address,
+		GroupID:          groupID,
+		Name:             name,
+		Courts:           courts,
+		TimeSlots:        timeSlots,
+		Address:          address,
+		GracePeriodHours: gracePeriodHours,
+		GameDays:         gameDays,
+		BookingOpensDays: bookingOpensDays,
 	}
 	created, err := s.repo.Create(ctx, venue)
 	if err != nil {
@@ -39,14 +42,17 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
+func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
 	venue := &models.Venue{
-		ID:        id,
-		GroupID:   groupID,
-		Name:      name,
-		Courts:    courts,
-		TimeSlots: timeSlots,
-		Address:   address,
+		ID:               id,
+		GroupID:          groupID,
+		Name:             name,
+		Courts:           courts,
+		TimeSlots:        timeSlots,
+		Address:          address,
+		GracePeriodHours: gracePeriodHours,
+		GameDays:         gameDays,
+		BookingOpensDays: bookingOpensDays,
 	}
 	updated, err := s.repo.Update(ctx, venue)
 	if err != nil {

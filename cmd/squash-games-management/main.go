@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,28 +79,21 @@ func main() {
 	gameService := service.NewGameService(gameRepo, venueRepo)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
 	venueService := service.NewVenueService(venueRepo)
-	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
+	pollWindow, err := parsePollWindow(cfg.CronPoll)
+	if err != nil {
+		slog.Error("unsupported CRON_POLL value", "spec", cfg.CronPoll, "err", err)
+		os.Exit(1)
+	}
+	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, loc, logger, pollWindow)
 
 	c := cron.New(cron.WithLocation(loc))
-	if _, err := c.AddFunc(cfg.CronDayBefore, scheduler.RunDayBeforeCheck); err != nil {
-		slog.Error("add day-before cron", "spec", cfg.CronDayBefore, "err", err)
-		os.Exit(1)
-	}
-	if _, err := c.AddFunc(cfg.CronDayAfter, scheduler.RunDayAfterCleanup); err != nil {
-		slog.Error("add day-after cron", "spec", cfg.CronDayAfter, "err", err)
-		os.Exit(1)
-	}
-	if _, err := c.AddFunc(cfg.CronWeeklyReminder, scheduler.RunWeeklyReminder); err != nil {
-		slog.Error("add weekly-reminder cron", "spec", cfg.CronWeeklyReminder, "err", err)
+	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
+		slog.Error("add poll cron", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
 	c.Start()
 	defer c.Stop()
-	slog.Info("cron scheduler started",
-		"day_before", cfg.CronDayBefore,
-		"day_after", cfg.CronDayAfter,
-		"weekly_reminder", cfg.CronWeeklyReminder,
-	)
+	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
 	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
@@ -117,6 +112,30 @@ func loadTimezone(name string) (*time.Location, error) {
 		return nil, fmt.Errorf("unknown timezone %q: %w", name, err)
 	}
 	return loc, nil
+}
+
+// parsePollWindow derives the reminder timing gate from a cron spec.
+// Only "*/N * * * *" patterns are supported; the window is N/2 minutes.
+// Reject unsupported patterns at startup so misconfigurations are caught early.
+func parsePollWindow(spec string) (time.Duration, error) {
+	fields := strings.Fields(spec)
+	if len(fields) != 5 {
+		return 0, fmt.Errorf("expected 5 cron fields, got %d in %q", len(fields), spec)
+	}
+	for _, f := range fields[1:] {
+		if f != "*" {
+			return 0, fmt.Errorf("only */N * * * * cron patterns are supported (got %q)", spec)
+		}
+	}
+	minField := fields[0]
+	if !strings.HasPrefix(minField, "*/") {
+		return 0, fmt.Errorf("minute field must be */N (got %q in %q)", minField, spec)
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(minField, "*/"))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid poll interval %q in cron spec %q", minField, spec)
+	}
+	return time.Duration(n) * time.Minute / 2, nil
 }
 
 func runMigrations(databaseURL string) error {

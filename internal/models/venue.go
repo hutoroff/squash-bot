@@ -12,4 +12,10 @@ type Venue struct {
 	TimeSlots string    `json:"time_slots"` // comma-separated HH:MM times, e.g. "18:00,19:00,20:00"
 	Address   string    `json:"address,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Scheduling configuration
+	GracePeriodHours      int        `json:"grace_period_hours"`                 // hours before game when cancellation window closes (default 24)
+	GameDays              string     `json:"game_days"`                          // comma-separated Go time.Weekday ints, e.g. "0,3" = Sunday+Wednesday
+	BookingOpensDays      int        `json:"booking_opens_days"`                 // days in advance courts booking becomes available (default 14)
+	LastBookingReminderAt *time.Time `json:"last_booking_reminder_at,omitempty"` // dedup: last time booking reminder was sent
 }

@@ -42,8 +42,8 @@ Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - `players`: id, telegram_id (UNIQUE), username, first_name, last_name, created_at
 - `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
 - `guest_participations`: id, game_id, invited_by_player_id, created_at
-- `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), added_at
-- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), created_at, UNIQUE(group_id, name)
+- `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), timezone (VARCHAR(64) DEFAULT 'UTC'), added_at
+- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), created_at, UNIQUE(group_id, name)
 
 ## Development Commands
 
@@ -120,27 +120,35 @@ ghcr.io/<github_owner>/squash-games-management:<version>
 - **Group messages** (game announcements, scheduled notifications) use the language stored in `bot_groups.language`; fetched via `groupLocalizer(ctx, chatID)` which calls `GET /api/v1/groups/{chatID}`.
 - **Private messages** use the language from the Telegram user's `LanguageCode` field via `userLocalizer(langCode)`, falling back to English.
 - Three languages are supported: `en` (default), `de`, `ru`. `i18n.Normalize()` maps any Telegram locale string to one of these.
-- Scheduler notifications (`processDayBefore`, `processDayAfter`, `RunWeeklyReminder`) use `groupRepo.GetByID()` directly to resolve group language.
+- Scheduler notifications (`RunCancellationReminders`, `RunDayAfterCleanup`) use `groupRepo.GetByID()` directly to resolve group language. Booking reminders use `userLocalizer` with the admin's Telegram `LanguageCode`.
 - Date formatting is locale-aware: English "Sunday, March 22", German "Sonntag, 22. März", Russian "Воскресенье, 22 марта".
 
-### Language Selection Flow (`/language`)
+### Language & Timezone Selection (`/language`)
 1. User runs `/language` in private chat.
 2. If admin in exactly one group → show language picker inline keyboard for that group immediately.
 3. If admin in multiple groups → show group picker first (`set_lang_group:<groupID>` callbacks), then language picker.
-4. Language picker sends `set_lang:<lang>:<groupID>` callback → `PATCH /api/v1/groups/{chatID}/language` → `bot_groups.language` updated.
-5. `PATCH` returns 404 if group row does not exist (bot was kicked), 400 for unsupported language codes, 500 for DB errors.
+4. Language picker shows 3 language buttons + a "🕐 Set Timezone" button.
+5. Language buttons send `set_lang:<lang>:<groupID>` callback → `PATCH /api/v1/groups/{chatID}/language` → `bot_groups.language` updated.
+6. "Set Timezone" button sends `set_tz_pick:<groupID>` → shows curated timezone picker (18 IANA timezones, 2 per row).
+7. Timezone button sends `set_tz:<groupID>:<tz>` → `PATCH /api/v1/groups/{chatID}/timezone` → `bot_groups.timezone` updated.
+8. `PATCH /timezone` returns 400 for invalid IANA timezone strings, 404 if group not found.
 
 ### Venue Management (`/venues`)
 Works in **private chat only**.
 
 1. Admin sends `/venues` → shows venue list for their group (or group picker if multiple groups).
 2. Each venue row shows "Edit" and "Delete" buttons; "Add Venue" button at the bottom.
-3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → address (optional, `-` to skip) → venue created.
-4. **Edit venue**: clicking a venue opens an edit menu with buttons for each field. Admin sends the new value as free text.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → address (optional, `-` to skip) → game days (toggle inline keyboard, `-` to skip) → grace period hours (integer or `-` for default 24) → venue created.
+4. **Edit venue**: clicking a venue opens an edit menu with buttons for each field (Name, Courts, Time Slots, Address, Game Days, Grace Period). Admin sends new value as free text, except for Game Days which uses the toggle keyboard.
 5. **Delete venue**: two-step confirmation; linked games retain their `venue_id` as NULL (ON DELETE SET NULL).
 
-Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`.
-State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`) and `pendingVenueEdit sync.Map` (chatID → `*venueEditState`).
+**Venue fields:**
+- `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder time = `game_date - (grace_period_hours + 6) hours`.
+- `game_days`: comma-separated weekday ints (Go `time.Weekday`: Sunday=0, Monday=1, …, Saturday=6). Used for booking reminder schedule.
+- `booking_opens_days`: how many days ahead booking opens (default 14). Included in booking reminder DM text.
+
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`.
+State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`).
 
 ### New Game Wizard (`/newGame`)
 Works in **private chat only**. Group @mentions are redirected to private chat.
@@ -182,9 +190,15 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 6. Log action at INFO level
 
 ### Scheduled Tasks (Cron-based)
-- **Day Before Game**: Check participant count vs courts×2; notify if off; use `notified_day_before` flag to prevent duplicates
-- **Day After Game**: Unpin message, remove InlineKeyboardMarkup, mark game complete
-- **Weekly Reminder**: DM group admins on Monday morning if no game is scheduled within 7 days
+A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunScheduledTasks()` which dispatches to three methods:
+
+- **`RunCancellationReminders()`**: Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity and notifies the group if over/under. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
+
+- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). If all conditions met, DMs all group admins with the venue name and `booking_opens_days`.
+
+- **`RunDayAfterCleanup()`**: Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
+
+Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`.
 
 ### Admin & Group Management
 - **Group admin rights** are verified dynamically per group via `GetChatAdministrators` — no hardcoded IDs; this controls game creation, player/guest management, and all `/games` actions
@@ -211,9 +225,7 @@ DATABASE_URL=                # required
 TELEGRAM_BOT_TOKEN=          # required (scheduler sends Telegram messages)
 INTERNAL_API_SECRET=         # required; shared bearer token for service-to-service auth
 SERVER_PORT=8080             # default 8080
-CRON_DAY_BEFORE=0 20 * * *  # default 8 PM daily
-CRON_DAY_AFTER=0 8 * * *    # default 8 AM daily
-CRON_WEEKLY_REMINDER=0 10 * * 1  # default Monday 10 AM
+CRON_POLL=*/5 * * * *        # default every 5 minutes
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 ```

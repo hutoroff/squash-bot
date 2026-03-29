@@ -40,9 +40,10 @@ const (
 	GameCompleted   = "game.completed"
 
 	// Scheduler notifications
-	SchedOverCapacity   = "sched.over_capacity"
-	SchedUnderCapacity  = "sched.under_capacity"
-	SchedWeeklyReminder = "sched.weekly_reminder"
+	SchedOverCapacity    = "sched.over_capacity"
+	SchedUnderCapacity   = "sched.under_capacity"
+	SchedWeeklyReminder  = "sched.weekly_reminder" // kept for backward compat; use SchedBookingReminder for new code
+	SchedBookingReminder = "sched.booking_reminder"
 
 	// Game keyboard buttons
 	BtnImIn     = "btn.im_in"
@@ -59,9 +60,12 @@ const (
 	BtnViewInGroup = "btn.view_in_group"
 
 	// Trigger buttons
-	BtnDayBefore      = "btn.day_before"
-	BtnDayAfter       = "btn.day_after"
-	BtnWeeklyReminder = "btn.weekly_reminder"
+	BtnDayBefore            = "btn.day_before"      // kept for compat
+	BtnDayAfter             = "btn.day_after"       // kept for compat
+	BtnWeeklyReminder       = "btn.weekly_reminder" // kept for compat
+	BtnCancellationReminder = "btn.cancellation_reminder"
+	BtnDayAfterCleanup      = "btn.day_after_cleanup"
+	BtnBookingReminder      = "btn.booking_reminder"
 
 	// Language selection buttons
 	BtnLangEn = "btn.lang_en"
@@ -151,6 +155,10 @@ const (
 	MsgSelectLanguage         = "msg.select_language"
 	MsgLanguageSet            = "msg.language_set"
 	MsgOnlyAdminSetLanguage   = "msg.only_admin_set_language"
+	MsgSelectGroupForTimezone = "msg.select_group_for_timezone"
+	MsgSelectTimezone         = "msg.select_timezone"
+	MsgTimezoneSet            = "msg.timezone_set"
+	BtnSetTimezone            = "btn.set_timezone"
 
 	// New game wizard
 	MsgNewGameSelectDate         = "msg.new_game_select_date"
@@ -189,6 +197,12 @@ const (
 	BtnVenueDelete           = "btn.venue_delete"
 	BtnVenueAdd              = "btn.venue_add"
 	BtnVenueConfirmDelete    = "btn.venue_confirm_delete"
+	BtnVenueEditGameDays     = "btn.venue_edit_game_days"
+	BtnVenueEditGracePeriod  = "btn.venue_edit_grace_period"
+
+	MsgVenueAskGameDays    = "msg.venue_ask_game_days"
+	MsgVenueAskGracePeriod = "msg.venue_ask_grace_period"
+	MsgVenueConfirmDays    = "msg.venue_confirm_days"
 
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
@@ -243,9 +257,10 @@ var translations = map[Lang]map[string]string{
 		GameCompleted:   "Game completed ✓",
 
 		// Scheduler
-		SchedOverCapacity:   "⚠️ Too many players! %d registered but only %d spots (%d courts). Consider booking an extra court.",
-		SchedUnderCapacity:  "📢 Free spots available! %d/%d players registered (%d courts). Invite more friends!",
-		SchedWeeklyReminder: "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
+		SchedOverCapacity:    "⚠️ Too many players! %d registered but only %d spots (%d courts). Consider booking an extra court.",
+		SchedUnderCapacity:   "📢 Free spots available! %d/%d players registered (%d courts). Invite more friends!",
+		SchedWeeklyReminder:  "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
+		SchedBookingReminder: "📅 Booking reminder for *%s*: booking opens in %d days. Don't forget to reserve your courts!",
 
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
@@ -260,9 +275,12 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Back",
 		BtnViewInGroup: "View in group →",
 
-		BtnDayBefore:      "Day Before Check",
-		BtnDayAfter:       "Day After Cleanup",
-		BtnWeeklyReminder: "Weekly Reminder",
+		BtnDayBefore:            "Day Before Check",
+		BtnDayAfter:             "Day After Cleanup",
+		BtnWeeklyReminder:       "Weekly Reminder",
+		BtnCancellationReminder: "Cancellation Reminder",
+		BtnDayAfterCleanup:      "Day After Cleanup",
+		BtnBookingReminder:      "Booking Reminder",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
@@ -351,6 +369,10 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Select a language for your group:",
 		MsgLanguageSet:            "Language updated ✓",
 		MsgOnlyAdminSetLanguage:   "Only group administrators can change the language.",
+		MsgSelectGroupForTimezone: "Which group's timezone do you want to change?",
+		MsgSelectTimezone:         "Select a timezone for your group:",
+		MsgTimezoneSet:            "Timezone updated ✓",
+		BtnSetTimezone:            "🕐 Set Timezone",
 
 		// New game wizard
 		MsgNewGameSelectDate:         "Select a date for the new game:",
@@ -382,6 +404,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueEditMenu:         "*%s*\nCourts: %s\nTime slots: %s\nAddress: %s",
 		MsgVenueConfirmDelete:    "Delete venue *%s*? This cannot be undone.",
 		MsgVenueInvalidTimeSlots: "Invalid time slots. Each slot must be in HH:MM format (e.g. 18:00,19:00,20:00):",
+		MsgVenueAskGameDays:      "Which day(s) do games happen at this venue? Tap to toggle, then press Confirm. Send - to skip.",
+		MsgVenueAskGracePeriod:   "Grace period for cancellation reminders in hours (default: 24). Send - to use default:",
+		MsgVenueConfirmDays:      "✓ Confirm",
 		BtnVenueEditName:         "✏️ Name",
 		BtnVenueEditCourts:       "🎾 Courts",
 		BtnVenueEditTimeSlots:    "🕐 Time Slots",
@@ -389,6 +414,8 @@ var translations = map[Lang]map[string]string{
 		BtnVenueDelete:           "🗑 Delete",
 		BtnVenueAdd:              "+ Add Venue",
 		BtnVenueConfirmDelete:    "Yes, delete",
+		BtnVenueEditGameDays:     "📅 Game Days",
+		BtnVenueEditGracePeriod:  "⏱ Grace Period",
 
 		// Game message — venue
 		GameVenueLine: "📍 %s",
@@ -441,9 +468,10 @@ var translations = map[Lang]map[string]string{
 		GameCompleted:   "Spiel beendet ✓",
 
 		// Scheduler
-		SchedOverCapacity:   "⚠️ Zu viele Spieler! %d angemeldet, aber nur %d Plätze (%d Plätze). Erwäge, einen weiteren Platz zu buchen.",
-		SchedUnderCapacity:  "📢 Freie Plätze verfügbar! %d/%d Spieler angemeldet (%d Plätze). Lade mehr Freunde ein!",
-		SchedWeeklyReminder: "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
+		SchedOverCapacity:    "⚠️ Zu viele Spieler! %d angemeldet, aber nur %d Plätze (%d Plätze). Erwäge, einen weiteren Platz zu buchen.",
+		SchedUnderCapacity:   "📢 Freie Plätze verfügbar! %d/%d Spieler angemeldet (%d Plätze). Lade mehr Freunde ein!",
+		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
+		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Die Buchung öffnet in %d Tagen. Vergiss nicht, deine Plätze zu reservieren!",
 
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
@@ -458,9 +486,12 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Zurück",
 		BtnViewInGroup: "In Gruppe ansehen →",
 
-		BtnDayBefore:      "Tag-Vorher-Prüfung",
-		BtnDayAfter:       "Tag-Danach-Bereinigung",
-		BtnWeeklyReminder: "Wöchentliche Erinnerung",
+		BtnDayBefore:            "Tag-Vorher-Prüfung",
+		BtnDayAfter:             "Tag-Danach-Bereinigung",
+		BtnWeeklyReminder:       "Wöchentliche Erinnerung",
+		BtnCancellationReminder: "Absage-Erinnerung",
+		BtnDayAfterCleanup:      "Tag-Danach-Bereinigung",
+		BtnBookingReminder:      "Buchungserinnerung",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
@@ -549,6 +580,10 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Sprache für deine Gruppe auswählen:",
 		MsgLanguageSet:            "Sprache aktualisiert ✓",
 		MsgOnlyAdminSetLanguage:   "Nur Gruppenadministratoren können die Sprache ändern.",
+		MsgSelectGroupForTimezone: "Für welche Gruppe möchtest du die Zeitzone ändern?",
+		MsgSelectTimezone:         "Zeitzone für deine Gruppe auswählen:",
+		MsgTimezoneSet:            "Zeitzone aktualisiert ✓",
+		BtnSetTimezone:            "🕐 Zeitzone festlegen",
 
 		// New game wizard
 		MsgNewGameSelectDate:         "Datum für das neue Spiel auswählen:",
@@ -580,6 +615,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueEditMenu:         "*%s*\nPlätze: %s\nZeitfenster: %s\nAdresse: %s",
 		MsgVenueConfirmDelete:    "Ort *%s* löschen? Dies kann nicht rückgängig gemacht werden.",
 		MsgVenueInvalidTimeSlots: "Ungültige Zeitfenster. Jedes Zeitfenster muss im Format HH:MM sein (z.B. 18:00,19:00,20:00):",
+		MsgVenueAskGameDays:      "An welchen Tag(en) finden Spiele in diesem Ort statt? Tippe zum Umschalten, dann Bestätigen drücken. Sende - zum Überspringen.",
+		MsgVenueAskGracePeriod:   "Kulanzzeit für Stornierungserinnerungen in Stunden (Standard: 24). Sende - für Standard:",
+		MsgVenueConfirmDays:      "✓ Bestätigen",
 		BtnVenueEditName:         "✏️ Name",
 		BtnVenueEditCourts:       "🎾 Plätze",
 		BtnVenueEditTimeSlots:    "🕐 Zeitfenster",
@@ -587,6 +625,8 @@ var translations = map[Lang]map[string]string{
 		BtnVenueDelete:           "🗑 Löschen",
 		BtnVenueAdd:              "+ Ort hinzufügen",
 		BtnVenueConfirmDelete:    "Ja, löschen",
+		BtnVenueEditGameDays:     "📅 Spieltage",
+		BtnVenueEditGracePeriod:  "⏱ Kulanzzeit",
 		GameVenueLine:            "📍 %s",
 
 		// Weekdays
@@ -637,9 +677,10 @@ var translations = map[Lang]map[string]string{
 		GameCompleted:   "Игра завершена ✓",
 
 		// Scheduler
-		SchedOverCapacity:   "⚠️ Слишком много игроков! Записалось %d, но только %d мест (%d корта). Рассмотрите бронирование дополнительного корта.",
-		SchedUnderCapacity:  "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
-		SchedWeeklyReminder: "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
+		SchedOverCapacity:    "⚠️ Слишком много игроков! Записалось %d, но только %d мест (%d корта). Рассмотрите бронирование дополнительного корта.",
+		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
+		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
+		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: бронирование откроется через %d дней. Не забудь зарезервировать корты!",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",
@@ -654,9 +695,12 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Назад",
 		BtnViewInGroup: "Открыть в группе →",
 
-		BtnDayBefore:      "Проверка за день",
-		BtnDayAfter:       "Очистка после игры",
-		BtnWeeklyReminder: "Еженедельное напоминание",
+		BtnDayBefore:            "Проверка за день",
+		BtnDayAfter:             "Очистка после игры",
+		BtnWeeklyReminder:       "Еженедельное напоминание",
+		BtnCancellationReminder: "Напоминание об отмене",
+		BtnDayAfterCleanup:      "Очистка после игры",
+		BtnBookingReminder:      "Напоминание о бронировании",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
@@ -745,6 +789,10 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Выбери язык для своей группы:",
 		MsgLanguageSet:            "Язык обновлён ✓",
 		MsgOnlyAdminSetLanguage:   "Только администраторы группы могут менять язык.",
+		MsgSelectGroupForTimezone: "Для какой группы изменить часовой пояс?",
+		MsgSelectTimezone:         "Выбери часовой пояс для своей группы:",
+		MsgTimezoneSet:            "Часовой пояс обновлён ✓",
+		BtnSetTimezone:            "🕐 Часовой пояс",
 
 		// New game wizard
 		MsgNewGameSelectDate:         "Выбери дату новой игры:",
@@ -776,6 +824,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueEditMenu:         "*%s*\nКорты: %s\nВременные слоты: %s\nАдрес: %s",
 		MsgVenueConfirmDelete:    "Удалить площадку *%s*? Это действие нельзя отменить.",
 		MsgVenueInvalidTimeSlots: "Неверный формат временных слотов. Каждый слот должен быть в формате ЧЧ:ММ (например 18:00,19:00,20:00):",
+		MsgVenueAskGameDays:      "В какие дни проходят игры на этой площадке? Нажми для выбора, затем подтверди. Отправь - для пропуска.",
+		MsgVenueAskGracePeriod:   "Период отмены для напоминаний в часах (по умолчанию: 24). Отправь - для значения по умолчанию:",
+		MsgVenueConfirmDays:      "✓ Подтвердить",
 		BtnVenueEditName:         "✏️ Название",
 		BtnVenueEditCourts:       "🎾 Корты",
 		BtnVenueEditTimeSlots:    "🕐 Временные слоты",
@@ -783,6 +834,8 @@ var translations = map[Lang]map[string]string{
 		BtnVenueDelete:           "🗑 Удалить",
 		BtnVenueAdd:              "+ Добавить площадку",
 		BtnVenueConfirmDelete:    "Да, удалить",
+		BtnVenueEditGameDays:     "📅 Игровые дни",
+		BtnVenueEditGracePeriod:  "⏱ Период отмены",
 		GameVenueLine:            "📍 %s",
 
 		// Weekdays (nominative)
