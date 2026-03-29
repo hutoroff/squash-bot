@@ -1,0 +1,22 @@
+FROM golang:1.25-alpine AS builder
+
+ARG VERSION=dev
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /sports-booking-service ./cmd/sports-booking-service/main.go
+
+
+FROM alpine:3.18
+
+RUN apk --no-cache add ca-certificates tzdata wget
+
+WORKDIR /app
+
+COPY --from=builder /sports-booking-service .
+
+CMD ["./sports-booking-service"]

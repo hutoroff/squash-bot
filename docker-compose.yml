@@ -47,5 +47,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  sports-booking-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.booking
+    environment:
+      SERVER_PORT: "8081"
+    env_file: .env
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   postgres_data:

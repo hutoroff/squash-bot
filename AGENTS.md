@@ -18,17 +18,19 @@ This file provides working instructions for coding agents in this repository.
 
 ## Architecture
 
-Two independently deployable binaries in one Go module:
+Three independently deployable binaries in one Go module:
 
 ```
 telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
+sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
 Key directories:
 
 - `cmd/squash-games-management` — management service entry point
 - `cmd/telegram-squash-bot` — telegram bot entry point
-- `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig`)
+- `cmd/sports-booking-service` — sports booking service entry point
+- `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig` / `BookingConfig`)
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group)
 - `internal/storage` — SQL repositories (games, players, participations, guests, groups)
@@ -36,6 +38,8 @@ Key directories:
 - `internal/api` — HTTP handlers for the management service REST API
 - `internal/client` — typed HTTP client used by the telegram bot
 - `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
+- `internal/eversports` — reverse-engineered Eversports.de HTTP client (login, bookings, single match)
+- `internal/booking` — HTTP server and handlers for the sports-booking-service REST API
 - `migrations` — embedded SQL migrations
 - `tests` — integration and e2e tests
 - `.github/workflows` — CI pipeline and automated documentation updates
@@ -62,7 +66,8 @@ Key directories:
 - Main configuration is environment-variable based via `.env`.
 - `squash-games-management` requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
 - `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
-- `INTERNAL_API_SECRET` is a shared secret used to authenticate all HTTP requests between the two services (bearer token in `Authorization` header). Both services must be configured with the same value.
+- `sports-booking-service` requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, `EVERSPORTS_USER_ID`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
+- `INTERNAL_API_SECRET` is a shared secret used to authenticate all HTTP requests between services (bearer token in `Authorization` header).
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
 
@@ -84,6 +89,13 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 
+# Run the sports-booking-service locally
+EVERSPORTS_EMAIL=<email> \
+  EVERSPORTS_PASSWORD=<password> \
+  EVERSPORTS_USER_ID=<numeric_id> \
+  INTERNAL_API_SECRET=<secret> \
+  go run cmd/sports-booking-service/main.go
+
 # Run tests
 go test ./...
 go test -tags integration -timeout 120s ./...
@@ -91,6 +103,7 @@ go test -tags integration -timeout 120s ./...
 # Build binaries
 go build ./cmd/squash-games-management/
 go build ./cmd/telegram-squash-bot/
+go build ./cmd/sports-booking-service/
 ```
 
 ## Testing Guidance
