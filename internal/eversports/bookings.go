@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,45 +40,61 @@ const matchQuery = `query Match($matchId: ID!, $first: Int) {
 }`
 
 // GetMatchByID fetches the details of a single booking by its UUID.
+// It logs in automatically if no session is held, and retries once on HTTP 401.
 func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, error) {
-	payload := gqlRequest{
-		OperationName: "Match",
-		Variables:     map[string]any{"matchId": matchID, "first": 3},
-		Query:         matchQuery,
+	do := func() (*Booking, error) {
+		payload := gqlRequest{
+			OperationName: "Match",
+			Variables:     map[string]any{"matchId": matchID, "first": 3},
+			Query:         matchQuery,
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: marshal Match request: %w", err)
+		}
+		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("eversports: Match request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: read Match response: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", errUnauthorized)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("eversports: Match HTTP %d: %s", resp.StatusCode, string(respBytes))
+		}
+
+		var gqlResp gqlMatchResponse
+		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
+			return nil, fmt.Errorf("eversports: decode Match response: %w", err)
+		}
+		if len(gqlResp.Errors) > 0 {
+			return nil, fmt.Errorf("eversports: Match graphql error: %s", gqlResp.Errors[0].Message)
+		}
+		b, err := gqlResp.Data.Match.toBooking()
+		if err != nil {
+			return nil, fmt.Errorf("eversports: parse Match times: %w", err)
+		}
+		return &b, nil
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: marshal Match request: %w", err)
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
 	}
-
-	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("eversports: Match request: %w", err)
+	b, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
 	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: read Match response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("eversports: Match HTTP %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var gqlResp gqlMatchResponse
-	if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-		return nil, fmt.Errorf("eversports: decode Match response: %w", err)
-	}
-	if len(gqlResp.Errors) > 0 {
-		return nil, fmt.Errorf("eversports: Match graphql error: %s", gqlResp.Errors[0].Message)
-	}
-
-	b, err := gqlResp.Data.Match.toBooking()
-	if err != nil {
-		return nil, fmt.Errorf("eversports: parse Match times: %w", err)
-	}
-	return &b, nil
+	return b, err
 }
 
 // ─── Booking list via activities endpoint ─────────────────────────────────────
@@ -87,33 +104,52 @@ const activitiesEndpoint = "/api/user/activities"
 // GetBookings returns all upcoming bookings for the authenticated user.
 // It calls GET /api/user/activities?userId=<activitiesUserID>&past=false and
 // parses the HTML fragment returned in the response body.
+// It logs in automatically if no session is held, and retries once on HTTP 401.
 func (c *Client) GetBookings(ctx context.Context) ([]Booking, error) {
-	rawURL := fmt.Sprintf("%s%s?userId=%s&past=false", baseURL, activitiesEndpoint, c.activitiesUserID)
-	resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: GetBookings request: %w", err)
-	}
-	defer resp.Body.Close()
+	do := func() ([]Booking, error) {
+		rawURL := fmt.Sprintf("%s%s?userId=%s&past=false", baseURL, activitiesEndpoint, c.activitiesUserID)
+		resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetBookings request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: GetBookings read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("eversports: GetBookings HTTP %d: %s", resp.StatusCode, string(respBytes))
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetBookings read response: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", errUnauthorized)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("eversports: GetBookings HTTP %d: %s", resp.StatusCode, string(respBytes))
+		}
+
+		var actResp activitiesResponse
+		if err := json.Unmarshal(respBytes, &actResp); err != nil {
+			return nil, fmt.Errorf("eversports: GetBookings decode response: %w", err)
+		}
+		if actResp.Status != "success" {
+			return nil, fmt.Errorf("eversports: GetBookings status=%q", actResp.Status)
+		}
+
+		bookings := parseActivitiesHTML(actResp.HTML, c.logger)
+		c.logger.Info("eversports bookings fetched", "count", len(bookings))
+		return bookings, nil
 	}
 
-	var actResp activitiesResponse
-	if err := json.Unmarshal(respBytes, &actResp); err != nil {
-		return nil, fmt.Errorf("eversports: GetBookings decode response: %w", err)
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
 	}
-	if actResp.Status != "success" {
-		return nil, fmt.Errorf("eversports: GetBookings status=%q", actResp.Status)
+	bookings, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
 	}
-
-	bookings := parseActivitiesHTML(actResp.HTML, c.logger)
-	c.logger.Info("eversports bookings fetched", "count", len(bookings))
-	return bookings, nil
+	return bookings, err
 }
 
 // ─── HTML parsing for activity items ─────────────────────────────────────────
@@ -216,36 +252,54 @@ const slotsEndpoint = "/api/slot"
 // facilityID is the numeric Eversports facility ID (e.g. "76443").
 // courtIDs are the numeric court IDs to include in the query.
 // startDate must be in YYYY-MM-DD format.
+// It logs in automatically if no session is held, and retries once on HTTP 401.
 func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]Slot, error) {
-	params := url.Values{}
-	params.Set("facilityId", facilityID)
-	params.Set("startDate", startDate)
-	for _, id := range courtIDs {
-		params.Add("courts[]", id)
-	}
-	rawURL := baseURL + slotsEndpoint + "?" + params.Encode()
+	do := func() ([]Slot, error) {
+		params := url.Values{}
+		params.Set("facilityId", facilityID)
+		params.Set("startDate", startDate)
+		for _, id := range courtIDs {
+			params.Add("courts[]", id)
+		}
+		rawURL := baseURL + slotsEndpoint + "?" + params.Encode()
 
-	resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: GetSlots request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetSlots request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: GetSlots read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("eversports: GetSlots HTTP %d: %s", resp.StatusCode, string(respBytes))
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetSlots read response: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", errUnauthorized)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("eversports: GetSlots HTTP %d: %s", resp.StatusCode, string(respBytes))
+		}
+
+		var slotsResp rawSlotsResponse
+		if err := json.Unmarshal(respBytes, &slotsResp); err != nil {
+			return nil, fmt.Errorf("eversports: GetSlots decode response: %w", err)
+		}
+		c.logger.Info("eversports slots fetched", "count", len(slotsResp.Slots), "date", startDate)
+		return slotsResp.Slots, nil
 	}
 
-	var slotsResp rawSlotsResponse
-	if err := json.Unmarshal(respBytes, &slotsResp); err != nil {
-		return nil, fmt.Errorf("eversports: GetSlots decode response: %w", err)
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
 	}
-
-	c.logger.Info("eversports slots fetched", "count", len(slotsResp.Slots), "date", startDate)
-	return slotsResp.Slots, nil
+	slots, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
+	}
+	return slots, err
 }
 
 // ─── Debug-page helper ────────────────────────────────────────────────────────
@@ -266,38 +320,53 @@ var nextDataRe = regexp.MustCompile(`<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]
 // FetchPageDebugInfo fetches the configured bookings page and returns the raw
 // __NEXT_DATA__ JSON (or a 2000-char HTML snippet if not found). Use the
 // GET /api/v1/eversports/debug-page endpoint to call this interactively.
+// It logs in automatically if no session is held, and retries once if the page
+// redirects to login (session expired).
 func (c *Client) FetchPageDebugInfo(ctx context.Context) (*PageDebugInfo, error) {
-	targetURL := baseURL + c.bookingsPath
-	resp, err := c.doAuthedPage(ctx, targetURL)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: fetch page: %w", err)
-	}
-	defer resp.Body.Close()
-
-	info := &PageDebugInfo{
-		URL:      targetURL,
-		FinalURL: resp.Request.URL.String(),
-		Status:   resp.StatusCode,
-	}
-
-	pageBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("eversports: read page body: %w", err)
-	}
-
-	matches := nextDataRe.FindSubmatch(pageBytes)
-	if len(matches) < 2 {
-		snippet := pageBytes
-		if len(snippet) > 2000 {
-			snippet = snippet[:2000]
+	do := func() (*PageDebugInfo, error) {
+		targetURL := baseURL + c.bookingsPath
+		resp, err := c.doAuthedPage(ctx, targetURL)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: fetch page: %w", err)
 		}
-		info.HTMLSnippet = string(snippet)
+		defer resp.Body.Close()
+
+		info := &PageDebugInfo{
+			URL:      targetURL,
+			FinalURL: resp.Request.URL.String(),
+			Status:   resp.StatusCode,
+		}
+		pageBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: read page body: %w", err)
+		}
+		matches := nextDataRe.FindSubmatch(pageBytes)
+		if len(matches) < 2 {
+			snippet := pageBytes
+			if len(snippet) > 2000 {
+				snippet = snippet[:2000]
+			}
+			info.HTMLSnippet = string(snippet)
+			return info, nil
+		}
+		info.HasNextData = true
+		info.NextData = json.RawMessage(matches[1])
 		return info, nil
 	}
 
-	info.HasNextData = true
-	info.NextData = json.RawMessage(matches[1])
-	return info, nil
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
+	}
+	info, err := do()
+	// doAuthedPage wraps errUnauthorized when it detects a redirect to login.
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
+	}
+	return info, err
 }
 
 // parseTime parses an RFC3339 timestamp, tolerating the millisecond variant
