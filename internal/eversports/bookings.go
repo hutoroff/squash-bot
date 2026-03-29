@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -205,6 +206,46 @@ func parseActivityItem(item string) (Booking, error) {
 	}
 
 	return b, nil
+}
+
+// ─── Court availability slots ────────────────────────────────────────────────
+
+const slotsEndpoint = "/api/slot"
+
+// GetSlots returns available court time slots for the given date.
+// facilityID is the numeric Eversports facility ID (e.g. "76443").
+// courtIDs are the numeric court IDs to include in the query.
+// startDate must be in YYYY-MM-DD format.
+func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]Slot, error) {
+	params := url.Values{}
+	params.Set("facilityId", facilityID)
+	params.Set("startDate", startDate)
+	for _, id := range courtIDs {
+		params.Add("courts[]", id)
+	}
+	rawURL := baseURL + slotsEndpoint + "?" + params.Encode()
+
+	resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("eversports: GetSlots request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("eversports: GetSlots read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("eversports: GetSlots HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var slotsResp rawSlotsResponse
+	if err := json.Unmarshal(respBytes, &slotsResp); err != nil {
+		return nil, fmt.Errorf("eversports: GetSlots decode response: %w", err)
+	}
+
+	c.logger.Info("eversports slots fetched", "count", len(slotsResp.Slots), "date", startDate)
+	return slotsResp.Slots, nil
 }
 
 // ─── Debug-page helper ────────────────────────────────────────────────────────

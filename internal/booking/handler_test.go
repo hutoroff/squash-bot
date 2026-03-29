@@ -20,15 +20,18 @@ var testLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Le
 // mockClient implements eversportsClient for tests. Fields control
 // what each method returns.
 type mockClient struct {
-	loginErr    error
-	loggedIn    bool
-	bookings    []eversports.Booking
-	bookingsErr error
-	match       *eversports.Booking
-	matchErr    error
-	lastMatchID string // records the matchID passed to GetMatchByID
-	debugInfo   *eversports.PageDebugInfo
-	debugErr    error
+	loginErr      error
+	loggedIn      bool
+	bookings      []eversports.Booking
+	bookingsErr   error
+	match         *eversports.Booking
+	matchErr      error
+	lastMatchID   string // records the matchID passed to GetMatchByID
+	debugInfo     *eversports.PageDebugInfo
+	debugErr      error
+	slots         []eversports.Slot
+	slotsErr      error
+	lastSlotsDate string // records the startDate passed to GetSlots
 }
 
 func (m *mockClient) Login(_ context.Context) error {
@@ -51,6 +54,11 @@ func (m *mockClient) GetMatchByID(_ context.Context, matchID string) (*eversport
 
 func (m *mockClient) FetchPageDebugInfo(_ context.Context) (*eversports.PageDebugInfo, error) {
 	return m.debugInfo, m.debugErr
+}
+
+func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date string) ([]eversports.Slot, error) {
+	m.lastSlotsDate = date
+	return m.slots, m.slotsErr
 }
 
 // newTestHandler creates a Handler backed by the given mock.
@@ -330,5 +338,342 @@ func TestDebugPage_Error(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+// ─── GET /api/v1/eversports/games ────────────────────────────────────────────
+
+func newCourtBookingsHandler(mock *mockClient, facilityID string, courtIDs []string) *Handler {
+	return &Handler{eversports: mock, logger: testLogger, version: "test-version", facilityID: facilityID, courtIDs: courtIDs}
+}
+
+func TestGetCourtBookings_NotLoggedIn(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: false}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("want 412, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_NotConfigured(t *testing.T) {
+	// No facilityID or courtIDs set — server misconfiguration, not a client error.
+	srv := serve(newTestHandler(&mockClient{loggedIn: true}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_MissingDate(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: true}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_InvalidDate(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: true}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=not-a-date")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_Success(t *testing.T) {
+	bookingID := 135271816
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: true, Booking: &bookingID},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385", "77392"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("slots count: want 1, got %d", len(got))
+	}
+	if got[0].Start != "2045" {
+		t.Errorf("Start: want %q, got %q", "2045", got[0].Start)
+	}
+	if mock.lastSlotsDate != "2026-04-07" {
+		t.Errorf("forwarded date: want %q, got %q", "2026-04-07", mock.lastSlotsDate)
+	}
+}
+
+func TestGetCourtBookings_Error(t *testing.T) {
+	mock := &mockClient{loggedIn: true, slotsErr: errors.New("API error")}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_FilterByDate(t *testing.T) {
+	// Eversports can return slots for dates beyond the requested one; only the
+	// requested date should be included in the response.
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "1830", Court: 77385},
+		{Date: "2026-04-08", Start: "1830", Court: 77385},
+		{Date: "2026-04-09", Start: "1830", Court: 77385},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 slot for 2026-04-07, got %d", len(got))
+	}
+	if got[0].Date != "2026-04-07" {
+		t.Errorf("Date: want %q, got %q", "2026-04-07", got[0].Date)
+	}
+}
+
+func TestGetCourtBookings_InvertedTimeRange(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: true}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=2000&endTime=1830")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for inverted range, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_InvalidStartTime(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: true}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	for _, bad := range []string{"abc", "25:00", "99", "2500"} {
+		resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=" + bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("startTime=%q: want 400, got %d", bad, resp.StatusCode)
+		}
+	}
+}
+
+func TestGetCourtBookings_FilterByStartTime(t *testing.T) {
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "1700", Court: 77385},
+		{Date: "2026-04-07", Start: "1830", Court: 77385},
+		{Date: "2026-04-07", Start: "2000", Court: 77385},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=1830")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 slots (1830, 2000), got %d", len(got))
+	}
+	if got[0].Start != "1830" || got[1].Start != "2000" {
+		t.Errorf("unexpected starts: %v", []string{got[0].Start, got[1].Start})
+	}
+}
+
+func TestGetCourtBookings_FilterByEndTime(t *testing.T) {
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "1700", Court: 77385},
+		{Date: "2026-04-07", Start: "1830", Court: 77385},
+		{Date: "2026-04-07", Start: "2000", Court: 77385},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&endTime=1830")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 slots (1700, 1830), got %d", len(got))
+	}
+}
+
+func TestGetCourtBookings_InvalidMyParam(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{loggedIn: true}, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for invalid my param, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourtBookings_FilterByMyTrue(t *testing.T) {
+	bookingID := 135271816
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "2045", Court: 77389, IsUserBookingOwner: true, Booking: &bookingID},
+		{Date: "2026-04-07", Start: "2045", Court: 77391, IsUserBookingOwner: false},
+		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: true, Booking: &bookingID},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77389", "77391", "77392"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 owned slots, got %d", len(got))
+	}
+	for _, s := range got {
+		if !s.IsUserBookingOwner {
+			t.Errorf("slot %d should be owned by user", s.Court)
+		}
+	}
+}
+
+func TestGetCourtBookings_FilterByMyFalse(t *testing.T) {
+	bookingID := 135271816
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "2045", Court: 77389, IsUserBookingOwner: true, Booking: &bookingID},
+		{Date: "2026-04-07", Start: "2045", Court: 77391, IsUserBookingOwner: false},
+		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: false},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77389", "77391", "77392"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 non-owned slots, got %d", len(got))
+	}
+}
+
+func TestGetCourtBookings_FilterByTimeRange(t *testing.T) {
+	slots := []eversports.Slot{
+		{Date: "2026-04-07", Start: "1700", Court: 77385},
+		{Date: "2026-04-07", Start: "1830", Court: 77385},
+		{Date: "2026-04-07", Start: "2000", Court: 77385},
+		{Date: "2026-04-07", Start: "2130", Court: 77385},
+	}
+	mock := &mockClient{loggedIn: true, slots: slots}
+	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=1830&endTime=2000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var got []eversports.Slot
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 slots (1830, 2000), got %d", len(got))
+	}
+	if got[0].Start != "1830" || got[1].Start != "2000" {
+		t.Errorf("unexpected starts: %v", []string{got[0].Start, got[1].Start})
 	}
 }

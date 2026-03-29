@@ -233,7 +233,8 @@ Guest spots count toward capacity.
 | `EVERSPORTS_EMAIL`          | Yes      | —                 | Eversports account email                                       |
 | `EVERSPORTS_PASSWORD`       | Yes      | —                 | Eversports account password                                    |
 | `EVERSPORTS_USER_ID`        | Yes      | —                 | Legacy numeric user ID for the bookings list endpoint. Find it by logging into eversports.de and checking the `userId=` parameter in the `/api/user/activities` network request in browser DevTools. |
-| `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric ID visible in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). Not used yet; reserved for a future iteration for court availability checking. |
+| `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric facility ID required for `GET /api/v1/eversports/games`. Find it in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). |
+| `EVERSPORTS_COURT_IDS`      | No       | _(empty)_         | Comma-separated numeric court IDs required for `GET /api/v1/eversports/games`. Find them in the `courts[]=` parameters of the `/api/slot` network request in browser DevTools. |
 | `EVERSPORTS_BOOKINGS_PATH`  | No       | `/user/bookings`  | URL path used by the `GET /api/v1/eversports/debug-page` diagnostic endpoint; change if your locale uses a prefix like `/de/user/bookings` |
 | `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
@@ -278,6 +279,7 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 | `POST` | `/api/v1/eversports/login`            | Yes  | Authenticate with Eversports (stores the session cookie)       |
 | `GET`  | `/api/v1/eversports/bookings`         | Yes  | List the authenticated user's upcoming court bookings          |
 | `GET`  | `/api/v1/eversports/matches/{id}`     | Yes  | Fetch a single booking by its UUID with full detail            |
+| `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Yes | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means the slot is already reserved. Optionally filter by time window (inclusive) and/or by whether the authenticated user owns the reservation (`my=true\|false`). Requires `EVERSPORTS_FACILITY_ID` and `EVERSPORTS_COURT_IDS`. |
 | `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
 
 Authentication with Eversports is cookie-based. The service POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout` and stores the resulting `et` session cookie in an in-memory jar.

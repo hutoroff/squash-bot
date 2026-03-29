@@ -147,6 +147,36 @@ type gqlMatchResponse struct {
 	} `json:"errors"`
 }
 
+// ─── Slot (court availability) ───────────────────────────────────────────────
+
+// Slot represents a single available court time slot returned by the
+// /api/slot endpoint.
+type Slot struct {
+	Date               string     `json:"date"`  // YYYY-MM-DD
+	Start              string     `json:"start"` // HHMM, e.g. "1830"
+	Court              int        `json:"court"` // numeric court ID
+	Title              *string    `json:"title"`
+	Present            bool       `json:"present"`
+	IsUserBookingOwner bool       `json:"isUserBookingOwner"`
+	Booking            *int       `json:"booking"`
+	Match              *SlotMatch `json:"match,omitempty"`
+}
+
+// SlotMatch is the match metadata embedded in a Slot when the slot is owned
+// by the authenticated user.
+type SlotMatch struct {
+	UUID            string `json:"uuid"`
+	IsPublic        bool   `json:"isPublic"`
+	MinParticipants *int   `json:"minParticipants"`
+	MaxParticipants *int   `json:"maxParticipants"`
+	CurParticipants int    `json:"curParticipants"`
+}
+
+// rawSlotsResponse is the JSON envelope returned by GET /api/slot.
+type rawSlotsResponse struct {
+	Slots []Slot `json:"slots"`
+}
+
 // ─── Match list GraphQL types ─────────────────────────────────────────────────
 
 // gqlMatchListResponse is the GraphQL response envelope for the list-of-matches

@@ -55,9 +55,13 @@ type BookingConfig struct {
 	EversportsEmail    string `env:"EVERSPORTS_EMAIL,required"`
 	EversportsPassword string `env:"EVERSPORTS_PASSWORD,required"`
 	// EversportsFacilityID is the numeric Eversports facility ID (visible in the
-	// venue page URL, e.g. eversports.de/s/venue-name-76443). Not used yet in
-	// this iteration; will be required for court availability checking.
+	// venue page URL, e.g. eversports.de/s/venue-name-76443). Required for the
+	// GET /api/v1/eversports/games endpoint.
 	EversportsFacilityID string `env:"EVERSPORTS_FACILITY_ID"`
+	// EversportsCourtIDs is a comma-separated list of numeric court IDs to
+	// query for availability via GET /api/v1/eversports/games.
+	// Find them in the courts[]= parameters of the /api/slot network request in browser DevTools.
+	EversportsCourtIDs string `env:"EVERSPORTS_COURT_IDS"`
 	// EversportsUserID is the legacy numeric user ID used by the /api/user/activities
 	// endpoint (e.g. 4802620). Find it by logging into eversports.de and inspecting
 	// the network request to /api/user/activities in browser DevTools.
