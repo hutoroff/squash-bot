@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/vkhutorov/squash_bot/internal/models"
 	"github.com/vkhutorov/squash_bot/internal/storage"
 	"github.com/vkhutorov/squash_bot/internal/testutil"
 )
@@ -181,7 +182,7 @@ func TestGroupRepo_GetAll_MultipleGroups(t *testing.T) {
 		t.Fatalf("GetAll: got %d groups, want %d", len(groups), len(seed))
 	}
 
-	byID := make(map[int64]storage.BotGroup, len(groups))
+	byID := make(map[int64]models.Group, len(groups))
 	for _, g := range groups {
 		byID[g.ChatID] = g
 	}
