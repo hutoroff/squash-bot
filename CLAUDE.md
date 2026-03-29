@@ -309,7 +309,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - `GetBookings(ctx) ([]Booking, error)` — auto-logins if needed, calls activities endpoint, parses HTML; retries once on HTTP 401
 - `GetMatchByID(ctx, matchID string) (*Booking, error)` — auto-logins if needed, single match via GraphQL; retries once on HTTP 401
 - `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — auto-logins if needed; retries once on HTTP 401
-- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update`, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401
+- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401
 - `FetchPageDebugInfo(ctx) (*PageDebugInfo, error)` — auto-logins if needed; retries once on login-page redirect
 
 ### HTTP endpoints
