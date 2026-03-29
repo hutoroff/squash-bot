@@ -4,7 +4,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 
 ## What It Does
 
-- Admin creates a game via `/new_game` in private chat or by @mentioning the bot in the group
+- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → time → courts)
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
@@ -75,14 +75,13 @@ Add the bot to a Telegram group and grant it admin rights (required for pinning 
 
 ### 4. Create a game
 
-In private chat with the bot, run `/new_game` and follow the prompt, or send the date/time and courts directly:
+In private chat with the bot, run `/newgame`. The bot will guide you through three steps:
 
-```
-2025-06-15 18:00
-courts: 2,3,4
-```
+1. **Pick a date** — tap one of the date buttons (today + next 13 days)
+2. **Enter the time** — type the time in `HH:MM` format (e.g. `19:30`)
+3. **Enter the courts** — type the court numbers (e.g. `2,3,4` or `2 3 4`)
 
-If you are an admin in multiple groups, the bot will ask you to pick a group.
+If you are an admin in multiple groups, the bot will ask you to pick a group after step 3.
 
 ## Running Locally (without Docker)
 
@@ -119,7 +118,7 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 | `/help`      | Anyone          | List available commands                          |
 | `/my_game`   | Anyone          | Show your next registered game with a link       |
 | `/games`     | Group admins    | List upcoming games you manage; edit/manage them |
-| `/new_game`  | Group admins    | Create a new game for your group                 |
+| `/newgame`   | Group admins    | Create a new game for your group (wizard)        |
 | `/language`  | Group admins    | Set the bot language for a group (en/de/ru)      |
 | `/trigger`   | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
 

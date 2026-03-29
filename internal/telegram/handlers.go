@@ -26,118 +26,53 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	// In private chats, slash commands take priority and cancel any pending
-	// courts-edit state (so an admin who clicked "Edit Courts" and then sends
-	// /help doesn't have the command text stored as court data).
-	// Group @mentions are handled below with their own per-command routing.
+	// In private chats, slash commands take priority and cancel any pending state.
 	if isPrivate && strings.HasPrefix(msg.Text, "/") {
 		b.pendingCourtsEdit.Delete(msg.Chat.ID)
+		b.pendingNewGameWizard.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
 		return
 	}
 
-	// In private chats, check for a pending courts-edit.
+	// In private chats, route to whichever state machine is active.
 	if isPrivate {
 		if raw, ok := b.pendingCourtsEdit.LoadAndDelete(msg.Chat.ID); ok {
 			b.processCourtsEdit(ctx, msg, raw.(int64))
 			return
 		}
+		if raw, ok := b.pendingNewGameWizard.Load(msg.Chat.ID); ok {
+			b.processNewGameWizard(ctx, msg, raw.(*newGameWizard))
+			return
+		}
+		// Non-command, non-wizard private messages are ignored.
+		return
 	}
 
-	text := msg.Text
+	// Group @mention: only /help and /start are served; everything else
+	// is redirected to private chat.
 	lz := b.userLocalizer(msg.From.LanguageCode)
+	text := stripBotMention(msg.Text, b.api.Self.UserName, msg.Entities)
+	text = strings.TrimSpace(text)
 
-	if isGroupMention {
-		// Group mention: target group is determined by where the bot was @mentioned.
-		text = stripBotMention(text, b.api.Self.UserName, msg.Entities)
-
-		if strings.HasPrefix(strings.TrimSpace(text), "/") {
-			// Slash command in a group @mention context.
-			// Only /help and /start are served from the group.
-			// /new_game is allowed when it carries game details in the body — treat it
-			// identically to a plain game-creation @mention for the current group.
-			// All other management commands belong in a private chat.
-			cmdText := strings.TrimSpace(text)
-			firstWord := strings.Fields(cmdText)[0]
-			if idx := strings.Index(firstWord, "@"); idx >= 0 {
-				firstWord = firstWord[:idx]
-			}
-			switch strings.ToLower(firstWord) {
-			case "/help", "/start":
-				stripped := *msg
-				stripped.Text = cmdText
-				b.handleCommand(ctx, &stripped)
-				return
-			case "/new_game":
-				lines := strings.SplitN(cmdText, "\n", 2)
-				if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
-					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSendGameDetails))
-					return
-				}
-				text = strings.TrimSpace(lines[1])
-				// text is now the game-creation body; fall through to the
-				// admin check and createAndAnnounceGame call below.
-			default:
-				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgManagementPrivateOnly))
-				return
-			}
+	if strings.HasPrefix(text, "/") {
+		cmdText := text
+		firstWord := strings.Fields(cmdText)[0]
+		if idx := strings.Index(firstWord, "@"); idx >= 0 {
+			firstWord = firstWord[:idx]
 		}
-
-		isAdmin, err := b.isAdminInGroup(msg.From.ID, msg.Chat.ID)
-		if err != nil {
-			slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
-			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedVerifyPermissions))
-			return
+		switch strings.ToLower(firstWord) {
+		case "/help", "/start":
+			stripped := *msg
+			stripped.Text = cmdText
+			b.handleCommand(ctx, &stripped)
+		default:
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgManagementPrivateOnly))
 		}
-		if !isAdmin {
-			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreate))
-			return
-		}
-		gameDate, courts, err := parseAdminCommand(text, b.loc)
-		if err != nil {
-			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
-			return
-		}
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, msg.Chat.ID, gameDate, courts, lz)
 		return
 	}
 
-	// Private message: discover which configured groups this user admins.
-	adminGroupIDs := b.adminGroups(msg.From.ID)
-	if len(adminGroupIDs) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreate))
-		return
-	}
-
-	gameDate, courts, err := parseAdminCommand(text, b.loc)
-	if err != nil {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
-		return
-	}
-
-	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, lz)
-		return
-	}
-
-	// Admin manages multiple groups — ask which one to post to.
-	// The key is (chatID, messageID): message IDs are unique only within a single
-	// chat, so using messageID alone would let two admins in different private chats
-	// collide and overwrite each other's pending game.
-	key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
-	b.pendingGames.Store(key, &pendingGame{
-		gameDate:    gameDate,
-		courts:      courts,
-		replyChatID: msg.Chat.ID,
-		replyMsgID:  msg.MessageID,
-	})
-	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
-	selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
-	selMsg.ReplyMarkup = keyboard
-	if _, err := b.api.Send(selMsg); err != nil {
-		slog.Error("send group selection keyboard", "err", err)
-		b.pendingGames.Delete(key)
-	}
+	// Non-command group @mention.
+	b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgManagementPrivateOnly))
 }
 
 func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, key pendingGameKey, groupID int64) {
@@ -266,6 +201,11 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 
 	if action == "trigger" {
 		b.handleTrigger(ctx, cb, rawID)
+		return
+	}
+
+	if action == "ng_date" {
+		b.handleNewGameDate(ctx, cb, rawID)
 		return
 	}
 
@@ -1024,6 +964,132 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 		msg.ReplyMarkup = keyboard
 		b.api.Send(msg) //nolint:errcheck
 	}
+}
+
+// handleNewGameDate handles the ng_date:<YYYY-MM-DD> callback from the date picker.
+// It stores the selected date in the wizard state and prompts for time.
+func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery, dateStr string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	date, err := time.ParseInLocation("2006-01-02", dateStr, b.loc)
+	if err != nil {
+		slog.Debug("handleNewGameDate: invalid date in callback", "data", dateStr)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	// Re-verify admin eligibility at callback time.
+	adminGroupIDs := b.adminGroups(cb.From.ID)
+	if len(adminGroupIDs) == 0 {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCreateGames))
+		return
+	}
+
+	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
+		gameDate: date,
+		step:     wizardStepTime,
+	})
+	b.answerCallback(cb.ID, "")
+
+	localDate := date.In(b.loc)
+	prompt := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
+		lz.Tf(i18n.MsgNewGameEnterTime, lz.FormatGameDate(localDate)))
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	prompt.ReplyMarkup = &emptyKeyboard
+	b.api.Send(prompt) //nolint:errcheck
+}
+
+// processNewGameWizard routes an incoming private message to the correct wizard step.
+func (b *Bot) processNewGameWizard(ctx context.Context, msg *tgbotapi.Message, wizard *newGameWizard) {
+	lz := b.userLocalizer(msg.From.LanguageCode)
+	switch wizard.step {
+	case wizardStepTime:
+		b.processNewGameWizardTime(ctx, msg, wizard, lz)
+	case wizardStepCourts:
+		b.processNewGameWizardCourts(ctx, msg, wizard, lz)
+	}
+}
+
+// processNewGameWizardTime parses the user's time input and advances to courts step.
+func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Message, wizard *newGameWizard, lz *i18n.Localizer) {
+	t, err := time.Parse("15:04", strings.TrimSpace(msg.Text))
+	if err != nil {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNewGameInvalidTime))
+		return // keep wizard state so the user can retry
+	}
+
+	d := wizard.gameDate.In(b.loc)
+	gameDate := time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, b.loc)
+	if !gameDate.After(time.Now()) {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNewGameTimePast))
+		return // keep wizard state so the user can retry
+	}
+
+	wizard.gameDate = gameDate
+	wizard.step = wizardStepCourts
+	b.pendingNewGameWizard.Store(msg.Chat.ID, wizard)
+
+	localDate := gameDate.In(b.loc)
+	b.reply(msg.Chat.ID, msg.MessageID,
+		lz.Tf(i18n.MsgNewGameEnterCourts, lz.FormatGameDate(localDate), localDate.Format("15:04")))
+}
+
+// processNewGameWizardCourts validates the courts input and creates the game.
+func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Message, wizard *newGameWizard, lz *i18n.Localizer) {
+	courts := normalizeCourts(strings.TrimSpace(msg.Text))
+	if courts == "" {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
+		return // keep wizard state so the user can retry
+	}
+	if len(courts) > maxCourtsLen {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsStringTooLong, maxCourtsLen))
+		return
+	}
+
+	b.pendingNewGameWizard.Delete(msg.Chat.ID)
+
+	adminGroupIDs := b.adminGroups(msg.From.ID)
+	if len(adminGroupIDs) == 0 {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreateGames))
+		return
+	}
+
+	if len(adminGroupIDs) == 1 {
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, lz)
+		return
+	}
+
+	// Admin manages multiple groups — ask which one to post to.
+	key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
+	b.pendingGames.Store(key, &pendingGame{
+		gameDate:    wizard.gameDate,
+		courts:      courts,
+		replyChatID: msg.Chat.ID,
+		replyMsgID:  msg.MessageID,
+	})
+	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
+	selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
+	selMsg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(selMsg); err != nil {
+		slog.Error("send group selection keyboard", "err", err)
+		b.pendingGames.Delete(key)
+	}
+}
+
+// normalizeCourts converts any common delimiter (space, semicolon, slash) to
+// commas and removes empty parts, returning a canonical "2,3,4" string.
+func normalizeCourts(s string) string {
+	for _, sep := range []string{" ", ";", "/", "|"} {
+		s = strings.ReplaceAll(s, sep, ",")
+	}
+	var parts []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity) string {

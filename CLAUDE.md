@@ -35,7 +35,7 @@ Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags)
-- **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`
+- **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
 
 ### Database Schema
 - `games`: id, chat_id, message_id, game_date, courts_count, courts, notified_day_before, completed, created_at
@@ -89,6 +89,18 @@ go build ./cmd/telegram-squash-bot/
 3. If admin in multiple groups → show group picker first (`set_lang_group:<groupID>` callbacks), then language picker.
 4. Language picker sends `set_lang:<lang>:<groupID>` callback → `PATCH /api/v1/groups/{chatID}/language` → `bot_groups.language` updated.
 5. `PATCH` returns 404 if group row does not exist (bot was kicked), 400 for unsupported language codes, 500 for DB errors.
+
+### New Game Wizard (`/newGame`)
+Works in **private chat only**. Group @mentions are redirected to private chat.
+
+1. Admin sends `/newGame` → bot sends a date-picker inline keyboard (today + next 13 days, 2 per row, locale-aware weekday abbreviation).
+2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → message is edited to show selected date; bot prompts for time.
+3. Admin types time (`HH:MM`) → validated; if past, user is asked to retry (wizard state preserved). Bot prompts for courts.
+4. Admin types courts (any delimiter: comma, space, semicolon, slash is normalised to commas) → `normalizeCourts` cleans the input.
+5. If admin is in one group → game is created immediately. If multiple groups → group-selection inline keyboard shown (same as before).
+6. Sending any slash command at any step cancels the wizard (`pendingNewGameWizard.Delete`).
+
+State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*newGameWizard{gameDate, step}` where `step` is `wizardStepTime` or `wizardStepCourts`.
 
 ### Button Click Flow
 1. Parse callback data (`action:game_id`, e.g. `join:123`, `skip:123`)

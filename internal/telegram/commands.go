@@ -31,7 +31,7 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandMyGame(ctx, msg, lz)
 	case "/games":
 		b.handleCommandGames(ctx, msg, lz)
-	case "/new_game":
+	case "/newgame":
 		b.handleCommandNewGame(ctx, msg, lz)
 	case "/language":
 		b.handleCommandLanguage(ctx, msg, lz)
@@ -159,41 +159,29 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 		return
 	}
 
-	// Strip the "/new_game" first line, pass the rest to parseAdminCommand.
-	text := strings.TrimSpace(msg.Text)
-	lines := strings.SplitN(text, "\n", 2)
-	if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSendGameDetailsCmd))
-		return
+	keyboard := b.buildDateSelectionKeyboard(lz)
+	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgNewGameSelectDate))
+	out.ReplyMarkup = keyboard
+	if _, err := b.api.Send(out); err != nil {
+		slog.Error("handleCommandNewGame: send date keyboard", "err", err)
 	}
-	body := strings.TrimSpace(lines[1])
+}
 
-	gameDate, courts, err := parseAdminCommand(body, b.loc)
-	if err != nil {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormatCmd))
-		return
+// buildDateSelectionKeyboard returns an inline keyboard with the next 14 days (2 per row).
+func (b *Bot) buildDateSelectionKeyboard(lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+	today := time.Now().In(b.loc)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i := 0; i < 14; i += 2 {
+		var row []tgbotapi.InlineKeyboardButton
+		for j := 0; j < 2; j++ {
+			date := today.AddDate(0, 0, i+j)
+			label := lz.ShortWeekday(date.Weekday()) + " " + date.Format("02.01")
+			dateStr := date.Format("2006-01-02")
+			row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, "ng_date:"+dateStr))
+		}
+		rows = append(rows, row)
 	}
-
-	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, lz)
-		return
-	}
-
-	// Admin manages multiple groups — ask which one to post to.
-	key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
-	b.pendingGames.Store(key, &pendingGame{
-		gameDate:    gameDate,
-		courts:      courts,
-		replyChatID: msg.Chat.ID,
-		replyMsgID:  msg.MessageID,
-	})
-	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
-	selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
-	selMsg.ReplyMarkup = keyboard
-	if _, err := b.api.Send(selMsg); err != nil {
-		slog.Error("send group selection keyboard", "err", err)
-		b.pendingGames.Delete(key)
-	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // handleCommandLanguage lets a group admin set the language for one of their groups.

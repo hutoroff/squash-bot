@@ -80,10 +80,10 @@ func TestEscapeMarkdown_Mixed(t *testing.T) {
 	}
 }
 
-// --- parseAdminCommand (command prefix stripping, used by handleCommandNewGame) ---
+// --- parseAdminCommand (retained for testing; no longer called from production handlers) ---
 
-// TestParseAdminCommand_NewGamePrefix simulates the prefix-stripping done inside
-// handleCommandNewGame: strip "/new_game", pass the rest to parseAdminCommand.
+// TestParseAdminCommand_NewGamePrefix exercises the core parsing logic with a
+// sample input that resembles the old /new_game command format.
 func TestParseAdminCommand_NewGamePrefix(t *testing.T) {
 	loc := time.UTC
 	raw := "/new_game\n2026-06-01 18:00\ncourts: 2,3,4"

@@ -31,20 +31,36 @@ type pendingGame struct {
 	replyMsgID  int
 }
 
+// wizardStep tracks which input the /newGame wizard is waiting for.
+type wizardStep int
+
+const (
+	wizardStepTime   wizardStep = iota // waiting for time text input
+	wizardStepCourts                   // waiting for courts text input
+)
+
+// newGameWizard holds the in-progress state for the /newGame wizard.
+// Keyed by private chat ID in pendingNewGameWizard.
+type newGameWizard struct {
+	gameDate time.Time // date only (midnight) at wizardStepTime; full datetime at wizardStepCourts
+	step     wizardStep
+}
+
 // maxConcurrentHandlers caps the number of update goroutines running in parallel.
 // This prevents memory exhaustion if Telegram delivers a burst of updates while
 // the DB or network is slow.
 const maxConcurrentHandlers = 50
 
 type Bot struct {
-	api               *tgbotapi.BotAPI
-	client            *client.Client
-	serviceAdminIDs   map[int64]bool
-	loc               *time.Location
-	logger            *slog.Logger
-	pendingGames      sync.Map      // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit sync.Map      // map[chatID int64]gameID int64
-	handlerSem        chan struct{} // semaphore limiting concurrent update handlers
+	api                  *tgbotapi.BotAPI
+	client               *client.Client
+	serviceAdminIDs      map[int64]bool
+	loc                  *time.Location
+	logger               *slog.Logger
+	pendingGames         sync.Map      // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit    sync.Map      // map[chatID int64]gameID int64
+	pendingNewGameWizard sync.Map      // map[chatID int64]*newGameWizard
+	handlerSem           chan struct{} // semaphore limiting concurrent update handlers
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient *client.Client, serviceAdminIDs string, logger *slog.Logger) *Bot {

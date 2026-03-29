@@ -150,6 +150,13 @@ const (
 	MsgLanguageSet            = "msg.language_set"
 	MsgOnlyAdminSetLanguage   = "msg.only_admin_set_language"
 
+	// New game wizard
+	MsgNewGameSelectDate  = "msg.new_game_select_date"
+	MsgNewGameEnterTime   = "msg.new_game_enter_time"
+	MsgNewGameInvalidTime = "msg.new_game_invalid_time"
+	MsgNewGameTimePast    = "msg.new_game_time_past"
+	MsgNewGameEnterCourts = "msg.new_game_enter_courts"
+
 	// Calendar — weekday names
 	WeekdaySunday    = "weekday.sunday"
 	WeekdayMonday    = "weekday.monday"
@@ -268,7 +275,7 @@ var translations = map[Lang]map[string]string{
 		MsgCmdHelp:                       "/help — Show this help message\n",
 		MsgCmdLanguage:                   "/language — Set the bot language for your group\n",
 		MsgAdminCommands:                 "\nAdmin commands:\n",
-		MsgCmdNewGame:                    "/new\\_game — Create a new game\n",
+		MsgCmdNewGame:                    "/newgame — Create a new game\n",
 		MsgCmdGames:                      "/games — Show and manage upcoming games\n",
 		MsgServiceAdminCommands:          "\nService admin commands:\n",
 		MsgCmdTrigger:                    "/trigger — Manually trigger a scheduled event\n",
@@ -306,6 +313,13 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Select a language for your group:",
 		MsgLanguageSet:            "Language updated ✓",
 		MsgOnlyAdminSetLanguage:   "Only group administrators can change the language.",
+
+		// New game wizard
+		MsgNewGameSelectDate:  "Select a date for the new game:",
+		MsgNewGameEnterTime:   "Game on %s.\n\nEnter the time (HH:MM, e.g. 19:30):",
+		MsgNewGameInvalidTime: "Invalid time. Please enter time as HH:MM (e.g. 19:30):",
+		MsgNewGameTimePast:    "That time is already in the past. Please enter a future time (e.g. 19:30):",
+		MsgNewGameEnterCourts: "Game on %s at %s.\n\nEnter the courts (e.g. 2,3 or 2 3):",
 
 		// Weekdays
 		WeekdaySunday:    "Sunday",
@@ -423,7 +437,7 @@ var translations = map[Lang]map[string]string{
 		MsgCmdHelp:                       "/help — Diese Hilfe anzeigen\n",
 		MsgCmdLanguage:                   "/language — Botsprache für deine Gruppe festlegen\n",
 		MsgAdminCommands:                 "\nAdmin-Befehle:\n",
-		MsgCmdNewGame:                    "/new\\_game — Ein neues Spiel erstellen\n",
+		MsgCmdNewGame:                    "/newgame — Ein neues Spiel erstellen\n",
 		MsgCmdGames:                      "/games — Bevorstehende Spiele anzeigen und verwalten\n",
 		MsgServiceAdminCommands:          "\nService-Admin-Befehle:\n",
 		MsgCmdTrigger:                    "/trigger — Geplantes Ereignis manuell auslösen\n",
@@ -461,6 +475,13 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Sprache für deine Gruppe auswählen:",
 		MsgLanguageSet:            "Sprache aktualisiert ✓",
 		MsgOnlyAdminSetLanguage:   "Nur Gruppenadministratoren können die Sprache ändern.",
+
+		// New game wizard
+		MsgNewGameSelectDate:  "Datum für das neue Spiel auswählen:",
+		MsgNewGameEnterTime:   "Spiel am %s.\n\nGib die Uhrzeit ein (HH:MM, z.B. 19:30):",
+		MsgNewGameInvalidTime: "Ungültige Uhrzeit. Bitte gib die Uhrzeit als HH:MM ein (z.B. 19:30):",
+		MsgNewGameTimePast:    "Diese Uhrzeit liegt bereits in der Vergangenheit. Bitte gib eine zukünftige Uhrzeit ein (z.B. 19:30):",
+		MsgNewGameEnterCourts: "Spiel am %s um %s.\n\nGib die Plätze ein (z.B. 2,3 oder 2 3):",
 
 		// Weekdays
 		WeekdaySunday:    "Sonntag",
@@ -578,7 +599,7 @@ var translations = map[Lang]map[string]string{
 		MsgCmdHelp:                       "/help — Показать эту справку\n",
 		MsgCmdLanguage:                   "/language — Установить язык бота для твоей группы\n",
 		MsgAdminCommands:                 "\nКоманды администратора:\n",
-		MsgCmdNewGame:                    "/new\\_game — Создать новую игру\n",
+		MsgCmdNewGame:                    "/newgame — Создать новую игру\n",
 		MsgCmdGames:                      "/games — Показать и управлять предстоящими играми\n",
 		MsgServiceAdminCommands:          "\nКоманды сервисного администратора:\n",
 		MsgCmdTrigger:                    "/trigger — Вручную запустить запланированное событие\n",
@@ -616,6 +637,13 @@ var translations = map[Lang]map[string]string{
 		MsgSelectLanguage:         "Выбери язык для своей группы:",
 		MsgLanguageSet:            "Язык обновлён ✓",
 		MsgOnlyAdminSetLanguage:   "Только администраторы группы могут менять язык.",
+
+		// New game wizard
+		MsgNewGameSelectDate:  "Выбери дату новой игры:",
+		MsgNewGameEnterTime:   "Игра %s.\n\nВведи время (ЧЧ:ММ, например 19:30):",
+		MsgNewGameInvalidTime: "Неверный формат времени. Введи время как ЧЧ:ММ (например 19:30):",
+		MsgNewGameTimePast:    "Это время уже прошло. Введи будущее время (например 19:30):",
+		MsgNewGameEnterCourts: "Игра %s в %s.\n\nВведи корты (например 2,3 или 2 3):",
 
 		// Weekdays (nominative)
 		WeekdaySunday:    "Воскресенье",
@@ -717,6 +745,16 @@ func (l *Localizer) FormatUpdatedAt(t time.Time) string {
 func (l *Localizer) FormatDayMonth(t time.Time) string {
 	month := l.T(monthShortKey(t.Month()))
 	return fmt.Sprintf("%d %s", t.Day(), month)
+}
+
+// ShortWeekday returns the first three runes of the localized weekday name.
+// Used for compact date-picker button labels (e.g. "Mon", "Mo", "Пон").
+func (l *Localizer) ShortWeekday(w time.Weekday) string {
+	full := []rune(l.T(weekdayKey(w)))
+	if len(full) <= 3 {
+		return string(full)
+	}
+	return string(full[:3])
 }
 
 // weekdayKey maps a time.Weekday to its translation key.
