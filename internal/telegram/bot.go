@@ -11,6 +11,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/vkhutorov/squash_bot/internal/client"
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 )
 
 // pendingGameKey uniquely identifies a pending group-selection request.
@@ -41,8 +42,8 @@ type Bot struct {
 	serviceAdminIDs   map[int64]bool
 	loc               *time.Location
 	logger            *slog.Logger
-	pendingGames      sync.Map     // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit sync.Map     // map[chatID int64]gameID int64
+	pendingGames      sync.Map      // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit sync.Map      // map[chatID int64]gameID int64
 	handlerSem        chan struct{} // semaphore limiting concurrent update handlers
 }
 
@@ -141,6 +142,9 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 	newStatus := update.NewChatMember.Status
 	oldStatus := update.OldChatMember.Status
 
+	// Use the language of the person who triggered the membership change.
+	lz := b.userLocalizer(update.From.LanguageCode)
+
 	switch newStatus {
 	case "left", "kicked":
 		if err := b.client.RemoveGroup(ctx, chat.ID); err != nil {
@@ -157,7 +161,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 		slog.Info("Bot membership changed", "chat_id", chat.ID, "title", chat.Title,
 			"old_status", oldStatus, "new_status", newStatus)
 
-		if text := membershipNotifyText(oldStatus, newStatus, chat.Title); text != "" {
+		if text := membershipNotifyText(oldStatus, newStatus, chat.Title, lz); text != "" {
 			msg := tgbotapi.NewMessage(update.From.ID, text)
 			if _, err := b.api.Send(msg); err != nil {
 				slog.Error("handleMyChatMember: notify permission change", "user_id", update.From.ID, "err", err)
@@ -207,7 +211,7 @@ func (b *Bot) reconcileGroupIfUnknown(ctx context.Context, chat *tgbotapi.Chat) 
 // membershipNotifyText returns the DM text to send to the person who triggered a
 // bot membership change, or an empty string when no notification is needed.
 // It is a pure function with no side effects so it can be tested without mocks.
-func membershipNotifyText(oldStatus, newStatus, chatTitle string) string {
+func membershipNotifyText(oldStatus, newStatus, chatTitle string, lz *i18n.Localizer) string {
 	// Only notify on transitions that land the bot in a non-admin member state.
 	if newStatus != "member" {
 		return ""
@@ -216,18 +220,27 @@ func membershipNotifyText(oldStatus, newStatus, chatTitle string) string {
 	wasAdmin := oldStatus == "administrator" || oldStatus == "creator"
 	switch {
 	case wasAbsent:
-		return fmt.Sprintf(
-			"I've been added to \"%s\" but I don't have administrator permissions.\n\n"+
-				"To pin game announcements, please grant me admin rights in that group.",
-			chatTitle,
-		)
+		return lz.Tf(i18n.MsgAddedNoAdmin, chatTitle)
 	case wasAdmin:
-		return fmt.Sprintf(
-			"I've lost administrator permissions in \"%s\".\n\n"+
-				"Without admin rights I can no longer pin game announcements.",
-			chatTitle,
-		)
+		return lz.Tf(i18n.MsgLostAdmin, chatTitle)
 	default:
 		return ""
 	}
+}
+
+// ── Language resolution ───────────────────────────────────────────────────────
+
+// userLocalizer returns a Localizer based on a Telegram user's LanguageCode.
+func (b *Bot) userLocalizer(langCode string) *i18n.Localizer {
+	return i18n.New(i18n.Normalize(langCode))
+}
+
+// groupLocalizer fetches the stored language for a group and returns a Localizer.
+// Falls back to English if the group is not found or the call fails.
+func (b *Bot) groupLocalizer(ctx context.Context, chatID int64) *i18n.Localizer {
+	group, err := b.client.GetGroupByID(ctx, chatID)
+	if err != nil || group == nil {
+		return i18n.New(i18n.En)
+	}
+	return i18n.New(i18n.Normalize(group.Language))
 }

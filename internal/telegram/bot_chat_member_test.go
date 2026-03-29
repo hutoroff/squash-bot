@@ -6,6 +6,8 @@ package telegram
 import (
 	"strings"
 	"testing"
+
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 )
 
 func TestMembershipNotifyText(t *testing.T) {
@@ -93,7 +95,7 @@ func TestMembershipNotifyText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := membershipNotifyText(tt.oldStatus, tt.newStatus, group)
+			got := membershipNotifyText(tt.oldStatus, tt.newStatus, group, i18n.New(i18n.En))
 
 			if tt.wantEmpty {
 				if got != "" {
@@ -125,7 +127,7 @@ func TestMembershipNotifyText_IncludesGroupTitle(t *testing.T) {
 	}
 	for _, c := range cases {
 		title := "My Unique Group Name 42"
-		got := membershipNotifyText(c.old, c.new, title)
+		got := membershipNotifyText(c.old, c.new, title, i18n.New(i18n.En))
 		if got == "" {
 			t.Errorf("(%s→%s) expected non-empty notification", c.old, c.new)
 			continue

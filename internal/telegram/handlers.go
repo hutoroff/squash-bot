@@ -10,6 +10,7 @@ import (
 	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
@@ -44,6 +45,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	text := msg.Text
+	lz := b.userLocalizer(msg.From.LanguageCode)
 
 	if isGroupMention {
 		// Group mention: target group is determined by where the bot was @mentioned.
@@ -69,16 +71,14 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			case "/new_game":
 				lines := strings.SplitN(cmdText, "\n", 2)
 				if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
-					b.reply(msg.Chat.ID, msg.MessageID,
-						"Send game details after the command:\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSendGameDetails))
 					return
 				}
 				text = strings.TrimSpace(lines[1])
 				// text is now the game-creation body; fall through to the
 				// admin check and createAndAnnounceGame call below.
 			default:
-				b.reply(msg.Chat.ID, msg.MessageID,
-					"Management commands work in private messages. Start a chat with me and use /help.")
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgManagementPrivateOnly))
 				return
 			}
 		}
@@ -86,37 +86,37 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		isAdmin, err := b.isAdminInGroup(msg.From.ID, msg.Chat.ID)
 		if err != nil {
 			slog.Error("check admin status", "err", err, "user_id", msg.From.ID)
-			b.reply(msg.Chat.ID, msg.MessageID, "Failed to verify permissions")
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedVerifyPermissions))
 			return
 		}
 		if !isAdmin {
-			b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreate))
 			return
 		}
 		gameDate, courts, err := parseAdminCommand(text, b.loc)
 		if err != nil {
-			b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
 			return
 		}
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, msg.Chat.ID, gameDate, courts)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, msg.Chat.ID, gameDate, courts, lz)
 		return
 	}
 
 	// Private message: discover which configured groups this user admins.
 	adminGroupIDs := b.adminGroups(msg.From.ID)
 	if len(adminGroupIDs) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreate))
 		return
 	}
 
 	gameDate, courts, err := parseAdminCommand(text, b.loc)
 	if err != nil {
-		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Use:\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
 		return
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, lz)
 		return
 	}
 
@@ -132,7 +132,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		replyMsgID:  msg.MessageID,
 	})
 	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
-	selMsg := tgbotapi.NewMessage(msg.Chat.ID, "Which group should I post the game announcement in?")
+	selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
 	selMsg.ReplyMarkup = keyboard
 	if _, err := b.api.Send(selMsg); err != nil {
 		slog.Error("send group selection keyboard", "err", err)
@@ -141,6 +141,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, key pendingGameKey, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
 	// Verify the callback originates from the same chat that created the request.
 	// A mismatch would indicate tampered callback data; drop it silently.
 	if cb.Message.Chat.ID != key.chatID {
@@ -152,7 +154,7 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 
 	raw, ok := b.pendingGames.LoadAndDelete(key)
 	if !ok {
-		b.answerCallback(cb.ID, "Session expired, please send the game details again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
 		return
 	}
 	pg := raw.(*pendingGame)
@@ -160,7 +162,7 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 	// Re-verify admin status at callback time to prevent replay attacks.
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
-		b.answerCallback(cb.ID, "You are not an admin in that group")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNotAdminInGroup))
 		return
 	}
 
@@ -168,23 +170,25 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 
 	// Clear the selection keyboard.
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Creating game...")
+	editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
 	editSel.ReplyMarkup = &emptyKeyboard
 	b.api.Send(editSel) //nolint:errcheck — best-effort UI update
 
-	b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts)
+	b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts, lz)
 }
 
-func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string) {
+func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, userLz *i18n.Localizer) {
 	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts)
 	if err != nil {
 		slog.Error("create game", "err", err)
-		b.reply(replyChatID, replyMsgID, "Failed to create game")
+		b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgFailedCreateGame))
 		return
 	}
 
-	msgText := FormatGameMessage(game, nil, nil, b.loc, time.Now())
-	keyboard := gameKeyboard(game.ID)
+	// Use the group's language for the public announcement.
+	groupLz := b.groupLocalizer(ctx, groupID)
+	msgText := FormatGameMessage(game, nil, nil, b.loc, time.Now(), groupLz)
+	keyboard := gameKeyboard(game.ID, groupLz)
 
 	announcement := tgbotapi.NewMessage(groupID, msgText)
 	announcement.ReplyMarkup = keyboard
@@ -192,7 +196,7 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 	sent, err := b.api.Send(announcement)
 	if err != nil {
 		slog.Error("send game message", "err", err)
-		b.reply(replyChatID, replyMsgID, "Game created but failed to send announcement")
+		b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgGameCreatedFailedAnnounce))
 		return
 	}
 
@@ -210,7 +214,7 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 	}
 
 	slog.Info("Game created", "date", gameDate.Format(time.DateOnly), "courts", courts, "message_id", sent.MessageID, "group_id", groupID)
-	b.reply(replyChatID, replyMsgID, "Game created and pinned ✓")
+	b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgGameCreatedPinned))
 }
 
 func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
@@ -262,6 +266,36 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 
 	if action == "trigger" {
 		b.handleTrigger(ctx, cb, rawID)
+		return
+	}
+
+	// set_lang_group:<groupID> — show language selection for that group
+	if action == "set_lang_group" {
+		groupID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			slog.Debug("invalid group_id in set_lang_group callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleSetLangGroup(ctx, cb, groupID)
+		return
+	}
+
+	// set_lang:<lang>:<groupID> — apply the chosen language to the group
+	if action == "set_lang" {
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			slog.Debug("invalid set_lang callback format", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			slog.Debug("invalid group_id in set_lang callback", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleSetLang(ctx, cb, subparts[0], groupID)
 		return
 	}
 
@@ -328,36 +362,41 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 }
 
 func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
 	participations, err := b.client.Join(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("join game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("get guests", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	groupLz := b.groupLocalizer(ctx, game.ChatID)
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
 func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
 	participations, skipped, err := b.client.Skip(ctx, gameID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("skip game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
@@ -369,74 +408,80 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("get guests", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	groupLz := b.groupLocalizer(ctx, game.ChatID)
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
 func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
 	u := cb.From
 	// Capacity enforcement is done atomically inside AddGuest (DB advisory lock +
 	// transaction), so there is no TOCTOU race even under concurrent clicks.
 	added, participations, guests, err := b.client.AddGuest(ctx, gameID, u.ID, u.UserName, u.FirstName, u.LastName)
 	if err != nil {
 		slog.Error("add guest", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 	if !added {
-		b.answerCallback(cb.ID, "Game is already at full capacity")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgGameFullCapacity))
 		return
 	}
 
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	groupLz := b.groupLocalizer(ctx, game.ChatID)
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
 func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
 	removed, participations, guests, err := b.client.RemoveGuest(ctx, gameID, cb.From.ID)
 	if err != nil {
 		slog.Error("remove guest", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	if !removed {
-		b.answerCallback(cb.ID, "You haven't invited any guests")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNoGuestsToRemove))
 		return
 	}
 
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("get game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Something went wrong, please try again")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests)
+	groupLz := b.groupLocalizer(ctx, game.ChatID)
+	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
-func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation) {
-	msgText := FormatGameMessage(game, participations, guests, b.loc, time.Now())
-	keyboard := gameKeyboard(game.ID)
+func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation, lz *i18n.Localizer) {
+	msgText := FormatGameMessage(game, participations, guests, b.loc, time.Now(), lz)
+	keyboard := gameKeyboard(game.ID, lz)
 
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
 	edit.ReplyMarkup = &keyboard
@@ -462,18 +507,17 @@ func (b *Bot) answerCallback(callbackID, text string) {
 }
 
 // gameKeyboard builds the inline keyboard for a game announcement.
-// Row 1: "I'm in" / "I'll skip" — register or remove yourself.
-// Row 2: "+1" / "-1" — add or remove a guest you are bringing.
-// Only the player who added a guest can remove it via "-1".
-func gameKeyboard(gameID int64) tgbotapi.InlineKeyboardMarkup {
+// Row 1: join / skip — register or remove yourself.
+// Row 2: +1 / -1 — add or remove a guest.
+func gameKeyboard(gameID int64, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("I'm in", fmt.Sprintf("join:%d", gameID)),
-			tgbotapi.NewInlineKeyboardButtonData("I'll skip", fmt.Sprintf("skip:%d", gameID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnImIn), fmt.Sprintf("join:%d", gameID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnIllSkip), fmt.Sprintf("skip:%d", gameID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+1", fmt.Sprintf("guest_add:%d", gameID)),
-			tgbotapi.NewInlineKeyboardButtonData("-1", fmt.Sprintf("guest_remove:%d", gameID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnPlusOne), fmt.Sprintf("guest_add:%d", gameID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnMinusOne), fmt.Sprintf("guest_remove:%d", gameID)),
 		),
 	)
 }
@@ -592,22 +636,22 @@ func (b *Bot) buildGroupSelectionKeyboard(groupIDs []int64, origin pendingGameKe
 // checkManageAdmin fetches the game and verifies that cb.From is still an admin
 // of the game's group chat. Answers the callback and returns (nil, false) on any
 // failure so callers can simply do `if game, ok := ...; !ok { return }`.
-func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) (*models.Game, bool) {
+func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64, lz *i18n.Localizer) (*models.Game, bool) {
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("checkManageAdmin: get game", "err", err, "game_id", gameID)
-		b.answerCallback(cb.ID, "Game not found")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgGameNotFound))
 		return nil, false
 	}
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, game.ChatID)
 	if err != nil {
 		slog.Error("checkManageAdmin: check admin", "err", err, "user_id", cb.From.ID, "chat_id", game.ChatID)
-		b.answerCallback(cb.ID, "Failed to verify permissions")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgFailedVerifyPermissions))
 		return nil, false
 	}
 	if !isAdmin {
-		b.answerCallback(cb.ID, "You no longer have admin access to this group")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgLostAdminAccess))
 		return nil, false
 	}
 
@@ -616,17 +660,18 @@ func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 
 // handleManage shows the management keyboard for a specific game.
 func (b *Bot) handleManage(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
 	}
 	b.answerCallback(cb.ID, "")
-	b.renderManageScreen(ctx, cb, game)
+	b.renderManageScreen(ctx, cb, game, lz)
 }
 
 // renderManageScreen edits the callback message to show the management view for the given game.
 // The callback must be answered before calling this.
-func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery, game *models.Game) {
+func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery, game *models.Game, lz *i18n.Localizer) {
 	participations, err := b.client.GetParticipations(ctx, game.ID)
 	if err != nil {
 		slog.Error("renderManageScreen: get participations", "err", err)
@@ -646,20 +691,20 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 
 	localDate := game.GameDate.In(b.loc)
-	text := fmt.Sprintf("*Manage game:*\n📅 %s · %s\n🎾 Courts: %s\nPlayers: %d/%d, Guests: %d",
-		formatGameDate(localDate), localDate.Format("15:04"),
+	text := lz.Tf(i18n.MsgManageGameHeader,
+		lz.FormatGameDate(localDate), localDate.Format("15:04"),
 		escapeMarkdown(game.Courts), registered, game.CourtsCount*2, len(guests))
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Kick Player", fmt.Sprintf("manage_players:%d", game.ID)),
-			tgbotapi.NewInlineKeyboardButtonData("Kick Guest", fmt.Sprintf("manage_guests:%d", game.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnKickPlayer), fmt.Sprintf("manage_players:%d", game.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnKickGuest), fmt.Sprintf("manage_guests:%d", game.ID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Edit Courts", fmt.Sprintf("manage_courts:%d", game.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnEditCourts), fmt.Sprintf("manage_courts:%d", game.ID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✕ Close", fmt.Sprintf("manage_close:%d", game.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnClose), fmt.Sprintf("manage_close:%d", game.ID)),
 		),
 	)
 
@@ -671,14 +716,15 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // handleManageShowPlayers lists registered players as kick buttons.
 func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
 		return
 	}
 
 	participations, err := b.client.GetParticipations(ctx, gameID)
 	if err != nil {
 		slog.Error("handleManageShowPlayers: get participations", "err", err)
-		b.answerCallback(cb.ID, "Something went wrong")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
@@ -690,23 +736,23 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 	}
 
 	if len(registered) == 0 {
-		b.answerCallback(cb.ID, "No registered players to kick")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNoPlayersToKick))
 		return
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range registered {
-		label := fmt.Sprintf("Kick %s", playerDisplayName(p.Player))
+		label := lz.Tf(i18n.MsgKickPlayerLabel, playerDisplayName(p.Player))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
 				fmt.Sprintf("manage_kick:%d:%d", gameID, p.Player.TelegramID)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("manage:%d", gameID)),
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("manage:%d", gameID)),
 	))
 
-	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Select a player to kick:")
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgSelectPlayerToKick))
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	edit.ReplyMarkup = &keyboard
 	b.api.Send(edit) //nolint:errcheck
@@ -715,7 +761,8 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 
 // handleManageKickPlayer removes a player from the game and updates the group message.
 func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, telegramID int64) {
-	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
 	}
@@ -723,56 +770,58 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 	participations, guests, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
-		b.answerCallback(cb.ID, "Something went wrong")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 	if !removed {
-		b.answerCallback(cb.ID, "Player not found in this game")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgKickPlayerNotFound))
 		return
 	}
 
 	slog.Info("Admin kicked player", "admin", cb.From.ID, "target_telegram_id", telegramID, "game_id", gameID)
 
-	// Update the group announcement.
+	// Update the group announcement using the group's language.
 	if game.MessageID != nil {
-		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests)
+		groupLz := b.groupLocalizer(ctx, game.ChatID)
+		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
 	}
 
-	b.answerCallback(cb.ID, "Player kicked ✓")
-	b.renderManageScreen(ctx, cb, game)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgPlayerKicked))
+	b.renderManageScreen(ctx, cb, game, lz)
 }
 
 // handleManageShowGuests lists guests as kick buttons.
 func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
 		return
 	}
 
 	guests, err := b.client.GetGuests(ctx, gameID)
 	if err != nil {
 		slog.Error("handleManageShowGuests: get guests", "err", err)
-		b.answerCallback(cb.ID, "Something went wrong")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	if len(guests) == 0 {
-		b.answerCallback(cb.ID, "No guests to kick")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNoGuestsToKick))
 		return
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, g := range guests {
-		label := fmt.Sprintf("Kick +1 (by %s)", playerDisplayName(g.InvitedBy))
+		label := lz.Tf(i18n.MsgKickGuestLabel, playerDisplayName(g.InvitedBy))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
 				fmt.Sprintf("manage_kick_guest:%d:%d", gameID, g.ID)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("manage:%d", gameID)),
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("manage:%d", gameID)),
 	))
 
-	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "Select a guest to kick:")
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgSelectGuestToKick))
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	edit.ReplyMarkup = &keyboard
 	b.api.Send(edit) //nolint:errcheck
@@ -781,7 +830,8 @@ func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQ
 
 // handleManageKickGuest removes a specific guest and updates the group message.
 func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, guestID int64) {
-	game, ok := b.checkManageAdmin(ctx, cb, gameID)
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
 	}
@@ -789,30 +839,33 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 	participations, guests, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
-		b.answerCallback(cb.ID, "Something went wrong")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 	if !removed {
-		b.answerCallback(cb.ID, "Guest not found")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgGuestNotFound))
 		return
 	}
 
 	slog.Info("Admin kicked guest", "admin", cb.From.ID, "guest_id", guestID, "game_id", gameID)
 
-	// Update the group announcement.
+	// Update the group announcement using the group's language.
 	if game.MessageID != nil {
-		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests)
+		groupLz := b.groupLocalizer(ctx, game.ChatID)
+		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
 	}
 
-	b.answerCallback(cb.ID, "Guest kicked ✓")
-	b.renderManageScreen(ctx, cb, game)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgGuestKicked))
+	b.renderManageScreen(ctx, cb, game, lz)
 }
 
 // handleTrigger calls the management service to run a scheduled event on demand.
 // Only users listed in serviceAdminIDs are allowed.
 func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, event string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
 	if !b.serviceAdminIDs[cb.From.ID] {
-		b.answerCallback(cb.ID, "Not authorized")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNotAuthorized))
 		return
 	}
 
@@ -821,7 +874,7 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 		// valid events
 	default:
 		slog.Debug("handleTrigger: unknown event", "event", event)
-		b.answerCallback(cb.ID, "Unknown event")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgUnknownEvent))
 		return
 	}
 
@@ -832,12 +885,12 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 	// the admin can retry.
 	if err := b.client.TriggerScheduledEvent(ctx, event); err != nil {
 		slog.Error("handleTrigger: request failed", "event", event, "err", err)
-		b.answerCallback(cb.ID, "Failed to trigger — check service health")
+		b.answerCallback(cb.ID, lz.T(i18n.MsgFailedTrigger))
 		return
 	}
 
 	slog.Info("Manual trigger", "event", event, "user_id", cb.From.ID)
-	b.answerCallback(cb.ID, "Triggered ✓")
+	b.answerCallback(cb.ID, lz.T(i18n.MsgTriggered))
 
 	// Remove the keyboard so the same message cannot be used to fire the job
 	// again. This prevents accidental duplicate runs (especially relevant for
@@ -850,6 +903,7 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 // handleManageClose restores the games-list view in the callback message so the
 // admin can continue managing other games without re-running /games.
 func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
 	b.answerCallback(cb.ID, "")
 
 	// Shared fallback: remove the keyboard and leave the message text as-is.
@@ -881,13 +935,13 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 
 	if len(games) == 0 {
 		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, "No upcoming games in your groups.")
+		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgNoUpcomingGames))
 		edit.ReplyMarkup = &emptyKeyboard
 		b.api.Send(edit) //nolint:errcheck
 		return
 	}
 
-	text, keyboard := formatGamesListMessage(games, groups, b.loc)
+	text, keyboard := formatGamesListMessage(games, groups, b.loc, lz)
 	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = &keyboard
@@ -896,15 +950,80 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 
 // handleManageEditCourts stores a pending courts-edit and prompts the admin to type the new value.
 func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	if _, ok := b.checkManageAdmin(ctx, cb, gameID); !ok {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
 		return
 	}
 
 	b.pendingCourtsEdit.Store(cb.Message.Chat.ID, gameID)
 	b.answerCallback(cb.ID, "")
 
-	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, "Send the new courts (e.g.: 2,3,4):")
+	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, lz.T(i18n.MsgSendNewCourts))
 	b.api.Send(prompt) //nolint:errcheck
+}
+
+// handleSetLangGroup shows the language selection keyboard for a specific group.
+func (b *Bot) handleSetLangGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderLanguageKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+}
+
+// handleSetLang applies the chosen language to the group.
+func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lang string, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	if err := b.client.SetGroupLanguage(ctx, groupID, lang); err != nil {
+		slog.Error("handleSetLang: set language", "err", err, "group_id", groupID, "lang", lang)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Group language updated", "group_id", groupID, "lang", lang, "by_user", cb.From.ID)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgLanguageSet))
+
+	// Remove the keyboard from the language-selection message.
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// renderLanguageKeyboard edits (or sends) a message with language selection buttons for groupID.
+func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangEn), fmt.Sprintf("set_lang:en:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangDe), fmt.Sprintf("set_lang:de:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangRu), fmt.Sprintf("set_lang:ru:%d", groupID)),
+		),
+	)
+
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgSelectLanguage))
+		edit.ReplyMarkup = &keyboard
+		b.api.Send(edit) //nolint:errcheck
+	} else {
+		msg := tgbotapi.NewMessage(chatID, lz.T(i18n.MsgSelectLanguage))
+		msg.ReplyMarkup = keyboard
+		b.api.Send(msg) //nolint:errcheck
+	}
 }
 
 func stripBotMention(text, botUsername string, entities []tgbotapi.MessageEntity) string {

@@ -5,9 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 	"github.com/vkhutorov/squash_bot/internal/telegram"
 )
+
+var enLz = i18n.New(i18n.En)
 
 func strPtr(s string) *string { return &s }
 
@@ -56,7 +59,7 @@ func makeGuest(inviterUsername, inviterFirstName string) *models.GuestParticipat
 
 func TestFormatGameMessage_NoPlayers(t *testing.T) {
 	game := makeGame("3,4", time.Date(2026, 3, 22, 18, 0, 0, 0, time.UTC))
-	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "🏸 Squash Game") {
 		t.Error("missing header")
@@ -82,7 +85,7 @@ func TestFormatGameMessage_WithRegisteredPlayers(t *testing.T) {
 		makeParticipation(2, "", "John", "Doe", models.StatusRegistered),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "Players (2/4):") {
 		t.Errorf("player count wrong, got:\n%s", msg)
@@ -103,7 +106,7 @@ func TestFormatGameMessage_SkippedPlayersExcluded(t *testing.T) {
 		makeParticipation(3, "carol", "", "", models.StatusRegistered),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now(), enLz)
 
 	// Only registered players count
 	if !strings.Contains(msg, "Players (2/6):") {
@@ -126,7 +129,7 @@ func TestFormatGameMessage_PlayerDisplayName_UsernamePreferred(t *testing.T) {
 		makeParticipation(1, "username_wins", "FirstName", "LastName", models.StatusRegistered),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "@username_wins") {
 		t.Errorf("username should be preferred over full name, got:\n%s", msg)
@@ -139,7 +142,7 @@ func TestFormatGameMessage_PlayerDisplayName_FallbackToFullName(t *testing.T) {
 		makeParticipation(1, "", "Jane", "Smith", models.StatusRegistered),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, nil, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "Jane Smith") {
 		t.Errorf("full name should be used when username absent, got:\n%s", msg)
@@ -149,7 +152,7 @@ func TestFormatGameMessage_PlayerDisplayName_FallbackToFullName(t *testing.T) {
 func TestFormatGameMessage_DateFormat(t *testing.T) {
 	// Sunday, March 22
 	game := makeGame("1", time.Date(2026, 3, 22, 18, 0, 0, 0, time.UTC))
-	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "Sunday") {
 		t.Errorf("day name missing, got:\n%s", msg)
@@ -171,7 +174,7 @@ func TestFormatGameMessage_WithGuests(t *testing.T) {
 		makeGuest("alice", ""),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, guests, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, guests, time.UTC, time.Now(), enLz)
 
 	// 1 registered + 1 guest = 2 total
 	if !strings.Contains(msg, "Players (2/4):") {
@@ -197,7 +200,7 @@ func TestFormatGameMessage_MultipleGuests(t *testing.T) {
 		makeGuest("bob", ""),
 	}
 
-	msg := telegram.FormatGameMessage(game, parts, guests, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, parts, guests, time.UTC, time.Now(), enLz)
 
 	// 2 registered + 3 guests = 5 total
 	if !strings.Contains(msg, "Players (5/6):") {
@@ -222,7 +225,7 @@ func TestFormatGameMessage_GuestsCountTowardTotal(t *testing.T) {
 		makeGuest("", "John"),
 	}
 
-	msg := telegram.FormatGameMessage(game, nil, guests, time.UTC, time.Now())
+	msg := telegram.FormatGameMessage(game, nil, guests, time.UTC, time.Now(), enLz)
 
 	if !strings.Contains(msg, "Players (1/2):") {
 		t.Errorf("guest should count toward total, got:\n%s", msg)
@@ -245,7 +248,7 @@ func TestFormatGameMessage_LastUpdatedUsesConfiguredTimezone(t *testing.T) {
 	now := time.Date(2025, 12, 31, 22, 30, 0, 0, time.UTC)
 	game := makeGame("1", time.Date(2026, 6, 1, 18, 0, 0, 0, time.UTC))
 
-	msg := telegram.FormatGameMessage(game, nil, nil, loc, now)
+	msg := telegram.FormatGameMessage(game, nil, nil, loc, now, enLz)
 
 	const wantFooter = "1 Jan 2026, 03:30"
 	const badFooter = "31 Dec 2025, 22:30"

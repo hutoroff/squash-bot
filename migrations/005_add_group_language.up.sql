@@ -1,0 +1,1 @@
+ALTER TABLE bot_groups ADD COLUMN language VARCHAR(5) NOT NULL DEFAULT 'en';

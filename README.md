@@ -113,14 +113,24 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 
 ## Bot Commands
 
-| Command     | Who can use     | Description                                      |
-|-------------|-----------------|--------------------------------------------------|
-| `/start`    | Anyone          | Show welcome message                             |
-| `/help`     | Anyone          | List available commands                          |
-| `/my_game`  | Anyone          | Show your next registered game with a link       |
-| `/games`    | Group admins    | List upcoming games you manage; edit/manage them |
-| `/new_game` | Group admins    | Create a new game for your group                 |
-| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
+| Command      | Who can use     | Description                                      |
+|--------------|-----------------|--------------------------------------------------|
+| `/start`     | Anyone          | Show welcome message                             |
+| `/help`      | Anyone          | List available commands                          |
+| `/my_game`   | Anyone          | Show your next registered game with a link       |
+| `/games`     | Group admins    | List upcoming games you manage; edit/manage them |
+| `/new_game`  | Group admins    | Create a new game for your group                 |
+| `/language`  | Group admins    | Set the bot language for a group (en/de/ru)      |
+| `/trigger`   | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
+
+## Localisation
+
+The bot supports three languages: **English** (default), **German**, and **Russian**.
+
+- **Group messages** (game announcements, capacity notifications, weekly reminders) use the language configured for that group.
+- **Private messages** use the language from the user's Telegram client (`LanguageCode`), falling back to English if the language is unsupported.
+
+Group admins set the language with `/language`. If the admin manages multiple groups, the bot first asks which group to configure, then shows the language picker. The setting is stored per group and survives bot restarts.
 
 ## Guest Management
 
@@ -182,6 +192,7 @@ cmd/
   telegram-squash-bot/      — telegram bot entry point
 internal/
   config/         — env-based config (TelegramConfig + ManagementConfig)
+  i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
   models/         — Game, Player, GameParticipation, GuestParticipation, Group
   storage/        — SQL repositories (games, players, participations, guests, groups)
   service/        — business logic + scheduler

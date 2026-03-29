@@ -252,6 +252,36 @@ func (c *Client) GroupExists(ctx context.Context, chatID int64) (bool, error) {
 	return true, nil
 }
 
+// GetGroupByID returns the group for the given chat ID, or nil if not found.
+func (c *Client) GetGroupByID(ctx context.Context, chatID int64) (*models.Group, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, parseErrorBody(resp)
+	}
+	var g models.Group
+	if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
+		return nil, fmt.Errorf("decode group response: %w", err)
+	}
+	return &g, nil
+}
+
+// SetGroupLanguage sets the language preference for a group.
+func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string) error {
+	body := map[string]string{"language": language}
+	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/language", body, nil)
+}
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 // TriggerScheduledEvent fires the named event (day_before, day_after, weekly_reminder)

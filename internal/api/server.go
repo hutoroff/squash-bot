@@ -14,11 +14,11 @@ import (
 
 // Handler wires all HTTP routes for the squash-games-management service.
 type Handler struct {
-	gameService  *service.GameService
-	partService  *service.ParticipationService
-	groupRepo    *storage.GroupRepo
-	scheduler    *service.SchedulerService
-	logger       *slog.Logger
+	gameService *service.GameService
+	partService *service.ParticipationService
+	groupRepo   *storage.GroupRepo
+	scheduler   *service.SchedulerService
+	logger      *slog.Logger
 }
 
 func NewHandler(
@@ -61,6 +61,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)
+	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/language", h.setGroupLanguage)
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)

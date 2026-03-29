@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
@@ -24,6 +26,39 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 	if err := h.groupRepo.Upsert(r.Context(), chatID, req.Title, req.BotIsAdmin); err != nil {
 		h.logger.Error("upsertGroup", "err", err, "chat_id", chatID)
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setGroupLanguage handles PATCH /api/v1/groups/{chatID}/language
+func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		Language string `json:"language"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.Language {
+	case "en", "de", "ru":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported language; use en, de, or ru")
+		return
+	}
+	if err := h.groupRepo.SetLanguage(r.Context(), chatID, req.Language); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupLanguage", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -59,22 +94,22 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 // getGroup handles GET /api/v1/groups/{chatID}
-// Returns 200 if found, 404 if not.
+// Returns the full group object if found, 404 if not.
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 	chatID, err := parseID(r.PathValue("chatID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid chat_id")
 		return
 	}
-	exists, err := h.groupRepo.Exists(r.Context(), chatID)
+	group, err := h.groupRepo.GetByID(r.Context(), chatID)
 	if err != nil {
-		h.logger.Error("getGroup", "err", err, "chat_id", chatID)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("getGroup", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "group not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"exists": true})
+	writeJSON(w, http.StatusOK, group)
 }

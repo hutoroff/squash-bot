@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 	"github.com/vkhutorov/squash_bot/internal/storage"
 )
@@ -40,6 +41,16 @@ func NewSchedulerService(
 		loc:       loc,
 		logger:    logger,
 	}
+}
+
+// groupLang returns a Localizer for the given chatID's stored language.
+// Falls back to English if the group is not found or the call fails.
+func (s *SchedulerService) groupLang(ctx context.Context, chatID int64) *i18n.Localizer {
+	group, err := s.groupRepo.GetByID(ctx, chatID)
+	if err != nil || group == nil {
+		return i18n.New(i18n.En)
+	}
+	return i18n.New(i18n.Normalize(group.Language))
 }
 
 // RunDayBeforeCheck checks tomorrow's games and sends notifications if player count != capacity.
@@ -81,19 +92,15 @@ func (s *SchedulerService) processDayBefore(ctx context.Context, game *models.Ga
 	capacity := game.CourtsCount * 2
 	var action, text string
 
+	lz := s.groupLang(ctx, game.ChatID)
+
 	switch {
 	case count > capacity:
 		action = "over_capacity"
-		text = fmt.Sprintf(
-			"⚠️ Too many players! %d registered but only %d spots (%d courts). Consider booking an extra court.",
-			count, capacity, game.CourtsCount,
-		)
+		text = lz.Tf(i18n.SchedOverCapacity, count, capacity, game.CourtsCount)
 	case count < capacity:
 		action = "under_capacity"
-		text = fmt.Sprintf(
-			"📢 Free spots available! %d/%d players registered (%d courts). Invite more friends!",
-			count, capacity, game.CourtsCount,
-		)
+		text = lz.Tf(i18n.SchedUnderCapacity, count, capacity, game.CourtsCount)
 	default:
 		action = "skipped"
 	}
@@ -167,7 +174,8 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		return
 	}
 
-	text := formatCompletedMessage(game, participations, guests, s.loc)
+	lz := s.groupLang(ctx, game.ChatID)
+	text := formatCompletedMessage(game, participations, guests, s.loc, lz)
 	edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
 	// Empty keyboard explicitly removes the inline buttons
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
@@ -189,6 +197,12 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		"unpinned", true,
 		"buttons_removed", true,
 	)
+}
+
+// adminEntry pairs a chat member with the localizer for their group.
+type adminEntry struct {
+	member tgbotapi.ChatMember
+	lang   *i18n.Localizer
 }
 
 // RunWeeklyReminder sends a DM to every non-bot group admin if no game is scheduled in the next 7 days.
@@ -220,14 +234,16 @@ func (s *SchedulerService) RunWeeklyReminder() {
 	}
 
 	// Collect admins only from groups that have no game scheduled this week.
+	// Each admin is DM'd once, using the language of the first group they're found in.
 	seen := make(map[int64]bool)
-	var allAdmins []tgbotapi.ChatMember
+	var allAdmins []adminEntry
 	for _, g := range groups {
 		chatID := g.ChatID
 		if chatIDsWithGame[chatID] {
 			s.logger.Info("weekly reminder: game already scheduled, skipping group", "chat_id", chatID)
 			continue
 		}
+		lz := i18n.New(i18n.Normalize(g.Language))
 		admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
 			ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
 		})
@@ -238,7 +254,7 @@ func (s *SchedulerService) RunWeeklyReminder() {
 		for _, admin := range admins {
 			if !admin.User.IsBot && !seen[admin.User.ID] {
 				seen[admin.User.ID] = true
-				allAdmins = append(allAdmins, admin)
+				allAdmins = append(allAdmins, adminEntry{member: admin, lang: lz})
 			}
 		}
 	}
@@ -248,23 +264,22 @@ func (s *SchedulerService) RunWeeklyReminder() {
 		return
 	}
 
-	text := "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!"
-
 	notified := 0
-	for _, admin := range allAdmins {
-		msg := tgbotapi.NewMessage(admin.User.ID, text)
+	for _, entry := range allAdmins {
+		text := entry.lang.T(i18n.SchedWeeklyReminder)
+		msg := tgbotapi.NewMessage(entry.member.User.ID, text)
 		if _, err := s.api.Send(msg); err != nil {
-			s.logger.Error("weekly reminder: send DM", "user_id", admin.User.ID, "username", admin.User.UserName, "err", err)
+			s.logger.Error("weekly reminder: send DM", "user_id", entry.member.User.ID, "username", entry.member.User.UserName, "err", err)
 			continue
 		}
-		s.logger.Info("weekly reminder: DM sent", "user_id", admin.User.ID, "username", admin.User.UserName)
+		s.logger.Info("weekly reminder: DM sent", "user_id", entry.member.User.ID, "username", entry.member.User.UserName)
 		notified++
 	}
 	s.logger.Info("weekly reminder done", "admins_notified", notified)
 }
 
 // formatCompletedMessage renders the final game message without interactive buttons.
-func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location) string {
+func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location, lz *i18n.Localizer) string {
 	capacity := game.CourtsCount * 2
 
 	var registered []*models.GameParticipation
@@ -278,10 +293,10 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 	localDate := game.GameDate.In(loc)
 
 	var sb strings.Builder
-	sb.WriteString("🏸 Squash Game\n\n")
-	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", schedulerFormatDate(localDate), localDate.Format("15:04")))
-	sb.WriteString(fmt.Sprintf("🎾 Courts: %s (capacity: %d players)\n\n", game.Courts, capacity))
-	sb.WriteString(fmt.Sprintf("Players (%d/%d):\n", totalCount, capacity))
+	sb.WriteString(lz.T(i18n.GameHeader) + "\n\n")
+	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", lz.FormatGameDate(localDate), localDate.Format("15:04")))
+	sb.WriteString(lz.Tf(i18n.GameCourts, game.Courts, capacity) + "\n\n")
+	sb.WriteString(lz.Tf(i18n.GamePlayers, totalCount, capacity) + "\n")
 
 	num := 1
 	for _, p := range registered {
@@ -289,16 +304,12 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 		num++
 	}
 	for _, g := range guests {
-		sb.WriteString(fmt.Sprintf("%d. +1 (by %s)\n", num, schedulerPlayerName(g.InvitedBy)))
+		sb.WriteString(fmt.Sprintf("%d. %s\n", num, lz.Tf(i18n.GameGuestLine, schedulerPlayerName(g.InvitedBy))))
 		num++
 	}
 
-	sb.WriteString("\nGame completed ✓")
+	sb.WriteString("\n" + lz.T(i18n.GameCompleted))
 	return sb.String()
-}
-
-func schedulerFormatDate(t time.Time) string {
-	return fmt.Sprintf("%s, %s %d", t.Weekday(), t.Format("January"), t.Day())
 }
 
 func schedulerPlayerName(p *models.Player) string {

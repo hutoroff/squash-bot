@@ -29,6 +29,7 @@ Key directories:
 - `cmd/squash-games-management` — management service entry point
 - `cmd/telegram-squash-bot` — telegram bot entry point
 - `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig`)
+- `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group)
 - `internal/storage` — SQL repositories (games, players, participations, guests, groups)
 - `internal/service` — business logic and scheduled jobs

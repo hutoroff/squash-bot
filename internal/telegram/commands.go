@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
@@ -21,40 +22,45 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 	}
 	cmd := strings.ToLower(raw)
 
+	lz := b.userLocalizer(msg.From.LanguageCode)
+
 	switch cmd {
 	case "/start", "/help":
-		b.handleCommandHelp(ctx, msg)
+		b.handleCommandHelp(ctx, msg, lz)
 	case "/my_game":
-		b.handleCommandMyGame(ctx, msg)
+		b.handleCommandMyGame(ctx, msg, lz)
 	case "/games":
-		b.handleCommandGames(ctx, msg)
+		b.handleCommandGames(ctx, msg, lz)
 	case "/new_game":
-		b.handleCommandNewGame(ctx, msg)
+		b.handleCommandNewGame(ctx, msg, lz)
+	case "/language":
+		b.handleCommandLanguage(ctx, msg, lz)
 	case "/trigger":
-		b.handleCommandTrigger(ctx, msg)
+		b.handleCommandTrigger(ctx, msg, lz)
 	default:
-		b.reply(msg.Chat.ID, msg.MessageID, "Unknown command. Send /help to see available commands.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgUnknownCommand))
 	}
 }
 
-func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message) {
+func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	adminGroupIDs := b.adminGroups(msg.From.ID)
 	isAdmin := len(adminGroupIDs) > 0
 
 	var sb strings.Builder
-	sb.WriteString("Available commands:\n")
-	sb.WriteString("/my\\_game — Show your next upcoming game\n")
-	sb.WriteString("/help — Show this help message\n")
+	sb.WriteString(lz.T(i18n.MsgAvailableCommands))
+	sb.WriteString(lz.T(i18n.MsgCmdMyGame))
+	sb.WriteString(lz.T(i18n.MsgCmdHelp))
 
 	if isAdmin {
-		sb.WriteString("\nAdmin commands:\n")
-		sb.WriteString("/new\\_game — Create a new game\n")
-		sb.WriteString("/games — Show and manage upcoming games\n")
+		sb.WriteString(lz.T(i18n.MsgAdminCommands))
+		sb.WriteString(lz.T(i18n.MsgCmdNewGame))
+		sb.WriteString(lz.T(i18n.MsgCmdGames))
+		sb.WriteString(lz.T(i18n.MsgCmdLanguage))
 	}
 
 	if b.serviceAdminIDs[msg.From.ID] {
-		sb.WriteString("\nService admin commands:\n")
-		sb.WriteString("/trigger — Manually trigger a scheduled event\n")
+		sb.WriteString(lz.T(i18n.MsgServiceAdminCommands))
+		sb.WriteString(lz.T(i18n.MsgCmdTrigger))
 	}
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, sb.String())
@@ -64,33 +70,33 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
+func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	game, err := b.client.GetNextGameForTelegramUser(ctx, msg.From.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get next game", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch your next game. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchGame))
 		return
 	}
 
 	if game == nil {
-		b.reply(msg.Chat.ID, msg.MessageID, "You have no upcoming registered games.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNoUpcomingRegistered))
 		return
 	}
 
 	participations, err := b.client.GetParticipations(ctx, game.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get participations", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch game details. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchDetails))
 		return
 	}
 	guests, err := b.client.GetGuests(ctx, game.ID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get guests", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch game details. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchDetails))
 		return
 	}
 
-	text := "Your next game:\n\n" + FormatGameMessage(game, participations, guests, b.loc, time.Now())
+	text := lz.T(i18n.MsgYourNextGame) + FormatGameMessage(game, participations, guests, b.loc, time.Now(), lz)
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, text)
 
@@ -99,7 +105,7 @@ func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
 		if link := superGroupMessageLink(game.ChatID, *game.MessageID); link != "" {
 			keyboard := tgbotapi.NewInlineKeyboardMarkup(
 				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonURL("View in group →", link),
+					tgbotapi.NewInlineKeyboardButtonURL(lz.T(i18n.BtnViewInGroup), link),
 				),
 			)
 			out.ReplyMarkup = keyboard
@@ -111,33 +117,33 @@ func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-func (b *Bot) handleCommandGames(ctx context.Context, msg *tgbotapi.Message) {
+func (b *Bot) handleCommandGames(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	adminGroupIDs := b.adminGroups(msg.From.ID)
 	if len(adminGroupIDs) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can use this command.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCanUse))
 		return
 	}
 
 	games, err := b.client.GetUpcomingGamesByChatIDs(ctx, adminGroupIDs)
 	if err != nil {
 		slog.Error("handleCommandGames: get games", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch games. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchGames))
 		return
 	}
 
 	groups, err := b.client.GetGroups(ctx)
 	if err != nil {
 		slog.Error("handleCommandGames: get groups", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to fetch group info. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchGroupInfo))
 		return
 	}
 
 	if len(games) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, "No upcoming games in your groups.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNoUpcomingGames))
 		return
 	}
 
-	text, keyboard := formatGamesListMessage(games, groups, b.loc)
+	text, keyboard := formatGamesListMessage(games, groups, b.loc, lz)
 	out := tgbotapi.NewMessage(msg.Chat.ID, text)
 	out.ReplyMarkup = keyboard
 	out.ParseMode = "Markdown"
@@ -146,10 +152,10 @@ func (b *Bot) handleCommandGames(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
+func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	adminGroupIDs := b.adminGroups(msg.From.ID)
 	if len(adminGroupIDs) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, "Only group administrators can create games.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreateGames))
 		return
 	}
 
@@ -157,21 +163,19 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
 	lines := strings.SplitN(text, "\n", 2)
 	if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
-		b.reply(msg.Chat.ID, msg.MessageID,
-			"Send the game details after the command:\n\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSendGameDetailsCmd))
 		return
 	}
 	body := strings.TrimSpace(lines[1])
 
 	gameDate, courts, err := parseAdminCommand(body, b.loc)
 	if err != nil {
-		b.reply(msg.Chat.ID, msg.MessageID,
-			"Invalid format. Use:\n\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormatCmd))
 		return
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, lz)
 		return
 	}
 
@@ -184,7 +188,7 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 		replyMsgID:  msg.MessageID,
 	})
 	keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
-	selMsg := tgbotapi.NewMessage(msg.Chat.ID, "Which group should I post the game announcement in?")
+	selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
 	selMsg.ReplyMarkup = keyboard
 	if _, err := b.api.Send(selMsg); err != nil {
 		slog.Error("send group selection keyboard", "err", err)
@@ -192,25 +196,60 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message) {
+// handleCommandLanguage lets a group admin set the language for one of their groups.
+func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
+	adminGroupIDs := b.adminGroups(msg.From.ID)
+	if len(adminGroupIDs) == 0 {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	if len(adminGroupIDs) == 1 {
+		// Show language selection directly.
+		b.renderLanguageKeyboard(msg.Chat.ID, 0, adminGroupIDs[0], lz)
+		return
+	}
+
+	// Multiple groups — first pick the group.
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, gid := range adminGroupIDs {
+		title := fmt.Sprintf("Group %d", gid)
+		chatInfo, err := b.api.GetChat(tgbotapi.ChatInfoConfig{
+			ChatConfig: tgbotapi.ChatConfig{ChatID: gid},
+		})
+		if err == nil && chatInfo.Title != "" {
+			title = chatInfo.Title
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("set_lang_group:%d", gid)),
+		))
+	}
+	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectGroupForLanguage))
+	out.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	if _, err := b.api.Send(out); err != nil {
+		slog.Error("handleCommandLanguage: send", "err", err)
+	}
+}
+
+func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	if !b.serviceAdminIDs[msg.From.ID] {
-		b.reply(msg.Chat.ID, msg.MessageID, "You are not authorized to use this command.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNotAuthorizedCmd))
 		return
 	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Day Before Check", "trigger:day_before"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayBefore), "trigger:day_before"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Day After Cleanup", "trigger:day_after"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayAfter), "trigger:day_after"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Weekly Reminder", "trigger:weekly_reminder"),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnWeeklyReminder), "trigger:weekly_reminder"),
 		),
 	)
 
-	out := tgbotapi.NewMessage(msg.Chat.ID, "Select a scheduled event to trigger manually:")
+	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectTriggerEvent))
 	out.ReplyMarkup = keyboard
 	if _, err := b.api.Send(out); err != nil {
 		slog.Error("handleCommandTrigger: send", "err", err)
@@ -219,21 +258,22 @@ func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message) {
 
 // processCourtsEdit handles the admin's text response after clicking "Edit Courts".
 func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, gameID int64) {
+	lz := b.userLocalizer(msg.From.LanguageCode)
 	courts := strings.TrimSpace(msg.Text)
 	if courts == "" {
-		b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Expected courts like: 2,3,4")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
 		return
 	}
 
 	// Validate: must be non-empty comma-separated values within length limit.
 	if len(courts) > maxCourtsLen {
-		b.reply(msg.Chat.ID, msg.MessageID, fmt.Sprintf("Courts string too long (max %d chars)", maxCourtsLen))
+		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsStringTooLong, maxCourtsLen))
 		return
 	}
 	parts := strings.Split(courts, ",")
 	for _, p := range parts {
 		if strings.TrimSpace(p) == "" {
-			b.reply(msg.Chat.ID, msg.MessageID, "Invalid format. Expected courts like: 2,3,4")
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
 			return
 		}
 	}
@@ -242,7 +282,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	game, err := b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("processCourtsEdit: get game", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Game not found.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgGameNotFoundPeriod))
 		return
 	}
 
@@ -250,17 +290,17 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	isAdmin, err := b.isAdminInGroup(msg.From.ID, game.ChatID)
 	if err != nil {
 		slog.Error("processCourtsEdit: check admin", "err", err, "user_id", msg.From.ID, "chat_id", game.ChatID)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to verify permissions.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedVerifyPermissionsPeriod))
 		return
 	}
 	if !isAdmin {
-		b.reply(msg.Chat.ID, msg.MessageID, "You no longer have admin access to this group.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgLostAdminAccessPeriod))
 		return
 	}
 
 	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
 		slog.Error("processCourtsEdit: update courts", "err", err, "game_id", gameID)
-		b.reply(msg.Chat.ID, msg.MessageID, "Failed to update courts. Please try again.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedUpdateCourts))
 		return
 	}
 
@@ -270,7 +310,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 	game, err = b.client.GetGameByID(ctx, gameID)
 	if err != nil {
 		slog.Error("processCourtsEdit: get game after update", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, "Courts updated, but failed to refresh the group message.")
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgCourtsUpdatedRefreshFailed))
 		return
 	}
 
@@ -279,16 +319,17 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 		if err != nil {
 			slog.Error("processCourtsEdit: get participations", "err", err)
 		} else {
-			guests, err := b.client.GetGuests(ctx, gameID)
+			gameGuests, err := b.client.GetGuests(ctx, gameID)
 			if err != nil {
 				slog.Error("processCourtsEdit: get guests", "err", err)
 			} else {
-				b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests)
+				groupLz := b.groupLocalizer(ctx, game.ChatID)
+				b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
 			}
 		}
 	}
 
-	b.reply(msg.Chat.ID, msg.MessageID, fmt.Sprintf("Courts updated to: %s ✓", courts))
+	b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsUpdated, courts))
 }
 
 // superGroupMessageLink returns a t.me deep link for a supergroup message.
@@ -303,14 +344,14 @@ func superGroupMessageLink(chatID, messageID int64) string {
 }
 
 // formatGamesListMessage builds the text and keyboard for the /games admin view.
-func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *time.Location) (string, tgbotapi.InlineKeyboardMarkup) {
+func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *time.Location, lz *i18n.Localizer) (string, tgbotapi.InlineKeyboardMarkup) {
 	groupTitles := make(map[int64]string, len(groups))
 	for _, g := range groups {
 		groupTitles[g.ChatID] = g.Title
 	}
 
 	var sb strings.Builder
-	sb.WriteString("*Upcoming games:*\n\n")
+	sb.WriteString(lz.T(i18n.MsgUpcomingGames))
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, game := range games {
@@ -320,15 +361,13 @@ func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *ti
 			title = fmt.Sprintf("Chat %d", game.ChatID)
 		}
 
-		sb.WriteString(fmt.Sprintf("📅 %s · %s\n",
-			formatGameDate(localDate), localDate.Format("15:04")))
-		sb.WriteString(fmt.Sprintf("🎾 Courts: %s — capacity %d\n",
-			escapeMarkdown(game.Courts), game.CourtsCount*2))
-		sb.WriteString(fmt.Sprintf("Group: %s\n\n", escapeMarkdown(title)))
+		sb.WriteString(fmt.Sprintf("📅 %s · %s\n", lz.FormatGameDate(localDate), localDate.Format("15:04")))
+		sb.WriteString(lz.Tf(i18n.MsgGameCourtsCapacity, escapeMarkdown(game.Courts), game.CourtsCount*2))
+		sb.WriteString(lz.Tf(i18n.MsgGroupLabel, escapeMarkdown(title)))
 
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
-				fmt.Sprintf("Manage: %s %s", localDate.Format("02 Jan"), localDate.Format("15:04")),
+				lz.Tf(i18n.MsgManageGameBtn, lz.FormatDayMonth(localDate), localDate.Format("15:04")),
 				fmt.Sprintf("manage:%d", game.ID),
 			),
 		))
