@@ -254,6 +254,127 @@ func parseActivityItem(item string) (Booking, error) {
 	return b, nil
 }
 
+// ─── Court list ───────────────────────────────────────────────────────────────
+
+const calendarUpdateEndpoint = "/api/booking/calendar/update"
+
+var (
+	// calendarCourtRowRe matches each court row in the booking calendar HTML.
+	calendarCourtRowRe = regexp.MustCompile(`(?s)<tr[^>]+class="court"[^>]*>(.*?)</tr>`)
+
+	// calendarCourtNameRe extracts the court display name from its <div>.
+	calendarCourtNameRe = regexp.MustCompile(`<div class="court-name[^"]*">([^<]+)<`)
+
+	// calendarCourtIDRe extracts the numeric court ID from a data-court attribute.
+	calendarCourtIDRe = regexp.MustCompile(`data-court="(\d+)"`)
+
+	// calendarCourtUUIDRe extracts the court UUID from a data-court-uuid attribute.
+	calendarCourtUUIDRe = regexp.MustCompile(`data-court-uuid="([^"]+)"`)
+)
+
+// GetCourts returns the list of courts at the facility by parsing the booking
+// calendar HTML. The calendar is fetched for today's date using the provided
+// facility and sport identifiers. Courts are deduplicated (the calendar HTML
+// repeats each court row once per date in the response).
+// It logs in automatically if no session is held, and retries once on HTTP 401.
+func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID string) ([]Court, error) {
+	do := func() ([]Court, error) {
+		form := url.Values{}
+		form.Set("facilityId", facilityID)
+		form.Set("facilitySlug", facilitySlug)
+		form.Set("sport[id]", sportID)
+		form.Set("sport[slug]", sportSlug)
+		form.Set("sport[name]", sportName)
+		form.Set("sport[uuid]", sportUUID)
+		form.Set("date", time.Now().Format("2006-01-02"))
+		form.Set("type", "user")
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+calendarUpdateEndpoint, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("eversports: create GetCourts request: %w", err)
+		}
+		setBrowserHeaders(req)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetCourts request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: GetCourts read response: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", errUnauthorized)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("eversports: GetCourts HTTP %d: %s", resp.StatusCode, string(respBytes))
+		}
+
+		courts := parseCalendarHTML(string(respBytes))
+		if len(courts) == 0 {
+			return nil, fmt.Errorf("eversports: GetCourts: no courts found in calendar response — check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID or inspect the HTML with the debug-page endpoint")
+		}
+		c.logger.Info("eversports courts fetched", "count", len(courts))
+		return courts, nil
+	}
+
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
+	}
+	courts, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
+	}
+	return courts, err
+}
+
+// parseCalendarHTML extracts unique courts from the booking calendar HTML
+// returned by POST /api/booking/calendar/update.
+// Each court row contains a numeric ID, a UUID, and a display name; courts
+// are deduplicated by ID because the HTML repeats each court for every date.
+func parseCalendarHTML(html string) []Court {
+	rows := calendarCourtRowRe.FindAllStringSubmatch(html, -1)
+	seen := make(map[string]struct{})
+	courts := make([]Court, 0, len(rows))
+	for _, row := range rows {
+		content := row[1]
+
+		idMatch := calendarCourtIDRe.FindStringSubmatch(content)
+		if len(idMatch) < 2 {
+			continue
+		}
+		id := idMatch[1]
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		uuidMatch := calendarCourtUUIDRe.FindStringSubmatch(content)
+		if len(uuidMatch) < 2 {
+			continue
+		}
+
+		nameMatch := calendarCourtNameRe.FindStringSubmatch(content)
+		if len(nameMatch) < 2 {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		courts = append(courts, Court{
+			ID:   id,
+			UUID: uuidMatch[1],
+			Name: strings.TrimSpace(nameMatch[1]),
+		})
+	}
+	return courts
+}
+
 // ─── Court availability slots ────────────────────────────────────────────────
 
 const slotsEndpoint = "/api/slot"

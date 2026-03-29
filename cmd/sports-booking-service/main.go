@@ -49,7 +49,7 @@ func main() {
 		}
 	}
 
-	h := booking.NewHandler(esClient, logger, Version, cfg.EversportsFacilityID, courtIDs, cfg.EversportsFacilityUUID, cfg.EversportsSportUUID)
+	h := booking.NewHandler(esClient, logger, Version, cfg.EversportsFacilityID, courtIDs, cfg.EversportsFacilityUUID, cfg.EversportsSportUUID, cfg.EversportsFacilitySlug, cfg.EversportsSportID, cfg.EversportsSportSlug, cfg.EversportsSportName)
 	srv := booking.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("sports-booking-service starting", "port", cfg.ServerPort, "version", Version)
