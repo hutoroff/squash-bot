@@ -126,6 +126,14 @@ State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*
 Wizard steps: `wizardStepGroup` (group picker, multi-group only), `wizardStepVenue` (venue picker), `wizardStepCourtPick` (court toggle), `wizardStepTime` (time input), `wizardStepCourts` (courts free text).
 New game callbacks: `ng_date`, `ng_group`, `ng_venue`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`.
 
+### Courts Update (`/games` → Manage → Edit Courts)
+When an admin taps "Edit Courts" in the `/games` manage screen:
+- If the game has a linked venue with courts configured → an inline court-toggle keyboard is shown (same ✓ toggle UX as new game creation). Pre-selects the courts already set on the game. Confirming calls `manage_court_confirm:<gameID>`.
+- If the game has no venue → falls back to free-text input as before.
+
+Callbacks: `manage_court_toggle:<court>` (toggle), `manage_court_confirm:<gameID>` (confirm and save).
+State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleState`). Cleared on any slash command.
+
 ### Button Click Flow
 1. Parse callback data (`action:game_id`, e.g. `join:123`, `skip:123`)
 2. Update `game_participations` table (upsert player, add/remove guest)

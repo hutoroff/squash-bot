@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -452,6 +453,10 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 }
 
 func (b *Bot) renderCourtPickKeyboard(chatID int64, messageID int, wizard *newGameWizard, lz *i18n.Localizer) {
+	venueID := int64(0)
+	if wizard.venueID != nil {
+		venueID = *wizard.venueID
+	}
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, court := range wizard.venueCourts {
 		label := court
@@ -459,7 +464,7 @@ func (b *Bot) renderCourtPickKeyboard(chatID int64, messageID int, wizard *newGa
 			label = "✓ " + court
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("ng_court_toggle:%s", court)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("ng_court_toggle:%d:%s", venueID, court)),
 		))
 	}
 
@@ -470,15 +475,31 @@ func (b *Bot) renderCourtPickKeyboard(chatID int64, messageID int, wizard *newGa
 		confirmLabel = lz.T(i18n.MsgNewGameSelectCourts)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(confirmLabel, "ng_court_confirm:_"),
+		tgbotapi.NewInlineKeyboardButtonData(confirmLabel, fmt.Sprintf("ng_court_confirm:%d", venueID)),
 	))
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	b.editText(chatID, messageID, lz.T(i18n.MsgNewGameSelectCourts), &keyboard)
 }
 
-func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, court string) {
+// handleNewGameCourtToggle toggles a court in the new-game wizard court picker.
+// rawID is "<venueID>:<court>".
+func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	subparts := strings.SplitN(rawID, ":", 2)
+	if len(subparts) != 2 {
+		slog.Debug("invalid rawID in ng_court_toggle", "data", cb.Data)
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	venueID, err := strconv.ParseInt(subparts[0], 10, 64)
+	if err != nil {
+		slog.Debug("invalid venue_id in ng_court_toggle", "data", cb.Data)
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	court := subparts[1]
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -486,6 +507,16 @@ func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.Callbac
 		return
 	}
 	wizard := raw.(*newGameWizard)
+
+	// Reject presses from an older message whose venue/session has been replaced.
+	wizardVenueID := int64(0)
+	if wizard.venueID != nil {
+		wizardVenueID = *wizard.venueID
+	}
+	if wizardVenueID != venueID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
 
 	if wizard.selectedCourts == nil {
 		wizard.selectedCourts = make(map[string]bool)
@@ -497,8 +528,17 @@ func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.Callbac
 	b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
 }
 
-func (b *Bot) handleNewGameCourtConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+// handleNewGameCourtConfirm confirms the court selection in the new-game wizard.
+// rawID is "<venueID>" — validated against the current wizard session.
+func (b *Bot) handleNewGameCourtConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	venueID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		slog.Debug("invalid venue_id in ng_court_confirm", "data", cb.Data)
+		b.answerCallback(cb.ID, "")
+		return
+	}
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -506,6 +546,16 @@ func (b *Bot) handleNewGameCourtConfirm(ctx context.Context, cb *tgbotapi.Callba
 		return
 	}
 	wizard := raw.(*newGameWizard)
+
+	// Reject confirms from an older message whose venue/session has been replaced.
+	wizardVenueID := int64(0)
+	if wizard.venueID != nil {
+		wizardVenueID = *wizard.venueID
+	}
+	if wizardVenueID != venueID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
 
 	courts := selectedCourtsString(wizard)
 	if courts == "" {

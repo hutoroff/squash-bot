@@ -29,6 +29,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	// In private chats, slash commands take priority and cancel any pending state.
 	if isPrivate && strings.HasPrefix(msg.Text, "/") {
 		b.pendingCourtsEdit.Delete(msg.Chat.ID)
+		b.pendingManageCourtsToggle.Delete(msg.Chat.ID)
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 		b.pendingVenueEdit.Delete(msg.Chat.ID)
@@ -404,6 +405,22 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	// manage courts toggle picker callbacks
+	if action == "manage_court_toggle" {
+		b.handleManageCourtsToggle(ctx, cb, rawID)
+		return
+	}
+	if action == "manage_court_confirm" {
+		gameID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			slog.Debug("invalid game_id in manage_court_confirm", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleManageCourtsConfirm(ctx, cb, gameID)
+		return
+	}
+
 	// New game wizard venue/court/timeslot callbacks
 	if action == "ng_venue" {
 		b.handleNewGameVenue(ctx, cb, rawID)
@@ -414,7 +431,7 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	if action == "ng_court_confirm" {
-		b.handleNewGameCourtConfirm(ctx, cb)
+		b.handleNewGameCourtConfirm(ctx, cb, rawID)
 		return
 	}
 	if action == "ng_timeslot" {
@@ -1109,18 +1126,191 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 	b.api.Send(edit) //nolint:errcheck
 }
 
-// handleManageEditCourts stores a pending courts-edit and prompts the admin to type the new value.
+// handleManageEditCourts either shows an inline court-toggle keyboard (when the game
+// has a venue with configured courts) or falls back to prompting for free-text input.
 func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
-	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
+	if !ok {
 		return
 	}
 
+	// If the game has a venue with courts, show the inline toggle picker.
+	if game.Venue != nil && game.Venue.Courts != "" {
+		courts := splitCSV(game.Venue.Courts)
+		// Pre-select courts that are already set on the game.
+		selected := make(map[string]bool)
+		for _, c := range splitCSV(game.Courts) {
+			selected[c] = true
+		}
+		state := &manageCourtsToggleState{
+			gameID:         gameID,
+			venueCourts:    courts,
+			selectedCourts: selected,
+		}
+		// Clear the free-text state so an earlier pendingCourtsEdit for a different
+		// game cannot steal the next text message from this chat.
+		b.pendingCourtsEdit.Delete(cb.Message.Chat.ID)
+		b.pendingManageCourtsToggle.Store(cb.Message.Chat.ID, state)
+		b.answerCallback(cb.ID, "")
+		b.renderManageCourtsKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, state, lz)
+		return
+	}
+
+	// No venue — fall back to free-text input.
+	// Clear any active toggle session so its buttons can no longer modify state.
+	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.pendingCourtsEdit.Store(cb.Message.Chat.ID, gameID)
 	b.answerCallback(cb.ID, "")
 
 	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, lz.T(i18n.MsgSendNewCourts))
 	b.api.Send(prompt) //nolint:errcheck
+}
+
+// renderManageCourtsKeyboard renders the inline toggle keyboard for the courts-update flow.
+func (b *Bot) renderManageCourtsKeyboard(chatID int64, messageID int, state *manageCourtsToggleState, lz *i18n.Localizer) {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, court := range state.venueCourts {
+		label := court
+		if state.selectedCourts[court] {
+			label = "✓ " + court
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("manage_court_toggle:%d:%s", state.gameID, court)),
+		))
+	}
+
+	selected := manageCourtsSelectedString(state)
+	confirmLabel := lz.Tf(i18n.MsgNewGameConfirmCourts, selected)
+	if selected == "" {
+		confirmLabel = lz.T(i18n.MsgNewGameSelectCourts)
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(confirmLabel, fmt.Sprintf("manage_court_confirm:%d", state.gameID)),
+	))
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.editText(chatID, messageID, lz.T(i18n.MsgNewGameSelectCourts), &keyboard)
+}
+
+// manageCourtsSelectedString returns a comma-separated string of selected courts
+// from state.venueCourts in their original order.
+func manageCourtsSelectedString(state *manageCourtsToggleState) string {
+	var parts []string
+	for _, c := range state.venueCourts {
+		if state.selectedCourts[c] {
+			parts = append(parts, c)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// handleManageCourtsToggle toggles a court in the manage-courts inline picker.
+// rawID is "<gameID>:<court>".
+func (b *Bot) handleManageCourtsToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	subparts := strings.SplitN(rawID, ":", 2)
+	if len(subparts) != 2 {
+		slog.Debug("invalid rawID in manage_court_toggle", "data", cb.Data)
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	gameID, err := strconv.ParseInt(subparts[0], 10, 64)
+	if err != nil {
+		slog.Debug("invalid game_id in manage_court_toggle", "data", cb.Data)
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	court := subparts[1]
+
+	raw, ok := b.pendingManageCourtsToggle.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*manageCourtsToggleState)
+
+	// Reject presses from an older message whose session has already been replaced.
+	if state.gameID != gameID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	if state.selectedCourts == nil {
+		state.selectedCourts = make(map[string]bool)
+	}
+	state.selectedCourts[court] = !state.selectedCourts[court]
+	b.pendingManageCourtsToggle.Store(cb.Message.Chat.ID, state)
+	b.answerCallback(cb.ID, "")
+
+	b.renderManageCourtsKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, state, lz)
+}
+
+// handleManageCourtsConfirm confirms the court selection and updates the game.
+func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingManageCourtsToggle.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*manageCourtsToggleState)
+
+	// Guard: the confirm callback's gameID must match the stored state to prevent
+	// replaying a stale callback from a previous session.
+	if state.gameID != gameID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	courts := manageCourtsSelectedString(state)
+	if courts == "" {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoCourtsSelected))
+		return
+	}
+
+	// Re-verify admin status before persisting changes.
+	if _, ok2 := b.checkManageAdmin(ctx, cb, gameID, lz); !ok2 {
+		return // checkManageAdmin already answered the callback
+	}
+
+	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
+	b.answerCallback(cb.ID, "")
+
+	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
+		slog.Error("handleManageCourtsConfirm: update courts", "err", err, "game_id", gameID)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)
+		return
+	}
+
+	slog.Info("Courts updated via toggle", "game_id", gameID, "courts", courts)
+
+	// Re-fetch to reflect the new courts value in the group announcement.
+	game, err := b.client.GetGameByID(ctx, gameID)
+	if err != nil {
+		slog.Error("handleManageCourtsConfirm: get game after update", "err", err)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgCourtsUpdatedRefreshFailed), nil)
+		return
+	}
+
+	if game.MessageID != nil {
+		participations, err := b.client.GetParticipations(ctx, gameID)
+		if err != nil {
+			slog.Error("handleManageCourtsConfirm: get participations", "err", err)
+		} else {
+			gameGuests, err := b.client.GetGuests(ctx, gameID)
+			if err != nil {
+				slog.Error("handleManageCourtsConfirm: get guests", "err", err)
+			} else {
+				groupLz := b.groupLocalizer(ctx, game.ChatID)
+				b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
+			}
+		}
+	}
+
+	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtsUpdated, courts), nil)
 }
 
 // handleSetLangGroup shows the language selection keyboard for a specific group.
@@ -1398,6 +1588,52 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 	}
 
 	wizard.gameDate = gameDate
+
+	// If courts were already chosen in the court-toggle step (venue-backed path),
+	// skip the free-text courts prompt and create the game immediately — same
+	// logic as handleNewGameTimeSlot.
+	courts := selectedCourtsString(wizard)
+	if courts != "" {
+		if wizard.groupID != 0 {
+			isAdmin, err := b.isAdminInGroup(msg.From.ID, wizard.groupID)
+			if err != nil || !isAdmin {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNotAdminInGroup))
+				return // wizard intact — user can retry
+			}
+			b.pendingNewGameWizard.Delete(msg.Chat.ID)
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, lz)
+			return
+		}
+		b.pendingNewGameWizard.Delete(msg.Chat.ID)
+		adminGroupIDs := b.adminGroups(msg.From.ID)
+		if len(adminGroupIDs) == 0 {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreateGames))
+			return
+		}
+		if len(adminGroupIDs) == 1 {
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, lz)
+			return
+		}
+		// Multiple groups, no pre-selection.
+		key := pendingGameKey{chatID: msg.Chat.ID, messageID: msg.MessageID}
+		b.pendingGames.Store(key, &pendingGame{
+			gameDate:    gameDate,
+			courts:      courts,
+			venueID:     wizard.venueID,
+			replyChatID: msg.Chat.ID,
+			replyMsgID:  msg.MessageID,
+		})
+		keyboard := b.buildGroupSelectionKeyboard(adminGroupIDs, key)
+		selMsg := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgWhichGroup))
+		selMsg.ReplyMarkup = keyboard
+		if _, err := b.api.Send(selMsg); err != nil {
+			slog.Error("processNewGameWizardTime: send group selection", "err", err)
+			b.pendingGames.Delete(key)
+		}
+		return
+	}
+
+	// No courts pre-selected (no-venue path) — ask the admin to type them.
 	wizard.step = wizardStepCourts
 	b.pendingNewGameWizard.Store(msg.Chat.ID, wizard)
 
