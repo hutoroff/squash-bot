@@ -302,6 +302,97 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 	return slots, err
 }
 
+// ─── CancelMatch ──────────────────────────────────────────────────────────────
+
+// cancelMatchMutation is the GraphQL mutation captured from a live browser
+// DevTools request to cancel a court booking.
+const cancelMatchMutation = `mutation CancelMatch($matchId: ID!, $origin: Origin!) {
+  cancelMatch(matchId: $matchId, origin: $origin) {
+    ... on BallsportMatch {
+      id
+      state
+      relativeLink
+      __typename
+    }
+    ... on ExpectedErrors {
+      errors {
+        id
+        message
+        path
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}`
+
+// CancelMatch cancels a booking by its UUID.
+// It logs in automatically if no session is held, and retries once on HTTP 401.
+func (c *Client) CancelMatch(ctx context.Context, matchID string) (*CancellationResult, error) {
+	do := func() (*CancellationResult, error) {
+		payload := gqlRequest{
+			OperationName: "CancelMatch",
+			Variables: map[string]any{
+				"matchId": matchID,
+				"origin":  "ORIGIN_MARKETPLACE",
+			},
+			Query: cancelMatchMutation,
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: marshal CancelMatch request: %w", err)
+		}
+		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("eversports: CancelMatch request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("eversports: read CancelMatch response: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", errUnauthorized)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("eversports: CancelMatch HTTP %d: %s", resp.StatusCode, string(respBytes))
+		}
+
+		var gqlResp gqlCancelMatchResponse
+		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
+			return nil, fmt.Errorf("eversports: decode CancelMatch response: %w", err)
+		}
+		if len(gqlResp.Errors) > 0 {
+			return nil, fmt.Errorf("eversports: CancelMatch graphql error: %s", gqlResp.Errors[0].Message)
+		}
+		cm := gqlResp.Data.CancelMatch
+		if len(cm.Errors) > 0 {
+			return nil, fmt.Errorf("eversports: CancelMatch error: %s", cm.Errors[0].Message)
+		}
+		c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
+		return &CancellationResult{
+			ID:           cm.ID,
+			State:        cm.State,
+			RelativeLink: cm.RelativeLink,
+		}, nil
+	}
+
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, err
+	}
+	result, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginErr
+		}
+		return do()
+	}
+	return result, err
+}
+
 // ─── Debug-page helper ────────────────────────────────────────────────────────
 
 // PageDebugInfo is returned by FetchPageDebugInfo.

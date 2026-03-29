@@ -21,16 +21,19 @@ var testLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Le
 // what each method returns. Authentication is handled by the real client;
 // the mock always behaves as if already logged in.
 type mockClient struct {
-	bookings      []eversports.Booking
-	bookingsErr   error
-	match         *eversports.Booking
-	matchErr      error
-	lastMatchID   string // records the matchID passed to GetMatchByID
-	debugInfo     *eversports.PageDebugInfo
-	debugErr      error
-	slots         []eversports.Slot
-	slotsErr      error
-	lastSlotsDate string // records the startDate passed to GetSlots
+	bookings          []eversports.Booking
+	bookingsErr       error
+	match             *eversports.Booking
+	matchErr          error
+	lastMatchID       string // records the matchID passed to GetMatchByID
+	cancellation      *eversports.CancellationResult
+	cancellationErr   error
+	lastCancelMatchID string // records the matchID passed to CancelMatch
+	debugInfo         *eversports.PageDebugInfo
+	debugErr          error
+	slots             []eversports.Slot
+	slotsErr          error
+	lastSlotsDate     string // records the startDate passed to GetSlots
 }
 
 func (m *mockClient) GetBookings(_ context.Context) ([]eversports.Booking, error) {
@@ -40,6 +43,11 @@ func (m *mockClient) GetBookings(_ context.Context) ([]eversports.Booking, error
 func (m *mockClient) GetMatchByID(_ context.Context, matchID string) (*eversports.Booking, error) {
 	m.lastMatchID = matchID
 	return m.match, m.matchErr
+}
+
+func (m *mockClient) CancelMatch(_ context.Context, matchID string) (*eversports.CancellationResult, error) {
+	m.lastCancelMatchID = matchID
+	return m.cancellation, m.cancellationErr
 }
 
 func (m *mockClient) FetchPageDebugInfo(_ context.Context) (*eversports.PageDebugInfo, error) {
@@ -188,6 +196,60 @@ func TestGetMatch_Error(t *testing.T) {
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches/bad-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+// ─── DELETE /api/v1/eversports/matches/{id} ──────────────────────────────────
+
+func TestCancelMatch_Success(t *testing.T) {
+	result := &eversports.CancellationResult{
+		ID:           "728e8066-4100-4dc4-81bb-9b9660b30fe6",
+		State:        "CANCELLED",
+		RelativeLink: "/match/728e8066-4100-4dc4-81bb-9b9660b30fe6",
+	}
+	mock := &mockClient{cancellation: result}
+	srv := serve(newTestHandler(mock))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/728e8066-4100-4dc4-81bb-9b9660b30fe6", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got eversports.CancellationResult
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != result.ID {
+		t.Errorf("ID: want %q, got %q", result.ID, got.ID)
+	}
+	if got.State != "CANCELLED" {
+		t.Errorf("State: want %q, got %q", "CANCELLED", got.State)
+	}
+	if mock.lastCancelMatchID != "728e8066-4100-4dc4-81bb-9b9660b30fe6" {
+		t.Errorf("forwarded matchID: want %q, got %q", "728e8066-4100-4dc4-81bb-9b9660b30fe6", mock.lastCancelMatchID)
+	}
+}
+
+func TestCancelMatch_Error(t *testing.T) {
+	mock := &mockClient{cancellationErr: errors.New("cannot cancel past booking")}
+	srv := serve(newTestHandler(mock))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/bad-id", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

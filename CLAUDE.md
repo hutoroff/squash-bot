@@ -313,6 +313,7 @@ Authentication with Eversports is handled automatically: the service logs in on 
 | `GET`  | `/version` | Service version (no auth) |
 | `GET`  | `/api/v1/eversports/bookings` | List upcoming bookings |
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
+| `DELETE` | `/api/v1/eversports/matches/{id}` | Cancel a booking by UUID; returns `{id, state, relativeLink}` |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID` + `EVERSPORTS_COURT_IDS` |
 | `GET`  | `/api/v1/eversports/debug-page` | Diagnostic: fetch bookings page and return `__NEXT_DATA__` |
 
