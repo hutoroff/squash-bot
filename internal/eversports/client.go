@@ -27,6 +27,10 @@ const (
 	// graphqlEndpoint is the single GraphQL gateway used by the Eversports frontend.
 	graphqlEndpoint = "/api/checkout"
 
+	// selfEndpoint returns the authenticated user's profile including the legacy
+	// numeric user ID required by the /api/user/activities endpoint.
+	selfEndpoint = "/u/self"
+
 	// loginMutation is the GraphQL mutation captured from browser DevTools.
 	loginMutation = `mutation LoginCredentialLogin($params: AuthParamsInput!, $credentials: CredentialLoginInput!) {
   credentialLogin(params: $params, credentials: $credentials) {
@@ -75,12 +79,13 @@ type Client struct {
 	email        string
 	password     string
 	bookingsPath string // path for the SSR bookings page (used by debug-page endpoint)
-	// activitiesUserID is the legacy numeric user ID for GET /api/user/activities.
-	activitiesUserID string
 
 	loginMu  sync.Mutex
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
+	// activitiesUserID is the legacy numeric user ID fetched from GET /u/self
+	// after login. It is required by the GET /api/user/activities endpoint.
+	activitiesUserID atomic.Value // string
 
 	// bookingMu serialises CreateBooking calls. The Eversports checkout flow is
 	// a three-step sequence (reserve → pay → create-from-booking) where step 3
@@ -95,19 +100,17 @@ type Client struct {
 // New creates a new Eversports client.
 // bookingsPath is the URL path to the user's bookings page (e.g. "/user/bookings"),
 // used only by the debug-page diagnostic endpoint.
-// activitiesUserID is the legacy numeric user ID for the bookings list endpoint.
-func New(email, password, bookingsPath, activitiesUserID string, logger *slog.Logger) *Client {
+func New(email, password, bookingsPath string, logger *slog.Logger) *Client {
 	jar, _ := cookiejar.New(nil) // never errors with nil options
 	return &Client{
 		http: &http.Client{
 			Jar:     jar,
 			Timeout: 30 * time.Second,
 		},
-		email:            email,
-		password:         password,
-		bookingsPath:     bookingsPath,
-		activitiesUserID: activitiesUserID,
-		logger:           logger,
+		email:        email,
+		password:     password,
+		bookingsPath: bookingsPath,
+		logger:       logger,
 	}
 }
 
@@ -183,6 +186,35 @@ func (c *Client) Login(ctx context.Context) error {
 
 	c.loggedIn.Store(true)
 	c.logger.Info("eversports login successful")
+	return nil
+}
+
+// fetchSelfUserID calls GET /u/self to retrieve the authenticated user's legacy
+// numeric ID and stores it in activitiesUserID for use by GetBookings.
+func (c *Client) fetchSelfUserID(ctx context.Context) error {
+	resp, err := c.doAuthed(ctx, http.MethodGet, baseURL+selfEndpoint, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var selfResp selfResponse
+	if err := json.Unmarshal(respBytes, &selfResp); err != nil {
+		return fmt.Errorf("decode /u/self response: %w", err)
+	}
+	if selfResp.Data.User.ID == 0 {
+		return fmt.Errorf("user ID missing in /u/self response")
+	}
+	c.activitiesUserID.Store(fmt.Sprintf("%d", selfResp.Data.User.ID))
+	c.logger.Debug("eversports user ID fetched", "userID", selfResp.Data.User.ID)
 	return nil
 }
 

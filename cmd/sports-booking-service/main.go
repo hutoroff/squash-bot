@@ -40,7 +40,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, cfg.EversportsBookingsPath, cfg.EversportsUserID, logger)
+	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, cfg.EversportsBookingsPath, logger)
 
 	var courtIDs []string
 	for _, s := range strings.Split(cfg.EversportsCourtIDs, ",") {
