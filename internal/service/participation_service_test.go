@@ -28,10 +28,10 @@ func setupParticipationTest(t *testing.T, ctx context.Context) (
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
 
-	gameSvc := service.NewGameService(gameRepo)
+	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool))
 	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
 
-	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2")
+	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
 	if err != nil {
 		t.Fatalf("create game: %v", err)
 	}
@@ -396,10 +396,10 @@ func TestParticipationService_AddGuest_AtCapacity(t *testing.T) {
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
 	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
-	gameSvc := service.NewGameService(gameRepo)
+	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool))
 
 	// 1 court → capacity 2.
-	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1")
+	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1", nil)
 	if err != nil {
 		t.Fatalf("create game: %v", err)
 	}
@@ -576,8 +576,9 @@ func TestParticipationService_KickGuestByID_WrongGame(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 	svc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
 
-	gA, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2")
-	gB, _ := service.NewGameService(gameRepo).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4")
+	venueRepo := storage.NewVenueRepo(testPool)
+	gA, _ := service.NewGameService(gameRepo, venueRepo).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
+	gB, _ := service.NewGameService(gameRepo, venueRepo).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4", nil)
 
 	_, _, _, _ = svc.AddGuest(ctx, gA.ID, 40011, "eve", "", "") // guest belongs to game A
 	guestsA, _ := svc.GetGuests(ctx, gA.ID)
