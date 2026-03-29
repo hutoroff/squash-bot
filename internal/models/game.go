@@ -9,6 +9,8 @@ type Game struct {
 	GameDate          time.Time `json:"game_date"`
 	CourtsCount       int       `json:"courts_count"`
 	Courts            string    `json:"courts"`
+	VenueID           *int64    `json:"venue_id,omitempty"`
+	Venue             *Venue    `json:"venue,omitempty"`
 	NotifiedDayBefore bool      `json:"notified_day_before"`
 	Completed         bool      `json:"completed"`
 	CreatedAt         time.Time `json:"created_at"`

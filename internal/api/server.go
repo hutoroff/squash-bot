@@ -14,26 +14,29 @@ import (
 
 // Handler wires all HTTP routes for the squash-games-management service.
 type Handler struct {
-	gameService *service.GameService
-	partService *service.ParticipationService
-	groupRepo   *storage.GroupRepo
-	scheduler   *service.SchedulerService
-	logger      *slog.Logger
+	gameService  *service.GameService
+	partService  *service.ParticipationService
+	venueService *service.VenueService
+	groupRepo    *storage.GroupRepo
+	scheduler    *service.SchedulerService
+	logger       *slog.Logger
 }
 
 func NewHandler(
 	gameService *service.GameService,
 	partService *service.ParticipationService,
+	venueService *service.VenueService,
 	groupRepo *storage.GroupRepo,
 	scheduler *service.SchedulerService,
 	logger *slog.Logger,
 ) *Handler {
 	return &Handler{
-		gameService: gameService,
-		partService: partService,
-		groupRepo:   groupRepo,
-		scheduler:   scheduler,
-		logger:      logger,
+		gameService:  gameService,
+		partService:  partService,
+		venueService: venueService,
+		groupRepo:    groupRepo,
+		scheduler:    scheduler,
+		logger:       logger,
 	}
 }
 
@@ -65,6 +68,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)
+
+	// Venues
+	mux.HandleFunc("POST /api/v1/venues", h.createVenue)
+	mux.HandleFunc("GET /api/v1/venues", h.listVenues)
+	mux.HandleFunc("GET /api/v1/venues/{id}", h.getVenue)
+	mux.HandleFunc("PATCH /api/v1/venues/{id}", h.updateVenue)
+	mux.HandleFunc("DELETE /api/v1/venues/{id}", h.deleteVenue)
 
 	// Scheduler triggers
 	mux.HandleFunc("POST /api/v1/scheduler/trigger/{event}", h.triggerScheduler)

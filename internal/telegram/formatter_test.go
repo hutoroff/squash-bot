@@ -235,6 +235,29 @@ func TestFormatGameMessage_GuestsCountTowardTotal(t *testing.T) {
 	}
 }
 
+func TestFormatGameMessage_WithVenue(t *testing.T) {
+	venueID := int64(42)
+	game := makeGame("2,3", time.Date(2026, 4, 15, 20, 0, 0, 0, time.UTC))
+	game.VenueID = &venueID
+	game.Venue = &models.Venue{ID: venueID, Name: "City Sports Center"}
+
+	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now(), enLz)
+
+	if !strings.Contains(msg, "📍 City Sports Center") {
+		t.Errorf("venue line missing, got:\n%s", msg)
+	}
+}
+
+func TestFormatGameMessage_NoVenue(t *testing.T) {
+	game := makeGame("2,3", time.Date(2026, 4, 15, 20, 0, 0, 0, time.UTC))
+
+	msg := telegram.FormatGameMessage(game, nil, nil, time.UTC, time.Now(), enLz)
+
+	if strings.Contains(msg, "📍") {
+		t.Errorf("venue line should be absent when game has no venue, got:\n%s", msg)
+	}
+}
+
 // TestFormatGameMessage_LastUpdatedUsesConfiguredTimezone is a regression test for
 // the bug where "Last updated" used time.Now() (server timezone) instead of
 // time.Now().In(loc). It uses a fixed UTC instant that falls on a different day,

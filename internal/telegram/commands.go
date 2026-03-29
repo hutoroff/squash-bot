@@ -35,6 +35,8 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandNewGame(ctx, msg, lz)
 	case "/language":
 		b.handleCommandLanguage(ctx, msg, lz)
+	case "/venues":
+		b.handleCommandVenues(ctx, msg, lz)
 	case "/trigger":
 		b.handleCommandTrigger(ctx, msg, lz)
 	default:
@@ -55,6 +57,7 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 		sb.WriteString(lz.T(i18n.MsgAdminCommands))
 		sb.WriteString(lz.T(i18n.MsgCmdNewGame))
 		sb.WriteString(lz.T(i18n.MsgCmdGames))
+		sb.WriteString(lz.T(i18n.MsgCmdVenues))
 		sb.WriteString(lz.T(i18n.MsgCmdLanguage))
 	}
 
@@ -157,6 +160,21 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 	if len(adminGroupIDs) == 0 {
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCreateGames))
 		return
+	}
+
+	// For single-group admins, ensure at least one venue is configured before
+	// showing the date picker — gives immediate feedback instead of failing mid-flow.
+	if len(adminGroupIDs) == 1 {
+		venues, err := b.client.GetVenuesByGroup(ctx, adminGroupIDs[0])
+		if err != nil {
+			slog.Error("handleCommandNewGame: fetch venues", "err", err)
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+			return
+		}
+		if len(venues) == 0 {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
+			return
+		}
 	}
 
 	keyboard := b.buildDateSelectionKeyboard(lz)

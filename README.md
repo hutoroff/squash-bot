@@ -4,7 +4,8 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 
 ## What It Does
 
-- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → time → courts)
+- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → venue/time → courts)
+- Admin manages venues (courts, time slots, address) for their group via `/venues`
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
@@ -73,15 +74,26 @@ Migrations run automatically on startup.
 
 Add the bot to a Telegram group and grant it admin rights (required for pinning messages). The bot will register the group automatically and start accepting game creation requests from group admins.
 
-### 4. Create a game
+### 4. (Optional) Configure venues
 
-In private chat with the bot, run `/newgame`. The bot will guide you through three steps:
+In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores a name, available court numbers, and preset time slots. Once venues are configured, the game creation wizard uses them to offer guided selections.
 
+### 5. Create a game
+
+In private chat with the bot, run `/newgame`. The bot will guide you through a wizard:
+
+**With venues configured:**
 1. **Pick a date** — tap one of the date buttons (today + next 13 days)
+2. **Select a venue** — or "No venue / manual" to enter courts and time manually
+3. **Toggle courts** — tap courts to select/deselect, then confirm
+4. **Select a time slot** — or tap "Custom time" to type a time manually
+
+**Without venues:**
+1. **Pick a date** — tap one of the date buttons
 2. **Enter the time** — type the time in `HH:MM` format (e.g. `19:30`)
 3. **Enter the courts** — type the court numbers (e.g. `2,3,4` or `2 3 4`)
 
-If you are an admin in multiple groups, the bot will ask you to pick a group after step 3.
+If you are an admin in multiple groups, the bot will ask you to pick a group after the courts step.
 
 ## Running Locally (without Docker)
 
@@ -119,6 +131,7 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 | `/my_game`   | Anyone          | Show your next registered game with a link       |
 | `/games`     | Group admins    | List upcoming games you manage; edit/manage them |
 | `/newgame`   | Group admins    | Create a new game for your group (wizard)        |
+| `/venues`    | Group admins    | Manage venues (courts, time slots, address)      |
 | `/language`  | Group admins    | Set the bot language for a group (en/de/ru)      |
 | `/trigger`   | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
 
@@ -192,7 +205,7 @@ cmd/
 internal/
   config/         — env-based config (TelegramConfig + ManagementConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
-  models/         — Game, Player, GameParticipation, GuestParticipation, Group
+  models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
   storage/        — SQL repositories (games, players, participations, guests, groups)
   service/        — business logic + scheduler
   api/            — HTTP handlers for the management service REST API

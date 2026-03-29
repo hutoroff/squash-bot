@@ -38,11 +38,12 @@ Two independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
 
 ### Database Schema
-- `games`: id, chat_id, message_id, game_date, courts_count, courts, notified_day_before, completed, created_at
+- `games`: id, chat_id, message_id, game_date, courts_count, courts, venue_id (nullable FK→venues), notified_day_before, completed, created_at
 - `players`: id, telegram_id (UNIQUE), username, first_name, last_name, created_at
 - `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
 - `guest_participations`: id, game_id, invited_by_player_id, created_at
 - `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), added_at
+- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), created_at, UNIQUE(group_id, name)
 
 ## Development Commands
 
@@ -90,17 +91,40 @@ go build ./cmd/telegram-squash-bot/
 4. Language picker sends `set_lang:<lang>:<groupID>` callback → `PATCH /api/v1/groups/{chatID}/language` → `bot_groups.language` updated.
 5. `PATCH` returns 404 if group row does not exist (bot was kicked), 400 for unsupported language codes, 500 for DB errors.
 
+### Venue Management (`/venues`)
+Works in **private chat only**.
+
+1. Admin sends `/venues` → shows venue list for their group (or group picker if multiple groups).
+2. Each venue row shows "Edit" and "Delete" buttons; "Add Venue" button at the bottom.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → address (optional, `-` to skip) → venue created.
+4. **Edit venue**: clicking a venue opens an edit menu with buttons for each field. Admin sends the new value as free text.
+5. **Delete venue**: two-step confirmation; linked games retain their `venue_id` as NULL (ON DELETE SET NULL).
+
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`.
+State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`) and `pendingVenueEdit sync.Map` (chatID → `*venueEditState`).
+
 ### New Game Wizard (`/newGame`)
 Works in **private chat only**. Group @mentions are redirected to private chat.
 
-1. Admin sends `/newGame` → bot sends a date-picker inline keyboard (today + next 13 days, 2 per row, locale-aware weekday abbreviation).
-2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → message is edited to show selected date; bot prompts for time.
-3. Admin types time (`HH:MM`) → validated; if past, user is asked to retry (wizard state preserved). Bot prompts for courts.
+**With venues configured (single-group admin):**
+1. Admin sends `/newGame` → date-picker keyboard (today + next 13 days).
+2. Admin taps a date → callback `ng_date:<YYYY-MM-DD>` → venue picker shown (one button per venue + "No venue / manual").
+3. Admin selects a venue → callback `ng_venue:<venueID>` → court toggle buttons (one per court, ✓ when selected) + Confirm button.
+4. Admin toggles courts (`ng_court_toggle:<court>`) and confirms (`ng_court_confirm:_`) → time slot buttons (one per slot + "Custom time").
+5. Admin selects a slot (`ng_timeslot:<HH:MM>`) or "Custom time" (`ng_time_custom:_`, reverts to free-text) → game created.
+6. Admin selects "No venue / manual" → falls back to the manual flow below.
+
+**Without venues (or multi-group admin):**
+1. Admin sends `/newGame` → date-picker keyboard.
+2. Admin taps a date → bot prompts for time (free text).
+3. Admin types time (`HH:MM`) → validated; if past, user is asked to retry. Bot prompts for courts.
 4. Admin types courts (any delimiter: comma, space, semicolon, slash is normalised to commas) → `normalizeCourts` cleans the input.
-5. If admin is in one group → game is created immediately. If multiple groups → group-selection inline keyboard shown (same as before).
+5. If admin is in one group → game is created immediately. If multiple groups → group-selection inline keyboard shown.
 6. Sending any slash command at any step cancels the wizard (`pendingNewGameWizard.Delete`).
 
-State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*newGameWizard{gameDate, step}` where `step` is `wizardStepTime` or `wizardStepCourts`.
+State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*newGameWizard`.
+Wizard steps: `wizardStepVenue` (venue picker), `wizardStepCourtPick` (court toggle), `wizardStepTime` (time input), `wizardStepCourts` (courts free text).
+New game callbacks: `ng_date`, `ng_venue`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`.
 
 ### Button Click Flow
 1. Parse callback data (`action:game_id`, e.g. `join:123`, `skip:123`)
@@ -127,7 +151,7 @@ State: `pendingNewGameWizard sync.Map` keyed by private `chatID int64`, value `*
 - Admins can remove any guest via the `/games` management menu
 
 ### Message Formatting
-- Emoji header, game date/time, court list, numbered player list, guest list
+- Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
 - Capacity line: `courts_count × 2`
 - "Last updated: [timestamp]" footer
 - "Game completed ✓" marker for finished games

@@ -22,32 +22,35 @@ func NewGameRepo(pool *pgxpool.Pool) *GameRepo {
 
 func (r *GameRepo) Create(ctx context.Context, game *models.Game) (*models.Game, error) {
 	const q = `
-		INSERT INTO games (chat_id, game_date, courts_count, courts)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, chat_id, message_id, game_date, courts_count, courts,
+		INSERT INTO games (chat_id, game_date, courts_count, courts, venue_id)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, chat_id, message_id, game_date, courts_count, courts, venue_id,
 		          notified_day_before, completed, created_at`
 
 	slog.Debug("GameRepo.Create", "chat_id", game.ChatID, "game_date", game.GameDate)
 
-	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount, game.Courts)
+	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount, game.Courts, game.VenueID)
 	return scanGame(row)
 }
 
 func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts,
-		       notified_day_before, completed, created_at
-		FROM games WHERE id = $1`
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		       g.notified_day_before, g.completed, g.created_at,
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at
+		FROM games g
+		LEFT JOIN venues v ON v.id = g.venue_id
+		WHERE g.id = $1`
 
 	slog.Debug("GameRepo.GetByID", "id", id)
 
 	row := r.pool.QueryRow(ctx, q, id)
-	return scanGame(row)
+	return scanGameWithVenue(row)
 }
 
 func (r *GameRepo) GetUpcomingGames(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE completed = false AND game_date > now()
@@ -82,7 +85,7 @@ func (r *GameRepo) UpdateMessageID(ctx context.Context, gameID, messageID int64)
 // GetGamesForDayBefore returns games scheduled in [from, to) where notified_day_before is false.
 func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE game_date >= $1 AND game_date < $2
@@ -111,7 +114,7 @@ func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time)
 // GetGamesForDayAfter returns games scheduled in [from, to) where completed is false and message_id is set.
 func (r *GameRepo) GetGamesForDayAfter(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE game_date >= $1 AND game_date < $2
@@ -154,7 +157,7 @@ func (r *GameRepo) MarkCompleted(ctx context.Context, gameID int64) error {
 // GetUpcomingGamesByChatIDs returns upcoming games for the given chat IDs.
 func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE completed = false AND game_date > now()
@@ -184,11 +187,13 @@ func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int6
 // Returns nil, nil if the user has no upcoming registered games.
 func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts,
-		       g.notified_day_before, g.completed, g.created_at
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		       g.notified_day_before, g.completed, g.created_at,
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
 		JOIN players p ON p.id = gp.player_id
+		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE p.telegram_id = $1 AND gp.status = 'registered'
 		  AND g.completed = false AND g.game_date > now()
 		ORDER BY g.game_date
@@ -197,7 +202,7 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 	slog.Debug("GameRepo.GetNextGameForTelegramUser", "telegram_id", telegramID)
 
 	row := r.pool.QueryRow(ctx, q, telegramID)
-	g, err := scanGame(row)
+	g, err := scanGameWithVenue(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -222,11 +227,54 @@ type scanner interface {
 func scanGame(s scanner) (*models.Game, error) {
 	var g models.Game
 	err := s.Scan(
-		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts,
+		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan game: %w", err)
+	}
+	return &g, nil
+}
+
+// scanGameWithVenue scans a game row that includes LEFT JOIN venue columns.
+// All venue columns are nullable (NULL when no venue is linked).
+func scanGameWithVenue(s scanner) (*models.Game, error) {
+	var g models.Game
+	var (
+		venueID      *int64
+		venueGroupID *int64
+		venueName    *string
+		venueCourts  *string
+		venueSlots   *string
+		venueAddr    *string
+		venueCreated *time.Time
+	)
+	err := s.Scan(
+		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
+		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
+		&venueID, &venueGroupID, &venueName, &venueCourts, &venueSlots, &venueAddr, &venueCreated,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("scan game: %w", err)
+	}
+	if venueID != nil {
+		addr := ""
+		if venueAddr != nil {
+			addr = *venueAddr
+		}
+		createdAt := time.Time{}
+		if venueCreated != nil {
+			createdAt = *venueCreated
+		}
+		g.Venue = &models.Venue{
+			ID:        *venueID,
+			GroupID:   *venueGroupID,
+			Name:      *venueName,
+			Courts:    *venueCourts,
+			TimeSlots: *venueSlots,
+			Address:   addr,
+			CreatedAt: createdAt,
+		}
 	}
 	return &g, nil
 }

@@ -11,26 +11,36 @@ import (
 )
 
 type GameService struct {
-	gameRepo *storage.GameRepo
+	gameRepo  *storage.GameRepo
+	venueRepo *storage.VenueRepo
 }
 
-func NewGameService(gameRepo *storage.GameRepo) *GameService {
-	return &GameService{gameRepo: gameRepo}
+func NewGameService(gameRepo *storage.GameRepo, venueRepo *storage.VenueRepo) *GameService {
+	return &GameService{gameRepo: gameRepo, venueRepo: venueRepo}
 }
 
-func (s *GameService) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string) (*models.Game, error) {
+func (s *GameService) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
+	// Verify venue ownership before inserting — prevents attaching another group's venue.
+	if venueID != nil {
+		if _, err := s.venueRepo.GetByIDAndGroupID(ctx, *venueID, chatID); err != nil {
+			return nil, fmt.Errorf("venue %d does not belong to group %d", *venueID, chatID)
+		}
+	}
+
 	courtsCount := len(strings.Split(courts, ","))
 	game := &models.Game{
 		ChatID:      chatID,
 		GameDate:    gameDate,
 		Courts:      courts,
 		CourtsCount: courtsCount,
+		VenueID:     venueID,
 	}
 	created, err := s.gameRepo.Create(ctx, game)
 	if err != nil {
 		return nil, fmt.Errorf("create game: %w", err)
 	}
-	return created, nil
+	// Re-fetch via GetByID so the returned game includes the hydrated Venue struct.
+	return s.gameRepo.GetByID(ctx, created.ID)
 }
 
 func (s *GameService) UpdateMessageID(ctx context.Context, gameID, messageID int64) error {

@@ -113,6 +113,7 @@ const (
 	MsgAdminCommands                 = "msg.admin_commands"
 	MsgCmdNewGame                    = "msg.cmd_new_game"
 	MsgCmdGames                      = "msg.cmd_games"
+	MsgCmdVenues                     = "msg.cmd_venues"
 	MsgServiceAdminCommands          = "msg.service_admin_commands"
 	MsgCmdTrigger                    = "msg.cmd_trigger"
 	MsgFailedFetchGame               = "msg.failed_fetch_game"
@@ -146,16 +147,51 @@ const (
 
 	// Language command
 	MsgSelectGroupForLanguage = "msg.select_group_for_language"
+	MsgSelectGroupForVenues   = "msg.select_group_for_venues"
 	MsgSelectLanguage         = "msg.select_language"
 	MsgLanguageSet            = "msg.language_set"
 	MsgOnlyAdminSetLanguage   = "msg.only_admin_set_language"
 
 	// New game wizard
-	MsgNewGameSelectDate  = "msg.new_game_select_date"
-	MsgNewGameEnterTime   = "msg.new_game_enter_time"
-	MsgNewGameInvalidTime = "msg.new_game_invalid_time"
-	MsgNewGameTimePast    = "msg.new_game_time_past"
-	MsgNewGameEnterCourts = "msg.new_game_enter_courts"
+	MsgNewGameSelectDate         = "msg.new_game_select_date"
+	MsgNewGameEnterTime          = "msg.new_game_enter_time"
+	MsgNewGameInvalidTime        = "msg.new_game_invalid_time"
+	MsgNewGameTimePast           = "msg.new_game_time_past"
+	MsgNewGameEnterCourts        = "msg.new_game_enter_courts"
+	MsgNewGameSelectVenue        = "msg.new_game_select_venue"
+	MsgNewGameNoVenue            = "msg.new_game_no_venue"
+	MsgNewGameSelectCourts       = "msg.new_game_select_courts"
+	MsgNewGameConfirmCourts      = "msg.new_game_confirm_courts"
+	MsgNewGameNoCourtsSelected   = "msg.new_game_no_courts_selected"
+	MsgNewGameSelectTime         = "msg.new_game_select_time"
+	MsgNewGameCustomTime         = "msg.new_game_custom_time"
+	MsgNewGameNoVenuesConfigured = "msg.new_game_no_venues_configured"
+
+	// Venue management
+	MsgVenueList             = "msg.venue_list"
+	MsgVenueNoVenues         = "msg.venue_no_venues"
+	MsgVenueCreated          = "msg.venue_created"
+	MsgVenueUpdated          = "msg.venue_updated"
+	MsgVenueDeleted          = "msg.venue_deleted"
+	MsgVenueNotFound         = "msg.venue_not_found"
+	MsgVenueAskName          = "msg.venue_ask_name"
+	MsgVenueAskCourts        = "msg.venue_ask_courts"
+	MsgVenueAskTimeSlots     = "msg.venue_ask_time_slots"
+	MsgVenueAskAddress       = "msg.venue_ask_address"
+	MsgVenueSkipAddress      = "msg.venue_skip_address"
+	MsgVenueEditMenu         = "msg.venue_edit_menu"
+	MsgVenueConfirmDelete    = "msg.venue_confirm_delete"
+	MsgVenueInvalidTimeSlots = "msg.venue_invalid_time_slots"
+	BtnVenueEditName         = "btn.venue_edit_name"
+	BtnVenueEditCourts       = "btn.venue_edit_courts"
+	BtnVenueEditTimeSlots    = "btn.venue_edit_time_slots"
+	BtnVenueEditAddress      = "btn.venue_edit_address"
+	BtnVenueDelete           = "btn.venue_delete"
+	BtnVenueAdd              = "btn.venue_add"
+	BtnVenueConfirmDelete    = "btn.venue_confirm_delete"
+
+	// Game message — venue line
+	GameVenueLine = "game.venue_line"
 
 	// Calendar — weekday names
 	WeekdaySunday    = "weekday.sunday"
@@ -277,6 +313,7 @@ var translations = map[Lang]map[string]string{
 		MsgAdminCommands:                 "\nAdmin commands:\n",
 		MsgCmdNewGame:                    "/newgame — Create a new game\n",
 		MsgCmdGames:                      "/games — Show and manage upcoming games\n",
+		MsgCmdVenues:                     "/venues — Manage venues for your group\n",
 		MsgServiceAdminCommands:          "\nService admin commands:\n",
 		MsgCmdTrigger:                    "/trigger — Manually trigger a scheduled event\n",
 		MsgFailedFetchGame:               "Failed to fetch your next game. Please try again.",
@@ -310,16 +347,51 @@ var translations = map[Lang]map[string]string{
 
 		// Language command
 		MsgSelectGroupForLanguage: "Which group's language do you want to change?",
+		MsgSelectGroupForVenues:   "Which group's venues do you want to manage?",
 		MsgSelectLanguage:         "Select a language for your group:",
 		MsgLanguageSet:            "Language updated ✓",
 		MsgOnlyAdminSetLanguage:   "Only group administrators can change the language.",
 
 		// New game wizard
-		MsgNewGameSelectDate:  "Select a date for the new game:",
-		MsgNewGameEnterTime:   "Game on %s.\n\nEnter the time (HH:MM, e.g. 19:30):",
-		MsgNewGameInvalidTime: "Invalid time. Please enter time as HH:MM (e.g. 19:30):",
-		MsgNewGameTimePast:    "That time is already in the past. Please enter a future time (e.g. 19:30):",
-		MsgNewGameEnterCourts: "Game on %s at %s.\n\nEnter the courts (e.g. 2,3 or 2 3):",
+		MsgNewGameSelectDate:         "Select a date for the new game:",
+		MsgNewGameEnterTime:          "Game on %s.\n\nEnter the time (HH:MM, e.g. 19:30):",
+		MsgNewGameInvalidTime:        "Invalid time. Please enter time as HH:MM (e.g. 19:30):",
+		MsgNewGameTimePast:           "That time is already in the past. Please enter a future time (e.g. 19:30):",
+		MsgNewGameEnterCourts:        "Game on %s at %s.\n\nEnter the courts (e.g. 2,3 or 2 3):",
+		MsgNewGameSelectVenue:        "Game on %s.\n\nSelect a venue:",
+		MsgNewGameNoVenue:            "No venue / manual",
+		MsgNewGameSelectCourts:       "Select courts for the game (tap to toggle):",
+		MsgNewGameConfirmCourts:      "✓ Confirm (%s)",
+		MsgNewGameNoCourtsSelected:   "Please select at least one court.",
+		MsgNewGameSelectTime:         "Game on %s at %s.\n\nSelect a time slot:",
+		MsgNewGameCustomTime:         "✎ Custom time",
+		MsgNewGameNoVenuesConfigured: "No venues are configured for your group. Please add at least one venue with /venues before creating a game.",
+
+		// Venue management
+		MsgVenueList:             "*Venues for %s:*\n\n",
+		MsgVenueNoVenues:         "No venues configured yet.",
+		MsgVenueCreated:          "Venue created ✓",
+		MsgVenueUpdated:          "Venue updated ✓",
+		MsgVenueDeleted:          "Venue deleted ✓",
+		MsgVenueNotFound:         "Venue not found.",
+		MsgVenueAskName:          "Enter the venue name (e.g. City Sports Center):",
+		MsgVenueAskCourts:        "Enter the available courts (e.g. 1,2,3,4,5,6):",
+		MsgVenueAskTimeSlots:     "Enter preset time slots (e.g. 18:00,19:00,20:00), or send - to skip:",
+		MsgVenueAskAddress:       "Enter the venue address or link (optional), or send - to skip:",
+		MsgVenueSkipAddress:      "-",
+		MsgVenueEditMenu:         "*%s*\nCourts: %s\nTime slots: %s\nAddress: %s",
+		MsgVenueConfirmDelete:    "Delete venue *%s*? This cannot be undone.",
+		MsgVenueInvalidTimeSlots: "Invalid time slots. Each slot must be in HH:MM format (e.g. 18:00,19:00,20:00):",
+		BtnVenueEditName:         "✏️ Name",
+		BtnVenueEditCourts:       "🎾 Courts",
+		BtnVenueEditTimeSlots:    "🕐 Time Slots",
+		BtnVenueEditAddress:      "📍 Address",
+		BtnVenueDelete:           "🗑 Delete",
+		BtnVenueAdd:              "+ Add Venue",
+		BtnVenueConfirmDelete:    "Yes, delete",
+
+		// Game message — venue
+		GameVenueLine: "📍 %s",
 
 		// Weekdays
 		WeekdaySunday:    "Sunday",
@@ -439,6 +511,7 @@ var translations = map[Lang]map[string]string{
 		MsgAdminCommands:                 "\nAdmin-Befehle:\n",
 		MsgCmdNewGame:                    "/newgame — Ein neues Spiel erstellen\n",
 		MsgCmdGames:                      "/games — Bevorstehende Spiele anzeigen und verwalten\n",
+		MsgCmdVenues:                     "/venues — Orte für deine Gruppe verwalten\n",
 		MsgServiceAdminCommands:          "\nService-Admin-Befehle:\n",
 		MsgCmdTrigger:                    "/trigger — Geplantes Ereignis manuell auslösen\n",
 		MsgFailedFetchGame:               "Dein nächstes Spiel konnte nicht abgerufen werden. Bitte versuche es erneut.",
@@ -472,16 +545,49 @@ var translations = map[Lang]map[string]string{
 
 		// Language command
 		MsgSelectGroupForLanguage: "Für welche Gruppe möchtest du die Sprache ändern?",
+		MsgSelectGroupForVenues:   "Für welche Gruppe möchtest du die Veranstaltungsorte verwalten?",
 		MsgSelectLanguage:         "Sprache für deine Gruppe auswählen:",
 		MsgLanguageSet:            "Sprache aktualisiert ✓",
 		MsgOnlyAdminSetLanguage:   "Nur Gruppenadministratoren können die Sprache ändern.",
 
 		// New game wizard
-		MsgNewGameSelectDate:  "Datum für das neue Spiel auswählen:",
-		MsgNewGameEnterTime:   "Spiel am %s.\n\nGib die Uhrzeit ein (HH:MM, z.B. 19:30):",
-		MsgNewGameInvalidTime: "Ungültige Uhrzeit. Bitte gib die Uhrzeit als HH:MM ein (z.B. 19:30):",
-		MsgNewGameTimePast:    "Diese Uhrzeit liegt bereits in der Vergangenheit. Bitte gib eine zukünftige Uhrzeit ein (z.B. 19:30):",
-		MsgNewGameEnterCourts: "Spiel am %s um %s.\n\nGib die Plätze ein (z.B. 2,3 oder 2 3):",
+		MsgNewGameSelectDate:         "Datum für das neue Spiel auswählen:",
+		MsgNewGameEnterTime:          "Spiel am %s.\n\nGib die Uhrzeit ein (HH:MM, z.B. 19:30):",
+		MsgNewGameInvalidTime:        "Ungültige Uhrzeit. Bitte gib die Uhrzeit als HH:MM ein (z.B. 19:30):",
+		MsgNewGameTimePast:           "Diese Uhrzeit liegt bereits in der Vergangenheit. Bitte gib eine zukünftige Uhrzeit ein (z.B. 19:30):",
+		MsgNewGameEnterCourts:        "Spiel am %s um %s.\n\nGib die Plätze ein (z.B. 2,3 oder 2 3):",
+		MsgNewGameSelectVenue:        "Spiel am %s.\n\nWähle einen Veranstaltungsort:",
+		MsgNewGameNoVenue:            "Kein Ort / manuell",
+		MsgNewGameSelectCourts:       "Plätze für das Spiel auswählen (tippen zum Umschalten):",
+		MsgNewGameConfirmCourts:      "✓ Bestätigen (%s)",
+		MsgNewGameNoCourtsSelected:   "Bitte mindestens einen Platz auswählen.",
+		MsgNewGameSelectTime:         "Spiel am %s um %s.\n\nZeitfenster auswählen:",
+		MsgNewGameCustomTime:         "✎ Eigene Uhrzeit",
+		MsgNewGameNoVenuesConfigured: "Für deine Gruppe sind keine Orte konfiguriert. Bitte füge mindestens einen Ort mit /venues hinzu, bevor du ein Spiel erstellst.",
+
+		// Venue management
+		MsgVenueList:             "*Orte für %s:*\n\n",
+		MsgVenueNoVenues:         "Noch keine Orte konfiguriert.",
+		MsgVenueCreated:          "Ort erstellt ✓",
+		MsgVenueUpdated:          "Ort aktualisiert ✓",
+		MsgVenueDeleted:          "Ort gelöscht ✓",
+		MsgVenueNotFound:         "Ort nicht gefunden.",
+		MsgVenueAskName:          "Gib den Namen des Ortes ein (z.B. Stadtsportszentrum):",
+		MsgVenueAskCourts:        "Gib die verfügbaren Plätze ein (z.B. 1,2,3,4,5,6):",
+		MsgVenueAskTimeSlots:     "Gib voreingestellte Zeitfenster ein (z.B. 18:00,19:00,20:00) oder sende - zum Überspringen:",
+		MsgVenueAskAddress:       "Gib die Adresse oder einen Link zum Ort ein (optional) oder sende - zum Überspringen:",
+		MsgVenueSkipAddress:      "-",
+		MsgVenueEditMenu:         "*%s*\nPlätze: %s\nZeitfenster: %s\nAdresse: %s",
+		MsgVenueConfirmDelete:    "Ort *%s* löschen? Dies kann nicht rückgängig gemacht werden.",
+		MsgVenueInvalidTimeSlots: "Ungültige Zeitfenster. Jedes Zeitfenster muss im Format HH:MM sein (z.B. 18:00,19:00,20:00):",
+		BtnVenueEditName:         "✏️ Name",
+		BtnVenueEditCourts:       "🎾 Plätze",
+		BtnVenueEditTimeSlots:    "🕐 Zeitfenster",
+		BtnVenueEditAddress:      "📍 Adresse",
+		BtnVenueDelete:           "🗑 Löschen",
+		BtnVenueAdd:              "+ Ort hinzufügen",
+		BtnVenueConfirmDelete:    "Ja, löschen",
+		GameVenueLine:            "📍 %s",
 
 		// Weekdays
 		WeekdaySunday:    "Sonntag",
@@ -601,6 +707,7 @@ var translations = map[Lang]map[string]string{
 		MsgAdminCommands:                 "\nКоманды администратора:\n",
 		MsgCmdNewGame:                    "/newgame — Создать новую игру\n",
 		MsgCmdGames:                      "/games — Показать и управлять предстоящими играми\n",
+		MsgCmdVenues:                     "/venues — Управлять площадками для твоей группы\n",
 		MsgServiceAdminCommands:          "\nКоманды сервисного администратора:\n",
 		MsgCmdTrigger:                    "/trigger — Вручную запустить запланированное событие\n",
 		MsgFailedFetchGame:               "Не удалось получить твою следующую игру. Попробуй ещё раз.",
@@ -634,16 +741,49 @@ var translations = map[Lang]map[string]string{
 
 		// Language command
 		MsgSelectGroupForLanguage: "Для какой группы изменить язык?",
+		MsgSelectGroupForVenues:   "Для какой группы управлять площадками?",
 		MsgSelectLanguage:         "Выбери язык для своей группы:",
 		MsgLanguageSet:            "Язык обновлён ✓",
 		MsgOnlyAdminSetLanguage:   "Только администраторы группы могут менять язык.",
 
 		// New game wizard
-		MsgNewGameSelectDate:  "Выбери дату новой игры:",
-		MsgNewGameEnterTime:   "Игра %s.\n\nВведи время (ЧЧ:ММ, например 19:30):",
-		MsgNewGameInvalidTime: "Неверный формат времени. Введи время как ЧЧ:ММ (например 19:30):",
-		MsgNewGameTimePast:    "Это время уже прошло. Введи будущее время (например 19:30):",
-		MsgNewGameEnterCourts: "Игра %s в %s.\n\nВведи корты (например 2,3 или 2 3):",
+		MsgNewGameSelectDate:         "Выбери дату новой игры:",
+		MsgNewGameEnterTime:          "Игра %s.\n\nВведи время (ЧЧ:ММ, например 19:30):",
+		MsgNewGameInvalidTime:        "Неверный формат времени. Введи время как ЧЧ:ММ (например 19:30):",
+		MsgNewGameTimePast:           "Это время уже прошло. Введи будущее время (например 19:30):",
+		MsgNewGameEnterCourts:        "Игра %s в %s.\n\nВведи корты (например 2,3 или 2 3):",
+		MsgNewGameSelectVenue:        "Игра %s.\n\nВыбери площадку:",
+		MsgNewGameNoVenue:            "Без площадки / вручную",
+		MsgNewGameSelectCourts:       "Выбери корты для игры (нажми для переключения):",
+		MsgNewGameConfirmCourts:      "✓ Подтвердить (%s)",
+		MsgNewGameNoCourtsSelected:   "Пожалуйста, выбери хотя бы один корт.",
+		MsgNewGameSelectTime:         "Игра %s в %s.\n\nВыбери временной слот:",
+		MsgNewGameCustomTime:         "✎ Своё время",
+		MsgNewGameNoVenuesConfigured: "Для вашей группы не настроены площадки. Добавьте хотя бы одну площадку через /venues, прежде чем создавать игру.",
+
+		// Venue management
+		MsgVenueList:             "*Площадки для %s:*\n\n",
+		MsgVenueNoVenues:         "Площадки ещё не настроены.",
+		MsgVenueCreated:          "Площадка создана ✓",
+		MsgVenueUpdated:          "Площадка обновлена ✓",
+		MsgVenueDeleted:          "Площадка удалена ✓",
+		MsgVenueNotFound:         "Площадка не найдена.",
+		MsgVenueAskName:          "Введи название площадки (например, Городской спортивный центр):",
+		MsgVenueAskCourts:        "Введи доступные корты (например, 1,2,3,4,5,6):",
+		MsgVenueAskTimeSlots:     "Введи временные слоты (например, 18:00,19:00,20:00) или отправь - для пропуска:",
+		MsgVenueAskAddress:       "Введи адрес или ссылку на площадку (необязательно) или отправь - для пропуска:",
+		MsgVenueSkipAddress:      "-",
+		MsgVenueEditMenu:         "*%s*\nКорты: %s\nВременные слоты: %s\nАдрес: %s",
+		MsgVenueConfirmDelete:    "Удалить площадку *%s*? Это действие нельзя отменить.",
+		MsgVenueInvalidTimeSlots: "Неверный формат временных слотов. Каждый слот должен быть в формате ЧЧ:ММ (например 18:00,19:00,20:00):",
+		BtnVenueEditName:         "✏️ Название",
+		BtnVenueEditCourts:       "🎾 Корты",
+		BtnVenueEditTimeSlots:    "🕐 Временные слоты",
+		BtnVenueEditAddress:      "📍 Адрес",
+		BtnVenueDelete:           "🗑 Удалить",
+		BtnVenueAdd:              "+ Добавить площадку",
+		BtnVenueConfirmDelete:    "Да, удалить",
+		GameVenueLine:            "📍 %s",
 
 		// Weekdays (nominative)
 		WeekdaySunday:    "Воскресенье",

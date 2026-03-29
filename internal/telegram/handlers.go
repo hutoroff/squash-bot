@@ -30,6 +30,9 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	if isPrivate && strings.HasPrefix(msg.Text, "/") {
 		b.pendingCourtsEdit.Delete(msg.Chat.ID)
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
+		b.pendingVenueWizard.Delete(msg.Chat.ID)
+		b.pendingVenueEdit.Delete(msg.Chat.ID)
+		b.pendingGroupVenuePick.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
 		return
 	}
@@ -42,6 +45,14 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		if raw, ok := b.pendingNewGameWizard.Load(msg.Chat.ID); ok {
 			b.processNewGameWizard(ctx, msg, raw.(*newGameWizard))
+			return
+		}
+		if raw, ok := b.pendingVenueWizard.Load(msg.Chat.ID); ok {
+			b.processVenueWizard(ctx, msg, raw.(*venueWizard))
+			return
+		}
+		if raw, ok := b.pendingVenueEdit.Load(msg.Chat.ID); ok {
+			b.processVenueEdit(ctx, msg, raw.(*venueEditState))
 			return
 		}
 		// Non-command, non-wizard private messages are ignored.
@@ -87,7 +98,10 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 
-	raw, ok := b.pendingGames.LoadAndDelete(key)
+	// Use Load (not LoadAndDelete) so the pending state survives transient
+	// failures (admin check error, no venues) and the group-picker keyboard
+	// remains usable for a retry.
+	raw, ok := b.pendingGames.Load(key)
 	if !ok {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
 		return
@@ -98,22 +112,97 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgNotAdminInGroup))
+		return // pendingGames intact — keyboard still usable
+	}
+
+	// Venue is required for each group. Check before consuming the pending state.
+	venues, err := b.client.GetVenuesByGroup(ctx, groupID)
+	if err != nil {
+		slog.Error("handleGroupSelection: fetch venues", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return // pendingGames intact — keyboard still usable
+	}
+	if len(venues) == 0 {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
+		return // pendingGames intact — keyboard still usable
+	}
+
+	// All checks passed — consume the pending state and proceed.
+	b.pendingGames.Delete(key)
+	b.answerCallback(cb.ID, "")
+
+	if len(venues) == 1 {
+		// Auto-select the only venue.
+		venueID := venues[0].ID
+		pg.venueID = &venueID
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
+		editSel.ReplyMarkup = &emptyKeyboard
+		b.api.Send(editSel) //nolint:errcheck
+		b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts, pg.venueID, lz)
+		return
+	}
+
+	// Multiple venues — show venue picker; state saved keyed by private chat ID.
+	b.pendingGroupVenuePick.Store(cb.Message.Chat.ID, &groupVenuePickState{
+		groupID:     groupID,
+		gameDate:    pg.gameDate,
+		courts:      pg.courts,
+		replyChatID: pg.replyChatID,
+		replyMsgID:  pg.replyMsgID,
+	})
+	localDate := pg.gameDate.In(b.loc)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, v := range venues {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(v.Name, fmt.Sprintf("ng_gvenue:%d", v.ID)),
+		))
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
+		lz.Tf(i18n.MsgNewGameSelectVenue, lz.FormatGameDate(localDate)))
+	editSel.ReplyMarkup = &keyboard
+	b.api.Send(editSel) //nolint:errcheck
+}
+
+// handleNewGameGroupVenue handles ng_gvenue:<venueID> callbacks.
+// It is used by multi-group admins who have already selected a group and are
+// now choosing a venue from that group's venue list.
+func (b *Bot) handleNewGameGroupVenue(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingGroupVenuePick.LoadAndDelete(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*groupVenuePickState)
+
+	venueID, err := parseInt64(rawID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	// Verify the venue belongs to the selected group (prevents callback forgery).
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil || venue.GroupID != state.groupID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
 		return
 	}
 
 	b.answerCallback(cb.ID, "")
 
-	// Clear the selection keyboard.
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
 	editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
 	editSel.ReplyMarkup = &emptyKeyboard
-	b.api.Send(editSel) //nolint:errcheck — best-effort UI update
+	b.api.Send(editSel) //nolint:errcheck
 
-	b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts, lz)
+	b.createAndAnnounceGame(ctx, state.replyChatID, state.replyMsgID, state.groupID, state.gameDate, state.courts, &venueID, lz)
 }
 
-func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, userLz *i18n.Localizer) {
-	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts)
+func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, venueID *int64, userLz *i18n.Localizer) {
+	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts, venueID)
 	if err != nil {
 		slog.Error("create game", "err", err)
 		b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgFailedCreateGame))
@@ -206,6 +295,133 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 
 	if action == "ng_date" {
 		b.handleNewGameDate(ctx, cb, rawID)
+		return
+	}
+
+	// Venue management callbacks
+	if action == "venue_list" {
+		groupID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueList(ctx, cb, groupID)
+		return
+	}
+	if action == "venue_add" {
+		groupID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueAdd(ctx, cb, groupID)
+		return
+	}
+	if action == "venue_edit" {
+		venueID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueEditMenu(ctx, cb, venueID)
+		return
+	}
+	if action == "venue_edit_name" || action == "venue_edit_courts" ||
+		action == "venue_edit_slots" || action == "venue_edit_addr" {
+		// format: venueID:groupID
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		venueID, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		var field venueEditField
+		switch action {
+		case "venue_edit_name":
+			field = venueEditFieldName
+		case "venue_edit_courts":
+			field = venueEditFieldCourts
+		case "venue_edit_slots":
+			field = venueEditFieldTimeSlots
+		default:
+			field = venueEditFieldAddress
+		}
+		b.handleVenueStartEdit(ctx, cb, venueID, groupID, field)
+		return
+	}
+	if action == "venue_delete" {
+		// format: venueID:groupID
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		venueID, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueDeleteConfirm(ctx, cb, venueID, groupID)
+		return
+	}
+	if action == "venue_delete_ok" {
+		// format: venueID:groupID
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		venueID, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueDelete(ctx, cb, venueID, groupID)
+		return
+	}
+
+	// New game wizard venue/court/timeslot callbacks
+	if action == "ng_venue" {
+		b.handleNewGameVenue(ctx, cb, rawID)
+		return
+	}
+	if action == "ng_court_toggle" {
+		b.handleNewGameCourtToggle(ctx, cb, rawID)
+		return
+	}
+	if action == "ng_court_confirm" {
+		b.handleNewGameCourtConfirm(ctx, cb)
+		return
+	}
+	if action == "ng_timeslot" {
+		b.handleNewGameTimeSlot(ctx, cb, rawID)
+		return
+	}
+	if action == "ng_time_custom" {
+		b.handleNewGameTimeCustom(ctx, cb)
+		return
+	}
+	if action == "ng_gvenue" {
+		b.handleNewGameGroupVenue(ctx, cb, rawID)
 		return
 	}
 
@@ -967,7 +1183,7 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 }
 
 // handleNewGameDate handles the ng_date:<YYYY-MM-DD> callback from the date picker.
-// It stores the selected date in the wizard state and prompts for time.
+// It stores the selected date in the wizard state and prompts for time or venue.
 func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery, dateStr string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
 
@@ -985,6 +1201,59 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
+	// For single-group admins, venue selection is mandatory and can be auto-skipped
+	// when exactly one venue exists. Multi-group admins use manual time entry because
+	// the target group (and therefore its venues) is unknown until courts are entered.
+	if len(adminGroupIDs) == 1 {
+		venues, err := b.client.GetVenuesByGroup(ctx, adminGroupIDs[0])
+		if err != nil {
+			slog.Error("handleNewGameDate: fetch venues", "err", err)
+			b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+			return
+		}
+		if len(venues) == 0 {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
+			return
+		}
+		if len(venues) == 1 {
+			// Auto-select the only venue — skip the picker entirely.
+			v := venues[0]
+			venueID := v.ID
+			wizard := &newGameWizard{
+				gameDate:       date,
+				step:           wizardStepCourtPick,
+				venueID:        &venueID,
+				venueCourts:    splitCSV(v.Courts),
+				selectedCourts: make(map[string]bool),
+				timeSlots:      splitCSV(v.TimeSlots),
+			}
+			b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
+			b.answerCallback(cb.ID, "")
+			b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+			return
+		}
+		// Multiple venues — show picker without a manual fallback option.
+		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
+			gameDate: date,
+			step:     wizardStepVenue,
+		})
+		b.answerCallback(cb.ID, "")
+		localDate := date.In(b.loc)
+		var rows [][]tgbotapi.InlineKeyboardButton
+		for _, v := range venues {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(v.Name, fmt.Sprintf("ng_venue:%d", v.ID)),
+			))
+		}
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+		prompt := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
+			lz.Tf(i18n.MsgNewGameSelectVenue, lz.FormatGameDate(localDate)))
+		prompt.ReplyMarkup = &keyboard
+		b.api.Send(prompt) //nolint:errcheck
+		return
+	}
+
+	// Multiple groups → proceed with manual time entry (venue checked at group-selection time).
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
 		gameDate: date,
 		step:     wizardStepTime,
@@ -1007,6 +1276,8 @@ func (b *Bot) processNewGameWizard(ctx context.Context, msg *tgbotapi.Message, w
 		b.processNewGameWizardTime(ctx, msg, wizard, lz)
 	case wizardStepCourts:
 		b.processNewGameWizardCourts(ctx, msg, wizard, lz)
+	case wizardStepVenue, wizardStepCourtPick:
+		// These steps use inline keyboard callbacks; text input is ignored.
 	}
 }
 
@@ -1055,7 +1326,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, lz)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, wizard.venueID, lz)
 		return
 	}
 
@@ -1064,6 +1335,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 	b.pendingGames.Store(key, &pendingGame{
 		gameDate:    wizard.gameDate,
 		courts:      courts,
+		venueID:     wizard.venueID,
 		replyChatID: msg.Chat.ID,
 		replyMsgID:  msg.MessageID,
 	})

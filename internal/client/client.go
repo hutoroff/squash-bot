@@ -36,11 +36,12 @@ func New(baseURL, apiSecret string) *Client {
 
 // ── Games ─────────────────────────────────────────────────────────────────────
 
-func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string) (*models.Game, error) {
+func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
 	body := map[string]any{
 		"chat_id":   chatID,
 		"game_date": gameDate,
 		"courts":    courts,
+		"venue_id":  venueID,
 	}
 	var game models.Game
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games", body, &game); err != nil {
@@ -280,6 +281,56 @@ func (c *Client) GetGroupByID(ctx context.Context, chatID int64) (*models.Group,
 func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string) error {
 	body := map[string]string{"language": language}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/language", body, nil)
+}
+
+// ── Venues ────────────────────────────────────────────────────────────────────
+
+type venueBody struct {
+	GroupID   int64  `json:"group_id"`
+	Name      string `json:"name"`
+	Courts    string `json:"courts"`
+	TimeSlots string `json:"time_slots"`
+	Address   string `json:"address,omitempty"`
+}
+
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
+	body := venueBody{GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address}
+	var venue models.Venue
+	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
+		return nil, err
+	}
+	return &venue, nil
+}
+
+func (c *Client) GetVenuesByGroup(ctx context.Context, groupID int64) ([]*models.Venue, error) {
+	path := "/api/v1/venues?group_id=" + strconv.FormatInt(groupID, 10)
+	var venues []*models.Venue
+	if err := c.do(ctx, http.MethodGet, path, nil, &venues); err != nil {
+		return nil, err
+	}
+	return venues, nil
+}
+
+func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, error) {
+	var venue models.Venue
+	if err := c.do(ctx, http.MethodGet, "/api/v1/venues/"+strconv.FormatInt(id, 10), nil, &venue); err != nil {
+		return nil, err
+	}
+	return &venue, nil
+}
+
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string) (*models.Venue, error) {
+	body := venueBody{GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address}
+	var venue models.Venue
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {
+		return nil, err
+	}
+	return &venue, nil
+}
+
+func (c *Client) DeleteVenue(ctx context.Context, id, groupID int64) error {
+	path := fmt.Sprintf("/api/v1/venues/%d?group_id=%d", id, groupID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

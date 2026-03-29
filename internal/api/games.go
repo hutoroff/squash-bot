@@ -13,6 +13,7 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		ChatID   int64     `json:"chat_id"`
 		GameDate time.Time `json:"game_date"`
 		Courts   string    `json:"courts"`
+		VenueID  *int64    `json:"venue_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -23,7 +24,7 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	game, err := h.gameService.CreateGame(r.Context(), req.ChatID, req.GameDate, req.Courts)
+	game, err := h.gameService.CreateGame(r.Context(), req.ChatID, req.GameDate, req.Courts, req.VenueID)
 	if err != nil {
 		h.logger.Error("createGame", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())

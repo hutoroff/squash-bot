@@ -30,7 +30,11 @@ func FormatGameMessage(game *models.Game, participants []*models.GameParticipati
 	var sb strings.Builder
 	sb.WriteString(lz.T(i18n.GameHeader) + "\n\n")
 	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", lz.FormatGameDate(localDate), localDate.Format("15:04")))
-	sb.WriteString(lz.Tf(i18n.GameCourts, game.Courts, capacity) + "\n\n")
+	sb.WriteString(lz.Tf(i18n.GameCourts, game.Courts, capacity) + "\n")
+	if game.Venue != nil {
+		sb.WriteString(lz.Tf(i18n.GameVenueLine, game.Venue.Name) + "\n")
+	}
+	sb.WriteString("\n")
 	sb.WriteString(lz.Tf(i18n.GamePlayers, totalCount, capacity) + "\n")
 
 	num := 1

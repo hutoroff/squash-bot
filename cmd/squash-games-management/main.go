@@ -69,9 +69,11 @@ func main() {
 	participationRepo := storage.NewParticipationRepo(pool)
 	guestRepo := storage.NewGuestRepo(pool)
 	groupRepo := storage.NewGroupRepo(pool)
+	venueRepo := storage.NewVenueRepo(pool)
 
-	gameService := service.NewGameService(gameRepo)
+	gameService := service.NewGameService(gameRepo, venueRepo)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
+	venueService := service.NewVenueService(venueRepo)
 	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 
 	c := cron.New(cron.WithLocation(loc))
@@ -95,7 +97,7 @@ func main() {
 		"weekly_reminder", cfg.CronWeeklyReminder,
 	)
 
-	h := api.NewHandler(gameService, partService, groupRepo, scheduler, logger)
+	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("squash-games-management starting", "port", cfg.ServerPort)
