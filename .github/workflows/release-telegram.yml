@@ -28,8 +28,15 @@ jobs:
 
       - name: Verify CI passed for this commit
         run: |
+          # Walk back past any release chore commits (created by previous release workflows)
+          # so we verify CI on the actual code commit, not a version-bump commit.
           SHA=$(git rev-parse HEAD)
-          echo "Checking CI status for commit ${SHA}"
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          while echo "${COMMIT_MSG}" | grep -q "^chore: release"; do
+            SHA=$(git rev-parse "${SHA}^")
+            COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          done
+          echo "Checking CI status for commit ${SHA} (${COMMIT_MSG})"
           CONCLUSION=$(gh api \
             "/repos/${{ github.repository }}/commits/${SHA}/check-runs" \
             --jq '[.check_runs[] | select(.name == "build-and-test")] | .[0].conclusion // "not_found"')
