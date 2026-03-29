@@ -38,7 +38,7 @@ Three independently deployable binaries in one Go module:
 
 - **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
 - **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
-- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; handles login and fetching the user's court bookings
+- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and fetches the user's court bookings
 
 ## Quick Start
 
@@ -276,13 +276,12 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 |--------|---------------------------------------|------|----------------------------------------------------------------|
 | `GET`  | `/health`                             | No   | Liveness probe                                                 |
 | `GET`  | `/version`                            | No   | Service version                                                |
-| `POST` | `/api/v1/eversports/login`            | Yes  | Authenticate with Eversports (stores the session cookie)       |
 | `GET`  | `/api/v1/eversports/bookings`         | Yes  | List the authenticated user's upcoming court bookings          |
 | `GET`  | `/api/v1/eversports/matches/{id}`     | Yes  | Fetch a single booking by its UUID with full detail            |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Yes | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means the slot is already reserved. Optionally filter by time window (inclusive) and/or by whether the authenticated user owns the reservation (`my=true\|false`). Requires `EVERSPORTS_FACILITY_ID` and `EVERSPORTS_COURT_IDS`. |
 | `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
 
-Authentication with Eversports is cookie-based. The service POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout` and stores the resulting `et` session cookie in an in-memory jar.
+Authentication with Eversports is handled automatically: the service logs in on the first request and re-authenticates if the session expires. Login POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout` and stores the resulting `et` session cookie in an in-memory jar.
 
 Bookings are fetched from `GET https://www.eversports.de/api/user/activities?userId=<EVERSPORTS_USER_ID>&past=false`, which returns an HTML fragment. The service parses that HTML to extract each booking's match UUID, start/end times, sport, venue name, and court. Because the activities endpoint does not include a timezone, returned times carry a UTC location as a placeholder; use `GET /api/v1/eversports/matches/{id}` for the accurate RFC 3339 timestamp with the correct offset.
 
@@ -297,10 +296,7 @@ EVERSPORTS_EMAIL=you@example.com \
   INTERNAL_API_SECRET=test \
   go run cmd/sports-booking-service/main.go
 
-# Trigger login
-curl -X POST -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/login
-
-# Fetch bookings
+# Fetch bookings (service logs in automatically on first request)
 curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/bookings
 
 # Fetch single booking detail (UUID from bookings list)

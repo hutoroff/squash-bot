@@ -295,18 +295,22 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 
 **Client API** (`internal/eversports`):
 - `New(email, password, bookingsPath, activitiesUserID string, logger) *Client`
-- `Login(ctx) error` — stores `et` cookie; `IsLoggedIn() bool` checks cookie presence
-- `GetBookings(ctx) ([]Booking, error)` — calls activities endpoint, parses HTML
-- `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL
-- `FetchPageDebugInfo(ctx) (*PageDebugInfo, error)` — fetches `bookingsPath`, extracts `__NEXT_DATA__`
+- `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
+- `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
+- `GetBookings(ctx) ([]Booking, error)` — auto-logins if needed, calls activities endpoint, parses HTML; retries once on HTTP 401
+- `GetMatchByID(ctx, matchID string) (*Booking, error)` — auto-logins if needed, single match via GraphQL; retries once on HTTP 401
+- `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — auto-logins if needed; retries once on HTTP 401
+- `FetchPageDebugInfo(ctx) (*PageDebugInfo, error)` — auto-logins if needed; retries once on login-page redirect
 
 ### HTTP endpoints
+
+All endpoints except `/health` and `/version` require `Authorization: Bearer <INTERNAL_API_SECRET>`.
+Authentication with Eversports is handled automatically: the service logs in on the first request and re-authenticates if the session expires.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET`  | `/health` | Liveness probe (no auth) |
 | `GET`  | `/version` | Service version (no auth) |
-| `POST` | `/api/v1/eversports/login` | Authenticate with Eversports |
 | `GET`  | `/api/v1/eversports/bookings` | List upcoming bookings |
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID` + `EVERSPORTS_COURT_IDS` |

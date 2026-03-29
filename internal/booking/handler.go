@@ -13,9 +13,8 @@ import (
 
 // eversportsClient is the subset of *eversports.Client methods used by Handler.
 // Defined as an interface to allow test doubles.
+// Authentication is handled automatically by the client implementation.
 type eversportsClient interface {
-	Login(ctx context.Context) error
-	IsLoggedIn() bool
 	GetBookings(ctx context.Context) ([]eversports.Booking, error)
 	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
 	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
@@ -45,7 +44,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
 
-	mux.HandleFunc("POST /api/v1/eversports/login", h.login)
 	mux.HandleFunc("GET /api/v1/eversports/bookings", h.getBookings)
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
@@ -61,21 +59,7 @@ func (h *Handler) getVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
 }
 
-func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if err := h.eversports.Login(r.Context()); err != nil {
-		h.logger.Error("eversports login failed", "err", err)
-		writeError(w, http.StatusBadGateway, "eversports login failed: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_in"})
-}
-
 func (h *Handler) getBookings(w http.ResponseWriter, r *http.Request) {
-	if !h.eversports.IsLoggedIn() {
-		writeError(w, http.StatusPreconditionFailed, "not logged in — call POST /api/v1/eversports/login first")
-		return
-	}
-
 	bookings, err := h.eversports.GetBookings(r.Context())
 	if err != nil {
 		h.logger.Error("eversports get bookings failed", "err", err)
@@ -86,10 +70,6 @@ func (h *Handler) getBookings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
-	if !h.eversports.IsLoggedIn() {
-		writeError(w, http.StatusPreconditionFailed, "not logged in — call POST /api/v1/eversports/login first")
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "match id is required")
@@ -112,10 +92,6 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 // Optional ?my=true|false filters by whether the authenticated user owns the reservation.
 // EVERSPORTS_FACILITY_ID and EVERSPORTS_COURT_IDS must be configured.
 func (h *Handler) getGames(w http.ResponseWriter, r *http.Request) {
-	if !h.eversports.IsLoggedIn() {
-		writeError(w, http.StatusPreconditionFailed, "not logged in — call POST /api/v1/eversports/login first")
-		return
-	}
 	if h.facilityID == "" || len(h.courtIDs) == 0 {
 		writeError(w, http.StatusInternalServerError, "games endpoint requires EVERSPORTS_FACILITY_ID and EVERSPORTS_COURT_IDS to be configured")
 		return
@@ -228,11 +204,6 @@ func filterSlots(slots []eversports.Slot, date, startTime, endTime string, myFil
 // characters of raw HTML if not. Use this to inspect what the page actually
 // returns and find the correct field paths for bookings data.
 func (h *Handler) debugPage(w http.ResponseWriter, r *http.Request) {
-	if !h.eversports.IsLoggedIn() {
-		writeError(w, http.StatusPreconditionFailed, "not logged in — call POST /api/v1/eversports/login first")
-		return
-	}
-
 	info, err := h.eversports.FetchPageDebugInfo(r.Context())
 	if err != nil {
 		h.logger.Error("eversports debug-page failed", "err", err)

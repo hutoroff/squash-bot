@@ -4,15 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// errUnauthorized is returned (wrapped) by client methods when Eversports
+// signals an expired or missing session (HTTP 401, or a redirect to the login
+// page). Callers should re-login and retry.
+var errUnauthorized = errors.New("eversports: unauthorized")
 
 const (
 	baseURL = "https://www.eversports.de"
@@ -71,6 +78,7 @@ type Client struct {
 	// activitiesUserID is the legacy numeric user ID for GET /api/user/activities.
 	activitiesUserID string
 
+	loginMu  sync.Mutex
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
 
@@ -171,9 +179,24 @@ func (c *Client) Login(ctx context.Context) error {
 	return nil
 }
 
-// IsLoggedIn returns true if the client holds a valid session cookie.
-func (c *Client) IsLoggedIn() bool {
-	return c.loggedIn.Load()
+// EnsureLoggedIn logs in if the client does not already hold a valid session.
+// It is safe for concurrent use: at most one login attempt runs at a time.
+func (c *Client) EnsureLoggedIn(ctx context.Context) error {
+	if c.loggedIn.Load() {
+		return nil // fast path — already authenticated
+	}
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	if c.loggedIn.Load() { // double-check after acquiring the lock
+		return nil
+	}
+	return c.Login(ctx)
+}
+
+// invalidateSession clears the logged-in flag so the next EnsureLoggedIn call
+// triggers a fresh login. Called when an API response signals session expiry.
+func (c *Client) invalidateSession() {
+	c.loggedIn.Store(false)
 }
 
 // doAuthed executes an authenticated JSON/XHR request. The CookieJar carries
@@ -216,7 +239,7 @@ func (c *Client) doAuthedPage(ctx context.Context, rawURL string) (*http.Respons
 	// the original to catch login-page redirects.
 	if finalURL := resp.Request.URL.String(); finalURL != rawURL {
 		resp.Body.Close()
-		return nil, fmt.Errorf("redirected from %s to %s — session may have expired or EVERSPORTS_BOOKINGS_PATH is wrong", rawURL, finalURL)
+		return nil, fmt.Errorf("%w: redirected from %s to %s (session may have expired or EVERSPORTS_BOOKINGS_PATH is wrong)", errUnauthorized, rawURL, finalURL)
 	}
 
 	return resp, nil
