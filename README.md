@@ -38,7 +38,7 @@ Three independently deployable binaries in one Go module:
 
 - **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
 - **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
-- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and fetches the user's court bookings
+- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
 
 ## Quick Start
 
@@ -235,6 +235,8 @@ Guest spots count toward capacity.
 | `EVERSPORTS_USER_ID`        | Yes      | —                 | Legacy numeric user ID for the bookings list endpoint. Find it by logging into eversports.de and checking the `userId=` parameter in the `/api/user/activities` network request in browser DevTools. |
 | `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric facility ID required for `GET /api/v1/eversports/games`. Find it in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). |
 | `EVERSPORTS_COURT_IDS`      | No       | _(empty)_         | Comma-separated numeric court IDs required for `GET /api/v1/eversports/games`. Find them in the `courts[]=` parameters of the `/api/slot` network request in browser DevTools. |
+| `EVERSPORTS_FACILITY_UUID`  | No       | `6266968c-…`      | UUID of the facility used when creating bookings via `POST /api/v1/eversports/matches`. Find it in the `facilityUuid` field of the `/checkout/api/payableitem/courtbooking` request body in browser DevTools. |
+| `EVERSPORTS_SPORT_UUID`     | No       | `b388b6e6-…`      | UUID of the sport used when creating bookings. Defaults to the well-known Eversports squash UUID. |
 | `EVERSPORTS_BOOKINGS_PATH`  | No       | `/user/bookings`  | URL path used by the `GET /api/v1/eversports/debug-page` diagnostic endpoint; change if your locale uses a prefix like `/de/user/bookings` |
 | `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
@@ -277,7 +279,9 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 | `GET`  | `/health`                             | No   | Liveness probe                                                 |
 | `GET`  | `/version`                            | No   | Service version                                                |
 | `GET`  | `/api/v1/eversports/bookings`         | Yes  | List the authenticated user's upcoming court bookings          |
+| `POST` | `/api/v1/eversports/matches`          | Yes  | Create a court booking. Body: `{"courtUuid":"…","start":"…","end":"…"}` (RFC 3339). Returns `{"bookingUuid":"…","bookingId":…}`. Requires `EVERSPORTS_FACILITY_UUID` and `EVERSPORTS_SPORT_UUID`. |
 | `GET`  | `/api/v1/eversports/matches/{id}`     | Yes  | Fetch a single booking by its UUID with full detail            |
+| `DELETE` | `/api/v1/eversports/matches/{id}`   | Yes  | Cancel a booking by UUID. Returns `{"id":"…","state":"CANCELLED","relativeLink":"…"}`. |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Yes | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means the slot is already reserved. Optionally filter by time window (inclusive) and/or by whether the authenticated user owns the reservation (`my=true\|false`). Requires `EVERSPORTS_FACILITY_ID` and `EVERSPORTS_COURT_IDS`. |
 | `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
 
@@ -301,6 +305,14 @@ curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/boo
 
 # Fetch single booking detail (UUID from bookings list)
 curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/matches/<uuid>
+
+# Create a booking
+curl -X POST -H "Authorization: Bearer test" -H "Content-Type: application/json" \
+  -d '{"courtUuid":"<court-uuid>","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}' \
+  http://localhost:8081/api/v1/eversports/matches
+
+# Cancel a booking
+curl -X DELETE -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/matches/<uuid>
 ```
 
 ## Project Structure

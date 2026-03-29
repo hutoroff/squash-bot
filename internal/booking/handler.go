@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,26 +19,31 @@ type eversportsClient interface {
 	GetBookings(ctx context.Context) ([]eversports.Booking, error)
 	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
 	CancelMatch(ctx context.Context, matchID string) (*eversports.CancellationResult, error)
+	CreateBooking(ctx context.Context, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*eversports.BookingResult, error)
 	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
 	GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]eversports.Slot, error)
 }
 
 // Handler wires all HTTP routes for the sports-booking-service.
 type Handler struct {
-	eversports eversportsClient
-	logger     *slog.Logger
-	version    string
-	facilityID string
-	courtIDs   []string
+	eversports   eversportsClient
+	logger       *slog.Logger
+	version      string
+	facilityID   string
+	courtIDs     []string
+	facilityUUID string
+	sportUUID    string
 }
 
-func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID string, courtIDs []string) *Handler {
+func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID string, courtIDs []string, facilityUUID, sportUUID string) *Handler {
 	return &Handler{
-		eversports: es,
-		logger:     logger,
-		version:    version,
-		facilityID: facilityID,
-		courtIDs:   courtIDs,
+		eversports:   es,
+		logger:       logger,
+		version:      version,
+		facilityID:   facilityID,
+		courtIDs:     courtIDs,
+		facilityUUID: facilityUUID,
+		sportUUID:    sportUUID,
 	}
 }
 
@@ -46,6 +52,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /version", h.getVersion)
 
 	mux.HandleFunc("GET /api/v1/eversports/bookings", h.getBookings)
+	mux.HandleFunc("POST /api/v1/eversports/matches", h.createMatch)
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
@@ -84,6 +91,52 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, match)
+}
+
+// createMatchRequest is the JSON body expected by POST /api/v1/eversports/matches.
+type createMatchRequest struct {
+	CourtUUID string `json:"courtUuid"`
+	Start     string `json:"start"` // RFC 3339, e.g. "2026-04-12T06:45:00Z"
+	End       string `json:"end"`   // RFC 3339
+}
+
+func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
+	if h.facilityUUID == "" || h.sportUUID == "" {
+		writeError(w, http.StatusInternalServerError, "booking creation requires EVERSPORTS_FACILITY_UUID and EVERSPORTS_SPORT_UUID to be configured")
+		return
+	}
+
+	var req createMatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.CourtUUID == "" {
+		writeError(w, http.StatusBadRequest, "courtUuid is required")
+		return
+	}
+	start, err := time.Parse(time.RFC3339, req.Start)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid start time (expected RFC 3339): "+err.Error())
+		return
+	}
+	end, err := time.Parse(time.RFC3339, req.End)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid end time (expected RFC 3339): "+err.Error())
+		return
+	}
+	if !end.After(start) {
+		writeError(w, http.StatusBadRequest, "end must be after start")
+		return
+	}
+
+	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, h.sportUUID, start, end)
+	if err != nil {
+		h.logger.Error("eversports create booking failed", "courtUuid", req.CourtUUID, "start", req.Start, "err", err)
+		writeError(w, http.StatusBadGateway, "create booking failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
 }
 
 func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {

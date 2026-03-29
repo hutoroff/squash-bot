@@ -177,6 +177,37 @@ type rawSlotsResponse struct {
 	Slots []Slot `json:"slots"`
 }
 
+// ─── CreateBooking types ──────────────────────────────────────────────────────
+
+// BookingResult is returned by CreateBooking.
+type BookingResult struct {
+	BookingUUID string `json:"bookingUuid"`
+	BookingID   int    `json:"bookingId"`
+}
+
+// courtBookingRequest is the payload for POST /checkout/api/payableitem/courtbooking.
+type courtBookingRequest struct {
+	FacilityUUID               string `json:"facilityUuid"`
+	CourtUUID                  string `json:"courtUuid"`
+	SportUUID                  string `json:"sportUuid"`
+	Start                      string `json:"start"`
+	End                        string `json:"end"`
+	Origin                     string `json:"origin"`
+	UseBudgetIfAvailable       bool   `json:"useBudgetIfAvailable"`
+	UseSpecialPriceIfAvailable bool   `json:"useSpecialPriceIfAvailable"`
+}
+
+// courtBookingResponse is the JSON response from POST /checkout/api/payableitem/courtbooking.
+type courtBookingResponse struct {
+	BookingUUID string `json:"bookingUuid"`
+	BookingID   int    `json:"bookingId"`
+	Payment     struct {
+		ID int `json:"id"`
+	} `json:"payment"`
+	Success bool   `json:"success"`
+	Status  string `json:"status"`
+}
+
 // ─── CancelMatch types ────────────────────────────────────────────────────────
 
 // CancellationResult is returned by CancelMatch. It contains the minimal

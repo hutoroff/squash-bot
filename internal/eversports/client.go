@@ -82,6 +82,13 @@ type Client struct {
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
 
+	// bookingMu serialises CreateBooking calls. The Eversports checkout flow is
+	// a three-step sequence (reserve → pay → create-from-booking) where step 3
+	// implicitly operates on the server's "most recently created booking" for
+	// the session. Allowing two concurrent calls to interleave could attach the
+	// match record to the wrong booking.
+	bookingMu sync.Mutex
+
 	logger *slog.Logger
 }
 
