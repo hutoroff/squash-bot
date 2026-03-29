@@ -177,6 +177,38 @@ type rawSlotsResponse struct {
 	Slots []Slot `json:"slots"`
 }
 
+// ─── CancelMatch types ────────────────────────────────────────────────────────
+
+// CancellationResult is returned by CancelMatch. It contains the minimal
+// fields from the BallsportMatch fragment in the CancelMatch mutation response.
+type CancellationResult struct {
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	RelativeLink string `json:"relativeLink"`
+}
+
+// gqlCancelMatchResponse is the GraphQL response envelope for the CancelMatch mutation.
+type gqlCancelMatchResponse struct {
+	Data struct {
+		CancelMatch struct {
+			Typename string `json:"__typename"`
+			// BallsportMatch fields
+			ID           string `json:"id"`
+			State        string `json:"state"`
+			RelativeLink string `json:"relativeLink"`
+			// ExpectedErrors fields
+			Errors []struct {
+				ID      string `json:"id"`
+				Message string `json:"message"`
+				Path    string `json:"path"`
+			} `json:"errors"`
+		} `json:"cancelMatch"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
 // ─── Match list GraphQL types ─────────────────────────────────────────────────
 
 // gqlMatchListResponse is the GraphQL response envelope for the list-of-matches

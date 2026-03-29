@@ -17,6 +17,7 @@ import (
 type eversportsClient interface {
 	GetBookings(ctx context.Context) ([]eversports.Booking, error)
 	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
+	CancelMatch(ctx context.Context, matchID string) (*eversports.CancellationResult, error)
 	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
 	GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]eversports.Slot, error)
 }
@@ -46,6 +47,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/eversports/bookings", h.getBookings)
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
+	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
 	mux.HandleFunc("GET /api/v1/eversports/debug-page", h.debugPage)
 }
@@ -82,6 +84,21 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, match)
+}
+
+func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "match id is required")
+		return
+	}
+	result, err := h.eversports.CancelMatch(r.Context(), id)
+	if err != nil {
+		h.logger.Error("eversports cancel match failed", "id", id, "err", err)
+		writeError(w, http.StatusBadGateway, "cancel match failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // getGames returns court reservations for the given date from the
