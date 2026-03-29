@@ -325,7 +325,7 @@ var translations = map[Lang]map[string]string{
 		// Commands
 		MsgUnknownCommand:                "Unknown command. Send /help to see available commands.",
 		MsgAvailableCommands:             "Available commands:\n",
-		MsgCmdMyGame:                     "/myGame — Show your next upcoming game\n",
+		MsgCmdMyGame:                     "/mygame — Show your next upcoming game\n",
 		MsgCmdHelp:                       "/help — Show this help message\n",
 		MsgCmdLanguage:                   "/language — Set the bot language for your group\n",
 		MsgAdminCommands:                 "\nAdmin commands:\n",
@@ -536,7 +536,7 @@ var translations = map[Lang]map[string]string{
 		// Commands
 		MsgUnknownCommand:                "Unbekannter Befehl. Sende /help, um verfügbare Befehle zu sehen.",
 		MsgAvailableCommands:             "Verfügbare Befehle:\n",
-		MsgCmdMyGame:                     "/myGame — Dein nächstes Spiel anzeigen\n",
+		MsgCmdMyGame:                     "/mygame — Dein nächstes Spiel anzeigen\n",
 		MsgCmdHelp:                       "/help — Diese Hilfe anzeigen\n",
 		MsgCmdLanguage:                   "/language — Botsprache für deine Gruppe festlegen\n",
 		MsgAdminCommands:                 "\nAdmin-Befehle:\n",
@@ -745,7 +745,7 @@ var translations = map[Lang]map[string]string{
 		// Commands
 		MsgUnknownCommand:                "Неизвестная команда. Отправь /help, чтобы увидеть доступные команды.",
 		MsgAvailableCommands:             "Доступные команды:\n",
-		MsgCmdMyGame:                     "/myGame — Показать твою следующую игру\n",
+		MsgCmdMyGame:                     "/mygame — Показать твою следующую игру\n",
 		MsgCmdHelp:                       "/help — Показать эту справку\n",
 		MsgCmdLanguage:                   "/language — Установить язык бота для твоей группы\n",
 		MsgAdminCommands:                 "\nКоманды администратора:\n",

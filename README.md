@@ -168,16 +168,16 @@ ghcr.io/<github_owner>/squash-games-management:<version>
 
 ## Bot Commands
 
-| Command      | Who can use     | Description                                      |
-|--------------|-----------------|--------------------------------------------------|
-| `/start`     | Anyone          | Show welcome message                             |
-| `/help`      | Anyone          | List available commands                          |
-| `/myGame`    | Anyone          | Show your next registered game with a link       |
-| `/games`     | Group admins    | List upcoming games you manage; edit/manage them |
-| `/newgame`   | Group admins    | Create a new game for your group (wizard)        |
-| `/venues`    | Group admins    | Manage venues (courts, time slots, address)      |
-| `/language`  | Group admins    | Set the bot language for a group (en/de/ru)      |
-| `/trigger`   | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
+| Command     | Who can use     | Description                                      |
+|-------------|-----------------|--------------------------------------------------|
+| `/start`    | Anyone          | Show welcome message                             |
+| `/help`     | Anyone          | List available commands                          |
+| `/mygame`   | Anyone          | Show your next registered game with a link       |
+| `/games`    | Group admins    | List upcoming games you manage; edit/manage them |
+| `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
+| `/venues`   | Group admins    | Manage venues (courts, time slots, address)      |
+| `/language` | Group admins    | Set the bot language for a group (en/de/ru)      |
+| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
 
 ## Localisation
 
