@@ -263,7 +263,8 @@ EVERSPORTS_PASSWORD=         # required; Eversports account password
 EVERSPORTS_USER_ID=          # required; legacy numeric user ID (find via /api/user/activities?userId= in DevTools)
 INTERNAL_API_SECRET=         # required; bearer token for authenticating callers
 SERVER_PORT=8081             # default 8081
-EVERSPORTS_FACILITY_ID=      # optional; not used yet (reserved for court availability)
+EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for /slots endpoint
+EVERSPORTS_COURT_IDS=        # optional; comma-separated numeric court IDs required for /slots endpoint
 EVERSPORTS_BOOKINGS_PATH=/user/bookings  # default; used only by the debug-page endpoint
 LOG_LEVEL=INFO
 TIMEZONE=UTC
@@ -308,6 +309,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 | `POST` | `/api/v1/eversports/login` | Authenticate with Eversports |
 | `GET`  | `/api/v1/eversports/bookings` | List upcoming bookings |
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
+| `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID` + `EVERSPORTS_COURT_IDS` |
 | `GET`  | `/api/v1/eversports/debug-page` | Diagnostic: fetch bookings page and return `__NEXT_DATA__` |
 
 ## Testing Approach
