@@ -265,6 +265,8 @@ INTERNAL_API_SECRET=         # required; bearer token for authenticating callers
 SERVER_PORT=8081             # default 8081
 EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for /slots endpoint
 EVERSPORTS_COURT_IDS=        # optional; comma-separated numeric court IDs required for /slots endpoint
+EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
+EVERSPORTS_SPORT_UUID=       # optional; UUID of the sport for booking creation (default: squash UUID b388b6e6-69de-11e8-bdc6-02bd505aa7b2)
 EVERSPORTS_BOOKINGS_PATH=/user/bookings  # default; used only by the debug-page endpoint
 LOG_LEVEL=INFO
 TIMEZONE=UTC
@@ -312,6 +314,7 @@ Authentication with Eversports is handled automatically: the service logs in on 
 | `GET`  | `/health` | Liveness probe (no auth) |
 | `GET`  | `/version` | Service version (no auth) |
 | `GET`  | `/api/v1/eversports/bookings` | List upcoming bookings |
+| `POST` | `/api/v1/eversports/matches` | Create a booking; body `{courtUuid, start, end}` (RFC 3339); returns `{bookingUuid, bookingId}`. Requires `EVERSPORTS_FACILITY_UUID` + `EVERSPORTS_SPORT_UUID` |
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by UUID |
 | `DELETE` | `/api/v1/eversports/matches/{id}` | Cancel a booking by UUID; returns `{id, state, relativeLink}` |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID` + `EVERSPORTS_COURT_IDS` |

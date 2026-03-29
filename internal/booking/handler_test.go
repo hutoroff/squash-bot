@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,11 +30,18 @@ type mockClient struct {
 	cancellation      *eversports.CancellationResult
 	cancellationErr   error
 	lastCancelMatchID string // records the matchID passed to CancelMatch
-	debugInfo         *eversports.PageDebugInfo
-	debugErr          error
-	slots             []eversports.Slot
-	slotsErr          error
-	lastSlotsDate     string // records the startDate passed to GetSlots
+	booking           *eversports.BookingResult
+	bookingErr        error
+	lastBookingArgs   struct {
+		courtUUID string
+		start     time.Time
+		end       time.Time
+	}
+	debugInfo     *eversports.PageDebugInfo
+	debugErr      error
+	slots         []eversports.Slot
+	slotsErr      error
+	lastSlotsDate string // records the startDate passed to GetSlots
 }
 
 func (m *mockClient) GetBookings(_ context.Context) ([]eversports.Booking, error) {
@@ -50,6 +58,13 @@ func (m *mockClient) CancelMatch(_ context.Context, matchID string) (*eversports
 	return m.cancellation, m.cancellationErr
 }
 
+func (m *mockClient) CreateBooking(_ context.Context, _, courtUUID, _ string, start, end time.Time) (*eversports.BookingResult, error) {
+	m.lastBookingArgs.courtUUID = courtUUID
+	m.lastBookingArgs.start = start
+	m.lastBookingArgs.end = end
+	return m.booking, m.bookingErr
+}
+
 func (m *mockClient) FetchPageDebugInfo(_ context.Context) (*eversports.PageDebugInfo, error) {
 	return m.debugInfo, m.debugErr
 }
@@ -62,6 +77,17 @@ func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date stri
 // newTestHandler creates a Handler backed by the given mock.
 func newTestHandler(mock *mockClient) *Handler {
 	return &Handler{eversports: mock, logger: testLogger, version: "test-version"}
+}
+
+// newBookingHandler creates a Handler with facility/sport UUIDs configured.
+func newBookingHandler(mock *mockClient) *Handler {
+	return &Handler{
+		eversports:   mock,
+		logger:       testLogger,
+		version:      "test-version",
+		facilityUUID: "6266968c-b0fd-4115-ad3b-ae225cc880f1",
+		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
+	}
 }
 
 // serve registers routes on a fresh mux and returns a test server.
@@ -249,6 +275,121 @@ func TestCancelMatch_Error(t *testing.T) {
 	defer srv.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/bad-id", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+// ─── POST /api/v1/eversports/matches ─────────────────────────────────────────
+
+func TestCreateMatch_Success(t *testing.T) {
+	result := &eversports.BookingResult{
+		BookingUUID: "68a0a8ed-7b71-4083-ae0b-1e99349582a6",
+		BookingID:   135414366,
+	}
+	mock := &mockClient{booking: result}
+	srv := serve(newBookingHandler(mock))
+	defer srv.Close()
+
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("want 201, got %d", resp.StatusCode)
+	}
+	var got eversports.BookingResult
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.BookingUUID != result.BookingUUID {
+		t.Errorf("bookingUuid: want %q, got %q", result.BookingUUID, got.BookingUUID)
+	}
+	if got.BookingID != result.BookingID {
+		t.Errorf("bookingId: want %d, got %d", result.BookingID, got.BookingID)
+	}
+	if mock.lastBookingArgs.courtUUID != "32ef2369-cf50-427f-8bdf-d380189584e8" {
+		t.Errorf("courtUuid forwarded: want %q, got %q", "32ef2369-cf50-427f-8bdf-d380189584e8", mock.lastBookingArgs.courtUUID)
+	}
+}
+
+func TestCreateMatch_NotConfigured(t *testing.T) {
+	srv := serve(newTestHandler(&mockClient{}))
+	defer srv.Close()
+
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateMatch_MissingCourtUUID(t *testing.T) {
+	srv := serve(newBookingHandler(&mockClient{}))
+	defer srv.Close()
+
+	body := `{"start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateMatch_InvalidTime(t *testing.T) {
+	srv := serve(newBookingHandler(&mockClient{}))
+	defer srv.Close()
+
+	for _, tc := range []struct{ body string }{
+		{`{"courtUuid":"abc","start":"not-a-time","end":"2026-04-12T07:30:00Z"}`},
+		{`{"courtUuid":"abc","start":"2026-04-12T06:45:00Z","end":"not-a-time"}`},
+		{`{"courtUuid":"abc","start":"2026-04-12T07:30:00Z","end":"2026-04-12T06:45:00Z"}`}, // end before start
+	} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("body %q: want 400, got %d", tc.body, resp.StatusCode)
+		}
+	}
+}
+
+func TestCreateMatch_Error(t *testing.T) {
+	mock := &mockClient{bookingErr: errors.New("slot already taken")}
+	srv := serve(newBookingHandler(mock))
+	defer srv.Close()
+
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
