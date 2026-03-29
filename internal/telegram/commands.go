@@ -27,7 +27,7 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 	switch cmd {
 	case "/start", "/help":
 		b.handleCommandHelp(ctx, msg, lz)
-	case "/my_game":
+	case "/myGame":
 		b.handleCommandMyGame(ctx, msg, lz)
 	case "/games":
 		b.handleCommandGames(ctx, msg, lz)

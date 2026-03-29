@@ -130,7 +130,7 @@ go test -tags integration -timeout 120s ./...      # integration tests (requires
 |--------------|-----------------|--------------------------------------------------|
 | `/start`     | Anyone          | Show welcome message                             |
 | `/help`      | Anyone          | List available commands                          |
-| `/my_game`   | Anyone          | Show your next registered game with a link       |
+| `/myGame`    | Anyone          | Show your next registered game with a link       |
 | `/games`     | Group admins    | List upcoming games you manage; edit/manage them |
 | `/newgame`   | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`    | Group admins    | Manage venues (courts, time slots, address)      |
