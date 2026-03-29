@@ -273,11 +273,12 @@ var (
 )
 
 // GetCourts returns the list of courts at the facility by parsing the booking
-// calendar HTML. The calendar is fetched for today's date using the provided
-// facility and sport identifiers. Courts are deduplicated (the calendar HTML
-// repeats each court row once per date in the response).
+// calendar HTML. date must be a YYYY-MM-DD string; the calendar endpoint returns
+// courts for that specific date (the venue may show different courts on different
+// days, e.g. when closed). Courts are deduplicated (the calendar HTML repeats
+// each court row once per date in the response).
 // It logs in automatically if no session is held, and retries once on HTTP 401.
-func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID string) ([]Court, error) {
+func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error) {
 	do := func() ([]Court, error) {
 		form := url.Values{}
 		form.Set("facilityId", facilityID)
@@ -286,7 +287,7 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 		form.Set("sport[slug]", sportSlug)
 		form.Set("sport[name]", sportName)
 		form.Set("sport[uuid]", sportUUID)
-		form.Set("date", time.Now().Format("2006-01-02"))
+		form.Set("date", date)
 		form.Set("type", "user")
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+calendarUpdateEndpoint, strings.NewReader(form.Encode()))

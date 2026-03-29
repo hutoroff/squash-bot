@@ -76,7 +76,7 @@ func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date stri
 	return m.slots, m.slotsErr
 }
 
-func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _ string) ([]eversports.Court, error) {
+func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _, _ string) ([]eversports.Court, error) {
 	return m.courts, m.courtsErr
 }
 
@@ -457,28 +457,44 @@ func TestDebugPage_Error(t *testing.T) {
 
 // ─── GET /api/v1/eversports/games ────────────────────────────────────────────
 
-func newCourtBookingsHandler(mock *mockClient, facilityID string, courtIDs []string) *Handler {
-	return &Handler{eversports: mock, logger: testLogger, version: "test-version", facilityID: facilityID, courtIDs: courtIDs}
+func newCourtBookingsHandler(mock *mockClient, facilityID string) *Handler {
+	return &Handler{
+		eversports:   mock,
+		logger:       testLogger,
+		version:      "test-version",
+		facilityID:   facilityID,
+		facilitySlug: "squash-house-berlin-03",
+		sportID:      "496",
+		sportSlug:    "squash",
+		sportName:    "Squash",
+		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
+	}
 }
 
 func TestGetCourtBookings_NotConfigured(t *testing.T) {
-	// No facilityID or courtIDs set — server misconfiguration, not a client error.
-	srv := serve(newTestHandler(&mockClient{}))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("want 500, got %d", resp.StatusCode)
+	// Missing any required field → 500 (server misconfiguration, not a client error).
+	for _, h := range []*Handler{
+		{eversports: &mockClient{}, logger: testLogger},                                                         // all missing
+		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s", sportID: "1", sportUUID: "u"},        // facilityID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", sportID: "1", sportUUID: "u"},      // facilitySlug missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportUUID: "u"}, // sportID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportID: "1"},   // sportUUID missing
+	} {
+		srv := serve(h)
+		resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("want 500 when config incomplete, got %d", resp.StatusCode)
+		}
 	}
 }
 
 func TestGetCourtBookings_MissingDate(t *testing.T) {
-	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games")
@@ -493,7 +509,7 @@ func TestGetCourtBookings_MissingDate(t *testing.T) {
 }
 
 func TestGetCourtBookings_InvalidDate(t *testing.T) {
-	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=not-a-date")
@@ -513,7 +529,7 @@ func TestGetCourtBookings_Success(t *testing.T) {
 		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: true, Booking: &bookingID},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385", "77392"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
@@ -542,7 +558,7 @@ func TestGetCourtBookings_Success(t *testing.T) {
 
 func TestGetCourtBookings_Error(t *testing.T) {
 	mock := &mockClient{slotsErr: errors.New("API error")}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
@@ -565,7 +581,7 @@ func TestGetCourtBookings_FilterByDate(t *testing.T) {
 		{Date: "2026-04-09", Start: "1830", Court: 77385},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07")
@@ -587,7 +603,7 @@ func TestGetCourtBookings_FilterByDate(t *testing.T) {
 }
 
 func TestGetCourtBookings_InvertedTimeRange(t *testing.T) {
-	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=2000&endTime=1830")
@@ -602,7 +618,7 @@ func TestGetCourtBookings_InvertedTimeRange(t *testing.T) {
 }
 
 func TestGetCourtBookings_InvalidStartTime(t *testing.T) {
-	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
 	defer srv.Close()
 
 	for _, bad := range []string{"abc", "25:00", "99", "2500"} {
@@ -624,7 +640,7 @@ func TestGetCourtBookings_FilterByStartTime(t *testing.T) {
 		{Date: "2026-04-07", Start: "2000", Court: 77385},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=1830")
@@ -655,7 +671,7 @@ func TestGetCourtBookings_FilterByEndTime(t *testing.T) {
 		{Date: "2026-04-07", Start: "2000", Court: 77385},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&endTime=1830")
@@ -674,7 +690,7 @@ func TestGetCourtBookings_FilterByEndTime(t *testing.T) {
 }
 
 func TestGetCourtBookings_InvalidMyParam(t *testing.T) {
-	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=yes")
@@ -696,7 +712,7 @@ func TestGetCourtBookings_FilterByMyTrue(t *testing.T) {
 		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: true, Booking: &bookingID},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77389", "77391", "77392"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=true")
@@ -730,7 +746,7 @@ func TestGetCourtBookings_FilterByMyFalse(t *testing.T) {
 		{Date: "2026-04-07", Start: "2045", Court: 77392, IsUserBookingOwner: false},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77389", "77391", "77392"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&my=false")
@@ -756,7 +772,7 @@ func TestGetCourtBookings_FilterByTimeRange(t *testing.T) {
 		{Date: "2026-04-07", Start: "2130", Court: 77385},
 	}
 	mock := &mockClient{slots: slots}
-	srv := serve(newCourtBookingsHandler(mock, "76443", []string{"77385"}))
+	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/eversports/games?date=2026-04-07&startTime=1830&endTime=2000")
