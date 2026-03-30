@@ -3,6 +3,7 @@ package booking
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,7 @@ type eversportsClient interface {
 	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
 	GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]eversports.Slot, error)
 	GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]eversports.Court, error)
+	GetFacility(ctx context.Context, slug string) (*eversports.Facility, error)
 }
 
 // Handler wires all HTTP routes for the sports-booking-service.
@@ -64,6 +66,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
 	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
+	mux.HandleFunc("GET /api/v1/eversports/facility", h.getFacility)
 	mux.HandleFunc("GET /api/v1/eversports/debug-page", h.debugPage)
 }
 
@@ -306,6 +309,26 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, courts)
+}
+
+// getFacility returns the venue profile for the configured facility slug.
+// Requires EVERSPORTS_FACILITY_SLUG to be configured.
+func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
+	if h.facilitySlug == "" {
+		writeError(w, http.StatusInternalServerError, "facility endpoint requires EVERSPORTS_FACILITY_SLUG to be configured")
+		return
+	}
+	facility, err := h.eversports.GetFacility(r.Context(), h.facilitySlug)
+	if err != nil {
+		if errors.Is(err, eversports.ErrNotFound) {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("facility %q not found", h.facilitySlug))
+			return
+		}
+		h.logger.Error("eversports get facility failed", "slug", h.facilitySlug, "err", err)
+		writeError(w, http.StatusBadGateway, "get facility failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, facility)
 }
 
 // debugPage fetches the configured bookings page and returns diagnostic

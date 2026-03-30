@@ -263,6 +263,125 @@ type gqlCancelMatchResponse struct {
 	} `json:"errors"`
 }
 
+// ─── Facility (venue profile) ─────────────────────────────────────────────────
+
+// Facility is the public response type for GET /api/v1/eversports/facility.
+// Fields excluded from the raw GraphQL response: social, about, amenities,
+// cheapestPrice, cheapestTrialProductPrice, faqs, images, location, logo,
+// offerings, ratings, reviews, specialPriceTypes, trainers.
+type Facility struct {
+	ID          string          `json:"id"`
+	Slug        string          `json:"slug"`
+	Name        string          `json:"name"`
+	Rating      float64         `json:"rating"`
+	ReviewCount int             `json:"reviewCount"`
+	Address     string          `json:"address"`
+	HideAddress bool            `json:"hideAddress"`
+	Tags        []FacilityTag   `json:"tags"`
+	Contact     FacilityContact `json:"contact"`
+	Sports      []FacilitySport `json:"sports"`
+	City        FacilityCity    `json:"city"`
+	Company     FacilityCompany `json:"company"`
+}
+
+// FacilityTag is a tag on a Facility.
+type FacilityTag struct {
+	Name string `json:"name"`
+}
+
+// FacilityContact holds the public contact details of a Facility.
+type FacilityContact struct {
+	Email     string `json:"email"`
+	Facebook  string `json:"facebook"`
+	Instagram string `json:"instagram"`
+	Website   string `json:"website"`
+	Telephone string `json:"telephone"`
+}
+
+// FacilitySport is a sport offered at a Facility.
+type FacilitySport struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// FacilityCity is the city the Facility belongs to.
+type FacilityCity struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+}
+
+// FacilityCompany groups sibling venues under the same company.
+type FacilityCompany struct {
+	Venues []FacilityVenueRef `json:"venues"`
+}
+
+// FacilityVenueRef is a brief reference to a venue within FacilityCompany.
+type FacilityVenueRef struct {
+	ID       string                `json:"id"`
+	Name     string                `json:"name"`
+	Slug     string                `json:"slug"`
+	Location FacilityVenueLocation `json:"location"`
+}
+
+// FacilityVenueLocation is the geographic location of a FacilityVenueRef.
+type FacilityVenueLocation struct {
+	City    string `json:"city"`
+	Zip     string `json:"zip"`
+	Country string `json:"country"`
+}
+
+// gqlFacilityResponse is the GraphQL response envelope for VenueProfileVenueContext.
+type gqlFacilityResponse struct {
+	Data struct {
+		VenueContext struct {
+			Venue struct {
+				ID          string  `json:"id"`
+				Slug        string  `json:"slug"`
+				Name        string  `json:"name"`
+				Rating      float64 `json:"rating"`
+				ReviewCount int     `json:"reviewCount"`
+				Address     string  `json:"address"`
+				HideAddress bool    `json:"hideAddress"`
+				Tags        []struct {
+					Name string `json:"name"`
+				} `json:"tags"`
+				Contact struct {
+					Email     string `json:"email"`
+					Facebook  string `json:"facebook"`
+					Instagram string `json:"instagram"`
+					Website   string `json:"website"`
+					Telephone string `json:"telephone"`
+				} `json:"contact"`
+				Sports []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+					Slug string `json:"slug"`
+				} `json:"sports"`
+				City struct {
+					ID   string `json:"id"`
+					Slug string `json:"slug"`
+				} `json:"city"`
+				Company struct {
+					Venues []struct {
+						ID       string `json:"id"`
+						Name     string `json:"name"`
+						Slug     string `json:"slug"`
+						Location struct {
+							City    string `json:"city"`
+							Zip     string `json:"zip"`
+							Country string `json:"country"`
+						} `json:"location"`
+					} `json:"venues"`
+				} `json:"company"`
+			} `json:"venue"`
+		} `json:"venueContext"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
 // ─── Match list GraphQL types ─────────────────────────────────────────────────
 
 // gqlMatchListResponse is the GraphQL response envelope for the list-of-matches

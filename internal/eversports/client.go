@@ -21,6 +21,10 @@ import (
 // page). Callers should re-login and retry.
 var errUnauthorized = errors.New("eversports: unauthorized")
 
+// ErrNotFound is returned when a requested resource does not exist (e.g. an
+// unknown facility slug). Callers can test for it with errors.Is.
+var ErrNotFound = errors.New("eversports: not found")
+
 const (
 	baseURL = "https://www.eversports.de"
 

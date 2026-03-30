@@ -80,6 +80,10 @@ func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _, _ string) ([
 	return m.courts, m.courtsErr
 }
 
+func (m *mockClient) GetFacility(_ context.Context, _ string) (*eversports.Facility, error) {
+	return nil, nil
+}
+
 // newTestHandler creates a Handler backed by the given mock.
 func newTestHandler(mock *mockClient) *Handler {
 	return &Handler{eversports: mock, logger: testLogger, version: "test-version"}
