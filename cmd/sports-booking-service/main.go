@@ -31,10 +31,12 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	if _, err := loadTimezone(cfg.Timezone); err != nil {
+	loc, err := loadTimezone(cfg.Timezone)
+	if err != nil {
 		slog.Error("load timezone", "timezone", cfg.Timezone, "err", err)
 		os.Exit(1)
 	}
+	time.Local = loc
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
