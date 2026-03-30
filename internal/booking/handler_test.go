@@ -32,6 +32,7 @@ type mockClient struct {
 	bookingErr        error
 	lastBookingArgs   struct {
 		courtUUID string
+		sportUUID string
 		start     time.Time
 		end       time.Time
 	}
@@ -40,6 +41,7 @@ type mockClient struct {
 	lastSlotsDate    string // records the startDate passed to GetSlots
 	courts           []eversports.Court
 	courtsErr        error
+	lastCourtsDate   string // records the date passed to GetCourts
 	facility         *eversports.Facility
 	facilityErr      error
 	lastFacilitySlug string
@@ -55,8 +57,9 @@ func (m *mockClient) CancelMatch(_ context.Context, matchID string) (*eversports
 	return m.cancellation, m.cancellationErr
 }
 
-func (m *mockClient) CreateBooking(_ context.Context, _, courtUUID, _ string, start, end time.Time) (*eversports.BookingResult, error) {
+func (m *mockClient) CreateBooking(_ context.Context, _, courtUUID, sportUUID string, start, end time.Time) (*eversports.BookingResult, error) {
 	m.lastBookingArgs.courtUUID = courtUUID
+	m.lastBookingArgs.sportUUID = sportUUID
 	m.lastBookingArgs.start = start
 	m.lastBookingArgs.end = end
 	return m.booking, m.bookingErr
@@ -67,7 +70,8 @@ func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date stri
 	return m.slots, m.slotsErr
 }
 
-func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _, _ string) ([]eversports.Court, error) {
+func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _, date string) ([]eversports.Court, error) {
+	m.lastCourtsDate = date
 	return m.courts, m.courtsErr
 }
 
@@ -81,14 +85,13 @@ func newTestHandler(mock *mockClient) *Handler {
 	return &Handler{eversports: mock, logger: testLogger, version: "test-version"}
 }
 
-// newBookingHandler creates a Handler with facility/sport UUIDs configured.
+// newBookingHandler creates a Handler with facilityUUID configured.
 func newBookingHandler(mock *mockClient) *Handler {
 	return &Handler{
 		eversports:   mock,
 		logger:       testLogger,
 		version:      "test-version",
 		facilityUUID: "6266968c-b0fd-4115-ad3b-ae225cc880f1",
-		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
 	}
 }
 
@@ -276,6 +279,9 @@ func TestCreateMatch_Success(t *testing.T) {
 	if mock.lastBookingArgs.courtUUID != "32ef2369-cf50-427f-8bdf-d380189584e8" {
 		t.Errorf("courtUuid forwarded: want %q, got %q", "32ef2369-cf50-427f-8bdf-d380189584e8", mock.lastBookingArgs.courtUUID)
 	}
+	if mock.lastBookingArgs.sportUUID != squashSportUUID {
+		t.Errorf("sportUUID forwarded: want %q, got %q", squashSportUUID, mock.lastBookingArgs.sportUUID)
+	}
 }
 
 func TestCreateMatch_NotConfigured(t *testing.T) {
@@ -364,21 +370,15 @@ func newCourtBookingsHandler(mock *mockClient, facilityID string) *Handler {
 		version:      "test-version",
 		facilityID:   facilityID,
 		facilitySlug: "squash-house-berlin-03",
-		sportID:      "496",
-		sportSlug:    "squash",
-		sportName:    "Squash",
-		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
 	}
 }
 
 func TestGetCourtBookings_NotConfigured(t *testing.T) {
 	// Missing any required field → 500 (server misconfiguration, not a client error).
 	for _, h := range []*Handler{
-		{eversports: &mockClient{}, logger: testLogger},                                                         // all missing
-		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s", sportID: "1", sportUUID: "u"},        // facilityID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", sportID: "1", sportUUID: "u"},      // facilitySlug missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportUUID: "u"}, // sportID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportID: "1"},   // sportUUID missing
+		{eversports: &mockClient{}, logger: testLogger},                      // all missing
+		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s"},   // facilityID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443"}, // facilitySlug missing
 	} {
 		srv := serve(h)
 		resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
@@ -452,7 +452,10 @@ func TestGetCourtBookings_Success(t *testing.T) {
 		t.Errorf("Start: want %q, got %q", "2045", got[0].Start)
 	}
 	if mock.lastSlotsDate != "2026-04-07" {
-		t.Errorf("forwarded date: want %q, got %q", "2026-04-07", mock.lastSlotsDate)
+		t.Errorf("forwarded date to GetSlots: want %q, got %q", "2026-04-07", mock.lastSlotsDate)
+	}
+	if mock.lastCourtsDate != "2026-04-07" {
+		t.Errorf("forwarded date to GetCourts: want %q, got %q", "2026-04-07", mock.lastCourtsDate)
 	}
 }
 
@@ -702,21 +705,15 @@ func newCourtsHandler(mock *mockClient) *Handler {
 		version:      "test-version",
 		facilityID:   "76443",
 		facilitySlug: "squash-house-berlin-03",
-		sportID:      "496",
-		sportSlug:    "squash",
-		sportName:    "Squash",
-		sportUUID:    "b388b6e6-69de-11e8-bdc6-02bd505aa7b2",
 	}
 }
 
 func TestGetCourts_NotConfigured(t *testing.T) {
 	// Missing required fields — should return 500.
 	for _, h := range []*Handler{
-		{eversports: &mockClient{}, logger: testLogger},                                                         // all missing
-		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s", sportID: "1", sportUUID: "u"},        // facilityID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", sportID: "1", sportUUID: "u"},      // facilitySlug missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportUUID: "u"}, // sportID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443", facilitySlug: "s", sportID: "1"},   // sportUUID missing
+		{eversports: &mockClient{}, logger: testLogger},                      // all missing
+		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s"},   // facilityID missing
+		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443"}, // facilitySlug missing
 	} {
 		srv := serve(h)
 		resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
@@ -774,6 +771,48 @@ func TestGetCourts_Error(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetCourts_WithDate(t *testing.T) {
+	courts := []eversports.Court{{ID: "77385", UUID: "32ef2369-cf50-427f-8bdf-d380189584e8", Name: "Court 1"}}
+	mock := &mockClient{courts: courts}
+	srv := serve(newCourtsHandler(mock))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts?date=2026-05-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got []eversports.Court
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("courts count: want 1, got %d", len(got))
+	}
+	if mock.lastCourtsDate != "2026-05-01" {
+		t.Errorf("forwarded date to GetCourts: want %q, got %q", "2026-05-01", mock.lastCourtsDate)
+	}
+}
+
+func TestGetCourts_InvalidDate(t *testing.T) {
+	srv := serve(newCourtsHandler(&mockClient{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts?date=not-a-date")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", resp.StatusCode)
 	}
 }
 

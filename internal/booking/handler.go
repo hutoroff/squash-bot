@@ -25,6 +25,14 @@ type eversportsClient interface {
 	GetFacility(ctx context.Context, slug string) (*eversports.Facility, error)
 }
 
+// Sport constants for squash (this service is squash-specific).
+const (
+	squashSportUUID = "b388b6e6-69de-11e8-bdc6-02bd505aa7b2"
+	squashSportSlug = "squash"
+	squashSportName = "Squash"
+	squashSportID   = "496"
+)
+
 // Handler wires all HTTP routes for the sports-booking-service.
 type Handler struct {
 	eversports   eversportsClient
@@ -32,25 +40,17 @@ type Handler struct {
 	version      string
 	facilityID   string
 	facilityUUID string
-	sportUUID    string
 	facilitySlug string
-	sportID      string
-	sportSlug    string
-	sportName    string
 }
 
-func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID, facilityUUID, sportUUID, facilitySlug, sportID, sportSlug, sportName string) *Handler {
+func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
 	return &Handler{
 		eversports:   es,
 		logger:       logger,
 		version:      version,
 		facilityID:   facilityID,
 		facilityUUID: facilityUUID,
-		sportUUID:    sportUUID,
 		facilitySlug: facilitySlug,
-		sportID:      sportID,
-		sportSlug:    sportSlug,
-		sportName:    sportName,
 	}
 }
 
@@ -98,8 +98,8 @@ type createMatchRequest struct {
 }
 
 func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
-	if h.facilityUUID == "" || h.sportUUID == "" {
-		writeError(w, http.StatusInternalServerError, "booking creation requires EVERSPORTS_FACILITY_UUID and EVERSPORTS_SPORT_UUID to be configured")
+	if h.facilityUUID == "" {
+		writeError(w, http.StatusInternalServerError, "booking creation requires EVERSPORTS_FACILITY_UUID to be configured")
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, h.sportUUID, start, end)
+	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
 	if err != nil {
 		h.logger.Error("eversports create booking failed", "courtUuid", req.CourtUUID, "start", req.Start, "err", err)
 		writeError(w, http.StatusBadGateway, "create booking failed: "+err.Error())
@@ -160,8 +160,8 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 // EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and
 // EVERSPORTS_SPORT_UUID must be configured (same requirements as /courts).
 func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
-	if h.facilityID == "" || h.facilitySlug == "" || h.sportID == "" || h.sportUUID == "" {
-		writeError(w, http.StatusInternalServerError, "games endpoint requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and EVERSPORTS_SPORT_UUID to be configured")
+	if h.facilityID == "" || h.facilitySlug == "" {
+		writeError(w, http.StatusInternalServerError, "games endpoint requires EVERSPORTS_FACILITY_ID and EVERSPORTS_FACILITY_SLUG to be configured")
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, h.sportID, h.sportSlug, h.sportName, h.sportUUID, date)
+	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
 		h.logger.Error("eversports get courts for games failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -280,15 +280,21 @@ func filterSlots(slots []eversports.Slot, date, startTime, endTime string, myFil
 
 // getCourts returns the list of courts at the configured facility by
 // parsing the Eversports booking calendar HTML.
-// Requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID,
-// and EVERSPORTS_SPORT_UUID to be configured.
+// Requires EVERSPORTS_FACILITY_ID and EVERSPORTS_FACILITY_SLUG to be configured.
+// Optional ?date=YYYY-MM-DD; defaults to today.
 func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
-	if h.facilityID == "" || h.facilitySlug == "" || h.sportID == "" || h.sportUUID == "" {
-		writeError(w, http.StatusInternalServerError, "courts endpoint requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and EVERSPORTS_SPORT_UUID to be configured")
+	if h.facilityID == "" || h.facilitySlug == "" {
+		writeError(w, http.StatusInternalServerError, "courts endpoint requires EVERSPORTS_FACILITY_ID and EVERSPORTS_FACILITY_SLUG to be configured")
 		return
 	}
-	today := time.Now().Format("2006-01-02")
-	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, h.sportID, h.sportSlug, h.sportName, h.sportUUID, today)
+	date := r.URL.Query().Get("date")
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	} else if _, err := time.Parse("2006-01-02", date); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid date format — expected YYYY-MM-DD")
+		return
+	}
+	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
 		h.logger.Error("eversports get courts failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
