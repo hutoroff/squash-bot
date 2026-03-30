@@ -37,11 +37,14 @@ type mockClient struct {
 		start     time.Time
 		end       time.Time
 	}
-	slots         []eversports.Slot
-	slotsErr      error
-	lastSlotsDate string // records the startDate passed to GetSlots
-	courts        []eversports.Court
-	courtsErr     error
+	slots            []eversports.Slot
+	slotsErr         error
+	lastSlotsDate    string // records the startDate passed to GetSlots
+	courts           []eversports.Court
+	courtsErr        error
+	facility         *eversports.Facility
+	facilityErr      error
+	lastFacilitySlug string
 }
 
 func (m *mockClient) GetBookings(_ context.Context) ([]eversports.Booking, error) {
@@ -74,8 +77,9 @@ func (m *mockClient) GetCourts(_ context.Context, _, _, _, _, _, _, _ string) ([
 	return m.courts, m.courtsErr
 }
 
-func (m *mockClient) GetFacility(_ context.Context, _ string) (*eversports.Facility, error) {
-	return nil, nil
+func (m *mockClient) GetFacility(_ context.Context, slug string) (*eversports.Facility, error) {
+	m.lastFacilitySlug = slug
+	return m.facility, m.facilityErr
 }
 
 // newTestHandler creates a Handler backed by the given mock.
@@ -824,5 +828,65 @@ func TestGetCourts_Error(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+// ─── GET /api/v1/eversports/facility ─────────────────────────────────────────
+
+func TestGetFacility_MissingSlug(t *testing.T) {
+	srv := serve(newTestHandler(&mockClient{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetFacility_SlugForwarded(t *testing.T) {
+	facility := &eversports.Facility{ID: "1234", Slug: "squash-house-berlin-03", Name: "Squash House Berlin"}
+	mock := &mockClient{facility: facility}
+	srv := serve(newTestHandler(mock))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility?slug=squash-house-berlin-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	var got eversports.Facility
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Slug != "squash-house-berlin-03" {
+		t.Errorf("Slug: want %q, got %q", "squash-house-berlin-03", got.Slug)
+	}
+	if mock.lastFacilitySlug != "squash-house-berlin-03" {
+		t.Errorf("forwarded slug: want %q, got %q", "squash-house-berlin-03", mock.lastFacilitySlug)
+	}
+}
+
+func TestGetFacility_NotFound(t *testing.T) {
+	mock := &mockClient{facilityErr: eversports.ErrNotFound}
+	srv := serve(newTestHandler(mock))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility?slug=unknown-slug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("want 404, got %d", resp.StatusCode)
 	}
 }
