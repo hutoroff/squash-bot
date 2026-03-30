@@ -86,7 +86,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // NewServer builds an http.Server with the handler's routes registered.
-// secret is the shared bearer token; all routes except /health require it.
+// secret is the shared bearer token; all routes except /health and /version require it.
 func NewServer(addr string, h *Handler, secret string) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -100,12 +100,13 @@ func NewServer(addr string, h *Handler, secret string) *http.Server {
 }
 
 // requireBearer is middleware that validates the Authorization: Bearer <secret> header.
-// The /health endpoint is exempt so container health checks work without credentials.
+// The /health and /version endpoints are exempt so container health checks and version
+// probes work without credentials.
 // Comparison is constant-time to prevent timing-based secret oracle attacks.
 func requireBearer(secret string, next http.Handler) http.Handler {
 	expected := []byte("Bearer " + secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || r.URL.Path == "/version" {
 			next.ServeHTTP(w, r)
 			return
 		}

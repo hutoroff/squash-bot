@@ -173,6 +173,90 @@ ghcr.io/<github_owner>/squash-games-management:<version>
 ghcr.io/<github_owner>/sports-booking-service:<version>
 ```
 
+## Production Deployment
+
+The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All three services and PostgreSQL run on a single server.
+
+### Server setup
+
+```bash
+# 1. Install Docker on a fresh VPS (e.g. Ubuntu 24.04)
+apt update && apt install -y docker.io docker-compose-v2
+systemctl enable docker
+
+# 2. Create the project directory
+mkdir -p /opt/squash-bot && cd /opt/squash-bot
+
+# 3. Copy docker-compose.prod.yml and create .env from .env.example
+#    Fill in all required values. Generate secrets:
+openssl rand -hex 32   # → INTERNAL_API_SECRET
+openssl rand -hex 32   # → POSTGRES_PASSWORD
+
+# 4. Lock down the .env file
+chmod 600 .env
+
+# 5. Pull images and start
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Migrations run automatically on first startup. Verify everything is healthy:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=20
+```
+
+### Updating a service
+
+After triggering a release workflow in GitHub Actions:
+
+```bash
+# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2), then:
+scripts/deploy.sh                        # pull all + restart changed
+scripts/deploy.sh squash-games-management  # or update a single service
+```
+
+### Database backups
+
+The `db-backup` sidecar in `docker-compose.prod.yml` runs `pg_dump` daily and retains the last 7 days in a `db_backups` Docker volume.
+
+Verify a backup exists:
+```bash
+docker compose -f docker-compose.prod.yml exec db-backup ls -lh /backups/
+```
+
+To restore from the most recent backup:
+```bash
+# Find the latest dump inside the backup container
+LATEST=$(docker compose -f docker-compose.prod.yml exec -T db-backup \
+  sh -c 'ls -t /backups/squash_bot_*.dump | head -1')
+
+# Pipe it into pg_restore on the postgres container
+docker compose -f docker-compose.prod.yml exec -T db-backup cat "$LATEST" | \
+  docker compose -f docker-compose.prod.yml exec -T postgres \
+    pg_restore -U squash_bot -d squash_bot --clean --if-exists
+```
+
+To copy a backup to the host for safekeeping:
+```bash
+docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
+```
+
+### Health monitoring
+
+`scripts/healthcheck.sh` pings the `/health` endpoints and sends a Telegram alert if a service is down. Install it in cron:
+
+```bash
+# Set the env vars for the script (use the same bot token; CHAT_ID is your personal Telegram chat ID)
+export HEALTHCHECK_BOT_TOKEN=<token>
+export HEALTHCHECK_CHAT_ID=<your_chat_id>
+
+# Add to crontab (runs every 5 minutes)
+crontab -e
+# */5 * * * * HEALTHCHECK_BOT_TOKEN=<token> HEALTHCHECK_CHAT_ID=<id> /opt/squash-bot/scripts/healthcheck.sh
+```
+
 ## Bot Commands
 
 | Command     | Who can use     | Description                                      |
@@ -283,6 +367,7 @@ internal/
   eversports/     — Eversports HTTP client (GraphQL login/match, /api/slot for court availability, calendar HTML for court discovery)
   booking/        — HTTP server wrapping the Eversports client
 migrations/       — embedded SQL migration files
+scripts/          — deploy.sh, healthcheck.sh (production ops)
 tests/            — integration and e2e tests
 .github/
   workflows/      — CI pipeline and release workflows

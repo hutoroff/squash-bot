@@ -1,0 +1,152 @@
+# Production deployment configuration.
+# Usage: docker compose -f docker-compose.prod.yml up -d
+# Requires: .env file with all secrets (see .env.example).
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: squash_bot
+      POSTGRES_USER: squash_bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squash_bot -d squash_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - internal
+
+  squash-games-management:
+    image: ${DOCKERHUB_USERNAME}/squash-games-management:${MANAGEMENT_VERSION:-latest}
+    environment:
+      DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
+      SERVER_PORT: "8080"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      CRON_POLL: ${CRON_POLL:-*/5 * * * *}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TIMEZONE: ${TIMEZONE:-UTC}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - internal
+
+  telegram-squash-bot:
+    image: ${DOCKERHUB_USERNAME}/telegram-squash-bot:${TELEGRAM_VERSION:-latest}
+    environment:
+      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      SERVICE_ADMIN_IDS: ${SERVICE_ADMIN_IDS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TIMEZONE: ${TIMEZONE:-UTC}
+    depends_on:
+      squash-games-management:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - internal
+
+  sports-booking-service:
+    image: ${DOCKERHUB_USERNAME}/sports-booking-service:${BOOKING_VERSION:-latest}
+    environment:
+      SERVER_PORT: "8081"
+      EVERSPORTS_EMAIL: ${EVERSPORTS_EMAIL:-}
+      EVERSPORTS_PASSWORD: ${EVERSPORTS_PASSWORD:-}
+      EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
+      EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
+      EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:-}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TIMEZONE: ${TIMEZONE:-UTC}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - internal
+
+  db-backup:
+    image: postgres:15-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: squash_bot
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: squash_bot
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Backup sidecar started. Running pg_dump every 24h, keeping 7 days."
+        while true; do
+          STAMP=$$(date +%Y%m%d_%H%M%S)
+          pg_dump -Fc > /backups/squash_bot_$${STAMP}.dump \
+            && echo "Backup created: squash_bot_$${STAMP}.dump" \
+            || echo "Backup FAILED at $${STAMP}"
+          find /backups -name "squash_bot_*.dump" -mtime +7 -delete
+          sleep 86400
+        done
+    volumes:
+      - db_backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    mem_limit: 64m
+    cpus: 0.1
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+  db_backups:
+
+networks:
+  internal:
+    driver: bridge
