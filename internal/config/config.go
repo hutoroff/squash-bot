@@ -62,25 +62,10 @@ type BookingConfig struct {
 	// bookings via POST /api/v1/eversports/matches. Find it in DevTools under
 	// the /checkout/api/payableitem/courtbooking request body (facilityUuid field).
 	EversportsFacilityUUID string `env:"EVERSPORTS_FACILITY_UUID" envDefault:"6266968c-b0fd-4115-ad3b-ae225cc880f1"`
-	// EversportsSportUUID is the UUID of the sport used when creating bookings
-	// (POST /api/v1/eversports/matches) and when resolving court IDs for
-	// GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
-	// Defaults to the well-known squash UUID from Eversports.
-	EversportsSportUUID string `env:"EVERSPORTS_SPORT_UUID" envDefault:"b388b6e6-69de-11e8-bdc6-02bd505aa7b2"`
 	// EversportsFacilitySlug is the facility slug visible in the venue page URL
-	// (e.g. "squash-house-berlin-03"). Required for GET /api/v1/eversports/games
+	// (e.g. "squash-house-berlin-03"). Required for GET /api/v1/eversports/matches
 	// and GET /api/v1/eversports/courts.
 	EversportsFacilitySlug string `env:"EVERSPORTS_FACILITY_SLUG"`
-	// EversportsSportID is the numeric sport ID used by the booking calendar
-	// endpoint (e.g. "496" for squash). Required for GET /api/v1/eversports/games
-	// and GET /api/v1/eversports/courts.
-	EversportsSportID string `env:"EVERSPORTS_SPORT_ID"`
-	// EversportsSportSlug is the sport slug (e.g. "squash"). Used in the calendar
-	// request body for GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
-	EversportsSportSlug string `env:"EVERSPORTS_SPORT_SLUG" envDefault:"squash"`
-	// EversportsSportName is the display name of the sport (e.g. "Squash"). Used in
-	// the calendar request body for GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
-	EversportsSportName string `env:"EVERSPORTS_SPORT_NAME" envDefault:"Squash"`
 	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	ServerPort        string `env:"SERVER_PORT"           envDefault:"8081"`
