@@ -206,6 +206,7 @@ type rawSlotsResponse struct {
 type BookingResult struct {
 	BookingUUID string `json:"bookingUuid"`
 	BookingID   int    `json:"bookingId"`
+	MatchID     string `json:"matchId,omitempty"`
 }
 
 // courtBookingRequest is the payload for POST /checkout/api/payableitem/courtbooking.
@@ -229,6 +230,23 @@ type courtBookingResponse struct {
 	} `json:"payment"`
 	Success bool   `json:"success"`
 	Status  string `json:"status"`
+}
+
+// createMatchRequest is the payload for POST /checkout/api/match/create-from-booking.
+// Despite the field name, bookingId holds the booking UUID string (not a numeric ID).
+type createMatchRequest struct {
+	BookingID string `json:"bookingId"`
+}
+
+// createMatchResponse is the JSON response from POST /checkout/api/match/create-from-booking.
+type createMatchResponse struct {
+	MatchID string `json:"matchId"`
+}
+
+// mpFeeRequest is the payload for POST /checkout/api/tracking/getMPFeeForCourtBooking.
+type mpFeeRequest struct {
+	BookingID int    `json:"bookingId"`
+	VenueUUID string `json:"venueUuid"`
 }
 
 // ─── CancelMatch types ────────────────────────────────────────────────────────

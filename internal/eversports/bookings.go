@@ -18,7 +18,7 @@ import (
 
 // matchQuery is the GraphQL query for a single booking, confirmed from a live
 // browser DevTools capture.
-const matchQuery = `query Match($matchId: ID!, $first: Int) {
+const matchQuery = `query Match($matchId: ID!) {
   match(matchId: $matchId) {
     ... on BallsportMatch {
       id
@@ -45,7 +45,7 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 	do := func() (*Booking, error) {
 		payload := gqlRequest{
 			OperationName: "Match",
-			Variables:     map[string]any{"matchId": matchID, "first": 3},
+			Variables:     map[string]any{"matchId": matchID},
 			Query:         matchQuery,
 		}
 		body, err := json.Marshal(payload)
@@ -438,13 +438,17 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 
 const (
 	courtBookingEndpoint      = "/checkout/api/payableitem/courtbooking"
+	mpFeeEndpoint             = "/checkout/api/tracking/getMPFeeForCourtBooking"
+	trackCheckoutEndpoint     = "/checkout/api/tracking/trackCheckoutCompleted"
 	createFromBookingEndpoint = "/checkout/api/match/create-from-booking"
 )
 
 // CreateBooking creates a court booking via the Eversports checkout flow:
-//  1. POST /checkout/api/payableitem/courtbooking  — reserve the slot and create payment
-//  2. POST /checkout/api/payment/{id}/pay-offline  — settle with the account budget
-//  3. POST /checkout/api/match/create-from-booking — attach a match record (best-effort)
+//  1. POST /checkout/api/payableitem/courtbooking               — reserve the slot and create payment
+//  2. POST /checkout/api/payment/{id}/pay-offline               — settle with the account budget
+//  3. POST /checkout/api/match/create-from-booking              — attach a match record (best-effort, before tracking)
+//  4. POST /checkout/api/tracking/getMPFeeForCourtBooking       — report MP fee (best-effort)
+//  5. POST /checkout/api/tracking/trackCheckoutCompleted        — track checkout completion (best-effort)
 //
 // facilityUUID and sportUUID are constants for the venue/sport and should come
 // from config. courtUUID identifies the specific court to book.
@@ -517,12 +521,21 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 		}
 
 		// Step 3: create match record (best-effort — failure does not abort the booking).
-		c.createMatchFromBooking(ctx)
+		// Must run before tracking calls: it relies on server-side checkout session
+		// state ("most recently created booking") which tracking may finalize.
+		matchID := c.createMatchFromBooking(ctx, bookResp.BookingUUID)
 
-		c.logger.Info("eversports booking created", "bookingUuid", bookResp.BookingUUID, "bookingId", bookResp.BookingID)
+		// Step 4: report MP fee (best-effort — failure does not abort the booking).
+		c.reportMPFee(ctx, bookResp.BookingID, facilityUUID)
+
+		// Step 5: track checkout completion (best-effort — failure does not abort the booking).
+		c.trackCheckoutCompleted(ctx)
+
+		c.logger.Info("eversports booking created", "bookingUuid", bookResp.BookingUUID, "bookingId", bookResp.BookingID, "matchId", matchID)
 		return &BookingResult{
 			BookingUUID: bookResp.BookingUUID,
 			BookingID:   bookResp.BookingID,
+			MatchID:     matchID,
 		}, nil
 	}
 
@@ -540,18 +553,64 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 	return result, err
 }
 
-// createMatchFromBooking fires a best-effort POST to attach a match record to
-// the most recently created booking. Errors are logged and ignored.
-func (c *Client) createMatchFromBooking(ctx context.Context) {
-	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+createFromBookingEndpoint, bytes.NewReader([]byte{}))
+// reportMPFee fires a best-effort POST to the tracking endpoint after a
+// successful booking. Errors are logged and ignored.
+func (c *Client) reportMPFee(ctx context.Context, bookingID int, venueUUID string) {
+	payload := mpFeeRequest{BookingID: bookingID, VenueUUID: venueUUID}
+	body, err := json.Marshal(payload)
 	if err != nil {
-		c.logger.Warn("eversports: create-from-booking request failed", "err", err)
+		c.logger.Warn("eversports: booking step 4 marshal failed", "err", err)
 		return
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		c.logger.Warn("eversports: create-from-booking HTTP error", "status", resp.StatusCode)
+	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+mpFeeEndpoint, bytes.NewReader(body))
+	if err != nil {
+		c.logger.Warn("eversports: reportMPFee failed", "err", err)
+		return
 	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+}
+
+// trackCheckoutCompleted fires a best-effort POST to the checkout tracking
+// endpoint after payment is settled. Errors are logged and ignored.
+func (c *Client) trackCheckoutCompleted(ctx context.Context) {
+	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+trackCheckoutEndpoint, bytes.NewReader([]byte{}))
+	if err != nil {
+		c.logger.Warn("eversports: trackCheckoutCompleted failed", "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+}
+
+// isCFChallenge reports whether the response body looks like a Cloudflare JS
+// challenge page (HTTP 200 with HTML) rather than a real API response.
+func isCFChallenge(body []byte) bool {
+	return bytes.Contains(body, []byte("challenge-platform/scripts/jsd/main.js"))
+}
+
+// createMatchFromBooking fires a best-effort POST to attach a match record to
+// the booking identified by bookingUUID. Returns the created matchId, or empty
+// string on failure.
+func (c *Client) createMatchFromBooking(ctx context.Context, bookingUUID string) string {
+	body, _ := json.Marshal(createMatchRequest{BookingID: bookingUUID})
+	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+createFromBookingEndpoint, bytes.NewReader(body))
+	if err != nil {
+		c.logger.Warn("eversports: createMatchFromBooking failed", "err", err)
+		return ""
+	}
+	defer resp.Body.Close()
+	respBytes, _ := io.ReadAll(resp.Body)
+	if isCFChallenge(respBytes) {
+		c.logger.Warn("eversports: createMatchFromBooking Cloudflare challenge detected")
+		return ""
+	}
+	var matchResp createMatchResponse
+	if err := json.Unmarshal(respBytes, &matchResp); err != nil {
+		c.logger.Warn("eversports: booking step 3 parse response failed", "err", err)
+		return ""
+	}
+	return matchResp.MatchID
 }
 
 // ─── CancelMatch ──────────────────────────────────────────────────────────────
