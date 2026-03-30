@@ -34,28 +34,6 @@ type Booking struct {
 	} `json:"price"`
 }
 
-// ─── Activities response ──────────────────────────────────────────────────────
-
-// activitiesResponse is the JSON envelope returned by GET /api/user/activities.
-// The HTML field contains an HTML fragment with one <li> per booking.
-type activitiesResponse struct {
-	Status string `json:"status"`
-	HTML   string `json:"html"`
-}
-
-// ─── Self endpoint ────────────────────────────────────────────────────────────
-
-// selfResponse is the JSON envelope returned by GET /u/self.
-// The numeric user ID is the legacy ID required by the /api/user/activities endpoint.
-type selfResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		User struct {
-			ID int `json:"id"`
-		} `json:"user"`
-	} `json:"data"`
-}
-
 // ─── GraphQL request envelope ─────────────────────────────────────────────────
 
 // gqlRequest is the generic GraphQL request body sent to /api/checkout.
@@ -395,20 +373,6 @@ type gqlFacilityResponse struct {
 			} `json:"venue"`
 		} `json:"venueContext"`
 	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
-}
-
-// ─── Match list GraphQL types ─────────────────────────────────────────────────
-
-// gqlMatchListResponse is the GraphQL response envelope for the list-of-matches
-// query. The exact query name and wrapper field are TBD — update once the page-
-// load request from /u is captured in browser DevTools.
-//
-// TODO: replace placeholder field name "matches" with the real one from the capture.
-type gqlMatchListResponse struct {
-	Data   map[string]any `json:"data"`
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`

@@ -31,10 +31,6 @@ const (
 	// graphqlEndpoint is the single GraphQL gateway used by the Eversports frontend.
 	graphqlEndpoint = "/api/checkout"
 
-	// selfEndpoint returns the authenticated user's profile including the legacy
-	// numeric user ID required by the /api/user/activities endpoint.
-	selfEndpoint = "/u/self"
-
 	// loginMutation is the GraphQL mutation captured from browser DevTools.
 	loginMutation = `mutation LoginCredentialLogin($params: AuthParamsInput!, $credentials: CredentialLoginInput!) {
   credentialLogin(params: $params, credentials: $credentials) {
@@ -85,9 +81,6 @@ type Client struct {
 	loginMu  sync.Mutex
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
-	// activitiesUserID is the legacy numeric user ID fetched from GET /u/self
-	// after login. It is required by the GET /api/user/activities endpoint.
-	activitiesUserID atomic.Value // string
 
 	// bookingMu serialises CreateBooking calls. The Eversports checkout flow is
 	// a three-step sequence (reserve → pay → create-from-booking) where step 3
@@ -185,35 +178,6 @@ func (c *Client) Login(ctx context.Context) error {
 
 	c.loggedIn.Store(true)
 	c.logger.Info("eversports login successful")
-	return nil
-}
-
-// fetchSelfUserID calls GET /u/self to retrieve the authenticated user's legacy
-// numeric ID and stores it in activitiesUserID for use by GetBookings.
-func (c *Client) fetchSelfUserID(ctx context.Context) error {
-	resp, err := c.doAuthed(ctx, http.MethodGet, baseURL+selfEndpoint, nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var selfResp selfResponse
-	if err := json.Unmarshal(respBytes, &selfResp); err != nil {
-		return fmt.Errorf("decode /u/self response: %w", err)
-	}
-	if selfResp.Data.User.ID == 0 {
-		return fmt.Errorf("user ID missing in /u/self response")
-	}
-	c.activitiesUserID.Store(fmt.Sprintf("%d", selfResp.Data.User.ID))
-	c.logger.Debug("eversports user ID fetched", "userID", selfResp.Data.User.ID)
 	return nil
 }
 
