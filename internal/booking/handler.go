@@ -309,20 +309,21 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, courts)
 }
 
-// getFacility returns the venue profile for the configured facility slug.
-// Requires EVERSPORTS_FACILITY_SLUG to be configured.
+// getFacility returns the venue profile for a given facility slug.
+// Requires ?slug= query parameter.
 func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
-	if h.facilitySlug == "" {
-		writeError(w, http.StatusInternalServerError, "facility endpoint requires EVERSPORTS_FACILITY_SLUG to be configured")
+	slug := r.URL.Query().Get("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "slug query parameter is required")
 		return
 	}
-	facility, err := h.eversports.GetFacility(r.Context(), h.facilitySlug)
+	facility, err := h.eversports.GetFacility(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, eversports.ErrNotFound) {
-			writeError(w, http.StatusNotFound, fmt.Sprintf("facility %q not found", h.facilitySlug))
+			writeError(w, http.StatusNotFound, fmt.Sprintf("facility %q not found", slug))
 			return
 		}
-		h.logger.Error("eversports get facility failed", "slug", h.facilitySlug, "err", err)
+		h.logger.Error("eversports get facility failed", "slug", slug, "err", err)
 		writeError(w, http.StatusBadGateway, "get facility failed: "+err.Error())
 		return
 	}
