@@ -239,7 +239,6 @@ Guest spots count toward capacity.
 | `EVERSPORTS_SPORT_ID`       | No       | _(empty)_         | Numeric sport ID from the booking calendar (e.g. `496` for squash at your facility). Required for `GET /api/v1/eversports/games` and `GET /api/v1/eversports/courts`. Find it in the `sport[id]` field of the `/api/booking/calendar/update` request body in browser DevTools. |
 | `EVERSPORTS_SPORT_SLUG`     | No       | `squash`          | Sport slug used in the calendar request body. Only change if booking a different sport. |
 | `EVERSPORTS_SPORT_NAME`     | No       | `Squash`          | Sport display name used in the calendar request body. Only change if booking a different sport. |
-| `EVERSPORTS_BOOKINGS_PATH`  | No       | `/user/bookings`  | URL path used by the `GET /api/v1/eversports/debug-page` diagnostic endpoint; change if your locale uses a prefix like `/de/user/bookings` |
 | `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
 | `LOG_LEVEL`                 | No       | `INFO`            | `INFO` or `DEBUG`                                              |
@@ -280,14 +279,14 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 |--------|---------------------------------------|------|----------------------------------------------------------------|
 | `GET`  | `/health`                             | No   | Liveness probe                                                 |
 | `GET`  | `/version`                            | No   | Service version                                                |
-| `GET`  | `/api/v1/eversports/bookings`         | Yes  | List the authenticated user's upcoming court bookings          |
+| `GET`  | `/api/v1/eversports/matches`          | Yes  | List the authenticated user's upcoming court bookings          |
 | `POST` | `/api/v1/eversports/matches`          | Yes  | Create a court booking. Body: `{"courtUuid":"…","start":"…","end":"…"}` (RFC 3339). Returns `{"bookingUuid":"…","bookingId":…}`. Requires `EVERSPORTS_FACILITY_UUID` and `EVERSPORTS_SPORT_UUID`. |
 | `GET`  | `/api/v1/eversports/matches/{id}`     | Yes  | Fetch a single booking by its UUID with full detail            |
 | `DELETE` | `/api/v1/eversports/matches/{id}`   | Yes  | Cancel a booking by UUID. Returns `{"id":"…","state":"CANCELLED","relativeLink":"…"}`. |
 | `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Yes | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means the slot is already reserved. Optionally filter by time window (inclusive) and/or by whether the authenticated user owns the reservation (`my=true\|false`). Court IDs are resolved automatically via `/courts`. Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, and `EVERSPORTS_SPORT_UUID`. |
 | `GET`  | `/api/v1/eversports/courts`           | Yes  | List courts at the facility; returns `[{"id":"…","uuid":"…","name":"…"}]`. Parses the Eversports booking calendar HTML. Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, and `EVERSPORTS_SPORT_UUID`. |
 | `GET`  | `/api/v1/eversports/facility`         | Yes  | Venue profile for the configured facility; returns `{"id","slug","name","rating","reviewCount","address","hideAddress","tags","contact","sports","city","company"}`. Returns 404 if the slug is not found on Eversports. Requires `EVERSPORTS_FACILITY_SLUG`. |
-| `GET`  | `/api/v1/eversports/debug-page`       | Yes  | Diagnostic: fetch the bookings page and return `__NEXT_DATA__` if present |
+
 
 Authentication with Eversports is handled automatically: the service logs in on the first request and re-authenticates if the session expires. Login POSTs the `LoginCredentialLogin` GraphQL mutation to `https://www.eversports.de/api/checkout`, stores the resulting `et` session cookie in an in-memory jar, then calls `GET /u/self` to retrieve the authenticated user's legacy numeric ID.
 
@@ -303,8 +302,8 @@ EVERSPORTS_EMAIL=you@example.com \
   INTERNAL_API_SECRET=test \
   go run cmd/sports-booking-service/main.go
 
-# Fetch bookings (service logs in automatically on first request)
-curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/bookings
+# Fetch matches (service logs in automatically on first request)
+curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/matches
 
 # Fetch single booking detail (UUID from bookings list)
 curl -H "Authorization: Bearer test" http://localhost:8081/api/v1/eversports/matches/<uuid>

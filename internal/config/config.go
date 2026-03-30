@@ -58,10 +58,6 @@ type BookingConfig struct {
 	// venue page URL, e.g. eversports.de/s/venue-name-76443). Required for
 	// GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
 	EversportsFacilityID string `env:"EVERSPORTS_FACILITY_ID"`
-	// EversportsBookingsPath is the URL path of the user's bookings page on
-	// Eversports. Used only by the GET /api/v1/eversports/debug-page diagnostic
-	// endpoint. Adjust if your account uses a locale prefix like /de/user/bookings.
-	EversportsBookingsPath string `env:"EVERSPORTS_BOOKINGS_PATH" envDefault:"/user/bookings"`
 	// EversportsFacilityUUID is the UUID of the facility (venue) used when creating
 	// bookings via POST /api/v1/eversports/matches. Find it in DevTools under
 	// the /checkout/api/payableitem/courtbooking request body (facilityUuid field).

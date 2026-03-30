@@ -37,8 +37,6 @@ type mockClient struct {
 		start     time.Time
 		end       time.Time
 	}
-	debugInfo     *eversports.PageDebugInfo
-	debugErr      error
 	slots         []eversports.Slot
 	slotsErr      error
 	lastSlotsDate string // records the startDate passed to GetSlots
@@ -65,10 +63,6 @@ func (m *mockClient) CreateBooking(_ context.Context, _, courtUUID, _ string, st
 	m.lastBookingArgs.start = start
 	m.lastBookingArgs.end = end
 	return m.booking, m.bookingErr
-}
-
-func (m *mockClient) FetchPageDebugInfo(_ context.Context) (*eversports.PageDebugInfo, error) {
-	return m.debugInfo, m.debugErr
 }
 
 func (m *mockClient) GetSlots(_ context.Context, _ string, _ []string, date string) ([]eversports.Slot, error) {
@@ -148,7 +142,7 @@ func TestGetVersion(t *testing.T) {
 	}
 }
 
-// ─── GET /api/v1/eversports/bookings ─────────────────────────────────────────
+// ─── GET /api/v1/eversports/matches ──────────────────────────────────────────
 
 func TestGetBookings_Success(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
@@ -159,7 +153,7 @@ func TestGetBookings_Success(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/bookings")
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +179,7 @@ func TestGetBookings_Error(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/bookings")
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,54 +395,6 @@ func TestCreateMatch_Error(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Errorf("want 502, got %d", resp.StatusCode)
-	}
-}
-
-// ─── GET /api/v1/eversports/debug-page ───────────────────────────────────────
-
-func TestDebugPage_Success(t *testing.T) {
-	info := &eversports.PageDebugInfo{
-		URL:         "https://www.eversports.de/user/bookings",
-		FinalURL:    "https://www.eversports.de/user/bookings",
-		Status:      200,
-		HasNextData: false,
-		HTMLSnippet: "<html>...",
-	}
-	mock := &mockClient{debugInfo: info}
-	srv := serve(newTestHandler(mock))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/debug-page")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200, got %d", resp.StatusCode)
-	}
-	var got eversports.PageDebugInfo
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.URL != info.URL {
-		t.Errorf("URL: want %q, got %q", info.URL, got.URL)
-	}
-}
-
-func TestDebugPage_Error(t *testing.T) {
-	mock := &mockClient{debugErr: errors.New("redirect detected")}
-	srv := serve(newTestHandler(mock))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/debug-page")
 	if err != nil {
 		t.Fatal(err)
 	}
