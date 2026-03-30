@@ -79,11 +79,9 @@ const htmlAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/
 // and HTML pages. Authentication is cookie-based: after login the `et` session
 // cookie is stored in the http.Client's CookieJar and sent automatically.
 type Client struct {
-	http         *http.Client
-	email        string
-	password     string
-	bookingsPath string // path for the SSR bookings page (used by debug-page endpoint)
-
+	http     *http.Client
+	email    string
+	password string
 	loginMu  sync.Mutex
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
@@ -102,19 +100,16 @@ type Client struct {
 }
 
 // New creates a new Eversports client.
-// bookingsPath is the URL path to the user's bookings page (e.g. "/user/bookings"),
-// used only by the debug-page diagnostic endpoint.
-func New(email, password, bookingsPath string, logger *slog.Logger) *Client {
+func New(email, password string, logger *slog.Logger) *Client {
 	jar, _ := cookiejar.New(nil) // never errors with nil options
 	return &Client{
 		http: &http.Client{
 			Jar:     jar,
 			Timeout: 30 * time.Second,
 		},
-		email:        email,
-		password:     password,
-		bookingsPath: bookingsPath,
-		logger:       logger,
+		email:    email,
+		password: password,
+		logger:   logger,
 	}
 }
 
@@ -255,37 +250,6 @@ func (c *Client) doAuthed(ctx context.Context, method, rawURL string, body io.Re
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return c.http.Do(req)
-}
-
-// doAuthedPage fetches an HTML page with the session cookie. It uses a
-// browser-style Accept header so the server returns rendered HTML rather than
-// JSON or a redirect. It also detects silent redirects: if the final URL after
-// following redirects differs from the requested URL, an error is returned so
-// callers can surface a clear "session expired / wrong path" message.
-func (c *Client) doAuthedPage(ctx context.Context, rawURL string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	setBrowserHeaders(req)
-	req.Header.Set("Accept", htmlAccept)
-	// Page navigation does not set Origin/X-Requested-With.
-	req.Header.Del("Origin")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Detect silent redirect: http.Client follows 3xx automatically, so by the
-	// time we see the response it is always 200. We compare the final URL to
-	// the original to catch login-page redirects.
-	if finalURL := resp.Request.URL.String(); finalURL != rawURL {
-		resp.Body.Close()
-		return nil, fmt.Errorf("%w: redirected from %s to %s (session may have expired or EVERSPORTS_BOOKINGS_PATH is wrong)", errUnauthorized, rawURL, finalURL)
-	}
-
-	return resp, nil
 }
 
 // hasCookie returns true if the CookieJar holds a cookie with the given name

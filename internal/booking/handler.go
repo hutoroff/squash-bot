@@ -21,7 +21,6 @@ type eversportsClient interface {
 	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
 	CancelMatch(ctx context.Context, matchID string) (*eversports.CancellationResult, error)
 	CreateBooking(ctx context.Context, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*eversports.BookingResult, error)
-	FetchPageDebugInfo(ctx context.Context) (*eversports.PageDebugInfo, error)
 	GetSlots(ctx context.Context, facilityID string, courtIDs []string, startDate string) ([]eversports.Slot, error)
 	GetCourts(ctx context.Context, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]eversports.Court, error)
 	GetFacility(ctx context.Context, slug string) (*eversports.Facility, error)
@@ -60,14 +59,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
 
-	mux.HandleFunc("GET /api/v1/eversports/bookings", h.getBookings)
+	mux.HandleFunc("GET /api/v1/eversports/matches", h.getBookings)
 	mux.HandleFunc("POST /api/v1/eversports/matches", h.createMatch)
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
 	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v1/eversports/facility", h.getFacility)
-	mux.HandleFunc("GET /api/v1/eversports/debug-page", h.debugPage)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -329,18 +327,4 @@ func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, facility)
-}
-
-// debugPage fetches the configured bookings page and returns diagnostic
-// information: the full __NEXT_DATA__ JSON if present, or the first 2000
-// characters of raw HTML if not. Use this to inspect what the page actually
-// returns and find the correct field paths for bookings data.
-func (h *Handler) debugPage(w http.ResponseWriter, r *http.Request) {
-	info, err := h.eversports.FetchPageDebugInfo(r.Context())
-	if err != nil {
-		h.logger.Error("eversports debug-page failed", "err", err)
-		writeError(w, http.StatusBadGateway, "debug-page failed: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, info)
 }

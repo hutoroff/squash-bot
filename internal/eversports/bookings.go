@@ -316,7 +316,7 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 
 		courts := parseCalendarHTML(string(respBytes))
 		if len(courts) == 0 {
-			return nil, fmt.Errorf("eversports: GetCourts: no courts found in calendar response — check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID or inspect the HTML with the debug-page endpoint")
+			c.logger.Warn("eversports: GetCourts: no courts found in calendar response — facility may be closed on this date, or check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID config")
 		}
 		c.logger.Info("eversports courts fetched", "count", len(courts))
 		return courts, nil
@@ -643,73 +643,6 @@ func (c *Client) CancelMatch(ctx context.Context, matchID string) (*Cancellation
 		return do()
 	}
 	return result, err
-}
-
-// ─── Debug-page helper ────────────────────────────────────────────────────────
-
-// PageDebugInfo is returned by FetchPageDebugInfo.
-type PageDebugInfo struct {
-	URL         string          `json:"url"`
-	FinalURL    string          `json:"final_url"`
-	Status      int             `json:"status"`
-	HasNextData bool            `json:"has_next_data"`
-	NextData    json.RawMessage `json:"next_data,omitempty"`
-	HTMLSnippet string          `json:"html_snippet,omitempty"`
-}
-
-// nextDataRe matches the JSON payload inside <script id="__NEXT_DATA__" ...>...</script>.
-var nextDataRe = regexp.MustCompile(`<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]*?)</script>`)
-
-// FetchPageDebugInfo fetches the configured bookings page and returns the raw
-// __NEXT_DATA__ JSON (or a 2000-char HTML snippet if not found). Use the
-// GET /api/v1/eversports/debug-page endpoint to call this interactively.
-// It logs in automatically if no session is held, and retries once if the page
-// redirects to login (session expired).
-func (c *Client) FetchPageDebugInfo(ctx context.Context) (*PageDebugInfo, error) {
-	do := func() (*PageDebugInfo, error) {
-		targetURL := baseURL + c.bookingsPath
-		resp, err := c.doAuthedPage(ctx, targetURL)
-		if err != nil {
-			return nil, fmt.Errorf("eversports: fetch page: %w", err)
-		}
-		defer resp.Body.Close()
-
-		info := &PageDebugInfo{
-			URL:      targetURL,
-			FinalURL: resp.Request.URL.String(),
-			Status:   resp.StatusCode,
-		}
-		pageBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("eversports: read page body: %w", err)
-		}
-		matches := nextDataRe.FindSubmatch(pageBytes)
-		if len(matches) < 2 {
-			snippet := pageBytes
-			if len(snippet) > 2000 {
-				snippet = snippet[:2000]
-			}
-			info.HTMLSnippet = string(snippet)
-			return info, nil
-		}
-		info.HasNextData = true
-		info.NextData = json.RawMessage(matches[1])
-		return info, nil
-	}
-
-	if err := c.EnsureLoggedIn(ctx); err != nil {
-		return nil, err
-	}
-	info, err := do()
-	// doAuthedPage wraps errUnauthorized when it detects a redirect to login.
-	if err != nil && errors.Is(err, errUnauthorized) {
-		c.invalidateSession()
-		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
-			return nil, loginErr
-		}
-		return do()
-	}
-	return info, err
 }
 
 // ─── Facility (venue profile) ─────────────────────────────────────────────────
