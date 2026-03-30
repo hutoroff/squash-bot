@@ -261,11 +261,11 @@ EVERSPORTS_EMAIL=            # required; Eversports account email
 EVERSPORTS_PASSWORD=         # required; Eversports account password
 INTERNAL_API_SECRET=         # required; bearer token for authenticating callers
 SERVER_PORT=8081             # default 8081
-EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for /games and /courts endpoints
-EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
-EVERSPORTS_SPORT_UUID=       # optional; UUID of the sport for booking creation and /courts endpoint (default: squash UUID b388b6e6-69de-11e8-bdc6-02bd505aa7b2)
-EVERSPORTS_FACILITY_SLUG=    # optional; facility slug from venue URL (e.g. "squash-house-berlin-03"); required for /courts endpoint
-EVERSPORTS_SPORT_ID=         # optional; numeric sport ID from booking calendar (e.g. "496" for squash); required for /courts endpoint
+EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for GET /matches and /courts endpoints
+EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for POST /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
+EVERSPORTS_SPORT_UUID=       # optional; UUID of the sport for GET /matches, POST /matches, and /courts (default: squash UUID b388b6e6-69de-11e8-bdc6-02bd505aa7b2)
+EVERSPORTS_FACILITY_SLUG=    # optional; facility slug from venue URL (e.g. "squash-house-berlin-03"); required for GET /matches and /courts
+EVERSPORTS_SPORT_ID=         # optional; numeric sport ID from booking calendar (e.g. "496" for squash); required for GET /matches and /courts
 EVERSPORTS_SPORT_SLUG=squash # default; sport slug used in /courts request
 EVERSPORTS_SPORT_NAME=Squash # default; sport display name used in /courts request
 LOG_LEVEL=INFO
@@ -283,20 +283,6 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - Session established via the `et` cookie (UUID, 30 days, httpOnly, secure, SameSite=None) set in the response
 - Response body may be empty; cookie presence in the jar is the success signal
 
-**Self** — `GET https://www.eversports.de/u/self`
-- Called lazily on the first `GetBookings` request (not during login) to retrieve the authenticated user's legacy numeric ID
-- Response: `{"status":"success","data":{"user":{"id":<number>,...}}}`
-- The `id` field is stored in the client and used by the bookings list endpoint
-
-**Bookings list** — `GET https://www.eversports.de/api/user/activities?userId=<numericID>&past=false`
-- Response: `{"status":"success","html":"<ul class=\"past-activities\"><li>...</li></ul>"}`
-- HTML fragment parsed with regex; each `<li>` contains:
-  - `data-match-relative-link="/match/<uuid>"` — match UUID (absent on some booking types)
-  - `<input id="google-calendar-start" value="YYYYMMDDTHHmmss">` / `google-calendar-end` — local venue time, no TZ
-  - `<input id="booking-sport" value="Squash">` / `facility-name`
-  - `<span class="session-info-value">Court 9</span>` — court name
-- `userId` is a **legacy numeric ID** fetched lazily from `GET /u/self` on the first `GetBookings` call
-
 **Single match** — `POST https://www.eversports.de/api/checkout` (GraphQL `Match` query by UUID)
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
@@ -304,7 +290,6 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - `New(email, password string, logger) *Client`
 - `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
 - `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
-- `GetBookings(ctx) ([]Booking, error)` — auto-logins if needed, calls activities endpoint, parses HTML; retries once on HTTP 401
 - `GetMatchByID(ctx, matchID string) (*Booking, error)` — auto-logins if needed, single match via GraphQL; retries once on HTTP 401
 - `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — auto-logins if needed; retries once on HTTP 401
 - `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401
@@ -320,11 +305,10 @@ Authentication with Eversports is handled automatically: the service logs in on 
 |--------|------|-------------|
 | `GET`  | `/health` | Liveness probe (no auth) |
 | `GET`  | `/version` | Service version (no auth) |
-| `GET`  | `/api/v1/eversports/matches` | List upcoming bookings |
+| `GET`  | `/api/v1/eversports/matches?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, `EVERSPORTS_SPORT_UUID` (courts are resolved dynamically) |
 | `POST` | `/api/v1/eversports/matches` | Create a booking; body `{courtUuid, start, end}` (RFC 3339); returns `{bookingUuid, bookingId, matchId}` (`matchId` omitted if match creation failed). Requires `EVERSPORTS_FACILITY_UUID` + `EVERSPORTS_SPORT_UUID` |
 | `GET`  | `/api/v1/eversports/matches/{id}` | Fetch single booking by match UUID (the `matchId` returned by `POST /matches`) |
 | `DELETE` | `/api/v1/eversports/matches/{id}` | Cancel a booking by match UUID (`matchId` from `POST /matches`, **not** `bookingUuid`); returns `{id, state, relativeLink}` |
-| `GET`  | `/api/v1/eversports/games?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true\|false]` | Court reservations for a date from the Eversports `/api/slot` endpoint. Each item is a time slot on a specific court; `booking != null` means reserved. Optional `startTime`/`endTime` filter to a time window (inclusive); optional `my` filters by user ownership (`isUserBookingOwner`). Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, `EVERSPORTS_SPORT_UUID` (courts are resolved dynamically) |
 | `GET`  | `/api/v1/eversports/courts` | List courts at the facility; returns `[{id, uuid, name}]`. Parses `POST /api/booking/calendar/update` HTML. Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG`, `EVERSPORTS_SPORT_ID`, `EVERSPORTS_SPORT_UUID` |
 | `GET`  | `/api/v1/eversports/facility?slug=<slug>` | Venue profile for a facility slug (e.g. `squash-house-berlin-03`); returns `{id, slug, name, rating, reviewCount, address, hideAddress, tags, contact, sports, city, company}`. `slug` query parameter is mandatory (400 if missing). |
 

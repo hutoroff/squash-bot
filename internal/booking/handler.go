@@ -17,7 +17,6 @@ import (
 // Defined as an interface to allow test doubles.
 // Authentication is handled automatically by the client implementation.
 type eversportsClient interface {
-	GetBookings(ctx context.Context) ([]eversports.Booking, error)
 	GetMatchByID(ctx context.Context, matchID string) (*eversports.Booking, error)
 	CancelMatch(ctx context.Context, matchID string) (*eversports.CancellationResult, error)
 	CreateBooking(ctx context.Context, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*eversports.BookingResult, error)
@@ -59,11 +58,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
 
-	mux.HandleFunc("GET /api/v1/eversports/matches", h.getBookings)
+	mux.HandleFunc("GET /api/v1/eversports/matches", h.listMatches)
 	mux.HandleFunc("POST /api/v1/eversports/matches", h.createMatch)
 	mux.HandleFunc("GET /api/v1/eversports/matches/{id}", h.getMatch)
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
-	mux.HandleFunc("GET /api/v1/eversports/games", h.getGames)
 	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v1/eversports/facility", h.getFacility)
 }
@@ -75,16 +73,6 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) getVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
-}
-
-func (h *Handler) getBookings(w http.ResponseWriter, r *http.Request) {
-	bookings, err := h.eversports.GetBookings(r.Context())
-	if err != nil {
-		h.logger.Error("eversports get bookings failed", "err", err)
-		writeError(w, http.StatusBadGateway, "eversports bookings failed: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, bookings)
 }
 
 func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +151,7 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// getGames returns court reservations for the given date from the
+// listMatches returns court reservations for the given date from the
 // Eversports /api/slot endpoint. Each item in the response is a time slot on a
 // specific court; slots where booking != null are already reserved.
 // Requires ?date=YYYY-MM-DD.
@@ -171,7 +159,7 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 // Optional ?my=true|false filters by whether the authenticated user owns the reservation.
 // EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and
 // EVERSPORTS_SPORT_UUID must be configured (same requirements as /courts).
-func (h *Handler) getGames(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 	if h.facilityID == "" || h.facilitySlug == "" || h.sportID == "" || h.sportUUID == "" {
 		writeError(w, http.StatusInternalServerError, "games endpoint requires EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and EVERSPORTS_SPORT_UUID to be configured")
 		return
