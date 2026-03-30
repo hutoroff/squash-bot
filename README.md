@@ -9,7 +9,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
-- The night before the game the bot notifies if the headcount is off (too few or too many players)
+- The night before the game the bot auto-cancels unused courts (if `SPORTS_BOOKING_SERVICE_URL` is set) and notifies the group with the outcome
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - The bot sends a weekly reminder to admins if no game is scheduled for the upcoming week
 
@@ -214,6 +214,7 @@ Guest spots count toward capacity.
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
+| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the sports-booking-service (e.g. `http://sports-booking-service:8081`); when set, the cancellation reminder automatically cancels unused courts via the Eversports API |
 
 ### telegram-squash-bot
 
@@ -240,7 +241,7 @@ A single 5-minute poll (configured via `CRON_POLL`) runs three tasks, each using
 | Booking reminder           | 10:00–10:05 (group TZ) | DMs group admins on configured game days with booking opening info.          |
 | Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.           |
 
-**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag.
+**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. Courts are selected using a consecutive-grouping algorithm: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 
 **Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). Message includes venue name and `venue.booking_opens_days`.
 

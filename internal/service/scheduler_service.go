@@ -15,15 +15,16 @@ import (
 )
 
 type SchedulerService struct {
-	api        *tgbotapi.BotAPI
-	gameRepo   *storage.GameRepo
-	partRepo   *storage.ParticipationRepo
-	guestRepo  *storage.GuestRepo
-	groupRepo  *storage.GroupRepo
-	venueRepo  *storage.VenueRepo
-	loc        *time.Location
-	logger     *slog.Logger
-	pollWindow time.Duration // half the configured poll interval; used as timing gate for reminders
+	api           *tgbotapi.BotAPI
+	gameRepo      *storage.GameRepo
+	partRepo      *storage.ParticipationRepo
+	guestRepo     *storage.GuestRepo
+	groupRepo     *storage.GroupRepo
+	venueRepo     *storage.VenueRepo
+	bookingClient BookingServiceClient // optional; nil disables automatic court cancellation
+	loc           *time.Location
+	logger        *slog.Logger
+	pollWindow    time.Duration // half the configured poll interval; used as timing gate for reminders
 }
 
 func NewSchedulerService(
@@ -33,20 +34,22 @@ func NewSchedulerService(
 	guestRepo *storage.GuestRepo,
 	groupRepo *storage.GroupRepo,
 	venueRepo *storage.VenueRepo,
+	bookingClient BookingServiceClient,
 	loc *time.Location,
 	logger *slog.Logger,
 	pollWindow time.Duration,
 ) *SchedulerService {
 	return &SchedulerService{
-		api:        api,
-		gameRepo:   gameRepo,
-		partRepo:   partRepo,
-		guestRepo:  guestRepo,
-		groupRepo:  groupRepo,
-		venueRepo:  venueRepo,
-		loc:        loc,
-		logger:     logger,
-		pollWindow: pollWindow,
+		api:           api,
+		gameRepo:      gameRepo,
+		partRepo:      partRepo,
+		guestRepo:     guestRepo,
+		groupRepo:     groupRepo,
+		venueRepo:     venueRepo,
+		bookingClient: bookingClient,
+		loc:           loc,
+		logger:        logger,
+		pollWindow:    pollWindow,
 	}
 }
 
@@ -130,31 +133,53 @@ func (s *SchedulerService) processCancellationReminder(ctx context.Context, game
 
 	count := registeredCount + guestCount
 	capacity := game.CourtsCount * 2
-	var action, text string
-
 	lz := s.groupLang(ctx, game.ChatID)
 
-	switch {
-	case count > capacity:
-		action = "over_capacity"
-		text = lz.Tf(i18n.SchedOverCapacity, count, capacity, game.CourtsCount)
-	case count < capacity:
-		action = "under_capacity"
-		text = lz.Tf(i18n.SchedUnderCapacity, count, capacity, game.CourtsCount)
-	default:
-		action = "skipped"
+	// Determine how many courts can be fully freed (each court needs 2 players).
+	courtsToCancel := 0
+	if count < capacity {
+		courtsToCancel = (capacity - count) / 2
+	}
+
+	// Attempt automatic court cancellation when a booking client is configured.
+	result, cancelErr := s.cancelUnusedCourts(ctx, game, courtsToCancel)
+	if cancelErr != nil {
+		s.logger.Error("cancellation reminder: court cancellation failed",
+			"game_id", game.ID, "err", cancelErr)
+		// Continue with notification even if cancellation failed; use no-op result.
+		result = buildNoOpResult(game)
+	}
+
+	gameDateTime := game.GameDate.Format("02.01 15:04")
+	newCourtsCount := result.remainingCount
+	newCapacity := newCourtsCount * 2
+	canceledStr := formatCanceledCourts(result.canceledCourts)
+
+	scenario := determineScenario(count, newCourtsCount, result.canceledCourts)
+
+	var text string
+	switch scenario {
+	case "all_canceled":
+		text = lz.Tf(i18n.SchedReminderAllCanceled, canceledStr, gameDateTime)
+	case "canceled_balanced":
+		text = lz.Tf(i18n.SchedReminderCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+	case "odd_canceled":
+		text = lz.Tf(i18n.SchedReminderOddCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+	case "odd_no_cancel":
+		text = lz.Tf(i18n.SchedReminderOddNoCancel, gameDateTime, count, newCapacity, newCourtsCount)
+	default: // all_good
+		text = lz.Tf(i18n.SchedReminderAllGood, gameDateTime, count, newCapacity, newCourtsCount)
 	}
 
 	s.logger.Info("cancellation reminder",
 		"game_id", game.ID,
 		"players", count,
 		"capacity", capacity,
-		"action", action,
+		"courts_to_cancel", courtsToCancel,
+		"canceled", len(result.canceledCourts),
+		"new_courts", newCourtsCount,
+		"scenario", scenario,
 	)
-
-	if action == "skipped" {
-		return
-	}
 
 	msg := tgbotapi.NewMessage(game.ChatID, text)
 	if _, err := s.api.Send(msg); err != nil {
@@ -359,6 +384,39 @@ func containsDay(gameDays string, day int) bool {
 		}
 	}
 	return false
+}
+
+// determineScenario classifies the outcome of a cancellation reminder into one of four
+// named scenarios used to select the notification message.
+//
+// count is the total registered player count.
+// newCourtsCount is the courts count after any cancellations.
+// canceledCourts are the court IDs that were successfully canceled (nil = none).
+// determineScenario classifies the outcome of a cancellation reminder into one of four
+// named scenarios used to select the notification message.
+//
+// count is the total registered player count.
+// newCourtsCount is the courts count after any cancellations.
+// canceledCourts are the court IDs that were successfully canceled (nil = none).
+//
+// "odd" scenarios only apply when count < newCapacity (there is an actual free spot).
+// When count >= newCapacity (at or over capacity) the outcome is "all_good".
+func determineScenario(count, newCourtsCount int, canceledCourts []int) string {
+	didCancel := len(canceledCourts) > 0
+	newCapacity := newCourtsCount * 2
+
+	switch {
+	case newCourtsCount == 0:
+		return "all_canceled"
+	case didCancel && count == newCapacity:
+		return "canceled_balanced"
+	case count < newCapacity && count%2 == 1 && didCancel:
+		return "odd_canceled"
+	case count < newCapacity && count%2 == 1:
+		return "odd_no_cancel"
+	default:
+		return "all_good"
+	}
 }
 
 // formatCompletedMessage renders the final game message without interactive buttons.

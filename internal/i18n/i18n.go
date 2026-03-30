@@ -45,6 +45,23 @@ const (
 	SchedWeeklyReminder  = "sched.weekly_reminder" // kept for backward compat; use SchedBookingReminder for new code
 	SchedBookingReminder = "sched.booking_reminder"
 
+	// Cancellation reminder — outcome scenarios (always sent).
+	// Scenario 1: no cancellation, player count is even and fits courts.
+	// Args: %s = game date+time, %d = player count, %d = capacity, %d = courts count
+	SchedReminderAllGood = "sched.reminder_all_good"
+	// Scenario 2: courts were canceled and player count is now perfectly balanced.
+	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = new capacity, %d = new courts count
+	SchedReminderCanceled = "sched.reminder_canceled"
+	// Scenario 3a: odd player count, no courts needed to be canceled.
+	// Args: %s = game date+time, %d = player count, %d = capacity, %d = courts count
+	SchedReminderOddNoCancel = "sched.reminder_odd_no_cancel"
+	// Scenario 3b: odd player count, some courts were canceled.
+	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = new capacity, %d = new courts count
+	SchedReminderOddCanceled = "sched.reminder_odd_canceled"
+	// Scenario 4: all courts were canceled — the game will not happen.
+	// Args: %s = canceled courts (all, comma-sep), %s = game date+time
+	SchedReminderAllCanceled = "sched.reminder_all_canceled"
+
 	// Game keyboard buttons
 	BtnImIn     = "btn.im_in"
 	BtnIllSkip  = "btn.ill_skip"
@@ -262,6 +279,12 @@ var translations = map[Lang]map[string]string{
 		SchedWeeklyReminder:  "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
 		SchedBookingReminder: "📅 Booking reminder for *%s*: booking opens in %d days. Don't forget to reserve your courts!",
 
+		SchedReminderAllGood:     "✅ Upcoming game on %s — all good! %d/%d players, %d courts confirmed.",
+		SchedReminderCanceled:    "✅ Courts %s canceled. Game on %s is all set! %d/%d players, %d courts.",
+		SchedReminderOddNoCancel: "⚠️ 1 free spot for the game on %s. %d/%d players, %d courts.",
+		SchedReminderOddCanceled: "⚠️ Courts %s canceled. 1 free spot for the game on %s. %d/%d players, %d courts.",
+		SchedReminderAllCanceled: "❌ All courts (%s) canceled for the game on %s. The game will not happen.",
+
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
 		BtnIllSkip:  "I'll skip",
@@ -473,6 +496,12 @@ var translations = map[Lang]map[string]string{
 		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
 		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Die Buchung öffnet in %d Tagen. Vergiss nicht, deine Plätze zu reservieren!",
 
+		SchedReminderAllGood:     "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze bestätigt.",
+		SchedReminderCanceled:    "✅ Plätze %s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze.",
+		SchedReminderOddNoCancel: "⚠️ 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze.",
+		SchedReminderOddCanceled: "⚠️ Plätze %s storniert. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze.",
+		SchedReminderAllCanceled: "❌ Alle Plätze (%s) für das Spiel am %s storniert. Das Spiel findet nicht statt.",
+
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
 		BtnIllSkip:  "Ich passe",
@@ -681,6 +710,12 @@ var translations = map[Lang]map[string]string{
 		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
 		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
 		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: бронирование откроется через %d дней. Не забудь зарезервировать корты!",
+
+		SchedReminderAllGood:     "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) подтверждено.",
+		SchedReminderCanceled:    "✅ Корт(а) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",
+		SchedReminderOddNoCancel: "⚠️ 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
+		SchedReminderOddCanceled: "⚠️ Корт(а) %s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
+		SchedReminderAllCanceled: "❌ Все корты (%s) отменены для игры %s. Игра не состоится.",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",

@@ -30,6 +30,9 @@ type ManagementConfig struct {
 	CronPoll          string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
 	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
 	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
+	// SportsBookingServiceURL is the base URL of the sports-booking-service. Optional.
+	// When set, the cancellation reminder will attempt to cancel unused courts automatically.
+	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {

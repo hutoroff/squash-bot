@@ -207,7 +207,21 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 ### Scheduled Tasks (Cron-based)
 A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunScheduledTasks()` which dispatches to three methods:
 
-- **`RunCancellationReminders()`**: Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity and notifies the group if over/under. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
+- **`RunCancellationReminders()`**: Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity, attempts automatic court cancellation (if `SPORTS_BOOKING_SERVICE_URL` is configured), and **always** sends a group notification. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
+
+  **Court cancellation flow** (when booking service URL is configured):
+  1. Computes `courtsToCancel = floor((capacity − count) / 2)` — fully unused courts (each needs 2 free spots).
+  2. Calls `GET /api/v1/eversports/matches?date=…&startTime=…&endTime=startTime+10m&my=true` to get own bookings.
+  3. Applies the consecutive-grouping selection algorithm: split booked courts by consecutive-run, pick from the smallest group (tie-break by lowest first court), cancel from the end of that group. Repeats until all courts-to-cancel are selected.
+  4. Cancels selected courts one-by-one via `DELETE /api/v1/eversports/matches/{matchUUID}`. Partial failures do not abort remaining cancellations.
+  5. Updates `games.courts` / `games.courts_count` in the DB.
+
+  **Notification scenarios** (always sent, determined after cancellation):
+  - `all_good` — count ≥ newCapacity or no free spots: "upcoming game, courts confirmed".
+  - `canceled_balanced` — courts canceled and count now == newCapacity: "courts X canceled, all set".
+  - `odd_no_cancel` — odd player count, nothing canceled, 1 free spot: "1 free spot".
+  - `odd_canceled` — odd player count, some courts canceled, 1 free spot: "courts X canceled, 1 free spot".
+  - `all_canceled` — all courts canceled: "game will not happen".
 
 - **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). If all conditions met, DMs all group admins with the venue name and `booking_opens_days`.
 
@@ -243,6 +257,8 @@ SERVER_PORT=8080             # default 8080
 CRON_POLL=*/5 * * * *        # default every 5 minutes
 LOG_LEVEL=INFO
 TIMEZONE=UTC
+SPORTS_BOOKING_SERVICE_URL=  # optional; e.g. http://sports-booking-service:8081
+                             # when set, cancellation reminder auto-cancels unused courts
 ```
 
 **`telegram-squash-bot`:**

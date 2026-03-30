@@ -84,7 +84,16 @@ func main() {
 		slog.Error("unsupported CRON_POLL value", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
-	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, loc, logger, pollWindow)
+
+	var bookingClient service.BookingServiceClient
+	if cfg.SportsBookingServiceURL != "" {
+		bookingClient = service.NewHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+		slog.Info("court auto-cancellation enabled", "booking_service", cfg.SportsBookingServiceURL)
+	} else {
+		slog.Info("court auto-cancellation disabled (SPORTS_BOOKING_SERVICE_URL not set)")
+	}
+
+	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, bookingClient, loc, logger, pollWindow)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
