@@ -10,8 +10,9 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
 - The night before the game the bot auto-cancels unused courts (if `SPORTS_BOOKING_SERVICE_URL` is set) and notifies the group with the outcome
+- At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and notifies the group
+- At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
-- The bot sends a weekly reminder to admins if no game is scheduled for the upcoming week
 
 ## Tech Stack
 
@@ -80,7 +81,9 @@ Add the bot to a Telegram group and grant it admin rights (required for pinning 
 
 In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores:
 - **Name**, **courts** (comma-separated), **time slots** (preset HH:MM options), **address** (optional)
-- **Game days** — weekdays when games are played (toggle keyboard). Used for the booking reminder.
+- **Game days** — weekdays when games are played (toggle keyboard). Used for the booking and auto-booking reminders.
+- **Preferred game time** — one of the configured time slots marked as the default. Used by auto-booking to pick the target slot at midnight.
+- **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM.
 - **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
 
 **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
@@ -298,7 +301,8 @@ Guest spots count toward capacity.
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the sports-booking-service (e.g. `http://sports-booking-service:8081`); when set, the cancellation reminder automatically cancels unused courts via the Eversports API |
+| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the sports-booking-service (e.g. `http://sports-booking-service:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
+| `AUTO_BOOKING_COURTS_COUNT`  | No | `3`              | Number of courts to book automatically at midnight; requires `SPORTS_BOOKING_SERVICE_URL` |
 
 ### telegram-squash-bot
 
@@ -317,17 +321,20 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 
 ## Scheduled Tasks
 
-A single 5-minute poll (configured via `CRON_POLL`) runs three tasks, each using per-group timezone and per-venue configuration:
+A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using per-group timezone and per-venue configuration:
 
-| Task                       | Trigger window      | What it does                                                                    |
-|----------------------------|---------------------|---------------------------------------------------------------------------------|
-| Cancellation reminder      | Any time (±2m30s)   | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.    |
-| Booking reminder           | 10:00–10:05 (group TZ) | DMs group admins on configured game days with booking opening info.          |
-| Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.           |
+| Task                       | Trigger window         | What it does                                                                          |
+|----------------------------|------------------------|---------------------------------------------------------------------------------------|
+| Auto-booking               | 00:00–00:05 (group TZ) | Books courts for the preferred time on configured game days when booking opens.       |
+| Cancellation reminder      | Any time (±2m30s)      | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.         |
+| Booking reminder           | 10:00–10:05 (group TZ) | DMs admins on configured game days with booking info (or confirms auto-booking ran).  |
+| Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.                    |
+
+**Auto-booking**: fires at midnight in each group's timezone on configured game days, for venues with `preferred_game_time` set. Deduped via `venue.last_auto_booking_at` (one per calendar day). Requires `SPORTS_BOOKING_SERVICE_URL`. Queries available (unbooked) slots in a ±10-minute window around `preferred_game_time` for the date `today + booking_opens_days`, then books up to `AUTO_BOOKING_COURTS_COUNT` courts. On full success, sends a group notification. On partial or full failure, silently DMs all group admins.
 
 **Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. Courts are selected using a consecutive-grouping algorithm: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 
-**Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). Message includes venue name and `venue.booking_opens_days`.
+**Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). If auto-booking already ran today (`venue.last_auto_booking_at` is set), sends a group confirmation message instead of a DM. Otherwise DMs all group admins with the venue name and `venue.booking_opens_days`.
 
 **Timezone**: set per group via `/language` → "🕐 Set Timezone" → select from curated list of 18 IANA timezones. Default is UTC.
 

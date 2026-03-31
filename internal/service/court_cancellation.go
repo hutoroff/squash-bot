@@ -59,7 +59,7 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	startHHMM := game.GameDate.UTC().Format("1504")
 	endHHMM := game.GameDate.UTC().Add(10 * time.Minute).Format("1504")
 
-	slots, err := s.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM)
+	slots, err := s.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
 	if err != nil {
 		return nil, fmt.Errorf("list matches: %w", err)
 	}

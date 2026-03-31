@@ -19,4 +19,5 @@ type Venue struct {
 	BookingOpensDays      int        `json:"booking_opens_days"`                 // days in advance courts booking becomes available (default 14)
 	LastBookingReminderAt *time.Time `json:"last_booking_reminder_at,omitempty"` // dedup: last time booking reminder was sent
 	PreferredGameTime     string     `json:"preferred_game_time"`                // preferred HH:MM time slot for new games, must be one of time_slots (empty = no preference)
+	LastAutoBookingAt     *time.Time `json:"last_auto_booking_at,omitempty"`     // dedup: last time auto-booking was performed
 }

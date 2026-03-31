@@ -220,8 +220,10 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	courtIDs := make([]string, len(courts))
+	courtUUIDByID := make(map[string]string, len(courts))
 	for i, c := range courts {
 		courtIDs[i] = c.ID
+		courtUUIDByID[c.ID] = c.UUID
 	}
 
 	slots, err := h.eversports.GetSlots(r.Context(), h.facilityID, courtIDs, date)
@@ -233,7 +235,20 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 
 	slots = filterSlots(slots, date, startTime, endTime, myFilter)
 
-	writeJSON(w, http.StatusOK, slots)
+	// Enrich each slot with the court UUID so callers can book without a separate /courts call.
+	type slotWithCourtUUID struct {
+		eversports.Slot
+		CourtUUID string `json:"courtUuid,omitempty"`
+	}
+	enriched := make([]slotWithCourtUUID, len(slots))
+	for i, s := range slots {
+		enriched[i] = slotWithCourtUUID{
+			Slot:      s,
+			CourtUUID: courtUUIDByID[strconv.Itoa(s.Court)],
+		}
+	}
+
+	writeJSON(w, http.StatusOK, enriched)
 }
 
 // parseHHMM validates and returns a 4-digit HHMM time string (e.g. "1830").

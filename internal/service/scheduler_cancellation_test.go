@@ -26,13 +26,17 @@ type mockBookingClient struct {
 	cancelCalls []string // UUIDs passed to CancelMatch
 }
 
-func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string) ([]BookingSlot, error) {
+func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string, _ bool) ([]BookingSlot, error) {
 	return m.slots, m.listErr
 }
 
 func (m *mockBookingClient) CancelMatch(_ context.Context, uuid string) error {
 	m.cancelCalls = append(m.cancelCalls, uuid)
 	return m.cancelErr
+}
+
+func (m *mockBookingClient) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+	return nil, nil
 }
 
 // ── test helpers ──────────────────────────────────────────────────────────────
@@ -261,11 +265,14 @@ type mockBookingClientCustomCancel struct {
 	cancelFn func(uuid string) error
 }
 
-func (m *mockBookingClientCustomCancel) ListMatches(_ context.Context, _, _, _ string) ([]BookingSlot, error) {
+func (m *mockBookingClientCustomCancel) ListMatches(_ context.Context, _, _, _ string, _ bool) ([]BookingSlot, error) {
 	return m.slots, nil
 }
 func (m *mockBookingClientCustomCancel) CancelMatch(_ context.Context, uuid string) error {
 	return m.cancelFn(uuid)
+}
+func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+	return nil, nil
 }
 
 // ── determineScenario tests ───────────────────────────────────────────────────

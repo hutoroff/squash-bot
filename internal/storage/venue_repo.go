@@ -22,7 +22,7 @@ func (r *VenueRepo) Create(ctx context.Context, venue *models.Venue) (*models.Ve
 		INSERT INTO venues (group_id, name, courts, time_slots, address, grace_period_hours, game_days, booking_opens_days, preferred_game_time)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
-		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time`
+		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time, last_auto_booking_at`
 
 	slog.Debug("VenueRepo.Create", "group_id", venue.GroupID, "name", venue.Name)
 
@@ -36,7 +36,7 @@ func (r *VenueRepo) Create(ctx context.Context, venue *models.Venue) (*models.Ve
 func (r *VenueRepo) GetByID(ctx context.Context, id int64) (*models.Venue, error) {
 	const q = `
 		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
-		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time, last_auto_booking_at
 		FROM venues WHERE id = $1`
 
 	slog.Debug("VenueRepo.GetByID", "id", id)
@@ -49,7 +49,7 @@ func (r *VenueRepo) GetByID(ctx context.Context, id int64) (*models.Venue, error
 func (r *VenueRepo) GetByIDAndGroupID(ctx context.Context, id, groupID int64) (*models.Venue, error) {
 	const q = `
 		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
-		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time, last_auto_booking_at
 		FROM venues WHERE id = $1 AND group_id = $2`
 
 	slog.Debug("VenueRepo.GetByIDAndGroupID", "id", id, "group_id", groupID)
@@ -61,7 +61,7 @@ func (r *VenueRepo) GetByIDAndGroupID(ctx context.Context, id, groupID int64) (*
 func (r *VenueRepo) GetByGroupID(ctx context.Context, groupID int64) ([]*models.Venue, error) {
 	const q = `
 		SELECT id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
-		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time
+		       grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time, last_auto_booking_at
 		FROM venues WHERE group_id = $1 ORDER BY name`
 
 	slog.Debug("VenueRepo.GetByGroupID", "group_id", groupID)
@@ -91,7 +91,7 @@ func (r *VenueRepo) Update(ctx context.Context, venue *models.Venue) (*models.Ve
 		    preferred_game_time = $8
 		WHERE id = $9 AND group_id = $10
 		RETURNING id, group_id, name, courts, time_slots, COALESCE(address, ''), created_at,
-		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time`
+		          grace_period_hours, game_days, booking_opens_days, last_booking_reminder_at, preferred_game_time, last_auto_booking_at`
 
 	slog.Debug("VenueRepo.Update", "id", venue.ID, "group_id", venue.GroupID)
 
@@ -126,12 +126,20 @@ func (r *VenueRepo) SetLastBookingReminderAt(ctx context.Context, venueID int64)
 	return err
 }
 
+// SetLastAutoBookingAt marks the auto-booking as performed now for a venue.
+func (r *VenueRepo) SetLastAutoBookingAt(ctx context.Context, venueID int64) error {
+	const q = `UPDATE venues SET last_auto_booking_at = now() WHERE id = $1`
+	slog.Debug("VenueRepo.SetLastAutoBookingAt", "venue_id", venueID)
+	_, err := r.pool.Exec(ctx, q, venueID)
+	return err
+}
+
 func scanVenue(s scanner) (*models.Venue, error) {
 	var v models.Venue
 	err := s.Scan(
 		&v.ID, &v.GroupID, &v.Name, &v.Courts, &v.TimeSlots, &v.Address, &v.CreatedAt,
 		&v.GracePeriodHours, &v.GameDays, &v.BookingOpensDays, &v.LastBookingReminderAt,
-		&v.PreferredGameTime,
+		&v.PreferredGameTime, &v.LastAutoBookingAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan venue: %w", err)

@@ -15,16 +15,17 @@ import (
 )
 
 type SchedulerService struct {
-	api           *tgbotapi.BotAPI
-	gameRepo      *storage.GameRepo
-	partRepo      *storage.ParticipationRepo
-	guestRepo     *storage.GuestRepo
-	groupRepo     *storage.GroupRepo
-	venueRepo     *storage.VenueRepo
-	bookingClient BookingServiceClient // optional; nil disables automatic court cancellation
-	loc           *time.Location
-	logger        *slog.Logger
-	pollWindow    time.Duration // half the configured poll interval; used as timing gate for reminders
+	api                    *tgbotapi.BotAPI
+	gameRepo               *storage.GameRepo
+	partRepo               *storage.ParticipationRepo
+	guestRepo              *storage.GuestRepo
+	groupRepo              *storage.GroupRepo
+	venueRepo              *storage.VenueRepo
+	bookingClient          BookingServiceClient // optional; nil disables automatic court cancellation and auto-booking
+	loc                    *time.Location
+	logger                 *slog.Logger
+	pollWindow             time.Duration // half the configured poll interval; used as timing gate for reminders
+	autoBookingCourtsCount int           // number of courts to book automatically at midnight
 }
 
 func NewSchedulerService(
@@ -38,24 +39,27 @@ func NewSchedulerService(
 	loc *time.Location,
 	logger *slog.Logger,
 	pollWindow time.Duration,
+	autoBookingCourtsCount int,
 ) *SchedulerService {
 	return &SchedulerService{
-		api:           api,
-		gameRepo:      gameRepo,
-		partRepo:      partRepo,
-		guestRepo:     guestRepo,
-		groupRepo:     groupRepo,
-		venueRepo:     venueRepo,
-		bookingClient: bookingClient,
-		loc:           loc,
-		logger:        logger,
-		pollWindow:    pollWindow,
+		api:                    api,
+		gameRepo:               gameRepo,
+		partRepo:               partRepo,
+		guestRepo:              guestRepo,
+		groupRepo:              groupRepo,
+		venueRepo:              venueRepo,
+		bookingClient:          bookingClient,
+		loc:                    loc,
+		logger:                 logger,
+		pollWindow:             pollWindow,
+		autoBookingCourtsCount: autoBookingCourtsCount,
 	}
 }
 
 // RunScheduledTasks is called by the single poll cron (default every 5 minutes).
-// It dispatches to all three scheduler tasks.
+// It dispatches to all scheduler tasks.
 func (s *SchedulerService) RunScheduledTasks() {
+	s.RunAutoBooking()
 	s.RunCancellationReminders()
 	s.RunBookingReminders()
 	s.RunDayAfterCleanup()
@@ -240,7 +244,18 @@ func (s *SchedulerService) RunBookingReminders() {
 				continue
 			}
 
-			if s.sendBookingReminderToAdmins(ctx, g.ChatID, venue, lz) {
+			// If auto-booking was done today, send a group notification instead of DM reminder.
+			autoBookedToday := venue.LastAutoBookingAt != nil &&
+				venue.LastAutoBookingAt.In(groupTZ).Format("2006-01-02") == todayStr
+
+			var sent bool
+			if autoBookedToday && venue.PreferredGameTime != "" {
+				sent = s.sendAutoBookingGroupNotification(ctx, g.ChatID, venue, localNow, lz)
+			} else {
+				sent = s.sendBookingReminderToAdmins(ctx, g.ChatID, venue, lz)
+			}
+
+			if sent {
 				if err := s.venueRepo.SetLastBookingReminderAt(ctx, venue.ID); err != nil {
 					s.logger.Error("booking reminder: update last sent", "venue_id", venue.ID, "err", err)
 				}
@@ -282,6 +297,31 @@ func (s *SchedulerService) sendBookingReminderToAdmins(ctx context.Context, chat
 		sent++
 	}
 	return sent > 0
+}
+
+// sendAutoBookingGroupNotification sends a group message confirming auto-booking was done.
+// Used by RunBookingReminders when auto-booking already ran today for the venue.
+// Returns true if the message was sent successfully.
+func (s *SchedulerService) sendAutoBookingGroupNotification(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	localNow time.Time,
+	lz *i18n.Localizer,
+) bool {
+	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
+	gameDateStr := fmt.Sprintf("%d-%02d-%02d", gameDate.Year(), gameDate.Month(), gameDate.Day())
+
+	text := lz.Tf(i18n.SchedBookingReminderAutoBooked, venue.Name, gameDateStr, venue.PreferredGameTime)
+	msg := tgbotapi.NewMessage(chatID, text)
+	if _, err := s.api.Send(msg); err != nil {
+		s.logger.Error("booking reminder: send auto-booking group notification",
+			"chat_id", chatID, "venue_id", venue.ID, "err", err)
+		return false
+	}
+	s.logger.Info("booking reminder: auto-booking group notification sent",
+		"chat_id", chatID, "venue_id", venue.ID)
+	return true
 }
 
 // RunDayAfterCleanup unpins and closes yesterday's games.

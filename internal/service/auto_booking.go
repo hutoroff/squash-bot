@@ -1,0 +1,248 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/vkhutorov/squash_bot/internal/models"
+)
+
+// autoBookingCourtDuration is the duration of a court booking created automatically.
+// Standard squash booking is 1 hour.
+const autoBookingCourtDuration = 60 * time.Minute
+
+// RunAutoBooking attempts to automatically book courts for upcoming game days
+// when booking opens. Fires in the [00:00, 00:05) window of each group's timezone
+// on configured game days. Requires bookingClient to be set.
+func (s *SchedulerService) RunAutoBooking() {
+	if s.bookingClient == nil {
+		return
+	}
+	s.logger.Info("auto-booking check started")
+	ctx := context.Background()
+	now := time.Now()
+
+	groups, err := s.groupRepo.GetAll(ctx)
+	if err != nil {
+		s.logger.Error("auto-booking: get groups", "err", err)
+		return
+	}
+
+	booked := 0
+	for _, g := range groups {
+		groupTZ := s.groupTimezone(&g)
+		localNow := now.In(groupTZ)
+
+		// Only fire in the [00:00, 00:05) window in the group's local time.
+		if localNow.Hour() != 0 || localNow.Minute() >= 5 {
+			continue
+		}
+
+		venues, err := s.venueRepo.GetByGroupID(ctx, g.ChatID)
+		if err != nil {
+			s.logger.Error("auto-booking: get venues", "chat_id", g.ChatID, "err", err)
+			continue
+		}
+
+		todayWd := int(localNow.Weekday())
+		todayStr := localNow.Format("2006-01-02")
+		lz := i18n.New(i18n.Normalize(g.Language))
+
+		for _, venue := range venues {
+			if venue.GameDays == "" || venue.PreferredGameTime == "" || venue.Courts == "" {
+				continue
+			}
+			if !containsDay(venue.GameDays, todayWd) {
+				continue
+			}
+			// Dedup: skip if already booked today in this group's timezone.
+			if venue.LastAutoBookingAt != nil &&
+				venue.LastAutoBookingAt.In(groupTZ).Format("2006-01-02") == todayStr {
+				s.logger.Info("auto-booking: already done today", "venue_id", venue.ID)
+				continue
+			}
+
+			if s.processAutoBookingForVenue(ctx, g.ChatID, venue, localNow, groupTZ, lz) {
+				booked++
+			}
+		}
+	}
+	s.logger.Info("auto-booking done", "venues_booked", booked)
+}
+
+// processAutoBookingForVenue attempts to book courts for a single venue.
+// Returns true if the auto-booking timestamp should be updated (at least one court booked).
+func (s *SchedulerService) processAutoBookingForVenue(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	localNow time.Time,
+	groupTZ *time.Location,
+	lz *i18n.Localizer,
+) bool {
+	// Game date = today + BookingOpensDays in group timezone.
+	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
+	gameDateStr := fmt.Sprintf("%d-%02d-%02d", gameDate.Year(), gameDate.Month(), gameDate.Day())
+
+	// Parse preferred game time "HH:MM" into a concrete time.Time for booking.
+	gameStart, err := parsePreferredTime(gameDateStr, venue.PreferredGameTime, groupTZ)
+	if err != nil {
+		s.logger.Error("auto-booking: parse preferred time",
+			"venue_id", venue.ID, "preferred_time", venue.PreferredGameTime, "err", err)
+		return false
+	}
+
+	// Time window for availability check: preferred time ±0/+10 min (narrow window), converted to UTC.
+	checkEndHHMM := gameStart.UTC().Add(10 * time.Minute).Format("1504")
+	checkStartHHMM := gameStart.UTC().Format("1504")
+	checkDateUTC := gameStart.UTC().Format("2006-01-02")
+
+	// Fetch all non-user-owned slots at the preferred time to find available courts.
+	slots, err := s.bookingClient.ListMatches(ctx, checkDateUTC, checkStartHHMM, checkEndHHMM, false)
+	if err != nil {
+		s.logger.Error("auto-booking: list available slots",
+			"venue_id", venue.ID, "date", checkDateUTC, "err", err)
+		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		return false
+	}
+
+	// Build the set of court IDs configured for this venue.
+	venueCourts := make(map[int]bool)
+	for _, c := range strings.Split(venue.Courts, ",") {
+		if t := strings.TrimSpace(c); t != "" {
+			if id, err := strconv.Atoi(t); err == nil {
+				venueCourts[id] = true
+			}
+		}
+	}
+
+	// Collect available (unbooked) court UUIDs restricted to venue courts.
+	available := filterAvailableCourts(slots, venueCourts)
+
+	if len(available) == 0 {
+		s.logger.Info("auto-booking: no available courts",
+			"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime)
+		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		return false
+	}
+
+	// Book up to autoBookingCourtsCount courts.
+	target := s.autoBookingCourtsCount
+	if target > len(available) {
+		target = len(available)
+	}
+
+	gameEnd := gameStart.Add(autoBookingCourtDuration)
+	startRFC := gameStart.UTC().Format(time.RFC3339)
+	endRFC := gameEnd.UTC().Format(time.RFC3339)
+
+	bookedCount := 0
+	for i := 0; i < target; i++ {
+		courtUUID := available[i]
+		if _, err := s.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
+			s.logger.Error("auto-booking: book court failed",
+				"venue_id", venue.ID, "court_uuid", courtUUID, "err", err)
+			continue
+		}
+		s.logger.Info("auto-booking: court booked",
+			"venue_id", venue.ID, "court_uuid", courtUUID, "date", gameDateStr, "time", venue.PreferredGameTime)
+		bookedCount++
+	}
+
+	if bookedCount == 0 {
+		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		return false
+	}
+
+	// Set dedup timestamp before sending notifications (so partial success is still recorded).
+	if err := s.venueRepo.SetLastAutoBookingAt(ctx, venue.ID); err != nil {
+		s.logger.Error("auto-booking: update last auto booking at", "venue_id", venue.ID, "err", err)
+	}
+
+	// Notify the group about the successful auto-booking.
+	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, venue.PreferredGameTime)
+	msg := tgbotapi.NewMessage(chatID, text)
+	if _, err := s.api.Send(msg); err != nil {
+		s.logger.Error("auto-booking: send group notification",
+			"venue_id", venue.ID, "chat_id", chatID, "err", err)
+	}
+
+	// If fewer courts were booked than requested, notify admins about the shortfall.
+	if bookedCount < s.autoBookingCourtsCount {
+		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, s.autoBookingCourtsCount, lz)
+	}
+
+	return true
+}
+
+// notifyAutoBookingFailure DMs all group admins about an auto-booking failure or partial success.
+// Messages are sent silently (DisableNotification=true).
+func (s *SchedulerService) notifyAutoBookingFailure(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDateStr, preferredHHMM string,
+	bookedCount, targetCount int,
+	lz *i18n.Localizer,
+) {
+	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		s.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+
+	text := lz.Tf(i18n.SchedAutoBookingFailDM, venue.Name, gameDateStr, preferredHHMM, bookedCount, targetCount)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.DisableNotification = true
+		if _, err := s.api.Send(msg); err != nil {
+			s.logger.Error("auto-booking: send failure DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+			continue
+		}
+		s.logger.Info("auto-booking: failure DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+	}
+}
+
+// filterAvailableCourts returns the UUIDs of unbooked courts from slots that
+// belong to the given venue court set (keyed by numeric Eversports court ID).
+// Duplicate UUIDs (multiple slots for the same court within the query window)
+// are deduplicated so that each court is booked at most once.
+func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool) []string {
+	seen := make(map[string]bool)
+	var available []string
+	for _, sl := range slots {
+		if sl.Booking == nil && sl.CourtUUID != "" && venueCourts[sl.Court] && !seen[sl.CourtUUID] {
+			seen[sl.CourtUUID] = true
+			available = append(available, sl.CourtUUID)
+		}
+	}
+	return available
+}
+
+// parsePreferredTime parses a "HH:MM" preferred time and "YYYY-MM-DD" date string
+// in the given timezone into a concrete time.Time for booking.
+func parsePreferredTime(gameDateStr, preferredTime string, loc *time.Location) (time.Time, error) {
+	parts := strings.SplitN(preferredTime, ":", 2)
+	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
+		return time.Time{}, fmt.Errorf("invalid preferred time format %q, expected HH:MM", preferredTime)
+	}
+
+	dt, err := time.ParseInLocation("2006-01-02 15:04", gameDateStr+" "+preferredTime, loc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse game datetime: %w", err)
+	}
+	return dt, nil
+}

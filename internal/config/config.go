@@ -31,8 +31,12 @@ type ManagementConfig struct {
 	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
 	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
 	// SportsBookingServiceURL is the base URL of the sports-booking-service. Optional.
-	// When set, the cancellation reminder will attempt to cancel unused courts automatically.
+	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
+	// and the auto-booking scheduler will book courts when booking opens at midnight.
 	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
+	// AutoBookingCourtsCount is the number of courts to book automatically at midnight
+	// when booking opens. Requires SPORTS_BOOKING_SERVICE_URL to be set.
+	AutoBookingCourtsCount int `env:"AUTO_BOOKING_COURTS_COUNT" envDefault:"3"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {

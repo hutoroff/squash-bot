@@ -18,6 +18,8 @@ func (h *Handler) triggerScheduler(w http.ResponseWriter, r *http.Request) {
 		job = h.scheduler.RunDayAfterCleanup
 	case "booking_reminder":
 		job = h.scheduler.RunBookingReminders
+	case "auto_booking":
+		job = h.scheduler.RunAutoBooking
 	default:
 		writeError(w, http.StatusBadRequest, "unknown event: "+event)
 		return

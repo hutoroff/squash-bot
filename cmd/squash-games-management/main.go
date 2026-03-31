@@ -87,13 +87,19 @@ func main() {
 
 	var bookingClient service.BookingServiceClient
 	if cfg.SportsBookingServiceURL != "" {
+		if cfg.AutoBookingCourtsCount <= 0 {
+			slog.Error("AUTO_BOOKING_COURTS_COUNT must be a positive integer", "value", cfg.AutoBookingCourtsCount)
+			os.Exit(1)
+		}
 		bookingClient = service.NewHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
-		slog.Info("court auto-cancellation enabled", "booking_service", cfg.SportsBookingServiceURL)
+		slog.Info("booking service enabled",
+			"booking_service", cfg.SportsBookingServiceURL,
+			"auto_booking_courts", cfg.AutoBookingCourtsCount)
 	} else {
-		slog.Info("court auto-cancellation disabled (SPORTS_BOOKING_SERVICE_URL not set)")
+		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
 
-	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, bookingClient, loc, logger, pollWindow)
+	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, bookingClient, loc, logger, pollWindow, cfg.AutoBookingCourtsCount)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {

@@ -49,7 +49,7 @@ Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
 - `guest_participations`: id, game_id, invited_by_player_id, created_at
 - `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), timezone (VARCHAR(64) DEFAULT 'UTC'), added_at
-- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), created_at, UNIQUE(group_id, name)
+- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), last_auto_booking_at (TIMESTAMPTZ nullable), created_at, UNIQUE(group_id, name)
 
 ## Development Commands
 
@@ -206,7 +206,7 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 6. Log action at INFO level
 
 ### Scheduled Tasks (Cron-based)
-A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunScheduledTasks()` which dispatches to three methods:
+A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunScheduledTasks()` which dispatches to four methods:
 
 - **`RunCancellationReminders()`**: Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity, attempts automatic court cancellation (if `SPORTS_BOOKING_SERVICE_URL` is configured), and **always** sends a group notification. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
 
@@ -224,11 +224,17 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
   - `odd_canceled` — odd player count, some courts canceled, 1 free spot: "courts X canceled, 1 free spot".
   - `all_canceled` — all courts canceled: "game will not happen".
 
-- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). If all conditions met, DMs all group admins with the venue name and `booking_opens_days`.
+- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`.
+
+- **`RunAutoBooking()`**: Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
+  1. Fetches available (unbooked) slots at `preferred_game_time` ± 10 min via `ListMatches(my=false)` for the date `today + booking_opens_days`.
+  2. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (1 hour each) via `BookMatch`.
+  3. On success: sends group notification; sets `last_auto_booking_at`.
+  4. On partial/full failure: immediately DMs all group admins silently (no notification sound).
 
 - **`RunDayAfterCleanup()`**: Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
 
-Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`.
+Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`, `auto_booking`.
 
 ### Admin & Group Management
 - **Group admin rights** are verified dynamically per group via `GetChatAdministrators` — no hardcoded IDs; this controls game creation, player/guest management, and all `/games` actions
@@ -259,7 +265,10 @@ CRON_POLL=*/5 * * * *        # default every 5 minutes
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 SPORTS_BOOKING_SERVICE_URL=  # optional; e.g. http://sports-booking-service:8081
-                             # when set, cancellation reminder auto-cancels unused courts
+                             # when set, enables: cancellation reminder auto-cancels courts,
+                             # and RunAutoBooking auto-books courts at midnight when booking opens
+AUTO_BOOKING_COURTS_COUNT=3  # optional; courts to auto-book at midnight (default 3)
+                             # requires SPORTS_BOOKING_SERVICE_URL
 ```
 
 **`telegram-squash-bot`:**

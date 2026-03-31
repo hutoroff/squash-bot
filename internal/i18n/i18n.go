@@ -45,6 +45,17 @@ const (
 	SchedWeeklyReminder  = "sched.weekly_reminder" // kept for backward compat; use SchedBookingReminder for new code
 	SchedBookingReminder = "sched.booking_reminder"
 
+	// Auto-booking notifications.
+	// Group message when auto-booking succeeds.
+	// Args: %d = courts booked, %s = venue name, %s = game date (YYYY-MM-DD), %s = preferred time (HH:MM)
+	SchedAutoBookingSuccess = "sched.auto_booking_success"
+	// Booking reminder group message when auto-booking was already done today.
+	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = preferred time (HH:MM)
+	SchedBookingReminderAutoBooked = "sched.booking_reminder_auto_booked"
+	// DM to admins when auto-booking partially failed or fully failed.
+	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = preferred time (HH:MM), %d = booked count, %d = target count
+	SchedAutoBookingFailDM = "sched.auto_booking_fail_dm"
+
 	// Cancellation reminder — outcome scenarios (always sent).
 	// Scenario 1: no cancellation, player count is even and fits courts.
 	// Args: %s = game date+time, %d = player count, %d = capacity, %d = courts count
@@ -489,6 +500,11 @@ var translations = map[Lang]map[string]string{
 		MonthShortOctober:   "Oct",
 		MonthShortNovember:  "Nov",
 		MonthShortDecember:  "Dec",
+
+		// Auto-booking
+		SchedAutoBookingSuccess:        "🤖 Auto-booked %d courts for %s on %s at %s.",
+		SchedBookingReminderAutoBooked: "🤖 Courts were automatically booked for %s on %s at %s. All set!",
+		SchedAutoBookingFailDM:         "⚠️ Auto-booking for %s on %s at %s: booked %d of %d courts. Please book the remaining courts manually.",
 	},
 
 	De: {
@@ -709,6 +725,11 @@ var translations = map[Lang]map[string]string{
 		MonthShortOctober:   "Okt",
 		MonthShortNovember:  "Nov",
 		MonthShortDecember:  "Dez",
+
+		// Auto-booking
+		SchedAutoBookingSuccess:        "🤖 %d Plätze automatisch gebucht für %s am %s um %s.",
+		SchedBookingReminderAutoBooked: "🤖 Plätze wurden automatisch gebucht für %s am %s um %s. Alles klar!",
+		SchedAutoBookingFailDM:         "⚠️ Automatische Buchung für %s am %s um %s: %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
 	},
 
 	Ru: {
@@ -929,6 +950,11 @@ var translations = map[Lang]map[string]string{
 		MonthShortOctober:   "окт",
 		MonthShortNovember:  "ноя",
 		MonthShortDecember:  "дек",
+
+		// Auto-booking
+		SchedAutoBookingSuccess:        "🤖 Автоматически забронировано %d кортов для %s на %s в %s.",
+		SchedBookingReminderAutoBooked: "🤖 Корты автоматически забронированы для %s на %s в %s. Всё готово!",
+		SchedAutoBookingFailDM:         "⚠️ Автобронирование для %s на %s в %s: забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
 	},
 }
 
