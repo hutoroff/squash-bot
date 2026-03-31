@@ -49,7 +49,7 @@ Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
 - `guest_participations`: id, game_id, invited_by_player_id, created_at
 - `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), timezone (VARCHAR(64) DEFAULT 'UTC'), added_at
-- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), created_at, UNIQUE(group_id, name)
+- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), created_at, UNIQUE(group_id, name)
 
 ## Development Commands
 
@@ -153,7 +153,7 @@ Works in **private chat only**.
 
 1. Admin sends `/venues` → shows venue list for their group (or group picker if multiple groups).
 2. Each venue row shows "Edit" and "Delete" buttons; "Add Venue" button at the bottom.
-3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → address (optional, `-` to skip) → game days (toggle inline keyboard, `-` to skip) → grace period hours (integer or `-` for default 24) → venue created.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if no time_slots entered) → address (optional, `-` to skip) → game days (toggle inline keyboard, `-` to skip) → grace period hours (integer or `-` for default 24) → venue created.
 4. **Edit venue**: clicking a venue opens an edit menu with buttons for each field (Name, Courts, Time Slots, Address, Game Days, Grace Period). Admin sends new value as free text, except for Game Days which uses the toggle keyboard.
 5. **Delete venue**: two-step confirmation; linked games retain their `venue_id` as NULL (ON DELETE SET NULL).
 
@@ -161,9 +161,10 @@ Works in **private chat only**.
 - `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder time = `game_date - (grace_period_hours + 6) hours`.
 - `game_days`: comma-separated weekday ints (Go `time.Weekday`: Sunday=0, Monday=1, …, Saturday=6). Used for booking reminder schedule.
 - `booking_opens_days`: how many days ahead booking opens (default 14). Included in booking reminder DM text.
+- `preferred_game_time`: a single HH:MM slot (must be one of `time_slots`, or empty for no preference). Displayed with ⭐ in the new-game wizard time slot keyboard. Set via `venue_edit_preferred_time` button or the venue creation wizard.
 
-Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`.
-State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`).
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`.
+State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`), `pendingVenuePreferredTimeEdit sync.Map` (chatID → `*venuePreferredTimeEditState`).
 
 ### New Game Wizard (`/newGame`)
 Works in **private chat only**. Group @mentions are redirected to private chat.

@@ -34,6 +34,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 		b.pendingVenueEdit.Delete(msg.Chat.ID)
 		b.pendingVenueGameDaysEdit.Delete(msg.Chat.ID)
+		b.pendingVenuePreferredTimeEdit.Delete(msg.Chat.ID)
 		b.pendingGroupVenuePick.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
 		return
@@ -335,7 +336,8 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	}
 	if action == "venue_edit_name" || action == "venue_edit_courts" ||
 		action == "venue_edit_slots" || action == "venue_edit_addr" ||
-		action == "venue_edit_gamedays" || action == "venue_edit_graceperiod" {
+		action == "venue_edit_gamedays" || action == "venue_edit_graceperiod" ||
+		action == "venue_edit_preferred_time" {
 		// format: venueID:groupID
 		subparts := strings.SplitN(rawID, ":", 2)
 		if len(subparts) != 2 {
@@ -364,6 +366,8 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 			field = venueEditFieldGameDays
 		case "venue_edit_graceperiod":
 			field = venueEditFieldGracePeriod
+		case "venue_edit_preferred_time":
+			field = venueEditFieldPreferredTime
 		default:
 			field = venueEditFieldAddress
 		}
@@ -418,6 +422,30 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	}
 	if action == "venue_day_confirm" {
 		b.handleVenueDayConfirm(ctx, cb)
+		return
+	}
+
+	// venue preferred time callbacks
+	if action == "venue_wiz_ptime" {
+		b.handleVenueWizPreferredTimePick(ctx, cb, rawID)
+		return
+	}
+	if action == "venue_ptime_set" {
+		// format: venueID:slot (slot may contain colons e.g. "18:00")
+		colonIdx := strings.Index(rawID, ":")
+		if colonIdx < 0 {
+			slog.Debug("invalid venue_ptime_set format", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		venueID, err := strconv.ParseInt(rawID[:colonIdx], 10, 64)
+		if err != nil {
+			slog.Debug("invalid venue_id in venue_ptime_set", "data", cb.Data)
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		slot := rawID[colonIdx+1:]
+		b.handleVenuePtimeSet(ctx, cb, venueID, slot)
 		return
 	}
 
@@ -1545,12 +1573,13 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 			v := venues[0]
 			venueID := v.ID
 			wizard := &newGameWizard{
-				gameDate:       date,
-				step:           wizardStepCourtPick,
-				venueID:        &venueID,
-				venueCourts:    splitCSV(v.Courts),
-				selectedCourts: make(map[string]bool),
-				timeSlots:      splitCSV(v.TimeSlots),
+				gameDate:          date,
+				step:              wizardStepCourtPick,
+				venueID:           &venueID,
+				venueCourts:       splitCSV(v.Courts),
+				selectedCourts:    make(map[string]bool),
+				timeSlots:         splitCSV(v.TimeSlots),
+				preferredGameTime: v.PreferredGameTime,
 			}
 			b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 			b.answerCallback(cb.ID, "")
@@ -1660,6 +1689,7 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 		wizard.venueCourts = splitCSV(v.Courts)
 		wizard.selectedCourts = make(map[string]bool)
 		wizard.timeSlots = splitCSV(v.TimeSlots)
+		wizard.preferredGameTime = v.PreferredGameTime
 		wizard.step = wizardStepCourtPick
 		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 		b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)

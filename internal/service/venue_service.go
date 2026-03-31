@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/vkhutorov/squash_bot/internal/models"
 	"github.com/vkhutorov/squash_bot/internal/storage"
@@ -16,16 +17,34 @@ func NewVenueService(repo *storage.VenueRepo) *VenueService {
 	return &VenueService{repo: repo}
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
+// validatePreferredGameTime returns an error if preferredGameTime is set but
+// does not appear in the comma-separated timeSlots list.
+func validatePreferredGameTime(preferredGameTime, timeSlots string) error {
+	if preferredGameTime == "" {
+		return nil
+	}
+	for _, slot := range strings.Split(timeSlots, ",") {
+		if strings.TrimSpace(slot) == preferredGameTime {
+			return nil
+		}
+	}
+	return fmt.Errorf("preferred_game_time %q is not present in time_slots %q", preferredGameTime, timeSlots)
+}
+
+func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+		return nil, err
+	}
 	venue := &models.Venue{
-		GroupID:          groupID,
-		Name:             name,
-		Courts:           courts,
-		TimeSlots:        timeSlots,
-		Address:          address,
-		GracePeriodHours: gracePeriodHours,
-		GameDays:         gameDays,
-		BookingOpensDays: bookingOpensDays,
+		GroupID:           groupID,
+		Name:              name,
+		Courts:            courts,
+		TimeSlots:         timeSlots,
+		Address:           address,
+		GracePeriodHours:  gracePeriodHours,
+		GameDays:          gameDays,
+		BookingOpensDays:  bookingOpensDays,
+		PreferredGameTime: preferredGameTime,
 	}
 	created, err := s.repo.Create(ctx, venue)
 	if err != nil {
@@ -42,17 +61,21 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int) (*models.Venue, error) {
+func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+		return nil, err
+	}
 	venue := &models.Venue{
-		ID:               id,
-		GroupID:          groupID,
-		Name:             name,
-		Courts:           courts,
-		TimeSlots:        timeSlots,
-		Address:          address,
-		GracePeriodHours: gracePeriodHours,
-		GameDays:         gameDays,
-		BookingOpensDays: bookingOpensDays,
+		ID:                id,
+		GroupID:           groupID,
+		Name:              name,
+		Courts:            courts,
+		TimeSlots:         timeSlots,
+		Address:           address,
+		GracePeriodHours:  gracePeriodHours,
+		GameDays:          gameDays,
+		BookingOpensDays:  bookingOpensDays,
+		PreferredGameTime: preferredGameTime,
 	}
 	updated, err := s.repo.Update(ctx, venue)
 	if err != nil {

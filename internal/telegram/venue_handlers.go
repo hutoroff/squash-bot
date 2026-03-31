@@ -177,9 +177,17 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			}
 		}
 		wiz.timeSlots = timeSlots
-		wiz.step = venueStepAddress
-		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskAddress))
+		if timeSlots != "" {
+			// Have time slots — ask for preferred time.
+			wiz.step = venueStepPreferredTime
+			b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+			keyboard := renderPreferredTimeKeyboard(splitCSV(timeSlots), lz)
+			b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
+		} else {
+			wiz.step = venueStepAddress
+			b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskAddress))
+		}
 
 	case venueStepAddress:
 		if text != lz.T(i18n.MsgVenueSkipAddress) && text != "-" {
@@ -205,7 +213,7 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 
 		gameDaysStr := gameDaysToString(wiz.gameDays)
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0)
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0, wiz.preferredGameTime)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -248,14 +256,19 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 	if address == "" {
 		address = "—"
 	}
+	preferredTime := venue.PreferredGameTime
+	if preferredTime == "" {
+		preferredTime = "—"
+	}
 	text := lz.Tf(i18n.MsgVenueEditMenu,
 		escapeMarkdown(venue.Name),
 		escapeMarkdown(venue.Courts),
 		escapeMarkdown(timeSlots),
 		escapeMarkdown(address),
-	)
+	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime))
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+	var rows [][]tgbotapi.InlineKeyboardButton
+	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditName), fmt.Sprintf("venue_edit_name:%d:%d", venue.ID, venue.GroupID)),
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditCourts), fmt.Sprintf("venue_edit_courts:%d:%d", venue.ID, venue.GroupID)),
@@ -268,11 +281,18 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGameDays), fmt.Sprintf("venue_edit_gamedays:%d:%d", venue.ID, venue.GroupID)),
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGracePeriod), fmt.Sprintf("venue_edit_graceperiod:%d:%d", venue.ID, venue.GroupID)),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_list:%d", venue.GroupID)),
-		),
 	)
+	// Only show "Preferred Time" button when time slots are configured.
+	if venue.TimeSlots != "" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditPreferredTime), fmt.Sprintf("venue_edit_preferred_time:%d:%d", venue.ID, venue.GroupID)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_list:%d", venue.GroupID)),
+	))
 
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	b.editText(chatID, messageID, text, &keyboard)
 }
 
@@ -306,6 +326,23 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		})
 		keyboard := renderGameDaysKeyboard(selectedDays, lz)
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskGameDays), &keyboard)
+		return
+	}
+
+	// Preferred time editing uses an inline keyboard of time slots.
+	if field == venueEditFieldPreferredTime {
+		slots := splitCSV(venue.TimeSlots)
+		if len(slots) == 0 {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNoPreferredTime))
+			return
+		}
+		b.pendingVenuePreferredTimeEdit.Store(cb.Message.Chat.ID, &venuePreferredTimeEditState{
+			venueID:   venueID,
+			groupID:   groupID,
+			timeSlots: slots,
+		})
+		keyboard := renderPreferredTimeEditKeyboard(venueID, slots, lz)
+		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
 		return
 	}
 
@@ -391,7 +428,21 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 
 	b.pendingVenueEdit.Delete(msg.Chat.ID)
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays)
+	// When time slots change, revalidate preferred game time; clear if no longer in the new list.
+	if state.field == venueEditFieldTimeSlots && venue.PreferredGameTime != "" {
+		found := false
+		for _, s := range splitCSV(venue.TimeSlots) {
+			if s == venue.PreferredGameTime {
+				found = true
+				break
+			}
+		}
+		if !found {
+			venue.PreferredGameTime = ""
+		}
+	}
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -527,7 +578,7 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 		}
 
 		venue.GameDays = gameDaysToString(state.selectedDays)
-		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays)
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
 		if err != nil {
 			slog.Error("handleVenueDayConfirm: update venue", "err", err)
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -538,6 +589,106 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgVenueUpdated), nil)
 		b.sendVenueList(ctx, cb.Message.Chat.ID, 0, state.groupID, lz)
 	}
+}
+
+// ── Preferred game time callbacks ─────────────────────────────────────────────
+
+// renderPreferredTimeKeyboard builds an inline keyboard for selecting a preferred game time.
+// Each slot gets its own button row, plus a "No preference" button at the bottom.
+func renderPreferredTimeKeyboard(slots []string, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, slot := range slots {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(slot, fmt.Sprintf("venue_wiz_ptime:%s", slot)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), "venue_wiz_ptime:_skip"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// renderPreferredTimeEditKeyboard builds an inline keyboard for editing an existing venue's preferred time.
+func renderPreferredTimeEditKeyboard(venueID int64, slots []string, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, slot := range slots {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(slot, fmt.Sprintf("venue_ptime_set:%d:%s", venueID, slot)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), fmt.Sprintf("venue_ptime_set:%d:_clear", venueID)),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// handleVenueWizPreferredTimePick handles venue_wiz_ptime:<slot> callbacks during venue creation wizard.
+func (b *Bot) handleVenueWizPreferredTimePick(ctx context.Context, cb *tgbotapi.CallbackQuery, slot string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wiz := raw.(*venueWizard)
+	if wiz.step != venueStepPreferredTime {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+
+	if slot != "_skip" {
+		wiz.preferredGameTime = slot
+	}
+	wiz.step = venueStepAddress
+	b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
+	b.answerCallback(cb.ID, "")
+
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskAddress))
+	edit.ReplyMarkup = &emptyKeyboard
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// handleVenuePtimeSet handles venue_ptime_set:<venueID>:<slot> callbacks for existing venue editing.
+func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, slot string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingVenuePreferredTimeEdit.LoadAndDelete(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*venuePreferredTimeEditState)
+
+	if state.venueID != venueID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	venue, err := b.client.GetVenueByID(ctx, state.venueID)
+	if err != nil {
+		slog.Error("handleVenuePtimeSet: get venue", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	preferredTime := ""
+	if slot != "_clear" {
+		preferredTime = slot
+	}
+	venue.PreferredGameTime = preferredTime
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
+	if err != nil {
+		slog.Error("handleVenuePtimeSet: update venue", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Venue preferred time updated", "venue_id", updated.ID, "preferred_game_time", updated.PreferredGameTime)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
 }
 
 // renderGameDaysKeyboard builds a toggle keyboard for weekday selection.
@@ -649,6 +800,7 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 	wizard.venueCourts = splitCSV(venue.Courts)
 	wizard.selectedCourts = make(map[string]bool)
 	wizard.timeSlots = splitCSV(venue.TimeSlots)
+	wizard.preferredGameTime = venue.PreferredGameTime
 	wizard.step = wizardStepCourtPick
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 	b.answerCallback(cb.ID, "")
@@ -793,8 +945,12 @@ func (b *Bot) renderTimeSlotKeyboard(chatID int64, messageID int, wizard *newGam
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, slot := range wizard.timeSlots {
+		label := slot
+		if slot == wizard.preferredGameTime {
+			label = "⭐ " + slot
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(slot, fmt.Sprintf("ng_timeslot:%s", slot)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("ng_timeslot:%s", slot)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(

@@ -46,13 +46,14 @@ const (
 // newGameWizard holds the in-progress state for the /newGame wizard.
 // Keyed by private chat ID in pendingNewGameWizard.
 type newGameWizard struct {
-	groupID        int64     // set for multi-group admins after group is selected
-	gameDate       time.Time // date only (midnight) at venue/time step; full datetime at courts step
-	step           wizardStep
-	venueID        *int64          // set when a venue is selected
-	venueCourts    []string        // available courts from the selected venue
-	selectedCourts map[string]bool // toggle state for court picker
-	timeSlots      []string        // available time slots from the selected venue
+	groupID           int64     // set for multi-group admins after group is selected
+	gameDate          time.Time // date only (midnight) at venue/time step; full datetime at courts step
+	step              wizardStep
+	venueID           *int64          // set when a venue is selected
+	venueCourts       []string        // available courts from the selected venue
+	selectedCourts    map[string]bool // toggle state for court picker
+	timeSlots         []string        // available time slots from the selected venue
+	preferredGameTime string          // venue's preferred game time; highlighted in the time slot keyboard
 }
 
 // venueWizardStep tracks which field the venue creation wizard is collecting.
@@ -62,6 +63,7 @@ const (
 	venueStepName venueWizardStep = iota
 	venueStepCourts
 	venueStepTimeSlots
+	venueStepPreferredTime // only shown when time_slots are set
 	venueStepAddress
 	venueStepGameDays
 	venueStepGracePeriod
@@ -69,14 +71,15 @@ const (
 
 // venueWizard holds state for the add-venue multi-step dialog.
 type venueWizard struct {
-	groupID     int64
-	step        venueWizardStep
-	name        string
-	courts      string
-	timeSlots   string
-	address     string
-	gameDays    []int // weekday ints (0=Sun..6=Sat)
-	gracePeriod int   // hours, 0 means use default (24)
+	groupID           int64
+	step              venueWizardStep
+	name              string
+	courts            string
+	timeSlots         string
+	preferredGameTime string // chosen from timeSlots; empty = no preference
+	address           string
+	gameDays          []int // weekday ints (0=Sun..6=Sat)
+	gracePeriod       int   // hours, 0 means use default (24)
 }
 
 // venueEditField identifies which venue field is being edited.
@@ -89,6 +92,7 @@ const (
 	venueEditFieldAddress
 	venueEditFieldGameDays
 	venueEditFieldGracePeriod
+	venueEditFieldPreferredTime
 )
 
 // venueEditState tracks an in-progress single-field edit for an existing venue.
@@ -104,6 +108,14 @@ type venueGameDaysEditState struct {
 	groupID      int64
 	selectedDays []int
 	msgID        int
+}
+
+// venuePreferredTimeEditState holds state when editing the preferred game time for an existing venue.
+// The admin picks from the venue's time_slots via inline buttons.
+type venuePreferredTimeEditState struct {
+	venueID   int64
+	groupID   int64
+	timeSlots []string // available slots to choose from
 }
 
 // groupVenuePickState holds game creation data for a multi-group admin who has
@@ -132,20 +144,21 @@ type manageCourtsToggleState struct {
 const maxConcurrentHandlers = 50
 
 type Bot struct {
-	api                       *tgbotapi.BotAPI
-	client                    *client.Client
-	serviceAdminIDs           map[int64]bool
-	loc                       *time.Location
-	logger                    *slog.Logger
-	pendingGames              sync.Map      // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit         sync.Map      // map[chatID int64]gameID int64
-	pendingManageCourtsToggle sync.Map      // map[chatID int64]*manageCourtsToggleState
-	pendingNewGameWizard      sync.Map      // map[chatID int64]*newGameWizard
-	pendingVenueWizard        sync.Map      // map[chatID int64]*venueWizard
-	pendingVenueEdit          sync.Map      // map[chatID int64]*venueEditState
-	pendingVenueGameDaysEdit  sync.Map      // map[chatID int64]*venueGameDaysEditState
-	pendingGroupVenuePick     sync.Map      // map[chatID int64]*groupVenuePickState
-	handlerSem                chan struct{} // semaphore limiting concurrent update handlers
+	api                           *tgbotapi.BotAPI
+	client                        *client.Client
+	serviceAdminIDs               map[int64]bool
+	loc                           *time.Location
+	logger                        *slog.Logger
+	pendingGames                  sync.Map      // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit             sync.Map      // map[chatID int64]gameID int64
+	pendingManageCourtsToggle     sync.Map      // map[chatID int64]*manageCourtsToggleState
+	pendingNewGameWizard          sync.Map      // map[chatID int64]*newGameWizard
+	pendingVenueWizard            sync.Map      // map[chatID int64]*venueWizard
+	pendingVenueEdit              sync.Map      // map[chatID int64]*venueEditState
+	pendingVenueGameDaysEdit      sync.Map      // map[chatID int64]*venueGameDaysEditState
+	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
+	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
+	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient *client.Client, serviceAdminIDs string, logger *slog.Logger) *Bot {
