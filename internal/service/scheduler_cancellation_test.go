@@ -50,6 +50,12 @@ func makeGame(courts string, courtsCount int, gameDate time.Time) *models.Game {
 	}
 }
 
+func makeGameWithVenue(courts string, courtsCount int, gameDate time.Time, autoBookingCourts string) *models.Game {
+	g := makeGame(courts, courtsCount, gameDate)
+	g.Venue = &models.Venue{AutoBookingCourts: autoBookingCourts}
+	return g
+}
+
 func matchPtr(uuid string) *SlotMatchID { return &SlotMatchID{UUID: uuid} }
 
 // ── cancelUnusedCourtsLogicOnly tests ────────────────────────────────────────
@@ -273,6 +279,104 @@ func (m *mockBookingClientCustomCancel) CancelMatch(_ context.Context, uuid stri
 }
 func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
 	return nil, nil
+}
+
+func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
+	// auto_booking_courts = "5,7,8,9" (priority: 5 highest, 9 lowest)
+	// All 4 are booked; cancel 2 → should cancel 9 first, then 8 (lowest priority first).
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
+			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
+			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
+			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
+		},
+	}
+	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	game := makeGameWithVenue("5,7,8,9", 4, time.Now().Add(time.Hour), "5,7,8,9")
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 2 {
+		t.Fatalf("expected 2 cancellations, got %v", result.canceledCourts)
+	}
+	canceledSet := make(map[int]bool)
+	for _, c := range result.canceledCourts {
+		canceledSet[c] = true
+	}
+	if !canceledSet[8] || !canceledSet[9] {
+		t.Errorf("expected courts 8 and 9 canceled (lowest priority), got %v", result.canceledCourts)
+	}
+	// Cancel calls must be in reverse-priority order: uuid-9 first, then uuid-8.
+	if len(client.cancelCalls) != 2 {
+		t.Fatalf("expected 2 cancel API calls, got %v", client.cancelCalls)
+	}
+	if client.cancelCalls[0] != "uuid-9" || client.cancelCalls[1] != "uuid-8" {
+		t.Errorf("cancel call order: got %v, want [uuid-9, uuid-8]", client.cancelCalls)
+	}
+}
+
+func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testing.T) {
+	// auto_booking_courts = "7"; courts 8 and 9 are booked but not in the priority list.
+	// Cancel 2 → priority gives court 7; grouping fallback on {8,9} gives court 9.
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
+			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
+			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
+		},
+	}
+	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	game := makeGameWithVenue("7,8,9", 3, time.Now().Add(time.Hour), "7")
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 2 {
+		t.Fatalf("expected 2 cancellations, got %v", result.canceledCourts)
+	}
+	// Court 7 is canceled first (from priority list).
+	if client.cancelCalls[0] != "uuid-7" {
+		t.Errorf("expected uuid-7 canceled first (priority), got %s", client.cancelCalls[0])
+	}
+	// Court 9 is canceled second (grouping fallback: {8,9} → end = 9).
+	if client.cancelCalls[1] != "uuid-9" {
+		t.Errorf("expected uuid-9 canceled second (grouping fallback), got %s", client.cancelCalls[1])
+	}
+	canceledSet := make(map[int]bool)
+	for _, c := range result.canceledCourts {
+		canceledSet[c] = true
+	}
+	if !canceledSet[7] || !canceledSet[9] {
+		t.Errorf("expected courts 7 and 9 canceled, got %v", result.canceledCourts)
+	}
+}
+
+func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
+	// auto_booking_courts = "5,7,8,9"; only courts 5 and 9 are booked.
+	// Cancel 1 → should cancel 9 (lowest priority that is actually booked).
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
+			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
+		},
+	}
+	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	game := makeGameWithVenue("5,9", 2, time.Now().Add(time.Hour), "5,7,8,9")
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 1 || result.canceledCourts[0] != 9 {
+		t.Errorf("expected court 9 canceled, got %v", result.canceledCourts)
+	}
+	if len(client.cancelCalls) != 1 || client.cancelCalls[0] != "uuid-9" {
+		t.Errorf("cancel calls: got %v, want [uuid-9]", client.cancelCalls)
+	}
 }
 
 // ── determineScenario tests ───────────────────────────────────────────────────

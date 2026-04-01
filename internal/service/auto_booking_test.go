@@ -72,7 +72,7 @@ func TestFilterAvailableCourts_AllAvailable(t *testing.T) {
 		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
 		{Court: 2, CourtUUID: "uuid-2", Booking: nil},
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 available courts, got %d: %v", len(got), got)
 	}
@@ -90,7 +90,7 @@ func TestFilterAvailableCourts_DeduplicatesSameCourt(t *testing.T) {
 		{Court: 1, CourtUUID: "uuid-1", Booking: nil}, // duplicate
 		{Court: 2, CourtUUID: "uuid-2", Booking: nil},
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 distinct UUIDs after dedup, got %d: %v", len(got), got)
 	}
@@ -105,7 +105,7 @@ func TestFilterAvailableCourts_ExcludesBooked(t *testing.T) {
 		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
 		{Court: 2, CourtUUID: "uuid-2", Booking: intPtrAB(99)}, // booked
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 1 || got[0] != "uuid-1" {
 		t.Errorf("expected [uuid-1], got %v", got)
 	}
@@ -118,7 +118,7 @@ func TestFilterAvailableCourts_ExcludesNonVenueCourts(t *testing.T) {
 		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
 		{Court: 3, CourtUUID: "uuid-3", Booking: nil}, // not in venue
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 1 || got[0] != "uuid-1" {
 		t.Errorf("expected [uuid-1], got %v", got)
 	}
@@ -129,7 +129,7 @@ func TestFilterAvailableCourts_ExcludesMissingUUID(t *testing.T) {
 	slots := []BookingSlot{
 		{Court: 1, CourtUUID: "", Booking: nil}, // no UUID
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected no results for missing UUID, got %v", got)
 	}
@@ -141,7 +141,7 @@ func TestFilterAvailableCourts_NoneAvailable(t *testing.T) {
 		{Court: 1, CourtUUID: "uuid-1", Booking: intPtrAB(1)},
 		{Court: 2, CourtUUID: "uuid-2", Booking: intPtrAB(2)},
 	}
-	got := filterAvailableCourts(slots, venueCourts)
+	got := filterAvailableCourts(slots, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty result, got %v", got)
 	}
@@ -149,7 +149,7 @@ func TestFilterAvailableCourts_NoneAvailable(t *testing.T) {
 
 func TestFilterAvailableCourts_EmptySlots(t *testing.T) {
 	venueCourts := map[int]bool{1: true}
-	got := filterAvailableCourts(nil, venueCourts)
+	got := filterAvailableCourts(nil, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty result for nil slots, got %v", got)
 	}

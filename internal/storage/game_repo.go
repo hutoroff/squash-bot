@@ -38,7 +38,8 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE g.id = $1`
@@ -191,7 +192,8 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
 		JOIN players p ON p.id = gp.player_id
@@ -221,7 +223,8 @@ func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Ga
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE g.completed = false
@@ -319,12 +322,16 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 		venueGameDays            *string
 		venueBookingOpensDays    *int
 		venueLastBookingReminder *time.Time
+		venuePreferredGameTime   *string
+		venueLastAutoBookingAt   *time.Time
+		venueAutoBookingCourts   *string
 	)
 	err := s.Scan(
 		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 		&venueID, &venueGroupID, &venueName, &venueCourts, &venueSlots, &venueAddr, &venueCreated,
 		&venueGracePeriodHours, &venueGameDays, &venueBookingOpensDays, &venueLastBookingReminder,
+		&venuePreferredGameTime, &venueLastAutoBookingAt, &venueAutoBookingCourts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan game: %w", err)
@@ -350,6 +357,14 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 		if venueBookingOpensDays != nil {
 			bookingDays = *venueBookingOpensDays
 		}
+		preferredGameTime := ""
+		if venuePreferredGameTime != nil {
+			preferredGameTime = *venuePreferredGameTime
+		}
+		autoBookingCourts := ""
+		if venueAutoBookingCourts != nil {
+			autoBookingCourts = *venueAutoBookingCourts
+		}
 		g.Venue = &models.Venue{
 			ID:                    *venueID,
 			GroupID:               *venueGroupID,
@@ -362,6 +377,9 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 			GameDays:              gameDays,
 			BookingOpensDays:      bookingDays,
 			LastBookingReminderAt: venueLastBookingReminder,
+			PreferredGameTime:     preferredGameTime,
+			LastAutoBookingAt:     venueLastAutoBookingAt,
+			AutoBookingCourts:     autoBookingCourts,
 		}
 	}
 	return &g, nil

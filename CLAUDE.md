@@ -214,7 +214,9 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
   **Court cancellation flow** (when booking service URL is configured):
   1. Computes `courtsToCancel = floor((capacity − count) / 2)` — fully unused courts (each needs 2 free spots).
   2. Calls `GET /api/v1/eversports/matches?date=…&startTime=…&endTime=startTime+10m&my=true` to get own bookings.
-  3. Applies the consecutive-grouping selection algorithm: split booked courts by consecutive-run, pick from the smallest group (tie-break by lowest first court), cancel from the end of that group. Repeats until all courts-to-cancel are selected.
+  3. Selects courts to cancel in two phases:
+     - **Phase 1 — priority order** (when the game's venue has `auto_booking_courts` configured): iterate `auto_booking_courts` in **reverse** (lowest-priority first) and pick courts that are actually booked, up to `courtsToCancel`.
+     - **Phase 2 — consecutive-grouping fallback**: if fewer than `courtsToCancel` courts were selected in phase 1 (including when `auto_booking_courts` is empty or all priority courts are already unbooked), apply the grouping algorithm to the remaining booked courts: split by consecutive-run, pick from the smallest group (tie-break by lowest first court), cancel from the end of that group. This handles courts booked outside the priority list (e.g. manually added).
   4. Cancels selected courts one-by-one via `DELETE /api/v1/eversports/matches/{matchUUID}`. Partial failures do not abort remaining cancellations.
   5. Updates `games.courts` / `games.courts_count` in the DB.
 

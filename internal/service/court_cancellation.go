@@ -90,8 +90,33 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 		courtIDs[i] = b.courtID
 	}
 
-	// Select which courts to cancel using the consecutive-grouping algorithm.
-	selected := selectCourtsToCancel(courtIDs, courtsToCancel)
+	// Select which courts to cancel.
+	// When the venue has auto_booking_courts configured, first cancel in reversed priority
+	// order (lowest-priority court first). Then fall back to the consecutive-grouping
+	// algorithm for any remaining slots — this covers courts booked outside the priority
+	// list (e.g. manually added) and the no-preference case (empty auto_booking_courts).
+	var selected []int
+	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
+		bookedSet := make(map[int]bool, len(booked))
+		for _, b := range booked {
+			bookedSet[b.courtID] = true
+		}
+		selected = selectCourtsByCancellationPriority(parseCourtIDs(game.Venue.AutoBookingCourts), bookedSet, courtsToCancel)
+	}
+	if len(selected) < courtsToCancel {
+		// Build the set of courts already selected to exclude them from the fallback input.
+		selectedSet := make(map[int]bool, len(selected))
+		for _, cID := range selected {
+			selectedSet[cID] = true
+		}
+		var remaining []int
+		for _, cID := range courtIDs {
+			if !selectedSet[cID] {
+				remaining = append(remaining, cID)
+			}
+		}
+		selected = append(selected, selectCourtsToCancel(remaining, courtsToCancel-len(selected))...)
+	}
 
 	// Build a lookup: courtID → matchUUID.
 	uuidByCourtID := make(map[int]string, len(booked))
@@ -197,6 +222,21 @@ func selectCourtsToCancel(sortedCourtIDs []int, n int) []int {
 		selected = append(selected, last)
 	}
 
+	return selected
+}
+
+// selectCourtsByCancellationPriority returns up to n court IDs to cancel, selected from
+// bookedSet in the reversed order of orderedPreferred (lowest-priority first).
+func selectCourtsByCancellationPriority(orderedPreferred []int, bookedSet map[int]bool, n int) []int {
+	if n <= 0 || len(orderedPreferred) == 0 {
+		return nil
+	}
+	var selected []int
+	for i := len(orderedPreferred) - 1; i >= 0 && len(selected) < n; i-- {
+		if bookedSet[orderedPreferred[i]] {
+			selected = append(selected, orderedPreferred[i])
+		}
+	}
 	return selected
 }
 
