@@ -337,7 +337,7 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	if action == "venue_edit_name" || action == "venue_edit_courts" ||
 		action == "venue_edit_slots" || action == "venue_edit_addr" ||
 		action == "venue_edit_gamedays" || action == "venue_edit_graceperiod" ||
-		action == "venue_edit_preferred_time" {
+		action == "venue_edit_preferred_time" || action == "venue_edit_auto_booking_courts" {
 		// format: venueID:groupID
 		subparts := strings.SplitN(rawID, ":", 2)
 		if len(subparts) != 2 {
@@ -368,6 +368,8 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 			field = venueEditFieldGracePeriod
 		case "venue_edit_preferred_time":
 			field = venueEditFieldPreferredTime
+		case "venue_edit_auto_booking_courts":
+			field = venueEditFieldAutoBookingCourts
 		default:
 			field = venueEditFieldAddress
 		}

@@ -31,8 +31,38 @@ func validatePreferredGameTime(preferredGameTime, timeSlots string) error {
 	return fmt.Errorf("preferred_game_time %q is not present in time_slots %q", preferredGameTime, timeSlots)
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+// validateAutoBookingCourts returns an error if any court in autoBookingCourts
+// is not present in the venue's courts list, or if duplicates are present.
+func validateAutoBookingCourts(autoBookingCourts, courts string) error {
+	if autoBookingCourts == "" {
+		return nil
+	}
+	courtSet := make(map[string]bool)
+	for _, c := range strings.Split(courts, ",") {
+		courtSet[strings.TrimSpace(c)] = true
+	}
+	seen := make(map[string]bool)
+	for _, c := range strings.Split(autoBookingCourts, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if !courtSet[c] {
+			return fmt.Errorf("auto_booking_courts contains %q which is not in courts %q", c, courts)
+		}
+		if seen[c] {
+			return fmt.Errorf("auto_booking_courts contains duplicate court %q", c)
+		}
+		seen[c] = true
+	}
+	return nil
+}
+
+func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error) {
 	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+		return nil, err
+	}
+	if err := validateAutoBookingCourts(autoBookingCourts, courts); err != nil {
 		return nil, err
 	}
 	venue := &models.Venue{
@@ -45,6 +75,7 @@ func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, cou
 		GameDays:          gameDays,
 		BookingOpensDays:  bookingOpensDays,
 		PreferredGameTime: preferredGameTime,
+		AutoBookingCourts: autoBookingCourts,
 	}
 	created, err := s.repo.Create(ctx, venue)
 	if err != nil {
@@ -61,8 +92,11 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error) {
 	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+		return nil, err
+	}
+	if err := validateAutoBookingCourts(autoBookingCourts, courts); err != nil {
 		return nil, err
 	}
 	venue := &models.Venue{
@@ -76,6 +110,7 @@ func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name,
 		GameDays:          gameDays,
 		BookingOpensDays:  bookingOpensDays,
 		PreferredGameTime: preferredGameTime,
+		AutoBookingCourts: autoBookingCourts,
 	}
 	updated, err := s.repo.Update(ctx, venue)
 	if err != nil {

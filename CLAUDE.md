@@ -49,7 +49,7 @@ Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - `game_participations`: id, game_id, player_id, status ('registered'|'skipped'), created_at, UNIQUE(game_id, player_id)
 - `guest_participations`: id, game_id, invited_by_player_id, created_at
 - `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), timezone (VARCHAR(64) DEFAULT 'UTC'), added_at
-- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), last_auto_booking_at (TIMESTAMPTZ nullable), created_at, UNIQUE(group_id, name)
+- `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), last_auto_booking_at (TIMESTAMPTZ nullable), auto_booking_courts (TEXT DEFAULT ''), created_at, UNIQUE(group_id, name)
 
 ## Development Commands
 
@@ -162,8 +162,9 @@ Works in **private chat only**.
 - `game_days`: comma-separated weekday ints (Go `time.Weekday`: Sunday=0, Monday=1, …, Saturday=6). Used for booking reminder schedule.
 - `booking_opens_days`: how many days ahead booking opens (default 14). Included in booking reminder DM text.
 - `preferred_game_time`: a single HH:MM slot (must be one of `time_slots`, or empty for no preference). Displayed with ⭐ in the new-game wizard time slot keyboard. Set via `venue_edit_preferred_time` button or the venue creation wizard.
+- `auto_booking_courts`: ordered comma-separated court IDs (subset of `courts`) that `RunAutoBooking` will attempt to book, in declared priority order. Empty means any available court is eligible (API response order). Validated: each ID must be present in `courts`. Set via `venue_edit_auto_booking_courts` button or the venue creation wizard (last step, after grace period).
 
-Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`.
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time/auto_booking_courts:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`.
 State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`), `pendingVenuePreferredTimeEdit sync.Map` (chatID → `*venuePreferredTimeEditState`).
 
 ### New Game Wizard (`/newGame`)
@@ -228,9 +229,10 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
 
 - **`RunAutoBooking()`**: Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
   1. Fetches available (unbooked) slots at `preferred_game_time` ± 10 min via `ListMatches(my=false)` for the date `today + booking_opens_days`.
-  2. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (1 hour each) via `BookMatch`.
-  3. On success: sends group notification; sets `last_auto_booking_at`.
-  4. On partial/full failure: immediately DMs all group admins silently (no notification sound).
+  2. Selects courts via `filterAvailableCourts`: if `auto_booking_courts` is set, returns only those IDs in declared order (priority booking); otherwise returns all available venue courts in API response order.
+  3. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (1 hour each) via `BookMatch`.
+  4. On success: sends group notification; sets `last_auto_booking_at`.
+  5. On partial/full failure: immediately DMs all group admins silently (no notification sound).
 
 - **`RunDayAfterCleanup()`**: Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
 

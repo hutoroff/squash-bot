@@ -301,13 +301,14 @@ type venueBody struct {
 	GameDays          string `json:"game_days"`
 	BookingOpensDays  int    `json:"booking_opens_days"`
 	PreferredGameTime string `json:"preferred_game_time"`
+	AutoBookingCourts string `json:"auto_booking_courts"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTime: preferredGameTime,
+		PreferredGameTime: preferredGameTime, AutoBookingCourts: autoBookingCourts,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
@@ -333,11 +334,11 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime string) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTime: preferredGameTime,
+		PreferredGameTime: preferredGameTime, AutoBookingCourts: autoBookingCourts,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {

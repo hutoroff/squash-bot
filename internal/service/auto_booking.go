@@ -121,8 +121,11 @@ func (s *SchedulerService) processAutoBookingForVenue(
 		}
 	}
 
-	// Collect available (unbooked) court UUIDs restricted to venue courts.
-	available := filterAvailableCourts(slots, venueCourts)
+	// Parse the ordered preference list (empty = no preference, all venue courts eligible).
+	orderedPreferred := parseCourtIDs(venue.AutoBookingCourts)
+
+	// Collect available (unbooked) court UUIDs restricted to venue courts, in priority order.
+	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
 
 	if len(available) == 0 {
 		s.logger.Info("auto-booking: no available courts",
@@ -216,20 +219,61 @@ func (s *SchedulerService) notifyAutoBookingFailure(
 	}
 }
 
-// filterAvailableCourts returns the UUIDs of unbooked courts from slots that
-// belong to the given venue court set (keyed by numeric Eversports court ID).
-// Duplicate UUIDs (multiple slots for the same court within the query window)
-// are deduplicated so that each court is booked at most once.
-func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool) []string {
-	seen := make(map[string]bool)
-	var available []string
+// filterAvailableCourts returns the UUIDs of available (unbooked) courts from
+// slots, restricted to venue courts. Each court is represented at most once
+// (multiple slots for the same court within the query window are deduplicated).
+//
+// orderedPreferred, if non-empty, defines both the eligible subset and the
+// booking priority order — only courts listed there are returned, in that
+// order. When orderedPreferred is empty all venue courts are eligible and
+// results follow the API response order.
+func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, orderedPreferred []int) []string {
+	// Build courtID → UUID map for all available venue courts (first UUID wins).
+	courtUUIDs := make(map[int]string)
 	for _, sl := range slots {
-		if sl.Booking == nil && sl.CourtUUID != "" && venueCourts[sl.Court] && !seen[sl.CourtUUID] {
-			seen[sl.CourtUUID] = true
-			available = append(available, sl.CourtUUID)
+		if sl.Booking == nil && sl.CourtUUID != "" && venueCourts[sl.Court] {
+			if _, seen := courtUUIDs[sl.Court]; !seen {
+				courtUUIDs[sl.Court] = sl.CourtUUID
+			}
 		}
 	}
-	return available
+
+	if len(orderedPreferred) > 0 {
+		// Ordered subset mode: emit only preferred courts, in declared order.
+		var result []string
+		for _, courtID := range orderedPreferred {
+			if uuid, ok := courtUUIDs[courtID]; ok {
+				result = append(result, uuid)
+			}
+		}
+		return result
+	}
+
+	// No preference: emit all available venue courts in API response order.
+	seen := make(map[int]bool)
+	var result []string
+	for _, sl := range slots {
+		if _, ok := courtUUIDs[sl.Court]; ok && !seen[sl.Court] {
+			seen[sl.Court] = true
+			result = append(result, courtUUIDs[sl.Court])
+		}
+	}
+	return result
+}
+
+// parseCourtIDs splits a comma-separated court ID string (e.g. "5,6,7") into
+// a slice of ints. Invalid tokens are silently skipped.
+func parseCourtIDs(s string) []int {
+	if s == "" {
+		return nil
+	}
+	var ids []int
+	for _, part := range strings.Split(s, ",") {
+		if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // parsePreferredTime parses a "HH:MM" preferred time and "YYYY-MM-DD" date string

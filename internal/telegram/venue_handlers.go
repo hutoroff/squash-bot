@@ -210,10 +210,28 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			gracePeriod = n
 		}
 		wiz.gracePeriod = gracePeriod
+		wiz.step = venueStepAutoBookingCourts
+		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgVenueAskAutoBookingCourts, wiz.courts))
+
+	case venueStepAutoBookingCourts:
+		autoBookingCourts := ""
+		if text != "-" && text != "" {
+			normalized := normalizeCourts(text)
+			courtSet := makeCourtSet(wiz.courts)
+			for _, part := range splitCSV(normalized) {
+				if !courtSet[part] {
+					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
+					return
+				}
+			}
+			autoBookingCourts = normalized
+		}
+		wiz.autoBookingCourts = autoBookingCourts
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 
 		gameDaysStr := gameDaysToString(wiz.gameDays)
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0, wiz.preferredGameTime)
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0, wiz.preferredGameTime, wiz.autoBookingCourts)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -260,12 +278,17 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 	if preferredTime == "" {
 		preferredTime = "—"
 	}
+	autoBookingCourts := venue.AutoBookingCourts
+	if autoBookingCourts == "" {
+		autoBookingCourts = "—"
+	}
 	text := lz.Tf(i18n.MsgVenueEditMenu,
 		escapeMarkdown(venue.Name),
 		escapeMarkdown(venue.Courts),
 		escapeMarkdown(timeSlots),
 		escapeMarkdown(address),
-	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime))
+	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime)) +
+		"\n" + lz.Tf(i18n.MsgVenueAutoBookingCourtsLine, escapeMarkdown(autoBookingCourts))
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	rows = append(rows,
@@ -286,6 +309,12 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 	if venue.TimeSlots != "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditPreferredTime), fmt.Sprintf("venue_edit_preferred_time:%d:%d", venue.ID, venue.GroupID)),
+		))
+	}
+	// Only show "Auto-booking Courts" button when courts are configured.
+	if venue.Courts != "" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourts), fmt.Sprintf("venue_edit_auto_booking_courts:%d:%d", venue.ID, venue.GroupID)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -364,6 +393,8 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		prompt = lz.T(i18n.MsgVenueAskAddress)
 	case venueEditFieldGracePeriod:
 		prompt = lz.T(i18n.MsgVenueAskGracePeriod)
+	case venueEditFieldAutoBookingCourts:
+		prompt = lz.Tf(i18n.MsgVenueAskAutoBookingCourts, venue.Courts)
 	}
 	b.sendText(cb.Message.Chat.ID, prompt, nil)
 }
@@ -424,6 +455,20 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 			}
 			venue.GracePeriodHours = n
 		}
+	case venueEditFieldAutoBookingCourts:
+		if text == "-" || text == "" {
+			venue.AutoBookingCourts = ""
+		} else {
+			normalized := normalizeCourts(text)
+			courtSet := makeCourtSet(venue.Courts)
+			for _, part := range splitCSV(normalized) {
+				if !courtSet[part] {
+					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
+					return
+				}
+			}
+			venue.AutoBookingCourts = normalized
+		}
 	}
 
 	b.pendingVenueEdit.Delete(msg.Chat.ID)
@@ -442,7 +487,19 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 		}
 	}
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
+	// When courts change, drop any auto-booking courts no longer present in the new list.
+	if state.field == venueEditFieldCourts && venue.AutoBookingCourts != "" {
+		newCourtSet := makeCourtSet(venue.Courts)
+		var valid []string
+		for _, c := range splitCSV(venue.AutoBookingCourts) {
+			if newCourtSet[c] {
+				valid = append(valid, c)
+			}
+		}
+		venue.AutoBookingCourts = strings.Join(valid, ",")
+	}
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts)
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -578,7 +635,7 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 		}
 
 		venue.GameDays = gameDaysToString(state.selectedDays)
-		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts)
 		if err != nil {
 			slog.Error("handleVenueDayConfirm: update venue", "err", err)
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -679,7 +736,7 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 	}
 	venue.PreferredGameTime = preferredTime
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts)
 	if err != nil {
 		slog.Error("handleVenuePtimeSet: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -1078,6 +1135,15 @@ func selectedCourtsString(wizard *newGameWizard) string {
 		}
 	}
 	return strings.Join(parts, ",")
+}
+
+// makeCourtSet builds a lookup set from a comma-separated courts string.
+func makeCourtSet(courts string) map[string]bool {
+	set := make(map[string]bool)
+	for _, c := range splitCSV(courts) {
+		set[c] = true
+	}
+	return set
 }
 
 // splitCSV splits a comma-separated string into a trimmed slice, omitting empty parts.
