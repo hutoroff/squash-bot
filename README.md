@@ -33,13 +33,15 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 ```
 telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
                                   →  sports-booking-service   →  eversports.de
+squash-web           →  HTTP API  →  squash-games-management
 ```
 
-Three independently deployable binaries in one Go module:
+Four independently deployable binaries in one Go module:
 
 - **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
 - **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
 - **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
+- **squash-web** — web UI (port 8082); Go backend serving an embedded React SPA
 
 ## Quick Start
 
@@ -127,6 +129,27 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 ```
+
+### squash-web
+
+The Go backend embeds the compiled React frontend from `web/frontend/dist/`. Build the frontend once before running the Go binary locally — or any time the frontend source changes:
+
+```bash
+# Build the frontend (runs npm ci + vite build inside web/frontend)
+go generate ./web/...
+
+# Run the web service
+go run cmd/squash-web/main.go
+# → http://localhost:8082
+```
+
+For faster frontend iteration, run the Vite dev server instead:
+
+```bash
+cd web/frontend && npm run dev   # hot-reload dev server on http://localhost:5173
+```
+
+The Vite dev server talks directly to browser; the Go backend is not involved during frontend development.
 
 ## Testing
 
@@ -321,6 +344,14 @@ Guest spots count toward capacity.
 
 See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the full list of environment variables, API endpoints, and local run instructions.
 
+### squash-web
+
+| Variable      | Required | Default | Description                    |
+|---------------|----------|---------|--------------------------------|
+| `SERVER_PORT` | No       | `8082`  | HTTP listen port               |
+| `LOG_LEVEL`   | No       | `INFO`  | `INFO` or `DEBUG`              |
+| `TIMEZONE`    | No       | `UTC`   | Timezone for date formatting   |
+
 ## Scheduled Tasks
 
 A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using per-group timezone and per-venue configuration:
@@ -366,8 +397,9 @@ cmd/
   squash-games-management/  — management service entry point
   telegram-squash-bot/      — telegram bot entry point
   sports-booking-service/   — Eversports booking service entry point
+  squash-web/               — web UI entry point
 internal/
-  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig)
+  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig, WebConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
   models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
   storage/        — SQL repositories (games, players, participations, guests, groups)
@@ -377,6 +409,10 @@ internal/
   telegram/       — bot loop, handlers, commands, formatter
   eversports/     — Eversports HTTP client (GraphQL login/match, /api/slot for court availability, calendar HTML for court discovery)
   booking/        — HTTP server wrapping the Eversports client
+  webserver/      — HTTP server + SPA handler for the web UI
+web/
+  embed.go        — embeds web/frontend/dist into the Go binary (go:generate builds it)
+  frontend/       — React + Vite + TypeScript source; `npm run build` outputs to dist/
 migrations/       — embedded SQL migration files
 scripts/          — deploy.sh, healthcheck.sh (production ops)
 tests/            — integration and e2e tests

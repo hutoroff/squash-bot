@@ -89,6 +89,22 @@ func LoadBooking() (*BookingConfig, error) {
 	return cfg, nil
 }
 
+// WebConfig holds configuration for the squash-web service.
+type WebConfig struct {
+	ServerPort string `env:"SERVER_PORT" envDefault:"8082"`
+	LogLevel   string `env:"LOG_LEVEL"   envDefault:"INFO"`
+	Timezone   string `env:"TIMEZONE"    envDefault:"UTC"`
+}
+
+func LoadWeb() (*WebConfig, error) {
+	cfg := &WebConfig{}
+	loadDotenv()
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func loadDotenv() {
 	if err := godotenv.Load(); err != nil {
 		slog.Debug("Error loading .env file")

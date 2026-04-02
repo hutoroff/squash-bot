@@ -1,0 +1,33 @@
+# Secrets — never send into build context
+.env
+.env.*
+!.env.example
+
+# Version control
+.git/
+.github/
+
+# Frontend build artifacts and deps (built inside Docker)
+web/frontend/node_modules/
+web/frontend/dist/
+
+# Go build outputs
+squash-games-management
+telegram-squash-bot
+sports-booking-service
+squash-web
+bin/
+tmp/
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

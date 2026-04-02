@@ -8,6 +8,10 @@ bin/
 /squash-games-management
 /telegram-squash-bot
 /sports-booking-service
+/squash-web
+
+# Frontend
+web/frontend/node_modules/
 
 # Test artifacts
 *.test
