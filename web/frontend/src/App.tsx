@@ -1,15 +1,7 @@
 import { useState, useEffect } from 'react'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
-
-interface User {
-  telegram_id: number
-  player_id?: number
-  first_name: string
-  last_name?: string
-  username?: string
-  photo_url?: string
-}
+import type { User } from './types'
 
 function App() {
   // undefined = loading, null = unauthenticated, User = authenticated
