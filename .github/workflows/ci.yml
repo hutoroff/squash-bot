@@ -1,10 +1,10 @@
 name: CI
+run-name: CI — ${{ github.sha }}
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  pull_request: { }
 
 jobs:
   build-and-test:
