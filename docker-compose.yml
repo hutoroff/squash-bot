@@ -70,6 +70,10 @@ services:
     env_file: .env
     environment:
       SERVER_PORT: "8082"
+      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+    depends_on:
+      squash-games-management:
+        condition: service_healthy
     ports:
       - "8082:8082"
     healthcheck:

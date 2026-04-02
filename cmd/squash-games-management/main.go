@@ -110,7 +110,7 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger, Version)
+	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("squash-games-management starting", "port", cfg.ServerPort, "version", Version)

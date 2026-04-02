@@ -17,8 +17,104 @@ body {
   padding: 2rem;
 }
 
-h1 {
-  font-size: 2rem;
-  margin-bottom: 1rem;
+h1, h2 {
   color: #1a1a2e;
+}
+
+h1 { font-size: 2rem; margin-bottom: 1rem; }
+h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+
+/* Loading state */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-size: 1.1rem;
+  color: #666;
+}
+
+/* Login page */
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 2.5rem 2rem;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+  text-align: center;
+  max-width: 360px;
+  width: 100%;
+}
+
+.login-card p {
+  color: #555;
+  margin-bottom: 1.75rem;
+  line-height: 1.5;
+}
+
+.telegram-login-widget {
+  display: flex;
+  justify-content: center;
+}
+
+/* Dashboard */
+.dashboard {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  background: #fff;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.dashboard-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #1a1a2e;
+}
+
+.logout-button {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #555;
+}
+
+.logout-button:hover {
+  background: #f5f5f5;
+}
+
+.dashboard-main {
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  margin-bottom: 0.5rem;
+}
+
+.username {
+  color: #2ca5e0;
+  font-size: 0.95rem;
 }

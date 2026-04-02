@@ -61,11 +61,13 @@ Edit `.env` and fill in the required values:
 
 ```env
 TELEGRAM_BOT_TOKEN=     # from @BotFather
-INTERNAL_API_SECRET=    # shared secret between the two services — generate with: openssl rand -hex 32
+TELEGRAM_BOT_NAME=      # bot username without @ (e.g. SquashBot)
+INTERNAL_API_SECRET=    # shared secret between services — generate with: openssl rand -hex 32
+JWT_SECRET=             # secret for web session tokens — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
 
-`DATABASE_URL` is pre-configured in `docker-compose.yml` for the management service container and does not need to be in `.env` when running via Docker Compose.
+`DATABASE_URL` and `MANAGEMENT_SERVICE_URL` are pre-configured in `docker-compose.yml` for the relevant containers and do not need to be in `.env` when running via Docker Compose.
 
 ### 2. Start
 
@@ -139,7 +141,12 @@ The Go backend embeds the compiled React frontend from `web/frontend/dist/`. Bui
 go generate ./web/...
 
 # Run the web service
-go run cmd/squash-web/main.go
+TELEGRAM_BOT_TOKEN=<token> \
+  TELEGRAM_BOT_NAME=<bot_username_without_@> \
+  MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  INTERNAL_API_SECRET=<secret> \
+  JWT_SECRET=$(openssl rand -hex 32) \
+  go run cmd/squash-web/main.go
 # → http://localhost:8082
 ```
 
@@ -149,7 +156,17 @@ For faster frontend iteration, run the Vite dev server instead:
 cd web/frontend && npm run dev   # hot-reload dev server on http://localhost:5173
 ```
 
-The Vite dev server talks directly to browser; the Go backend is not involved during frontend development.
+The Vite dev server talks directly to the browser; the Go backend is not involved during frontend development.
+
+#### Telegram Login Widget — BotFather domain setup
+
+The Login Widget only works on domains that are explicitly registered with Telegram. This is a one-time step per deployment:
+
+1. Open [@BotFather](https://t.me/BotFather) and send `/mybots`.
+2. Select your bot → **Bot Settings → Domain**.
+3. Enter the **hostname only** of your squash-web deployment — no `https://` prefix, no path (e.g. `squash.example.com`).
+
+> **Local development:** `localhost` is not accepted by the Telegram Login Widget. Use a tunnel such as [ngrok](https://ngrok.com/) (`ngrok http 8082`), register the generated hostname in BotFather, and set `TELEGRAM_BOT_NAME` accordingly before testing the login flow end-to-end.
 
 ## Testing
 
@@ -346,11 +363,16 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 
 ### squash-web
 
-| Variable      | Required | Default | Description                    |
-|---------------|----------|---------|--------------------------------|
-| `SERVER_PORT` | No       | `8082`  | HTTP listen port               |
-| `LOG_LEVEL`   | No       | `INFO`  | `INFO` or `DEBUG`              |
-| `TIMEZONE`    | No       | `UTC`   | Timezone for date formatting   |
+| Variable                 | Required | Default | Description                                                                                                             |
+|--------------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
+| `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
+| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of squash-games-management (e.g. `http://squash-games-management:8080`); pre-set in `docker-compose.yml`       |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on squash-games-management; used to call `GET /api/v1/players/{id}`                                |
+| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
+| `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
+| `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
+| `TIMEZONE`               | No       | `UTC`   | Timezone for date formatting                                                                                            |
 
 ## Scheduled Tasks
 

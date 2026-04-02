@@ -252,6 +252,23 @@ Manual trigger via `/trigger` (service admins only) uses the event names `cancel
 - Players can remove their own most-recently-added guest
 - Admins can remove any guest via the `/games` management menu
 
+### Web Authentication (`squash-web`)
+Authentication uses the [Telegram Login Widget](https://core.telegram.org/widgets/login).
+
+**Flow:**
+1. `GET /api/config` returns `{"bot_name":"<TELEGRAM_BOT_NAME>"}` — frontend uses this to render the widget.
+2. User clicks the widget button and approves in the Telegram app.
+3. Telegram redirects the browser to `GET /api/auth/callback?id=…&first_name=…&auth_date=…&hash=…`.
+4. Backend verifies the HMAC-SHA256 hash: `key = SHA256(TELEGRAM_BOT_TOKEN)`, `sig = hex(HMAC-SHA256(key, sorted_key=value_pairs))`. Also checks `auth_date` is ≤ 86400 s old.
+5. Backend calls `GET /api/v1/players/{telegramID}` on squash-games-management (with `INTERNAL_API_SECRET`). Returns `player_id` if the user has previously used the Telegram bot; `nil` if not (login still succeeds).
+6. Backend issues a signed HS256 JWT (`JWT_SECRET`, 7-day expiry) and sets it as an HttpOnly, SameSite=Lax `session` cookie. The `Secure` flag is set when `r.TLS != nil` **or** `X-Forwarded-Proto: https` (covers TLS-terminating proxies).
+7. `GET /api/auth/me` — returns `200` + user JSON from the cookie, or `401` if absent/expired/invalid.
+8. `POST /api/auth/logout` — expires the cookie.
+
+**BotFather setup (one-time per deployment):** `/mybots` → select bot → Bot Settings → Domain → enter the public hostname (no `https://`). `localhost` is not accepted; use a tunnel (e.g. ngrok) for local end-to-end testing.
+
+**New management service endpoint:** `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Requires bearer auth. Used exclusively by squash-web during login.
+
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
 - Capacity line: `courts_count × 2`
@@ -295,6 +312,18 @@ SERVER_PORT=8081             # default 8081
 EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for GET /matches and /courts endpoints
 EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for POST /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
 EVERSPORTS_FACILITY_SLUG=    # optional; facility slug from venue URL (e.g. "squash-house-berlin-03"); required for GET /matches and /courts
+LOG_LEVEL=INFO
+TIMEZONE=UTC
+```
+
+**`squash-web`:**
+```
+TELEGRAM_BOT_TOKEN=          # required; verifies Telegram Login Widget HMAC-SHA256 callbacks
+TELEGRAM_BOT_NAME=           # required; bot username without @ shown in the Login Widget (e.g. SquashBot)
+MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080); pre-set in docker-compose.yml
+INTERNAL_API_SECRET=         # required; shared bearer token for calling squash-games-management
+JWT_SECRET=                  # required; signs/verifies session cookies (HS256, 7-day expiry); generate with openssl rand -hex 32
+SERVER_PORT=8082             # default 8082
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 ```

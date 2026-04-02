@@ -48,7 +48,15 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	h := webserver.NewHandler(distFS, Version, logger)
+	auth := webserver.NewAuthHandler(
+		cfg.TelegramBotToken,
+		cfg.TelegramBotName,
+		cfg.JWTSecret,
+		cfg.ManagementServiceURL,
+		cfg.InternalAPISecret,
+		logger,
+	)
+	h := webserver.NewHandler(distFS, Version, logger, auth)
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
 	slog.Info("squash-web starting", "port", cfg.ServerPort, "version", Version)

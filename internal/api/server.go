@@ -18,6 +18,7 @@ type Handler struct {
 	partService  *service.ParticipationService
 	venueService *service.VenueService
 	groupRepo    *storage.GroupRepo
+	playerRepo   *storage.PlayerRepo
 	scheduler    *service.SchedulerService
 	logger       *slog.Logger
 	version      string
@@ -28,6 +29,7 @@ func NewHandler(
 	partService *service.ParticipationService,
 	venueService *service.VenueService,
 	groupRepo *storage.GroupRepo,
+	playerRepo *storage.PlayerRepo,
 	scheduler *service.SchedulerService,
 	logger *slog.Logger,
 	version string,
@@ -37,6 +39,7 @@ func NewHandler(
 		partService:  partService,
 		venueService: venueService,
 		groupRepo:    groupRepo,
+		playerRepo:   playerRepo,
 		scheduler:    scheduler,
 		logger:       logger,
 		version:      version,
@@ -64,6 +67,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/games/{id}/guests/{guestID}", h.kickGuest)
 
 	// Players
+	mux.HandleFunc("GET /api/v1/players/{telegramID}", h.getPlayerByTelegramID)
 	mux.HandleFunc("GET /api/v1/players/{telegramID}/next-game", h.getNextGame)
 
 	// Groups
