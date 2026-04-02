@@ -18,7 +18,8 @@ export interface Game {
   courts: string
   completed: boolean
   participation_status: ParticipationStatus | null
-  registered_count: number
+  /** Total registered players plus guests — matches actual capacity consumption. */
+  participant_count: number
   venue_name?: string
   venue_address?: string
   group_title: string

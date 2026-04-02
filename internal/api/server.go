@@ -69,6 +69,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Players
 	mux.HandleFunc("GET /api/v1/players/{telegramID}", h.getPlayerByTelegramID)
 	mux.HandleFunc("GET /api/v1/players/{telegramID}/next-game", h.getNextGame)
+	mux.HandleFunc("GET /api/v1/players/{playerID}/games", h.listPlayerGames)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)

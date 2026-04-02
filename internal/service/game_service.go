@@ -69,3 +69,8 @@ func (s *GameService) UpdateCourts(ctx context.Context, gameID int64, courts str
 	courtsCount := len(strings.Split(courts, ","))
 	return s.gameRepo.UpdateCourts(ctx, gameID, courts, courtsCount)
 }
+
+// GetGamesForPlayer returns all games in which the player has any participation record.
+func (s *GameService) GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error) {
+	return s.gameRepo.GetGamesForPlayer(ctx, playerID)
+}

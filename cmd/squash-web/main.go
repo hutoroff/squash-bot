@@ -56,7 +56,8 @@ func main() {
 		cfg.InternalAPISecret,
 		logger,
 	)
-	h := webserver.NewHandler(distFS, Version, logger, auth)
+	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	h := webserver.NewHandler(distFS, Version, logger, auth, games)
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
 	slog.Info("squash-web starting", "port", cfg.ServerPort, "version", Version)

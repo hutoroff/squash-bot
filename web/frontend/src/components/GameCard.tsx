@@ -19,7 +19,7 @@ export default function GameCard({ game }: GameCardProps) {
   const { weekday, date, time } = formatGameDate(game.game_date, game.timezone)
   const capacity = game.courts_count * 2
   const courts = game.courts.split(',').map(c => c.trim()).filter(Boolean)
-  const fillPct = Math.min((game.registered_count / capacity) * 100, 100)
+  const fillPct = Math.min((game.participant_count / capacity) * 100, 100)
 
   const participationBadge = () => {
     if (game.participation_status === 'registered') {
@@ -65,9 +65,9 @@ export default function GameCard({ game }: GameCardProps) {
 
       <div className="game-card__footer">
         <div className="game-card__capacity">
-          <span className="game-card__capacity-label">{game.registered_count} / {capacity} players</span>
+          <span className="game-card__capacity-label">{game.participant_count} / {capacity}</span>
           <div className="game-card__capacity-bar" role="progressbar"
-            aria-valuenow={game.registered_count} aria-valuemin={0} aria-valuemax={capacity}>
+            aria-valuenow={game.participant_count} aria-valuemin={0} aria-valuemax={capacity}>
             <div className="game-card__capacity-fill" style={{ width: `${fillPct}%` }} />
           </div>
         </div>

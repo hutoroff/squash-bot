@@ -204,6 +204,50 @@ func (a *AuthHandler) lookupPlayer(ctx context.Context, telegramID int64) (*int6
 	return &p.ID, nil
 }
 
+// resolvePlayerID returns the player ID for the given claims.
+//
+// If claims.PlayerID is already set it is returned immediately. Otherwise a
+// fresh lookup by TelegramID is performed against the management service. If a
+// player record is found the session cookie is refreshed in the same response
+// so that subsequent requests skip this round-trip.
+//
+// Returns (nil, nil) when the player record genuinely does not exist yet.
+func (a *AuthHandler) resolvePlayerID(w http.ResponseWriter, r *http.Request, claims *JWTClaims) (*int64, error) {
+	if claims.PlayerID != nil {
+		return claims.PlayerID, nil
+	}
+
+	pid, err := a.lookupPlayer(r.Context(), claims.TelegramID)
+	if err != nil {
+		return nil, fmt.Errorf("lookup player: %w", err)
+	}
+	if pid == nil {
+		return nil, nil
+	}
+
+	// Player record now exists — refresh the JWT so future requests skip this lookup.
+	updated := *claims
+	updated.PlayerID = pid
+	updated.Exp = time.Now().Add(tokenExpiry).Unix()
+	token, err := issueJWT(a.jwtSecret, updated)
+	if err != nil {
+		// Non-fatal: the resolved pid is still usable; the stale cookie will
+		// self-correct the next time the user logs in or the JWT rotates.
+		a.logger.Warn("resolvePlayerID: could not refresh JWT", "err", err)
+		return pid, nil
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(tokenExpiry),
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+	return pid, nil
+}
+
 // verifyTelegramAuth validates the Telegram Login Widget data hash.
 // See https://core.telegram.org/widgets/login#checking-authorization
 func verifyTelegramAuth(botToken string, params map[string]string) bool {

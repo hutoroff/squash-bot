@@ -13,6 +13,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and notifies the group
 - At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
+- **squash-web** provides a React web UI (port 8082): sign in with your Telegram account, then browse your upcoming and past games with participation status and live capacity
 
 ## Tech Stack
 
@@ -368,7 +369,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
 | `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of squash-games-management (e.g. `http://squash-games-management:8080`); pre-set in `docker-compose.yml`       |
-| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on squash-games-management; used to call `GET /api/v1/players/{id}`                                |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on squash-games-management; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
 | `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |

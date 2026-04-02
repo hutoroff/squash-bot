@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { Game } from '../types'
 import GameCard from './GameCard'
-import { fetchMyGames } from '../mocks/games'
+import { fetchMyGames, ApiError } from '../api/games'
 
 export default function GamesList() {
   const [games, setGames] = useState<Game[] | null>(null)
@@ -10,7 +10,14 @@ export default function GamesList() {
   useEffect(() => {
     fetchMyGames()
       .then(setGames)
-      .catch(() => setError('Failed to load games. Please try again later.'))
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) {
+          // Session expired between page load and games fetch — reload to re-auth.
+          window.location.reload()
+          return
+        }
+        setError('Failed to load games. Please try again later.')
+      })
   }, [])
 
   if (error) {

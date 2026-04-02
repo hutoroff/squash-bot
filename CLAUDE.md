@@ -21,7 +21,7 @@ telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQ
 sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
 **`squash-games-management`** (`cmd/squash-games-management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
@@ -39,8 +39,13 @@ Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - **booking/**: REST API wrapping the Eversports client (port 8081)
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
+**`squash-web`** (`cmd/squash-web/`)
+- **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints
+- **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
+- No DB access; authenticates users via Telegram Login Widget, calls squash-games-management for data
+
 **Shared**
-- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags)
+- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
 - **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
 
 ### Database Schema
@@ -264,10 +269,13 @@ Authentication uses the [Telegram Login Widget](https://core.telegram.org/widget
 6. Backend issues a signed HS256 JWT (`JWT_SECRET`, 7-day expiry) and sets it as an HttpOnly, SameSite=Lax `session` cookie. The `Secure` flag is set when `r.TLS != nil` **or** `X-Forwarded-Proto: https` (covers TLS-terminating proxies).
 7. `GET /api/auth/me` — returns `200` + user JSON from the cookie, or `401` if absent/expired/invalid.
 8. `POST /api/auth/logout` — expires the cookie.
+9. `GET /api/games` — returns a JSON array of the authenticated user's games (see below). Player ID is read from the JWT claim only — never from a query parameter. If `player_id` is absent from the JWT (user logged in before their first bot interaction), a live `lookupPlayer` call is made by `TelegramID`; if a record is now found the session cookie is refreshed in the same response with an updated JWT so subsequent requests skip the re-lookup. Returns `[]` when no player record exists yet; returns `502` on management service errors.
 
 **BotFather setup (one-time per deployment):** `/mybots` → select bot → Bot Settings → Domain → enter the public hostname (no `https://`). `localhost` is not accepted; use a tunnel (e.g. ngrok) for local end-to-end testing.
 
-**New management service endpoint:** `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Requires bearer auth. Used exclusively by squash-web during login.
+**Management service endpoints used by squash-web:**
+- `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Used during login to populate `player_id` in the JWT.
+- `GET /api/v1/players/{playerID}/games` — returns all `PlayerGame` records for a player (newest first). Each item: `id`, `game_date`, `courts_count`, `courts`, `completed`, `participation_status` (`registered`|`skipped`), `participant_count` (registered players + guests), `venue_name`, `venue_address`, `group_title`, `timezone`. Used by `GET /api/games`. Both endpoints require bearer auth.
 
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
