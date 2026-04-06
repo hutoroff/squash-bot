@@ -81,10 +81,11 @@ Add the bot to a Telegram group and grant it admin rights (required for pinning 
 
 In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores:
 - **Name**, **courts** (comma-separated), **time slots** (preset HH:MM options), **address** (optional)
-- **Game days** — weekdays when games are played (toggle keyboard). Used for the booking and auto-booking reminders.
-- **Preferred game time** — one of the configured time slots marked as the default. Used by auto-booking to pick the target slot at midnight.
-- **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM.
+- **Game days** — weekdays when games are played (toggle keyboard; press Confirm with nothing selected to skip). Used for booking and auto-booking reminders.
+- **Preferred game time** — one of the configured time slots marked as the default (highlighted ⭐ in the new-game wizard). Used by auto-booking to pick the target slot at midnight.
+- **Auto-booking courts** — ordered subset of courts tried first when auto-booking at midnight (priority order). Leave blank to book any available court.
 - **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
+- **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM and used by auto-booking to compute the target date.
 
 **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
 
@@ -269,7 +270,7 @@ crontab -e
 | `/mygame`   | Anyone          | Show your next registered game with a link       |
 | `/games`    | Group admins    | List upcoming games you manage; edit/manage them |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
-| `/venues`   | Group admins    | Manage venues (courts, time slots, address)      |
+| `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/language` | Group admins    | Set the bot language for a group (en/de/ru)      |
 | `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
 

@@ -244,6 +244,12 @@ const (
 	MsgVenueInvalidAutoBookingCourts = "msg.venue_invalid_auto_booking_courts"
 	BtnVenueEditAutoBookingCourts    = "btn.venue_edit_auto_booking_courts"
 
+	// Booking opens days
+	// Args for MsgVenueBookingOpensDaysLine: %d = days
+	MsgVenueAskBookingOpensDays  = "msg.venue_ask_booking_opens_days"
+	MsgVenueBookingOpensDaysLine = "msg.venue_booking_opens_days_line"
+	BtnVenueEditBookingOpensDays = "btn.venue_edit_booking_opens_days"
+
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
@@ -471,6 +477,10 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAutoBookingCourtsLine:    "Auto-booking courts: %s",
 		MsgVenueInvalidAutoBookingCourts: "Invalid courts — each ID must be in the venue's court list. Please try again:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-booking Courts",
+
+		MsgVenueAskBookingOpensDays:  "How many days in advance does booking open? (default: 14). Send - to use default:",
+		MsgVenueBookingOpensDaysLine: "Booking opens: %d days before",
+		BtnVenueEditBookingOpensDays: "📆 Booking Opens",
 
 		// Game message — venue
 		GameVenueLine: "📍 %s",
@@ -702,7 +712,12 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAutoBookingCourtsLine:    "Auto-Buchungsplätze: %s",
 		MsgVenueInvalidAutoBookingCourts: "Ungültige Plätze — jede ID muss in der Platzkonfiguration des Ortes enthalten sein. Bitte erneut versuchen:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-Buchungsplätze",
-		GameVenueLine:                    "📍 %s",
+
+		MsgVenueAskBookingOpensDays:  "Wie viele Tage im Voraus öffnet die Buchung? (Standard: 14). Sende - für Standard:",
+		MsgVenueBookingOpensDaysLine: "Buchung öffnet: %d Tage vorher",
+		BtnVenueEditBookingOpensDays: "📆 Buchung öffnet",
+
+		GameVenueLine: "📍 %s",
 
 		// Weekdays
 		WeekdaySunday:    "Sonntag",
@@ -931,7 +946,12 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAutoBookingCourtsLine:    "Корты автобронирования: %s",
 		MsgVenueInvalidAutoBookingCourts: "Неверные корты — каждый ID должен быть в списке кортов площадки. Попробуй снова:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Корты автобронирования",
-		GameVenueLine:                    "📍 %s",
+
+		MsgVenueAskBookingOpensDays:  "За сколько дней открывается бронирование? (по умолчанию: 14). Отправь - для значения по умолчанию:",
+		MsgVenueBookingOpensDaysLine: "Бронирование: за %d дней",
+		BtnVenueEditBookingOpensDays: "📆 Бронирование",
+
+		GameVenueLine: "📍 %s",
 
 		// Weekdays (nominative)
 		WeekdaySunday:    "Воскресенье",
