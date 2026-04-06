@@ -37,8 +37,12 @@ services:
       CRON_POLL: ${CRON_POLL:-*/5 * * * *}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
+      SPORTS_BOOKING_SERVICE_URL: ${SPORTS_BOOKING_SERVICE_URL:-}
+      AUTO_BOOKING_COURTS_COUNT: ${AUTO_BOOKING_COURTS_COUNT:-3}
     depends_on:
       postgres:
+        condition: service_healthy
+      sports-booking-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
