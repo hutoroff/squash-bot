@@ -94,6 +94,7 @@ const (
 	BtnCancellationReminder = "btn.cancellation_reminder"
 	BtnDayAfterCleanup      = "btn.day_after_cleanup"
 	BtnBookingReminder      = "btn.booking_reminder"
+	BtnAutoBooking          = "btn.auto_booking"
 
 	// Language selection buttons
 	BtnLangEn = "btn.lang_en"
@@ -333,6 +334,7 @@ var translations = map[Lang]map[string]string{
 		BtnCancellationReminder: "Cancellation Reminder",
 		BtnDayAfterCleanup:      "Day After Cleanup",
 		BtnBookingReminder:      "Booking Reminder",
+		BtnAutoBooking:          "Auto Booking",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
@@ -568,6 +570,7 @@ var translations = map[Lang]map[string]string{
 		BtnCancellationReminder: "Absage-Erinnerung",
 		BtnDayAfterCleanup:      "Tag-Danach-Bereinigung",
 		BtnBookingReminder:      "Buchungserinnerung",
+		BtnAutoBooking:          "Automatische Buchung",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
@@ -802,6 +805,7 @@ var translations = map[Lang]map[string]string{
 		BtnCancellationReminder: "Напоминание об отмене",
 		BtnDayAfterCleanup:      "Очистка после игры",
 		BtnBookingReminder:      "Напоминание о бронировании",
+		BtnAutoBooking:          "Автобронирование",
 
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",

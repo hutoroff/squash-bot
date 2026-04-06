@@ -253,6 +253,9 @@ func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, l
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBookingReminder), "trigger:booking_reminder"),
 		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnAutoBooking), "trigger:auto_booking"),
+		),
 	)
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectTriggerEvent))

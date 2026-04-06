@@ -1128,10 +1128,7 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 		return
 	}
 
-	switch event {
-	case "cancellation_reminder", "day_after_cleanup", "booking_reminder":
-		// valid events
-	default:
+	if !isValidTriggerEvent(event) {
 		slog.Debug("handleTrigger: unknown event", "event", event)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgUnknownEvent))
 		return
@@ -1157,6 +1154,17 @@ func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, eve
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
 	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
 	b.api.Send(edit) //nolint:errcheck
+}
+
+// isValidTriggerEvent reports whether event is a recognised scheduler event name
+// that may be triggered manually via the /trigger command.
+func isValidTriggerEvent(event string) bool {
+	switch event {
+	case "cancellation_reminder", "day_after_cleanup", "booking_reminder", "auto_booking":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleManageClose restores the games-list view in the callback message so the

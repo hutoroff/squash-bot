@@ -311,6 +311,29 @@ func TestParseAdminCommand_ValidCourts(t *testing.T) {
 	}
 }
 
+// --- isValidTriggerEvent ---
+
+func TestIsValidTriggerEvent(t *testing.T) {
+	valid := []string{
+		"cancellation_reminder",
+		"day_after_cleanup",
+		"booking_reminder",
+		"auto_booking",
+	}
+	for _, e := range valid {
+		if !isValidTriggerEvent(e) {
+			t.Errorf("isValidTriggerEvent(%q): expected true", e)
+		}
+	}
+
+	invalid := []string{"", "unknown", "auto_Booking", "AUTO_BOOKING", "trigger"}
+	for _, e := range invalid {
+		if isValidTriggerEvent(e) {
+			t.Errorf("isValidTriggerEvent(%q): expected false", e)
+		}
+	}
+}
+
 // --- isBotMentioned UTF-16 offset correctness ---
 
 // newMinimalBot returns a Bot with only the api.Self.UserName field set, which is
