@@ -29,14 +29,16 @@ type courtsUpdater func(ctx context.Context, gameID int64, courts string, count 
 // to cancel according to the grouping algorithm, cancels them, and updates the game record.
 //
 // courtsToCancel is the number of courts that should be freed up.
+// loc is the group's timezone used to convert the game time to local HHMM for the slot query.
 // Returns the cancellation result and any error that aborted the operation.
 // Partial cancellations (some courts canceled, then an error) are reflected in the result.
 func (s *SchedulerService) cancelUnusedCourts(
 	ctx context.Context,
 	game *models.Game,
 	courtsToCancel int,
+	loc *time.Location,
 ) (*courtCancellationResult, error) {
-	return s.cancelUnusedCourtsLogicOnly(ctx, game, courtsToCancel,
+	return s.cancelUnusedCourtsLogicOnly(ctx, game, courtsToCancel, loc,
 		func(ctx context.Context, gameID int64, courts string, count int) error {
 			return s.gameRepo.UpdateCourts(ctx, gameID, courts, count)
 		})
@@ -44,20 +46,22 @@ func (s *SchedulerService) cancelUnusedCourts(
 
 // cancelUnusedCourtsLogicOnly is the testable core of cancelUnusedCourts.
 // It accepts a courtsUpdater callback instead of using gameRepo directly.
+// loc is the group's timezone; the Eversports /api/slot endpoint returns times in
+// the venue's local timezone, so date and HHMM parameters must be in local time too.
 func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	ctx context.Context,
 	game *models.Game,
 	courtsToCancel int,
+	loc *time.Location,
 	updateFn courtsUpdater,
 ) (*courtCancellationResult, error) {
 	if s.bookingClient == nil || courtsToCancel == 0 {
 		return buildNoOpResult(game), nil
 	}
 
-	// Format time parameters: startTime = HHMM of game, endTime = startTime + 10 min.
-	date := game.GameDate.UTC().Format("2006-01-02")
-	startHHMM := game.GameDate.UTC().Format("1504")
-	endHHMM := game.GameDate.UTC().Add(10 * time.Minute).Format("1504")
+	// Format time parameters in local (venue) time: Eversports /api/slot returns
+	// slot Start values in the venue's local timezone, not UTC.
+	date, startHHMM, endHHMM := slotQueryWindow(game.GameDate.In(loc))
 
 	slots, err := s.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
 	if err != nil {

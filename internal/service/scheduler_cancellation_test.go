@@ -64,7 +64,7 @@ func TestCancelUnusedCourts_NilClient(t *testing.T) {
 	s := &SchedulerService{bookingClient: nil, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestCancelUnusedCourts_ZeroCourtsToCancel(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 0, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 0, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestCancelUnusedCourts_ListError(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
-	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, noopUpdate)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err == nil {
 		t.Fatal("expected error from ListMatches, got nil")
 	}
@@ -113,7 +113,7 @@ func TestCancelUnusedCourts_NoOwnedSlots(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1", 1, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCancelUnusedCourts_CancelsCorrectCourts(t *testing.T) {
 	game := makeGame("5,6,8,9", 4, time.Now().Add(time.Hour))
 
 	var updatedCourts string
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1,
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC,
 		func(_ context.Context, _ int64, courts string, _ int) error {
 			updatedCourts = courts
 			return nil
@@ -173,7 +173,7 @@ func TestCancelUnusedCourts_Cancel2Courts_SpecExample(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,7,8,9", 4, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestCancelUnusedCourts_DBWriteFailure_ReturnsError(t *testing.T) {
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
 	dbErr := errors.New("connection reset")
-	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2,
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC,
 		func(_ context.Context, _ int64, _ string, _ int) error {
 			return dbErr
 		})
@@ -230,7 +230,7 @@ func TestCancelUnusedCourts_MismatchedLengths_ReturnsError(t *testing.T) {
 	// Game says 2 courts but Eversports has 3 bookings.
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
-	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, noopUpdate)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err == nil {
 		t.Fatal("expected error for mismatched court counts, got nil")
 	}
@@ -255,7 +255,7 @@ func TestCancelUnusedCourts_CancelError_PartialSuccess(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("5,7,8,9", 4, time.Now().Add(time.Hour), "5,7,8,9")
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testi
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("7,8,9", 3, time.Now().Add(time.Hour), "7")
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("5,9", 2, time.Now().Add(time.Hour), "5,7,8,9")
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, noopUpdate)
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -447,3 +447,60 @@ func TestCourtsToCancel_Calculation(t *testing.T) {
 
 // noopUpdate is a courtsUpdater that does nothing, for tests that don't need DB writes.
 func noopUpdate(_ context.Context, _ int64, _ string, _ int) error { return nil }
+
+// ── recordingBookingClient ─────────────────────────────────────────────────────
+
+// recordingBookingClient records the arguments passed to ListMatches so tests can
+// assert that the caller passed the correct date and time parameters.
+type recordingBookingClient struct {
+	listedDate      string
+	listedStartHHMM string
+	listedEndHHMM   string
+	slots           []BookingSlot
+}
+
+func (r *recordingBookingClient) ListMatches(_ context.Context, date, startHHMM, endHHMM string, _ bool) ([]BookingSlot, error) {
+	r.listedDate = date
+	r.listedStartHHMM = startHHMM
+	r.listedEndHHMM = endHHMM
+	return r.slots, nil
+}
+func (r *recordingBookingClient) CancelMatch(_ context.Context, _ string) error { return nil }
+func (r *recordingBookingClient) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+	return nil, nil
+}
+
+// ── timezone regression test ─────────────────────────────────────────────────
+
+func TestCancelUnusedCourts_UsesLocalTimeForSlotQuery(t *testing.T) {
+	// Regression: the original code called game.GameDate.UTC().Format(...) when
+	// building the ListMatches parameters. For a game stored at 23:30 UTC (which is
+	// 00:30 CET / Berlin the NEXT calendar day), that produced the wrong date and HHMM.
+	//
+	// Berlin in January is CET (UTC+1).
+	// GameDate = 2026-01-15 23:30 UTC == 2026-01-16 00:30 CET.
+	//
+	// Correct (local Berlin): date "2026-01-16", startHHMM "0030", endHHMM "0040".
+	// Wrong (UTC):            date "2026-01-15", startHHMM "2330", endHHMM "2340".
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+
+	gameDate := time.Date(2026, 1, 15, 23, 30, 0, 0, time.UTC)
+	recorder := &recordingBookingClient{slots: nil} // empty → no-op, but ListMatches is still called
+	s := &SchedulerService{bookingClient: recorder, logger: noopLogger()}
+	game := makeGame("1,2", 2, gameDate)
+
+	_, _ = s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, berlin, noopUpdate)
+
+	if recorder.listedDate != "2026-01-16" {
+		t.Errorf("date: got %q, want %q (local Berlin date, not UTC)", recorder.listedDate, "2026-01-16")
+	}
+	if recorder.listedStartHHMM != "0030" {
+		t.Errorf("startHHMM: got %q, want %q (local Berlin time)", recorder.listedStartHHMM, "0030")
+	}
+	if recorder.listedEndHHMM != "0040" {
+		t.Errorf("endHHMM: got %q, want %q (local Berlin time +10 min)", recorder.listedEndHHMM, "0040")
+	}
+}

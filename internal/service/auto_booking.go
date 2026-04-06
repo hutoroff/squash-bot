@@ -103,16 +103,14 @@ func (s *SchedulerService) processAutoBookingForVenue(
 		return false
 	}
 
-	// Time window for availability check: preferred time ±0/+10 min (narrow window), converted to UTC.
-	checkEndHHMM := gameStart.UTC().Add(10 * time.Minute).Format("1504")
-	checkStartHHMM := gameStart.UTC().Format("1504")
-	checkDateUTC := gameStart.UTC().Format("2006-01-02")
+	// Time window for availability check: preferred time +0/+10 min (narrow window).
+	checkDateLocal, checkStartHHMM, checkEndHHMM := slotQueryWindow(gameStart)
 
 	// Fetch all non-user-owned slots at the preferred time to find available courts.
-	slots, err := s.bookingClient.ListMatches(ctx, checkDateUTC, checkStartHHMM, checkEndHHMM, false)
+	slots, err := s.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkEndHHMM, false)
 	if err != nil {
 		s.logger.Error("auto-booking: list available slots",
-			"venue_id", venue.ID, "date", checkDateUTC, "err", err)
+			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
 		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
 		return false
 	}
@@ -280,6 +278,16 @@ func parseCourtIDs(s string) []int {
 		}
 	}
 	return ids
+}
+
+// slotQueryWindow returns the date (YYYY-MM-DD), startHHMM, and endHHMM (start+10 min)
+// parameters for a BookingServiceClient.ListMatches call targeting gameStart.
+// All values are in the timezone carried by gameStart because the Eversports /api/slot
+// endpoint returns slot Start values in the venue's local timezone, not UTC.
+func slotQueryWindow(gameStart time.Time) (date, startHHMM, endHHMM string) {
+	return gameStart.Format("2006-01-02"),
+		gameStart.Format("1504"),
+		gameStart.Add(10 * time.Minute).Format("1504")
 }
 
 // parsePreferredTime parses a "HH:MM" preferred time and "YYYY-MM-DD" date string

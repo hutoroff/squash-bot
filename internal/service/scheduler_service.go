@@ -65,6 +65,24 @@ func (s *SchedulerService) RunScheduledTasks() {
 	s.RunDayAfterCleanup()
 }
 
+// groupTZByID loads the IANA timezone for the group identified by chatID.
+// Returns (loc, true) on success and (nil, false) on any error or not-found.
+// Callers must not proceed with timezone-sensitive operations when ok is false,
+// because acting on a guessed timezone can cause the wrong Eversports slot
+// window to be queried or canceled.
+func (s *SchedulerService) groupTZByID(ctx context.Context, chatID int64) (*time.Location, bool) {
+	group, err := s.groupRepo.GetByID(ctx, chatID)
+	if err != nil {
+		s.logger.Error("cannot resolve group timezone", "chat_id", chatID, "err", err)
+		return nil, false
+	}
+	if group == nil {
+		s.logger.Error("cannot resolve group timezone: group not found", "chat_id", chatID)
+		return nil, false
+	}
+	return s.groupTimezone(group), true
+}
+
 // groupLang returns a Localizer for the given chatID's stored language.
 // Falls back to English if the group is not found or the call fails.
 func (s *SchedulerService) groupLang(ctx context.Context, chatID int64) *i18n.Localizer {
@@ -154,12 +172,23 @@ func (s *SchedulerService) processCancellationReminder(ctx context.Context, game
 	}
 
 	// Attempt automatic court cancellation when a booking client is configured.
-	result, cancelErr := s.cancelUnusedCourts(ctx, game, courtsToCancel)
-	if cancelErr != nil {
-		s.logger.Error("cancellation reminder: court cancellation failed",
-			"game_id", game.ID, "err", cancelErr)
-		// Continue with notification even if cancellation failed; use no-op result.
+	// We need the group's timezone to query Eversports in local time; if the lookup
+	// fails we skip cancellation entirely rather than risk querying the wrong window.
+	var result *courtCancellationResult
+	groupTZ, tzOK := s.groupTZByID(ctx, game.ChatID)
+	if !tzOK {
+		s.logger.Warn("cancellation reminder: skipping court cancellation (timezone unavailable)",
+			"game_id", game.ID)
 		result = buildNoOpResult(game)
+	} else {
+		var cancelErr error
+		result, cancelErr = s.cancelUnusedCourts(ctx, game, courtsToCancel, groupTZ)
+		if cancelErr != nil {
+			s.logger.Error("cancellation reminder: court cancellation failed",
+				"game_id", game.ID, "err", cancelErr)
+			// Continue with notification even if cancellation failed; use no-op result.
+			result = buildNoOpResult(game)
+		}
 	}
 
 	gameDateTime := game.GameDate.Format("02.01 15:04")

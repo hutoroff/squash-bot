@@ -62,6 +62,43 @@ func TestParsePreferredTime_InvalidDate(t *testing.T) {
 	}
 }
 
+// ── slotQueryWindow ───────────────────────────────────────────────────────────
+
+func TestSlotQueryWindow_DayBoundary(t *testing.T) {
+	// Regression: when the code used UTC formatting, a game near midnight in a
+	// non-UTC timezone caused slotQueryWindow to return the wrong date and HHMM.
+	//
+	// Berlin in January is CET (UTC+1).
+	// 2026-01-15 23:30 UTC == 2026-01-16 00:30 CET.
+	// The correct query window is on "2026-01-16" starting at "0030" (local time).
+	// Using UTC would produce "2026-01-15" / "2330" — a different date entirely.
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+
+	gameUTC := time.Date(2026, 1, 15, 23, 30, 0, 0, time.UTC)
+	gameStart := gameUTC.In(berlin)
+
+	date, startHHMM, endHHMM := slotQueryWindow(gameStart)
+
+	if date != "2026-01-16" {
+		t.Errorf("date: got %q, want %q (local Berlin date)", date, "2026-01-16")
+	}
+	if startHHMM != "0030" {
+		t.Errorf("startHHMM: got %q, want %q (local Berlin time)", startHHMM, "0030")
+	}
+	if endHHMM != "0040" {
+		t.Errorf("endHHMM: got %q, want %q (local Berlin time +10 min)", endHHMM, "0040")
+	}
+
+	// Sanity-check: UTC formatting would have produced a different date, confirming
+	// the test would catch a regression that uses .UTC() instead of the local time.
+	if gameUTC.Format("2006-01-02") != "2026-01-15" {
+		t.Error("UTC date sanity check failed — test setup is wrong")
+	}
+}
+
 // ── filterAvailableCourts ─────────────────────────────────────────────────────
 
 func intPtrAB(v int) *int { return &v }
