@@ -272,7 +272,7 @@ crontab -e
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/language` | Group admins    | Set the bot language for a group (en/de/ru)      |
-| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS` |
+| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup` |
 
 ## Localisation
 
@@ -324,16 +324,18 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 
 A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using per-group timezone and per-venue configuration:
 
-| Task                       | Trigger window         | What it does                                                                          |
+| Task                       | Trigger window (cron)  | What it does                                                                          |
 |----------------------------|------------------------|---------------------------------------------------------------------------------------|
 | Auto-booking               | 00:00–00:05 (group TZ) | Books courts for the preferred time on configured game days when booking opens.       |
-| Cancellation reminder      | Any time (±2m30s)      | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.         |
+| Cancellation reminder      | ±2m30s of reminder time | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.        |
 | Booking reminder           | 10:00–10:05 (group TZ) | DMs admins on configured game days with booking info (or confirms auto-booking ran).  |
 | Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.                    |
 
+`/trigger <event>` bypasses the cron time-window gate for the chosen task. Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`) and `game_days` validation still apply.
+
 **Auto-booking**: fires at midnight in each group's timezone on configured game days, for venues with `preferred_game_time` set. Deduped via `venue.last_auto_booking_at` (one per calendar day). Requires `SPORTS_BOOKING_SERVICE_URL`. Queries available (unbooked) slots in a ±10-minute window around `preferred_game_time` for the date `today + booking_opens_days`, then books up to `AUTO_BOOKING_COURTS_COUNT` courts. On full success, sends a group notification. On partial or full failure, silently DMs all group admins.
 
-**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. Courts are selected using a consecutive-grouping algorithm: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
+**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 
 **Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). If auto-booking already ran today (`venue.last_auto_booking_at` is set), sends a group confirmation message instead of a DM. Otherwise DMs all group admins with the venue name and `venue.booking_opens_days`.
 

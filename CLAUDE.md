@@ -238,7 +238,7 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
 
 - **`RunDayAfterCleanup()`**: Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
 
-Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`, `auto_booking`.
+Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`, `auto_booking`. Each event routes to a `ForceRun*` method that bypasses the time-window scheduling gate (e.g. `[00:00, 00:05)` for auto-booking, `±pollWindow` for cancellation reminders) but still respects `game_days` validation and same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`).
 
 ### Admin & Group Management
 - **Group admin rights** are verified dynamically per group via `GetChatAdministrators` — no hardcoded IDs; this controls game creation, player/guest management, and all `/games` actions
