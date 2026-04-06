@@ -57,7 +57,7 @@ func (s *SchedulerService) RunAutoBooking() {
 			if venue.GameDays == "" || venue.PreferredGameTime == "" || venue.Courts == "" {
 				continue
 			}
-			if !containsDay(venue.GameDays, todayWd) {
+			if !containsDay(venue.GameDays, int(localNow.AddDate(0, 0, venue.BookingOpensDays).Weekday())) {
 				continue
 			}
 			// Dedup: skip if already booked today in this group's timezone.

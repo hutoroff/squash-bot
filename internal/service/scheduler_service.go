@@ -234,7 +234,7 @@ func (s *SchedulerService) RunBookingReminders() {
 			if venue.GameDays == "" {
 				continue
 			}
-			if !containsDay(venue.GameDays, todayWd) {
+			if !containsDay(venue.GameDays, int(localNow.AddDate(0, 0, venue.BookingOpensDays).Weekday())) {
 				continue
 			}
 			// Dedup: skip if already sent today in this group's timezone.
