@@ -164,6 +164,8 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 
 	// For single-group admins, ensure at least one venue is configured before
 	// showing the date picker — gives immediate feedback instead of failing mid-flow.
+	// Also resolve the group timezone so the date picker shows the correct "today".
+	loc := b.loc
 	if len(adminGroupIDs) == 1 {
 		venues, err := b.client.GetVenuesByGroup(ctx, adminGroupIDs[0])
 		if err != nil {
@@ -175,9 +177,10 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
 			return
 		}
+		loc = b.groupLocation(ctx, adminGroupIDs[0])
 	}
 
-	keyboard := b.buildDateSelectionKeyboard(lz)
+	keyboard := b.buildDateSelectionKeyboard(lz, loc)
 	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgNewGameSelectDate))
 	out.ReplyMarkup = keyboard
 	if _, err := b.api.Send(out); err != nil {
@@ -186,8 +189,9 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 }
 
 // buildDateSelectionKeyboard returns an inline keyboard with the next 14 days (2 per row).
-func (b *Bot) buildDateSelectionKeyboard(lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
-	today := time.Now().In(b.loc)
+// loc determines which timezone is used to compute "today"; use the group's timezone when known.
+func (b *Bot) buildDateSelectionKeyboard(lz *i18n.Localizer, loc *time.Location) tgbotapi.InlineKeyboardMarkup {
+	today := time.Now().In(loc)
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for i := 0; i < 14; i += 2 {
 		var row []tgbotapi.InlineKeyboardButton

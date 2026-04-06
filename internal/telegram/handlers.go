@@ -1553,13 +1553,6 @@ func (b *Bot) renderTimezoneKeyboard(chatID int64, messageID int, groupID int64,
 func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery, dateStr string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
 
-	date, err := time.ParseInLocation("2006-01-02", dateStr, b.loc)
-	if err != nil {
-		slog.Debug("handleNewGameDate: invalid date in callback", "data", dateStr)
-		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
-		return
-	}
-
 	// Re-verify admin eligibility at callback time.
 	adminGroupIDs := b.adminGroups(cb.From.ID)
 	if len(adminGroupIDs) == 0 {
@@ -1581,12 +1574,22 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 			b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoVenuesConfigured))
 			return
 		}
+		// Parse date in the group's timezone so the calendar date is correct.
+		loc := b.groupLocation(ctx, adminGroupIDs[0])
+		date, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			slog.Debug("handleNewGameDate: invalid date in callback", "data", dateStr)
+			b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+			return
+		}
 		if len(venues) == 1 {
 			// Auto-select the only venue — skip the picker entirely.
 			v := venues[0]
 			venueID := v.ID
 			wizard := &newGameWizard{
 				gameDate:          date,
+				dateStr:           dateStr,
+				loc:               loc,
 				step:              wizardStepCourtPick,
 				venueID:           &venueID,
 				venueCourts:       splitCSV(v.Courts),
@@ -1602,10 +1605,12 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		// Multiple venues — show picker without a manual fallback option.
 		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
 			gameDate: date,
+			dateStr:  dateStr,
+			loc:      loc,
 			step:     wizardStepVenue,
 		})
 		b.answerCallback(cb.ID, "")
-		localDate := date.In(b.loc)
+		localDate := date.In(loc)
 		var rows [][]tgbotapi.InlineKeyboardButton
 		for _, v := range venues {
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -1620,9 +1625,20 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
+	// Multiple groups — group timezone is unknown until the admin picks a group.
+	// Parse with the bot's fallback timezone for now; handleNewGameGroup will
+	// re-parse dateStr once the group (and its timezone) is known.
+	date, err := time.ParseInLocation("2006-01-02", dateStr, b.loc)
+	if err != nil {
+		slog.Debug("handleNewGameDate: invalid date in callback", "data", dateStr)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
 	// Multiple groups → ask which group to create the game in first.
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, &newGameWizard{
 		gameDate: date,
+		dateStr:  dateStr,
 		step:     wizardStepGroup,
 	})
 	b.answerCallback(cb.ID, "")
@@ -1692,6 +1708,18 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 
 	wizard.groupID = groupID
+
+	// Now that the group is known, load its timezone and re-parse the date so the
+	// calendar date is correct for that group's local time, regardless of what
+	// timezone the date picker was built with.
+	loc := b.groupLocation(ctx, groupID)
+	wizard.loc = loc
+	if wizard.dateStr != "" {
+		if reparsed, err := time.ParseInLocation("2006-01-02", wizard.dateStr, loc); err == nil {
+			wizard.gameDate = reparsed
+		}
+	}
+
 	b.answerCallback(cb.ID, "")
 
 	if len(venues) == 1 {
@@ -1718,7 +1746,7 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 	wizard.selectedCourts = nil
 	wizard.timeSlots = nil
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
-	localDate := wizard.gameDate.In(b.loc)
+	localDate := wizard.gameDate.In(loc)
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, v := range venues {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -1753,8 +1781,9 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 		return // keep wizard state so the user can retry
 	}
 
-	d := wizard.gameDate.In(b.loc)
-	gameDate := time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, b.loc)
+	loc := b.wizardLoc(wizard)
+	d := wizard.gameDate.In(loc)
+	gameDate := time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 	if !gameDate.After(time.Now()) {
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNewGameTimePast))
 		return // keep wizard state so the user can retry
@@ -1810,7 +1839,7 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 	wizard.step = wizardStepCourts
 	b.pendingNewGameWizard.Store(msg.Chat.ID, wizard)
 
-	localDate := gameDate.In(b.loc)
+	localDate := gameDate.In(b.wizardLoc(wizard))
 	b.reply(msg.Chat.ID, msg.MessageID,
 		lz.Tf(i18n.MsgNewGameEnterCourts, lz.FormatGameDate(localDate), localDate.Format("15:04")))
 }

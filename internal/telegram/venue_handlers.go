@@ -1066,8 +1066,9 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	d := wizard.gameDate.In(b.loc)
-	gameDate := time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, b.loc)
+	loc := b.wizardLoc(wizard)
+	d := wizard.gameDate.In(loc)
+	gameDate := time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 	if !gameDate.After(time.Now()) {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameTimePast))
 		return
@@ -1147,7 +1148,7 @@ func (b *Bot) handleNewGameTimeCustom(ctx context.Context, cb *tgbotapi.Callback
 	// Keep wizard at wizardStepTime but clear the time slot keyboard → admin types time.
 	b.answerCallback(cb.ID, "")
 
-	localDate := wizard.gameDate.In(b.loc)
+	localDate := wizard.gameDate.In(b.wizardLoc(wizard))
 	prompt := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID,
 		lz.Tf(i18n.MsgNewGameEnterTime, lz.FormatGameDate(localDate)))
 	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}

@@ -46,8 +46,10 @@ const (
 // newGameWizard holds the in-progress state for the /newGame wizard.
 // Keyed by private chat ID in pendingNewGameWizard.
 type newGameWizard struct {
-	groupID           int64     // set for multi-group admins after group is selected
-	gameDate          time.Time // date only (midnight) at venue/time step; full datetime at courts step
+	groupID           int64          // set for multi-group admins after group is selected
+	gameDate          time.Time      // date only (midnight) at venue/time step; full datetime at courts step
+	dateStr           string         // raw "YYYY-MM-DD" from the date picker; used to re-parse in group timezone
+	loc               *time.Location // group timezone; set once the group is known, falls back to bot loc
 	step              wizardStep
 	venueID           *int64          // set when a venue is selected
 	venueCourts       []string        // available courts from the selected venue
@@ -363,4 +365,27 @@ func (b *Bot) groupLocalizer(ctx context.Context, chatID int64) *i18n.Localizer 
 		return i18n.New(i18n.En)
 	}
 	return i18n.New(i18n.Normalize(group.Language))
+}
+
+// wizardLoc returns the timezone stored in the wizard, falling back to b.loc.
+// Use this everywhere the wizard needs a *time.Location after the group is known.
+func (b *Bot) wizardLoc(w *newGameWizard) *time.Location {
+	if w.loc != nil {
+		return w.loc
+	}
+	return b.loc
+}
+
+// groupLocation loads the IANA timezone for a group and returns a *time.Location.
+// Falls back to b.loc if the group is not found or the timezone string is invalid.
+func (b *Bot) groupLocation(ctx context.Context, chatID int64) *time.Location {
+	group, err := b.client.GetGroupByID(ctx, chatID)
+	if err != nil || group == nil {
+		return b.loc
+	}
+	loc, err := time.LoadLocation(group.Timezone)
+	if err != nil {
+		return b.loc
+	}
+	return loc
 }
