@@ -228,10 +228,25 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			autoBookingCourts = normalized
 		}
 		wiz.autoBookingCourts = autoBookingCourts
+		wiz.step = venueStepBookingOpensDays
+		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskBookingOpensDays))
+
+	case venueStepBookingOpensDays:
+		bookingOpensDays := 0
+		if text != "-" && text != "" {
+			n, err := strconv.Atoi(text)
+			if err != nil || n <= 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			bookingOpensDays = n
+		}
+		wiz.bookingOpensDays = bookingOpensDays
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 
 		gameDaysStr := gameDaysToString(wiz.gameDays)
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, 0, wiz.preferredGameTime, wiz.autoBookingCourts)
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, wiz.preferredGameTime, wiz.autoBookingCourts)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -288,7 +303,8 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 		escapeMarkdown(timeSlots),
 		escapeMarkdown(address),
 	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime)) +
-		"\n" + lz.Tf(i18n.MsgVenueAutoBookingCourtsLine, escapeMarkdown(autoBookingCourts))
+		"\n" + lz.Tf(i18n.MsgVenueAutoBookingCourtsLine, escapeMarkdown(autoBookingCourts)) +
+		"\n" + lz.Tf(i18n.MsgVenueBookingOpensDaysLine, venue.BookingOpensDays)
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	rows = append(rows,
@@ -303,6 +319,9 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGameDays), fmt.Sprintf("venue_edit_gamedays:%d:%d", venue.ID, venue.GroupID)),
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditGracePeriod), fmt.Sprintf("venue_edit_graceperiod:%d:%d", venue.ID, venue.GroupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditBookingOpensDays), fmt.Sprintf("venue_edit_booking_opens_days:%d:%d", venue.ID, venue.GroupID)),
 		),
 	)
 	// Only show "Preferred Time" button when time slots are configured.
@@ -395,6 +414,8 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		prompt = lz.T(i18n.MsgVenueAskGracePeriod)
 	case venueEditFieldAutoBookingCourts:
 		prompt = lz.Tf(i18n.MsgVenueAskAutoBookingCourts, venue.Courts)
+	case venueEditFieldBookingOpensDays:
+		prompt = lz.T(i18n.MsgVenueAskBookingOpensDays)
 	}
 	b.sendText(cb.Message.Chat.ID, prompt, nil)
 }
@@ -468,6 +489,17 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 				}
 			}
 			venue.AutoBookingCourts = normalized
+		}
+	case venueEditFieldBookingOpensDays:
+		if text == "-" || text == "" {
+			venue.BookingOpensDays = 14
+		} else {
+			n, err := strconv.Atoi(text)
+			if err != nil || n <= 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			venue.BookingOpensDays = n
 		}
 	}
 

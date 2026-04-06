@@ -153,8 +153,8 @@ Works in **private chat only**.
 
 1. Admin sends `/venues` → shows venue list for their group (or group picker if multiple groups).
 2. Each venue row shows "Edit" and "Delete" buttons; "Add Venue" button at the bottom.
-3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if no time_slots entered) → address (optional, `-` to skip) → game days (toggle inline keyboard, `-` to skip) → grace period hours (integer or `-` for default 24) → venue created.
-4. **Edit venue**: clicking a venue opens an edit menu with buttons for each field (Name, Courts, Time Slots, Address, Game Days, Grace Period). Admin sends new value as free text, except for Game Days which uses the toggle keyboard.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if no time_slots entered) → address (optional, `-` to skip) → game days (toggle inline keyboard; tap days to toggle, press "✓ Confirm" to proceed — confirming with nothing selected skips the field) → grace period hours (integer or `-` for default 24) → auto-booking courts (ordered subset or `-`) → booking opens days (integer or `-` for default 14) → venue created.
+4. **Edit venue**: clicking a venue opens an edit menu showing current values and buttons for each field. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens): admin sends new value as a message. Inline-keyboard fields: Game Days uses the toggle keyboard (tap days + Confirm); Preferred Time shows buttons for each configured time slot plus a "✕ No preference" option.
 5. **Delete venue**: two-step confirmation; linked games retain their `venue_id` as NULL (ON DELETE SET NULL).
 
 **Venue fields:**
@@ -162,9 +162,9 @@ Works in **private chat only**.
 - `game_days`: comma-separated weekday ints (Go `time.Weekday`: Sunday=0, Monday=1, …, Saturday=6). Used for booking reminder schedule.
 - `booking_opens_days`: how many days ahead booking opens (default 14). Included in booking reminder DM text.
 - `preferred_game_time`: a single HH:MM slot (must be one of `time_slots`, or empty for no preference). Displayed with ⭐ in the new-game wizard time slot keyboard. Set via `venue_edit_preferred_time` button or the venue creation wizard.
-- `auto_booking_courts`: ordered comma-separated court IDs (subset of `courts`) that `RunAutoBooking` will attempt to book, in declared priority order. Empty means any available court is eligible (API response order). Validated: each ID must be present in `courts`. Set via `venue_edit_auto_booking_courts` button or the venue creation wizard (last step, after grace period).
+- `auto_booking_courts`: ordered comma-separated court IDs (subset of `courts`) that `RunAutoBooking` will attempt to book, in declared priority order. Empty means any available court is eligible (API response order). Validated: each ID must be present in `courts`. Set via `venue_edit_auto_booking_courts` button or the venue creation wizard (second-to-last step, after grace period).
 
-Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time/auto_booking_courts:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`.
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time/auto_booking_courts/booking_opens_days:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`.
 State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`), `pendingVenuePreferredTimeEdit sync.Map` (chatID → `*venuePreferredTimeEditState`).
 
 ### New Game Wizard (`/newGame`)
