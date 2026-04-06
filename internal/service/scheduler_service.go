@@ -226,7 +226,6 @@ func (s *SchedulerService) RunBookingReminders() {
 			continue
 		}
 
-		todayWd := int(localNow.Weekday())
 		todayStr := localNow.Format("2006-01-02")
 		lz := i18n.New(i18n.Normalize(g.Language))
 
