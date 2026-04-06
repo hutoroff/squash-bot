@@ -19,7 +19,14 @@ const autoBookingCourtDuration = 60 * time.Minute
 // RunAutoBooking attempts to automatically book courts for upcoming game days
 // when booking opens. Fires in the [00:00, 00:05) window of each group's timezone
 // on configured game days. Requires bookingClient to be set.
-func (s *SchedulerService) RunAutoBooking() {
+func (s *SchedulerService) RunAutoBooking() { s.runAutoBooking(false) }
+
+// ForceRunAutoBooking bypasses the [00:00, 00:05) time window check.
+// game_days validation and the same-day dedup guard (last_auto_booking_at)
+// still apply. Intended for manual triggers.
+func (s *SchedulerService) ForceRunAutoBooking() { s.runAutoBooking(true) }
+
+func (s *SchedulerService) runAutoBooking(force bool) {
 	if s.bookingClient == nil {
 		return
 	}
@@ -39,7 +46,7 @@ func (s *SchedulerService) RunAutoBooking() {
 		localNow := now.In(groupTZ)
 
 		// Only fire in the [00:00, 00:05) window in the group's local time.
-		if localNow.Hour() != 0 || localNow.Minute() >= 5 {
+		if !force && (localNow.Hour() != 0 || localNow.Minute() >= 5) {
 			continue
 		}
 

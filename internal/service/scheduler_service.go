@@ -93,7 +93,15 @@ func (s *SchedulerService) groupTimezone(group *models.Group) *time.Location {
 // (default 24 hours). The reminder fires when:
 //
 //	now ≈ game_date − grace_period_hours − 6h  (within ±pollWindow)
-func (s *SchedulerService) RunCancellationReminders() {
+func (s *SchedulerService) RunCancellationReminders() { s.runCancellationReminders(false) }
+
+// ForceRunCancellationReminders processes all upcoming unnotified games regardless of
+// how far away their reminder time is, bypassing the ±pollWindow scheduling gate.
+// Already-notified games (notified_day_before=true) are still skipped.
+// Intended for manual triggers.
+func (s *SchedulerService) ForceRunCancellationReminders() { s.runCancellationReminders(true) }
+
+func (s *SchedulerService) runCancellationReminders(force bool) {
 	s.logger.Info("cancellation reminder check started")
 	ctx := context.Background()
 	now := time.Now()
@@ -115,7 +123,7 @@ func (s *SchedulerService) RunCancellationReminders() {
 		if diff < 0 {
 			diff = -diff
 		}
-		if diff > s.pollWindow {
+		if !force && diff > s.pollWindow {
 			continue
 		}
 		s.processCancellationReminder(ctx, game)
@@ -199,7 +207,14 @@ func (s *SchedulerService) processCancellationReminder(ctx context.Context, game
 // RunBookingReminders sends a DM to each group admin when court booking opens for a venue.
 // Fires at 10:00–10:05 in the group's timezone on each configured game day of the week.
 // NOTE: Telegram only allows bots to DM users who have previously started a private chat with the bot.
-func (s *SchedulerService) RunBookingReminders() {
+func (s *SchedulerService) RunBookingReminders() { s.runBookingReminders(false) }
+
+// ForceRunBookingReminders bypasses the [10:00, 10:05) time window check.
+// game_days validation and the same-day dedup guard (last_booking_reminder_at)
+// still apply. Intended for manual triggers.
+func (s *SchedulerService) ForceRunBookingReminders() { s.runBookingReminders(true) }
+
+func (s *SchedulerService) runBookingReminders(force bool) {
 	s.logger.Info("booking reminder check started")
 	ctx := context.Background()
 	now := time.Now()
@@ -216,7 +231,7 @@ func (s *SchedulerService) RunBookingReminders() {
 		localNow := now.In(groupTZ)
 
 		// Only fire in the [10:00, 10:05) window in the group's local time.
-		if localNow.Hour() != 10 || localNow.Minute() >= 5 {
+		if !force && (localNow.Hour() != 10 || localNow.Minute() >= 5) {
 			continue
 		}
 
@@ -325,7 +340,13 @@ func (s *SchedulerService) sendAutoBookingGroupNotification(
 
 // RunDayAfterCleanup unpins and closes yesterday's games.
 // Runs at 03:00–03:05 in each group's local timezone.
-func (s *SchedulerService) RunDayAfterCleanup() {
+func (s *SchedulerService) RunDayAfterCleanup() { s.runDayAfterCleanup(false) }
+
+// ForceRunDayAfterCleanup bypasses the [03:00, 03:05) time window check.
+// Intended for manual triggers.
+func (s *SchedulerService) ForceRunDayAfterCleanup() { s.runDayAfterCleanup(true) }
+
+func (s *SchedulerService) runDayAfterCleanup(force bool) {
 	s.logger.Info("day-after cleanup check started")
 	ctx := context.Background()
 	now := time.Now()
@@ -342,7 +363,7 @@ func (s *SchedulerService) RunDayAfterCleanup() {
 		localNow := now.In(groupTZ)
 
 		// Only fire in the [03:00, 03:05) window in the group's local time.
-		if localNow.Hour() != 3 || localNow.Minute() >= 5 {
+		if !force && (localNow.Hour() != 3 || localNow.Minute() >= 5) {
 			continue
 		}
 
