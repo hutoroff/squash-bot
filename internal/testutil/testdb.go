@@ -105,6 +105,6 @@ func IsDockerAvailable() bool {
 // Call this at the start of each test to ensure isolation.
 func Truncate(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx,
-		"TRUNCATE guest_participations, game_participations, players, games, bot_groups RESTART IDENTITY CASCADE")
+		"TRUNCATE guest_participations, game_participations, players, games, venues, bot_groups RESTART IDENTITY CASCADE")
 	return err
 }
