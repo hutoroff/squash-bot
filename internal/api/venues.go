@@ -28,8 +28,16 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
+	if req.GracePeriodHours < 0 {
+		writeError(w, http.StatusBadRequest, "grace_period_hours must be a positive integer")
+		return
+	}
 	if req.GracePeriodHours == 0 {
 		req.GracePeriodHours = 24
+	}
+	if req.BookingOpensDays < 0 {
+		writeError(w, http.StatusBadRequest, "booking_opens_days must be a positive integer")
+		return
 	}
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
@@ -115,8 +123,16 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
+	if req.GracePeriodHours < 0 {
+		writeError(w, http.StatusBadRequest, "grace_period_hours must be a positive integer")
+		return
+	}
 	if req.GracePeriodHours == 0 {
 		req.GracePeriodHours = 24
+	}
+	if req.BookingOpensDays < 0 {
+		writeError(w, http.StatusBadRequest, "booking_opens_days must be a positive integer")
+		return
 	}
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
