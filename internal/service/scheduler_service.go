@@ -201,6 +201,8 @@ func (s *SchedulerService) processCancellationReminder(ctx context.Context, game
 		text = lz.Tf(i18n.SchedReminderOddCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
 	case "odd_no_cancel":
 		text = lz.Tf(i18n.SchedReminderOddNoCancel, gameDateTime, count, newCapacity, newCourtsCount)
+	case "even_no_cancel":
+		text = lz.Tf(i18n.SchedReminderEvenNoCancel, gameDateTime, count, newCapacity, newCourtsCount)
 	default: // all_good
 		text = lz.Tf(i18n.SchedReminderAllGood, gameDateTime, count, newCapacity, newCourtsCount)
 	}
@@ -502,14 +504,16 @@ func containsDay(gameDays string, day int) bool {
 // count is the total registered player count.
 // newCourtsCount is the courts count after any cancellations.
 // canceledCourts are the court IDs that were successfully canceled (nil = none).
-// determineScenario classifies the outcome of a cancellation reminder into one of four
+// determineScenario classifies the outcome of a cancellation reminder into one of five
 // named scenarios used to select the notification message.
 //
 // count is the total registered player count.
 // newCourtsCount is the courts count after any cancellations.
 // canceledCourts are the court IDs that were successfully canceled (nil = none).
 //
-// "odd" scenarios only apply when count < newCapacity (there is an actual free spot).
+// "odd" scenarios apply when count < newCapacity and count is odd (1 free spot on a court).
+// "even_no_cancel" applies when count < newCapacity, count is even, and nothing was canceled
+// (booking service unavailable or no owned bookings found). The group should cancel manually.
 // When count >= newCapacity (at or over capacity) the outcome is "all_good".
 func determineScenario(count, newCourtsCount int, canceledCourts []int) string {
 	didCancel := len(canceledCourts) > 0
@@ -524,7 +528,9 @@ func determineScenario(count, newCourtsCount int, canceledCourts []int) string {
 		return "odd_canceled"
 	case count < newCapacity && count%2 == 1:
 		return "odd_no_cancel"
-	default:
+	case count < newCapacity && count%2 == 0:
+		return "even_no_cancel"
+	default: // count >= newCapacity
 		return "all_good"
 	}
 }

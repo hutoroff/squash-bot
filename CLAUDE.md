@@ -232,11 +232,12 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
   5. Updates `games.courts` / `games.courts_count` in the DB.
 
   **Notification scenarios** (always sent, determined after cancellation):
-  - `all_good` — count ≥ newCapacity or no free spots: "upcoming game, courts confirmed".
+  - `all_good` — count ≥ newCapacity: "upcoming game, courts confirmed".
   - `canceled_balanced` — courts canceled and count now == newCapacity: "courts X canceled, all set".
   - `odd_no_cancel` — odd player count, nothing canceled, 1 free spot: "1 free spot".
   - `odd_canceled` — odd player count, some courts canceled, 1 free spot: "courts X canceled, 1 free spot".
   - `all_canceled` — all courts canceled: "game will not happen".
+  - `even_no_cancel` — even player count, count < capacity, nothing (or not enough) canceled: "please cancel unused courts". Fires when the booking service is absent or found no owned bookings.
 
 - **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). After the dedup check, queries `GetUncompletedGamesByGroupAndDay` for the target date (`today + booking_opens_days`); if a game already exists for that day the reminder is skipped entirely (dedup guard is NOT updated, so the check retries on the next poll). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`, using Markdown formatting. The DM message reads: *"Booking is open now! Game in N days — don't forget to reserve courts."*
 

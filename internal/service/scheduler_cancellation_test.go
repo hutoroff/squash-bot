@@ -389,20 +389,24 @@ func TestDetermineScenario(t *testing.T) {
 		canceledCourts []int
 		want           string
 	}{
-		// Scenario 1: all good, no cancellation, even players at or above capacity
+		// all_good: at or over capacity
 		{"all_good exact capacity", 4, 2, nil, "all_good"},
 		{"all_good over capacity", 5, 2, nil, "all_good"},
+		// canceled_balanced: courts canceled, now exactly at capacity
 		{"all_good even after cancel", 4, 2, []int{9}, "canceled_balanced"},
-		// Scenario 2: courts canceled, now balanced
 		{"canceled_balanced", 6, 3, []int{9}, "canceled_balanced"},
-		// Scenario 3a: odd players, no cancel
+		// odd_no_cancel: odd player count, nothing canceled
 		{"odd_no_cancel", 3, 2, nil, "odd_no_cancel"},
 		{"odd_no_cancel 1 player", 1, 1, nil, "odd_no_cancel"},
-		// Scenario 3b: odd players with cancellation
+		// odd_canceled: odd player count, some courts canceled
 		{"odd_canceled", 3, 2, []int{8}, "odd_canceled"},
-		// Scenario 4: all courts canceled
+		// all_canceled: all courts gone
 		{"all_canceled", 0, 0, []int{1, 2}, "all_canceled"},
 		{"all_canceled odd count", 1, 0, []int{1}, "all_canceled"},
+		// even_no_cancel: even free spots, nothing canceled (booking service absent or no owned bookings)
+		{"even_no_cancel zero players", 0, 3, nil, "even_no_cancel"},
+		{"even_no_cancel 2 players 3 courts", 2, 3, nil, "even_no_cancel"},
+		{"even_no_cancel empty canceled slice", 0, 3, []int{}, "even_no_cancel"},
 	}
 
 	for _, tc := range tests {
