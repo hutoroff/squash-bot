@@ -165,6 +165,7 @@ Select the bump type (`patch` / `minor` / `major`). The workflow will:
 |----------|---------------------|----------------------------------------------------|
 | Variable | `DOCKERHUB_USERNAME`| Docker Hub org or username for image names         |
 | Secret   | `DOCKERHUB_TOKEN`   | Docker Hub access token with push rights           |
+| Secret   | `RELEASE_PAT`       | Personal Access Token used by the release workflows to push the VERSION-bump commit to `main`. Required when main is branch-protected. Classic PAT: `repo` scope. Fine-grained PAT: `Contents: Read and Write`. The PAT owner must be a bypass actor in the branch-protection rule. |
 
 `GITHUB_TOKEN` is provided automatically and is used for GHCR pushes and CI status checks.
 
@@ -337,7 +338,7 @@ A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using 
 
 **Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 
-**Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). If auto-booking already ran today (`venue.last_auto_booking_at` is set), sends a group confirmation message instead of a DM. Otherwise DMs all group admins with the venue name and `venue.booking_opens_days`.
+**Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). Skipped silently (without updating the dedup guard) if a game already exists for the target date (`today + booking_opens_days`). If auto-booking already ran today (`venue.last_auto_booking_at` is set), sends a group confirmation message instead of a DM. Otherwise DMs all group admins: booking is open now, and the game is in `booking_opens_days` days.
 
 **Timezone**: set per group via `/language` → "🕐 Set Timezone" → select from curated list of 18 IANA timezones. Default is UTC.
 

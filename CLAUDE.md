@@ -121,6 +121,7 @@ Select bump type (`patch` / `minor` / `major`). The workflow will:
 **Required GitHub configuration (one-time setup):**
 - Variable `DOCKERHUB_USERNAME` — Docker Hub org or username for image names.
 - Secret `DOCKERHUB_TOKEN` — Docker Hub access token with push rights.
+- Secret `RELEASE_PAT` — a Personal Access Token (classic: `repo` scope; fine-grained: `Contents: Read and Write`) whose owner is listed as a bypass actor in the branch-protection rule for `main`. Required so the "Commit and tag" step can push the VERSION bump directly to a protected branch. `GITHUB_TOKEN` cannot bypass branch protection.
 - `GITHUB_TOKEN` is used automatically for GHCR pushes and the check-runs API.
 
 Image names follow the pattern:
@@ -227,7 +228,7 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
   - `odd_canceled` — odd player count, some courts canceled, 1 free spot: "courts X canceled, 1 free spot".
   - `all_canceled` — all courts canceled: "game will not happen".
 
-- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`.
+- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). After the dedup check, queries `GetUncompletedGamesByGroupAndDay` for the target date (`today + booking_opens_days`); if a game already exists for that day the reminder is skipped entirely (dedup guard is NOT updated, so the check retries on the next poll). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`, using Markdown formatting. The DM message reads: *"Booking is open now! Game in N days — don't forget to reserve courts."*
 
 - **`RunAutoBooking()`**: Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
   1. Fetches available (unbooked) slots at `preferred_game_time` ± 10 min via `ListMatches(my=false)` for the date `today + booking_opens_days`.
