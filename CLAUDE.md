@@ -134,10 +134,12 @@ Select bump type (`patch` / `minor` / `major`). The workflow will:
 - Secret `RELEASE_PAT` — a Personal Access Token (classic: `repo` scope; fine-grained: `Contents: Read and Write`) whose owner is listed as a bypass actor in the branch-protection rule for `main`. Required so the "Commit and tag" step can push the VERSION bump directly to a protected branch. `GITHUB_TOKEN` cannot bypass branch protection.
 - `GITHUB_TOKEN` is used automatically for GHCR pushes and the check-runs API.
 
-Image names follow the pattern:
+Image names follow the pattern (service → image name):
 ```
-<DOCKERHUB_USERNAME>/squash-games-management:<version>
-ghcr.io/<github_owner>/squash-games-management:<version>
+management  →  <DOCKERHUB_USERNAME>/squash-management:<version>
+telegram    →  <DOCKERHUB_USERNAME>/squash-telegram-bot:<version>
+booking     →  <DOCKERHUB_USERNAME>/squash-booking-eversports:<version>
+web         →  <DOCKERHUB_USERNAME>/squash-web:<version>
 ```
 
 ## Key Business Logic Workflows

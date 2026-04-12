@@ -28,7 +28,7 @@ services:
       - internal
 
   management:  # was: squash-games-management
-    image: ${DOCKERHUB_USERNAME}/squash-games-management:${MANAGEMENT_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-latest}
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
@@ -63,7 +63,7 @@ services:
           - squash-games-management  # deprecated alias, will be removed in a future release
 
   telegram:  # was: telegram-squash-bot
-    image: ${DOCKERHUB_USERNAME}/telegram-squash-bot:${TELEGRAM_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-latest}
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -88,7 +88,7 @@ services:
           - telegram-squash-bot  # deprecated alias, will be removed in a future release
 
   booking:  # was: sports-booking-service
-    image: ${DOCKERHUB_USERNAME}/sports-booking-service:${BOOKING_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-latest}
     environment:
       SERVER_PORT: "8081"
       EVERSPORTS_EMAIL: ${EVERSPORTS_EMAIL:-}
