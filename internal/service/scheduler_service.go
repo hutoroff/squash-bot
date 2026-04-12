@@ -344,6 +344,7 @@ func (s *SchedulerService) sendBookingReminderToAdmins(ctx context.Context, chat
 		}
 		seen[admin.User.ID] = true
 		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.ParseMode = "Markdown"
 		if _, err := s.api.Send(msg); err != nil {
 			s.logger.Error("booking reminder: send DM", "user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
 			continue
