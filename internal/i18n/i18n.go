@@ -307,7 +307,7 @@ var translations = map[Lang]map[string]string{
 		SchedOverCapacity:    "⚠️ Too many players! %d registered but only %d spots (%d courts). Consider booking an extra court.",
 		SchedUnderCapacity:   "📢 Free spots available! %d/%d players registered (%d courts). Invite more friends!",
 		SchedWeeklyReminder:  "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
-		SchedBookingReminder: "📅 Booking reminder for *%s*: booking opens in %d days. Don't forget to reserve your courts!",
+		SchedBookingReminder: "📅 Booking reminder for *%s*: game in %d days — courts booking is open now! Don't forget to reserve your courts.",
 
 		SchedReminderAllGood:     "✅ Upcoming game on %s — all good! %d/%d players, %d courts confirmed.",
 		SchedReminderCanceled:    "✅ Courts %s canceled. Game on %s is all set! %d/%d players, %d courts.",
@@ -543,7 +543,7 @@ var translations = map[Lang]map[string]string{
 		SchedOverCapacity:    "⚠️ Zu viele Spieler! %d angemeldet, aber nur %d Plätze (%d Plätze). Erwäge, einen weiteren Platz zu buchen.",
 		SchedUnderCapacity:   "📢 Freie Plätze verfügbar! %d/%d Spieler angemeldet (%d Plätze). Lade mehr Freunde ein!",
 		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
-		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Die Buchung öffnet in %d Tagen. Vergiss nicht, deine Plätze zu reservieren!",
+		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Spiel in %d Tagen — Buchung ist jetzt offen! Vergiss nicht, deine Plätze zu reservieren.",
 
 		SchedReminderAllGood:     "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze bestätigt.",
 		SchedReminderCanceled:    "✅ Plätze %s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze.",
@@ -778,7 +778,7 @@ var translations = map[Lang]map[string]string{
 		SchedOverCapacity:    "⚠️ Слишком много игроков! Записалось %d, но только %d мест (%d корта). Рассмотрите бронирование дополнительного корта.",
 		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
 		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
-		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: бронирование откроется через %d дней. Не забудь зарезервировать корты!",
+		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: игра через %d дней — бронирование открыто сейчас! Не забудь зарезервировать корты.",
 
 		SchedReminderAllGood:     "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) подтверждено.",
 		SchedReminderCanceled:    "✅ Корт(а) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",

@@ -287,6 +287,18 @@ func (s *SchedulerService) runBookingReminders(force bool) {
 				continue
 			}
 
+			// Skip if a game is already created for the target date — no need to prompt.
+			targetStart, targetEnd := bookingTargetWindow(localNow, venue.BookingOpensDays)
+			existingGames, err := s.gameRepo.GetUncompletedGamesByGroupAndDay(ctx, g.ChatID, targetStart, targetEnd)
+			if err != nil {
+				s.logger.Error("booking reminder: check existing games", "venue_id", venue.ID, "err", err)
+				// Fail-open: proceed with the reminder rather than silently suppressing it.
+			} else if len(existingGames) > 0 {
+				s.logger.Info("booking reminder: game already created for target date, skipping",
+					"venue_id", venue.ID, "target_date", targetStart.Format("2006-01-02"))
+				continue
+			}
+
 			// If auto-booking was done today, send a group notification instead of DM reminder.
 			autoBookedToday := venue.LastAutoBookingAt != nil &&
 				venue.LastAutoBookingAt.In(groupTZ).Format("2006-01-02") == todayStr
@@ -462,6 +474,17 @@ func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Gam
 		"unpinned", true,
 		"buttons_removed", true,
 	)
+}
+
+// bookingTargetWindow returns the [start, end) UTC time range that covers the
+// target game day for a booking reminder. localNow is the current time already
+// converted to the group's timezone; days is venue.BookingOpensDays.
+// The window spans from midnight to midnight (exclusive) of that local day.
+func bookingTargetWindow(localNow time.Time, days int) (start, end time.Time) {
+	target := localNow.AddDate(0, 0, days)
+	start = time.Date(target.Year(), target.Month(), target.Day(), 0, 0, 0, 0, target.Location())
+	end = start.AddDate(0, 0, 1)
+	return
 }
 
 // containsDay reports whether the comma-separated weekday string contains the given day number.
