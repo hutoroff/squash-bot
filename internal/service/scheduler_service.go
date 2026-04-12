@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/gameformat"
 	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 	"github.com/vkhutorov/squash_bot/internal/storage"
@@ -95,15 +96,7 @@ func (s *SchedulerService) groupLang(ctx context.Context, chatID int64) *i18n.Lo
 
 // groupTimezone loads the IANA timezone for a group, falling back to the service default.
 func (s *SchedulerService) groupTimezone(group *models.Group) *time.Location {
-	if group.Timezone == "" {
-		return s.loc
-	}
-	loc, err := time.LoadLocation(group.Timezone)
-	if err != nil {
-		s.logger.Warn("invalid group timezone, using service default", "timezone", group.Timezone, "chat_id", group.ChatID)
-		return s.loc
-	}
-	return loc
+	return resolveGroupTimezone(group, s.loc, s.logger)
 }
 
 // RunCancellationReminders fires capacity notifications 6 hours before the cancellation
@@ -558,28 +551,14 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 
 	num := 1
 	for _, p := range registered {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", num, schedulerPlayerName(p.Player)))
+		sb.WriteString(fmt.Sprintf("%d. %s\n", num, gameformat.PlayerDisplayName(p.Player)))
 		num++
 	}
 	for _, g := range guests {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", num, lz.Tf(i18n.GameGuestLine, schedulerPlayerName(g.InvitedBy))))
+		sb.WriteString(fmt.Sprintf("%d. %s\n", num, lz.Tf(i18n.GameGuestLine, gameformat.PlayerDisplayName(g.InvitedBy))))
 		num++
 	}
 
 	sb.WriteString("\n" + lz.T(i18n.GameCompleted))
 	return sb.String()
-}
-
-func schedulerPlayerName(p *models.Player) string {
-	if p.Username != nil && *p.Username != "" {
-		return "@" + *p.Username
-	}
-	var parts []string
-	if p.FirstName != nil && *p.FirstName != "" {
-		parts = append(parts, *p.FirstName)
-	}
-	if p.LastName != nil && *p.LastName != "" {
-		parts = append(parts, *p.LastName)
-	}
-	return strings.Join(parts, " ")
 }

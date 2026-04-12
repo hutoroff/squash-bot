@@ -47,6 +47,7 @@ Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
 - **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
+- **gameformat/**: Shared game message formatter and keyboard builder used by both the telegram bot and the management service. `FormatGameMessage(game, participations, guests, loc, now, lz)` produces the announcement text; `GameKeyboard(gameID, lz)` builds the inline keyboard; `PlayerDisplayName(p)` formats a player's display name.
 
 ### Database Schema
 - `games`: id, chat_id, message_id, game_date, courts_count, courts, venue_id (nullable FK→venues), notified_day_before, completed, created_at

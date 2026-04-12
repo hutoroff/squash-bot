@@ -20,6 +20,7 @@ type Handler struct {
 	groupRepo    *storage.GroupRepo
 	playerRepo   *storage.PlayerRepo
 	scheduler    *service.SchedulerService
+	gameNotifier *service.GameNotifier
 	logger       *slog.Logger
 	version      string
 }
@@ -31,6 +32,7 @@ func NewHandler(
 	groupRepo *storage.GroupRepo,
 	playerRepo *storage.PlayerRepo,
 	scheduler *service.SchedulerService,
+	gameNotifier *service.GameNotifier,
 	logger *slog.Logger,
 	version string,
 ) *Handler {
@@ -41,6 +43,7 @@ func NewHandler(
 		groupRepo:    groupRepo,
 		playerRepo:   playerRepo,
 		scheduler:    scheduler,
+		gameNotifier: gameNotifier,
 		logger:       logger,
 		version:      version,
 	}

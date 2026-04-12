@@ -10,6 +10,7 @@ import (
 	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/internal/gameformat"
 	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
@@ -771,16 +772,7 @@ func (b *Bot) answerCallback(callbackID, text string) {
 // Row 1: join / skip — register or remove yourself.
 // Row 2: +1 / -1 — add or remove a guest.
 func gameKeyboard(gameID int64, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnImIn), fmt.Sprintf("join:%d", gameID)),
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnIllSkip), fmt.Sprintf("skip:%d", gameID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnPlusOne), fmt.Sprintf("guest_add:%d", gameID)),
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnMinusOne), fmt.Sprintf("guest_remove:%d", gameID)),
-		),
-	)
+	return gameformat.GameKeyboard(gameID, lz)
 }
 
 // adminGroups returns the IDs of all known groups where userID is an admin.
@@ -1003,7 +995,7 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range registered {
-		label := lz.Tf(i18n.MsgKickPlayerLabel, playerDisplayName(p.Player))
+		label := lz.Tf(i18n.MsgKickPlayerLabel, gameformat.PlayerDisplayName(p.Player))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
 				fmt.Sprintf("manage_kick:%d:%d", gameID, p.Player.TelegramID)),
@@ -1072,7 +1064,7 @@ func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQ
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, g := range guests {
-		label := lz.Tf(i18n.MsgKickGuestLabel, playerDisplayName(g.InvitedBy))
+		label := lz.Tf(i18n.MsgKickGuestLabel, gameformat.PlayerDisplayName(g.InvitedBy))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
 				fmt.Sprintf("manage_kick_guest:%d:%d", gameID, g.ID)),
