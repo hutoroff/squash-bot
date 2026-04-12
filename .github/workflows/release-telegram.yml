@@ -101,17 +101,17 @@ jobs:
           push: true
           build-args: VERSION=${{ steps.bump.outputs.version }}
           tags: |
-            ${{ vars.DOCKERHUB_USERNAME }}/telegram-squash-bot:${{ steps.bump.outputs.version }}
-            ${{ vars.DOCKERHUB_USERNAME }}/telegram-squash-bot:latest
-            ghcr.io/${{ github.repository_owner }}/telegram-squash-bot:${{ steps.bump.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/telegram-squash-bot:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-telegram-bot:${{ steps.bump.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-telegram-bot:latest
+            ghcr.io/${{ github.repository_owner }}/squash-telegram-bot:${{ steps.bump.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/squash-telegram-bot:latest
 
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add cmd/telegram-squash-bot/VERSION
-          git commit -m "chore: release telegram-squash-bot v${{ steps.bump.outputs.version }}"
+          git commit -m "chore: release squash-telegram-bot v${{ steps.bump.outputs.version }}"
           git tag "telegram/v${{ steps.bump.outputs.version }}"
           git push
           git push origin "telegram/v${{ steps.bump.outputs.version }}"

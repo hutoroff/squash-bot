@@ -217,11 +217,14 @@ Select the bump type (`patch` / `minor` / `major`). The workflow will:
 
 Published image names:
 ```
-<DOCKERHUB_USERNAME>/squash-games-management:<version>
-ghcr.io/<github_owner>/squash-games-management:<version>
+<DOCKERHUB_USERNAME>/squash-management:<version>
+ghcr.io/<github_owner>/squash-management:<version>
 
-<DOCKERHUB_USERNAME>/sports-booking-service:<version>
-ghcr.io/<github_owner>/sports-booking-service:<version>
+<DOCKERHUB_USERNAME>/squash-telegram-bot:<version>
+ghcr.io/<github_owner>/squash-telegram-bot:<version>
+
+<DOCKERHUB_USERNAME>/squash-booking-eversports:<version>
+ghcr.io/<github_owner>/squash-booking-eversports:<version>
 
 <DOCKERHUB_USERNAME>/squash-web:<version>
 ghcr.io/<github_owner>/squash-web:<version>
@@ -431,10 +434,10 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API end
 
 ```
 cmd/
-  squash-games-management/  — management service entry point
-  telegram-squash-bot/      — telegram bot entry point
-  sports-booking-service/   — Eversports booking service entry point
-  squash-web/               — web UI entry point
+  squash-games-management/  — management service (management) entry point
+  telegram-squash-bot/      — telegram bot (telegram) entry point
+  sports-booking-service/   — booking service entry point
+  squash-web/               — web service (web) entry point
 internal/
   config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig, WebConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)

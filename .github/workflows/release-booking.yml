@@ -101,17 +101,17 @@ jobs:
           push: true
           build-args: VERSION=${{ steps.bump.outputs.version }}
           tags: |
-            ${{ vars.DOCKERHUB_USERNAME }}/sports-booking-service:${{ steps.bump.outputs.version }}
-            ${{ vars.DOCKERHUB_USERNAME }}/sports-booking-service:latest
-            ghcr.io/${{ github.repository_owner }}/sports-booking-service:${{ steps.bump.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/sports-booking-service:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-booking-eversports:${{ steps.bump.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-booking-eversports:latest
+            ghcr.io/${{ github.repository_owner }}/squash-booking-eversports:${{ steps.bump.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/squash-booking-eversports:latest
 
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add cmd/sports-booking-service/VERSION
-          git commit -m "chore: release sports-booking-service v${{ steps.bump.outputs.version }}"
+          git commit -m "chore: release squash-booking-eversports v${{ steps.bump.outputs.version }}"
           git tag "booking/v${{ steps.bump.outputs.version }}"
           git push
           git push origin "booking/v${{ steps.bump.outputs.version }}"
