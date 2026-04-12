@@ -10,6 +10,7 @@ interface GamesListProps {
 export default function GamesList({ user }: GamesListProps) {
   const [games, setGames] = useState<Game[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pastExpanded, setPastExpanded] = useState(false)
 
   useEffect(() => {
     fetchMyGames()
@@ -58,8 +59,22 @@ export default function GamesList({ user }: GamesListProps) {
       )}
       {past.length > 0 && (
         <section className="games-list__section">
-          <h3 className="games-list__section-title">Past</h3>
-          {past.map(game => <GameCard key={game.id} game={game} user={user} />)}
+          <button
+            className="games-list__section-toggle"
+            onClick={() => setPastExpanded(v => !v)}
+            aria-expanded={pastExpanded}
+            aria-controls="past-games-section"
+          >
+            <span className="games-list__section-title">Past ({past.length})</span>
+            <span className="games-list__section-chevron" aria-hidden="true">
+              {pastExpanded ? '▾' : '▸'}
+            </span>
+          </button>
+          {pastExpanded && (
+            <div id="past-games-section">
+              {past.map(game => <GameCard key={game.id} game={game} user={user} />)}
+            </div>
+          )}
         </section>
       )}
     </div>

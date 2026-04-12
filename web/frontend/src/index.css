@@ -202,6 +202,29 @@ h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
   color: #888;
 }
 
+.games-list__section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+.games-list__section-toggle:hover .games-list__section-title {
+  color: #666;
+}
+
+.games-list__section-chevron {
+  font-size: 0.75rem;
+  color: #aaa;
+  line-height: 1;
+}
+
 .games-list__message {
   color: #888;
   font-size: 0.95rem;
