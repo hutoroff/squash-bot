@@ -108,10 +108,10 @@ func TestEnvironmentStartup(t *testing.T) {
 
 	// --- Verify schema: all expected tables exist ---
 	t.Run("schema_tables_exist", func(t *testing.T) {
-		for _, table := range []string{"games", "players", "game_participations", "guest_participations"} {
+		for _, table := range []string{"games", "players", "game_participations", "guest_participations", "bot_groups", "venues"} {
 			var exists bool
 			err := pool.QueryRow(ctx,
-				"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table,
+				"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)", table,
 			).Scan(&exists)
 			if err != nil {
 				t.Fatalf("check table %q: %v", table, err)
@@ -132,12 +132,13 @@ func TestEnvironmentStartup(t *testing.T) {
 		playerRepo := storage.NewPlayerRepo(pool)
 		partRepo := storage.NewParticipationRepo(pool)
 		guestRepo := storage.NewGuestRepo(pool)
-		gameSvc := service.NewGameService(gameRepo)
+		venueRepo := storage.NewVenueRepo(pool)
+		gameSvc := service.NewGameService(gameRepo, venueRepo)
 		partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
 
 		// 1. Create a game (2 courts → capacity 4)
 		gameDate := time.Now().Add(48 * time.Hour)
-		game, err := gameSvc.CreateGame(ctx, -9001, gameDate, "1,2")
+		game, err := gameSvc.CreateGame(ctx, -9001, gameDate, "1,2", nil)
 		if err != nil {
 			t.Fatalf("CreateGame: %v", err)
 		}
@@ -233,7 +234,7 @@ func TestEnvironmentStartup(t *testing.T) {
 
 		// 9. Day-after cleanup: verify query with completed=false and message_id set
 		yesterday := time.Now().Add(-24 * time.Hour)
-		pastGame, _ := gameSvc.CreateGame(ctx, -9001, yesterday, "3")
+		pastGame, _ := gameSvc.CreateGame(ctx, -9001, yesterday, "3", nil)
 		_ = gameSvc.UpdateMessageID(ctx, pastGame.ID, 777)
 
 		pastFrom := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
