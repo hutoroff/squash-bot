@@ -35,7 +35,7 @@ jobs:
           # so we verify CI on the actual code commit, not a version-bump commit.
           SHA=$(git rev-parse HEAD)
           COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
-          while echo "${COMMIT_MSG}" | grep -q "^chore: release"; do
+          while echo "${COMMIT_MSG}" | grep -qE "^\[chore\]: release|^chore: release"; do
             SHA=$(git rev-parse "${SHA}^")
             COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
           done
@@ -114,7 +114,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add cmd/squash-web/VERSION
-          git commit -m "chore: release squash-web v${{ steps.bump.outputs.version }}"
+          git commit -m "[chore]: release squash-web v${{ steps.bump.outputs.version }}"
           git tag "web/v${{ steps.bump.outputs.version }}"
           git push
           git push origin "web/v${{ steps.bump.outputs.version }}"
