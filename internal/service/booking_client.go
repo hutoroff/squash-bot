@@ -11,7 +11,7 @@ import (
 )
 
 // BookingSlot is a minimal representation of a court slot returned by the
-// sports-booking-service GET /api/v1/eversports/matches endpoint.
+// booking service GET /api/v1/eversports/matches endpoint.
 type BookingSlot struct {
 	Court              int          `json:"court"`               // numeric Eversports court ID
 	CourtUUID          string       `json:"courtUuid,omitempty"` // court UUID required for booking
@@ -32,7 +32,7 @@ type BookMatchResult struct {
 	MatchID     string `json:"matchId,omitempty"`
 }
 
-// BookingServiceClient is the interface for interacting with the sports-booking-service.
+// BookingServiceClient is the interface for interacting with the booking service.
 // It is an interface to allow test doubles.
 type BookingServiceClient interface {
 	// ListMatches returns slots for the given date filtered to the time window.
@@ -53,8 +53,8 @@ type httpBookingClient struct {
 	httpClient *http.Client
 }
 
-// NewHTTPBookingClient creates a BookingServiceClient backed by the sports-booking-service HTTP API.
-// baseURL is e.g. "http://sports-booking-service:8081".
+// NewHTTPBookingClient creates a BookingServiceClient backed by the booking service HTTP API.
+// baseURL is e.g. "http://booking:8081".
 func NewHTTPBookingClient(baseURL, apiSecret string) BookingServiceClient {
 	return &httpBookingClient{
 		baseURL:   strings.TrimRight(baseURL, "/"),

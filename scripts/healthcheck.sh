@@ -32,7 +32,7 @@ send_alert() {
 FAILED=""
 
 # Check services that expose /health endpoints.
-SERVICES=("squash-games-management:8080" "sports-booking-service:8081")
+SERVICES=("management:8080" "booking:8081")
 
 for entry in "${SERVICES[@]}"; do
   NAME="${entry%%:*}"
@@ -49,12 +49,12 @@ for entry in "${SERVICES[@]}"; do
   fi
 done
 
-# Check telegram-squash-bot container is running (no /health endpoint).
-TG_CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q telegram-squash-bot 2>/dev/null || true)
+# Check telegram container is running (no /health endpoint).
+TG_CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q telegram 2>/dev/null || true)
 if [ -z "$TG_CONTAINER" ]; then
-  FAILED="${FAILED}telegram-squash-bot (container not found)\n"
+  FAILED="${FAILED}telegram (container not found)\n"
 elif [ "$(docker inspect -f '{{.State.Running}}' "$TG_CONTAINER" 2>/dev/null)" != "true" ]; then
-  FAILED="${FAILED}telegram-squash-bot (not running)\n"
+  FAILED="${FAILED}telegram (not running)\n"
 fi
 
 if [ -n "$FAILED" ]; then

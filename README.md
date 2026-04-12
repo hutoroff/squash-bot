@@ -13,7 +13,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and notifies the group
 - At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
-- **squash-web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
+- **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
 
 ## Tech Stack
 
@@ -32,17 +32,17 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 ## Architecture
 
 ```
-telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
-                                  →  sports-booking-service   →  eversports.de
-squash-web           →  HTTP API  →  squash-games-management
+telegram  →  HTTP API  →  management  →  PostgreSQL
+                       →  booking     →  eversports.de
+web       →  HTTP API  →  management
 ```
 
 Four independently deployable binaries in one Go module:
 
-- **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
-- **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
-- **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
-- **squash-web** — web UI (port 8082); Go backend serving an embedded React SPA
+- **management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
+- **telegram** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
+- **booking** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
+- **web** — web UI (port 8082); Go backend serving an embedded React SPA
 
 ## Quick Start
 
@@ -133,7 +133,7 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   go run cmd/telegram-squash-bot/main.go
 ```
 
-### squash-web
+### web
 
 The Go backend embeds the compiled React frontend from `web/frontend/dist/`. Build the frontend once before running the Go binary locally — or any time the frontend source changes:
 
@@ -165,7 +165,7 @@ The Login Widget only works on domains that are explicitly registered with Teleg
 
 1. Open [@BotFather](https://t.me/BotFather) and send `/mybots`.
 2. Select your bot → **Bot Settings → Domain**.
-3. Enter the **hostname only** of your squash-web deployment — no `https://` prefix, no path (e.g. `squash.example.com`).
+3. Enter the **hostname only** of your web service deployment — no `https://` prefix, no path (e.g. `squash.example.com`).
 
 > **Local development:** `localhost` is not accepted by the Telegram Login Widget. Use a tunnel such as [ngrok](https://ngrok.com/) (`ngrok http 8082`), register the generated hostname in BotFather, and set `TELEGRAM_BOT_NAME` accordingly before testing the login flow end-to-end.
 
@@ -193,10 +193,10 @@ The version is injected at build time (`-ldflags "-X main.Version=..."`) and log
 
 Trigger the relevant workflow from **GitHub Actions → Run workflow**:
 
-- **Release Management Service** — for `squash-games-management`
-- **Release Telegram Bot** — for `telegram-squash-bot`
-- **Release Booking Service** — for `sports-booking-service`
-- **Release Web Service** — for `squash-web`
+- **Release Management Service** — for `management`
+- **Release Telegram Bot** — for `telegram`
+- **Release Booking Service** — for `booking`
+- **Release Web Service** — for `web`
 
 Select the bump type (`patch` / `minor` / `major`). The workflow will:
 
@@ -245,7 +245,7 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 #    Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
-openssl rand -hex 32   # → JWT_SECRET (squash-web session signing)
+openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 
 # 4. Lock down the .env file
 chmod 600 .env
@@ -262,9 +262,9 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=20
 ```
 
-squash-web listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`).
+The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`).
 
-> **BotFather domain setup (required for squash-web login):** After the server is reachable at a public hostname, register it once with Telegram: `/mybots` → select bot → **Bot Settings → Domain** → enter the hostname only (no `https://`). The Telegram Login Widget will not work until this step is done.
+> **BotFather domain setup (required for web login):** After the server is reachable at a public hostname, register it once with Telegram: `/mybots` → select bot → **Bot Settings → Domain** → enter the hostname only (no `https://`). The Telegram Login Widget will not work until this step is done.
 
 ### Updating a service
 
@@ -272,9 +272,9 @@ After triggering a release workflow in GitHub Actions:
 
 ```bash
 # Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2, WEB_VERSION=1.0.1), then:
-scripts/deploy.sh                        # pull all + restart changed
-scripts/deploy.sh squash-games-management  # or update a single service
-scripts/deploy.sh squash-web               # or update squash-web
+scripts/deploy.sh              # pull all + restart changed
+scripts/deploy.sh management   # or update a single service
+scripts/deploy.sh web          # or update the web service
 ```
 
 ### Database backups
@@ -347,7 +347,7 @@ Guest spots count toward capacity.
 
 ## Environment Variables
 
-### squash-games-management
+### management
 
 | Variable               | Required | Default           | Description                                         |
 |------------------------|----------|-------------------|-----------------------------------------------------|
@@ -358,32 +358,32 @@ Guest spots count toward capacity.
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the sports-booking-service (e.g. `http://sports-booking-service:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
+| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `AUTO_BOOKING_COURTS_COUNT`  | No | `3`              | Number of courts to book automatically at midnight; requires `SPORTS_BOOKING_SERVICE_URL` |
 
-### telegram-squash-bot
+### telegram
 
 | Variable                 | Required | Default           | Description                                         |
 |--------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://squash-games-management:8080`) |
+| `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://management:8080`) |
 | `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service  |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
 | `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
 
-### sports-booking-service
+### booking
 
 See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the full list of environment variables, API endpoints, and local run instructions.
 
-### squash-web
+### web
 
 | Variable                 | Required | Default | Description                                                                                                             |
 |--------------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of squash-games-management (e.g. `http://squash-games-management:8080`); pre-set in `docker-compose.yml`       |
-| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on squash-games-management; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
+| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
 | `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
@@ -423,7 +423,7 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 
 ## Sports Booking Service
 
-**sports-booking-service** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It supports listing, creating, and cancelling court bookings.
+**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It supports listing, creating, and cancelling court bookings.
 
 See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API endpoints, environment variables, and local run instructions.
 

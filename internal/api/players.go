@@ -10,7 +10,7 @@ import (
 
 // getPlayerByTelegramID handles GET /api/v1/players/{telegramID}.
 // Returns the player record for the given Telegram user ID, or 404 if not found.
-// Used by squash-web to link authenticated web users with known bot players.
+// Used by the web service to link authenticated web users with known bot players.
 func (h *Handler) getPlayerByTelegramID(w http.ResponseWriter, r *http.Request) {
 	telegramID, err := strconv.ParseInt(r.PathValue("telegramID"), 10, 64)
 	if err != nil {
