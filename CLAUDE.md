@@ -40,9 +40,10 @@ Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
 **`squash-web`** (`cmd/squash-web/`)
-- **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints
+- **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
 - **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
 - No DB access; authenticates users via Telegram Login Widget, calls squash-games-management for data
+- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`internal/service`)
 
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
@@ -277,6 +278,24 @@ Authentication uses the [Telegram Login Widget](https://core.telegram.org/widget
 **Management service endpoints used by squash-web:**
 - `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Used during login to populate `player_id` in the JWT.
 - `GET /api/v1/players/{playerID}/games` — returns all `PlayerGame` records for a player (newest first). Each item: `id`, `game_date`, `courts_count`, `courts`, `completed`, `participation_status` (`registered`|`skipped`), `participant_count` (registered players + guests), `venue_name`, `venue_address`, `group_title`, `timezone`. Used by `GET /api/games`. Both endpoints require bearer auth.
+
+### Web Participation Flow (`squash-web`)
+
+The SPA lets authenticated users manage their participation from the browser. The past-games section is **collapsed by default**; `GameCard` components for past games are not mounted until the user expands the section, which avoids unnecessary `GET /api/games/{id}/participants` calls.
+
+**Web API endpoints (all require the `session` cookie; player ID taken from JWT only):**
+
+| Method   | Path                             | Action                                      |
+|----------|----------------------------------|---------------------------------------------|
+| `GET`    | `/api/games/{id}/participants`   | Return participants + guests for a game     |
+| `POST`   | `/api/games/{id}/join`           | Register the current user for the game      |
+| `POST`   | `/api/games/{id}/skip`           | Mark the current user as skipped            |
+| `POST`   | `/api/games/{id}/guests`         | Add a guest linked to the current user      |
+| `DELETE` | `/api/games/{id}/guests`         | Remove the current user's most-recent guest |
+
+Each mutating action (join/skip/+1/-1) calls the corresponding management service endpoint with the player ID from the JWT, then calls `GameNotifier.NotifyGameUpdated(gameID)` to re-fetch participants and edit the Telegram announcement in place. Returns the updated `GameParticipants` payload to the frontend so the UI refreshes without a second round-trip.
+
+**`GameNotifier`** (`internal/service/game_notifier.go`): fetches game + participants + guests, re-formats the message and keyboard, then calls `EditMessageText` on the Telegram Bot API. It resolves the group timezone via `resolveGroupTimezone` (falls back to the default location on invalid IANA strings).
 
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list

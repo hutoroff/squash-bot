@@ -13,7 +13,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and notifies the group
 - At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
-- **squash-web** provides a React web UI (port 8082): sign in with your Telegram account, then browse your upcoming and past games with participation status and live capacity
+- **squash-web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
 
 ## Tech Stack
 
@@ -172,8 +172,11 @@ The Login Widget only works on domains that are explicitly registered with Teleg
 ## Testing
 
 ```bash
-go test ./...                                      # all tests
+go test ./...                                      # all Go tests
 go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
+
+# Frontend tests (Vitest + Testing Library)
+cd web/frontend && npm test
 ```
 
 ## Versioning & Releases
@@ -426,10 +429,11 @@ internal/
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
   models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
   storage/        — SQL repositories (games, players, participations, guests, groups)
-  service/        — business logic + scheduler
+  service/        — business logic + scheduler; GameNotifier for on-demand Telegram message edits
   api/            — HTTP handlers for the management service REST API
   client/         — typed HTTP client used by the telegram bot
   telegram/       — bot loop, handlers, commands, formatter
+  gameformat/     — shared game message formatter and keyboard builder (used by telegram bot and management service)
   eversports/     — Eversports HTTP client (GraphQL login/match, /api/slot for court availability, calendar HTML for court discovery)
   booking/        — HTTP server wrapping the Eversports client
   webserver/      — HTTP server + SPA handler for the web UI

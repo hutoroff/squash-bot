@@ -36,7 +36,8 @@ Key directories:
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, PlayerGame)
 - `internal/storage` — SQL repositories (games, players, participations, guests, groups)
-- `internal/service` — business logic and scheduled jobs
+- `internal/gameformat` — shared game message formatter and keyboard builder (`FormatGameMessage`, `GameKeyboard`, `PlayerDisplayName`); used by both the telegram bot and the management service scheduler
+- `internal/service` — business logic and scheduled jobs; includes `GameNotifier` for on-demand Telegram message editing triggered from the web API
 - `internal/api` — HTTP handlers for the management service REST API
 - `internal/client` — typed HTTP client used by the telegram bot
 - `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
@@ -112,9 +113,12 @@ TELEGRAM_BOT_TOKEN=<token> \
   JWT_SECRET=$(openssl rand -hex 32) \
   go run cmd/squash-web/main.go
 
-# Run tests
+# Run Go tests
 go test ./...
 go test -tags integration -timeout 120s ./...
+
+# Run frontend tests
+cd web/frontend && npm test
 
 # Build binaries
 go build ./cmd/squash-games-management/
@@ -127,6 +131,16 @@ go build ./cmd/sports-booking-service/
 - Prefer targeted tests first for the package being changed, then broaden to `go test ./...` if needed.
 - Add tests when modifying business logic if there is an existing nearby test pattern.
 - Do not attempt to fix unrelated failing tests unless the user asks.
+
+### Frontend tests
+
+Tests live alongside their components (`src/components/*.test.tsx`) and use **Vitest + Testing Library**.
+
+Key setup notes:
+- `globals: true` in `vite.config.ts` is required — Testing Library registers its `afterEach(cleanup)` using the global `afterEach` at module init time; without it, DOM leaks across tests and causes spurious failures.
+- `vi.mock('../api/games', factory)` keeps the `ApiError` class inline alongside `vi.fn()` stubs so tests can import and `instanceof`-check it.
+- When the same text appears in both a section heading and a badge (e.g. "Upcoming"), use `getByRole('heading', { name: '...' })` instead of `getByText` to avoid ambiguous-match errors.
+- Test files are excluded from `tsconfig.json` (`"exclude"`) so `tsc && vite build` doesn't type-check them; vitest uses esbuild for transformation.
 
 ## Documentation Guidance
 
