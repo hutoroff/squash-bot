@@ -46,7 +46,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
         <section className="games-section">
           <h2 className="games-section__title">My Games</h2>
-          <GamesList />
+          <GamesList user={user} />
         </section>
       </main>
     </div>

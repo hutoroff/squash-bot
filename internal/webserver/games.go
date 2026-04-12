@@ -1,11 +1,35 @@
 package webserver
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
+
+// mgmtPlayer is a player record as returned by the management service.
+type mgmtPlayer struct {
+	TelegramID int64   `json:"telegram_id"`
+	Username   *string `json:"username"`
+	FirstName  *string `json:"first_name"`
+	LastName   *string `json:"last_name"`
+}
+
+// mgmtParticipation is a participation record as returned by the management service.
+type mgmtParticipation struct {
+	ID     int64      `json:"id"`
+	Player mgmtPlayer `json:"player"`
+	Status string     `json:"status"`
+}
+
+// mgmtGuest is a guest participation record as returned by the management service.
+type mgmtGuest struct {
+	ID        int64      `json:"id"`
+	InvitedBy mgmtPlayer `json:"invited_by"`
+}
 
 // GamesHandler serves the /api/games endpoint for the authenticated web frontend.
 type GamesHandler struct {
@@ -106,4 +130,242 @@ func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(games) //nolint:errcheck
+}
+
+// fetchParticipantsData fetches participations and guests for a game from the management service.
+func (g *GamesHandler) fetchParticipantsData(ctx context.Context, gameID string) ([]mgmtParticipation, []mgmtGuest, error) {
+	partsReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/api/v1/games/%s/participations", g.mgmtURL, gameID), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	partsReq.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	partsResp, err := g.httpClient.Do(partsReq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer partsResp.Body.Close()
+	if partsResp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, partsResp.Body) //nolint:errcheck
+		return nil, nil, fmt.Errorf("management returned %d for participations", partsResp.StatusCode)
+	}
+	var parts []mgmtParticipation
+	if err := json.NewDecoder(partsResp.Body).Decode(&parts); err != nil {
+		return nil, nil, err
+	}
+
+	guestsReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/api/v1/games/%s/guests", g.mgmtURL, gameID), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	guestsReq.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	guestsResp, err := g.httpClient.Do(guestsReq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer guestsResp.Body.Close()
+	if guestsResp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, guestsResp.Body) //nolint:errcheck
+		return nil, nil, fmt.Errorf("management returned %d for guests", guestsResp.StatusCode)
+	}
+	var guests []mgmtGuest
+	if err := json.NewDecoder(guestsResp.Body).Decode(&guests); err != nil {
+		return nil, nil, err
+	}
+
+	if parts == nil {
+		parts = []mgmtParticipation{}
+	}
+	if guests == nil {
+		guests = []mgmtGuest{}
+	}
+	return parts, guests, nil
+}
+
+// writeParticipantsResponse fetches the current participants state and writes it to w.
+func (g *GamesHandler) writeParticipantsResponse(w http.ResponseWriter, r *http.Request, gameID string) {
+	parts, guests, err := g.fetchParticipantsData(r.Context(), gameID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		"participations": parts,
+		"guests":         guests,
+	})
+}
+
+// handleGetParticipants handles GET /api/games/{id}/participants.
+func (g *GamesHandler) handleGetParticipants(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := g.auth.claimsFromRequest(r); err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+		return
+	}
+	g.writeParticipantsResponse(w, r, r.PathValue("id"))
+}
+
+// handleJoinGame handles POST /api/games/{id}/join.
+func (g *GamesHandler) handleJoinGame(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	claims, err := g.auth.claimsFromRequest(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+		return
+	}
+	id := r.PathValue("id")
+	body, _ := json.Marshal(map[string]any{
+		"telegram_id": claims.TelegramID,
+		"username":    claims.Username,
+		"first_name":  claims.FirstName,
+		"last_name":   claims.LastName,
+	})
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		fmt.Sprintf("%s/api/v1/games/%s/join", g.mgmtURL, id), bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"action failed"}`)) //nolint:errcheck
+		return
+	}
+	g.writeParticipantsResponse(w, r, id)
+}
+
+// handleSkipGame handles POST /api/games/{id}/skip.
+func (g *GamesHandler) handleSkipGame(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	claims, err := g.auth.claimsFromRequest(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+		return
+	}
+	id := r.PathValue("id")
+	body, _ := json.Marshal(map[string]any{
+		"telegram_id": claims.TelegramID,
+		"username":    claims.Username,
+		"first_name":  claims.FirstName,
+		"last_name":   claims.LastName,
+	})
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		fmt.Sprintf("%s/api/v1/games/%s/skip", g.mgmtURL, id), bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"action failed"}`)) //nolint:errcheck
+		return
+	}
+	g.writeParticipantsResponse(w, r, id)
+}
+
+// handleAddGuest handles POST /api/games/{id}/guest.
+func (g *GamesHandler) handleAddGuest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	claims, err := g.auth.claimsFromRequest(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+		return
+	}
+	id := r.PathValue("id")
+	body, _ := json.Marshal(map[string]any{
+		"telegram_id": claims.TelegramID,
+		"username":    claims.Username,
+		"first_name":  claims.FirstName,
+		"last_name":   claims.LastName,
+	})
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		fmt.Sprintf("%s/api/v1/games/%s/guests", g.mgmtURL, id), bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"action failed"}`)) //nolint:errcheck
+		return
+	}
+	g.writeParticipantsResponse(w, r, id)
+}
+
+// handleRemoveGuest handles DELETE /api/games/{id}/guest.
+func (g *GamesHandler) handleRemoveGuest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	claims, err := g.auth.claimsFromRequest(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+		return
+	}
+	id := r.PathValue("id")
+	body, _ := json.Marshal(map[string]any{
+		"telegram_id": claims.TelegramID,
+	})
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete,
+		fmt.Sprintf("%s/api/v1/games/%s/guests", g.mgmtURL, id), bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"action failed"}`)) //nolint:errcheck
+		return
+	}
+	g.writeParticipantsResponse(w, r, id)
 }

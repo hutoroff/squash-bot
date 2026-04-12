@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react'
-import type { Game } from '../types'
+import type { Game, User } from '../types'
 import GameCard from './GameCard'
 import { fetchMyGames, ApiError } from '../api/games'
 
-export default function GamesList() {
+interface GamesListProps {
+  user: User
+}
+
+export default function GamesList({ user }: GamesListProps) {
   const [games, setGames] = useState<Game[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,13 +53,13 @@ export default function GamesList() {
       {upcoming.length > 0 && (
         <section className="games-list__section">
           <h3 className="games-list__section-title">Upcoming</h3>
-          {upcoming.map(game => <GameCard key={game.id} game={game} />)}
+          {upcoming.map(game => <GameCard key={game.id} game={game} user={user} />)}
         </section>
       )}
       {past.length > 0 && (
         <section className="games-list__section">
           <h3 className="games-list__section-title">Past</h3>
-          {past.map(game => <GameCard key={game.id} game={game} />)}
+          {past.map(game => <GameCard key={game.id} game={game} user={user} />)}
         </section>
       )}
     </div>

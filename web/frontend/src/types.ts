@@ -26,3 +26,26 @@ export interface Game {
   /** IANA timezone of the group, e.g. "Europe/Berlin". Used to display game times in venue local time. */
   timezone: string
 }
+
+export interface GamePlayer {
+  telegram_id: number
+  username?: string
+  first_name?: string
+  last_name?: string
+}
+
+export interface GameParticipation {
+  id: number
+  player: GamePlayer
+  status: ParticipationStatus
+}
+
+export interface GuestParticipation {
+  id: number
+  invited_by: GamePlayer
+}
+
+export interface GameParticipants {
+  participations: GameParticipation[]
+  guests: GuestParticipation[]
+}

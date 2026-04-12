@@ -38,6 +38,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/me", h.auth.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", h.auth.handleLogout)
 	mux.HandleFunc("GET /api/games", h.games.handleListGames)
+	mux.HandleFunc("GET /api/games/{id}/participants", h.games.handleGetParticipants)
+	mux.HandleFunc("POST /api/games/{id}/join", h.games.handleJoinGame)
+	mux.HandleFunc("POST /api/games/{id}/skip", h.games.handleSkipGame)
+	mux.HandleFunc("POST /api/games/{id}/guest", h.games.handleAddGuest)
+	mux.HandleFunc("DELETE /api/games/{id}/guest", h.games.handleRemoveGuest)
 	mux.Handle("/", spaFileServer(h.staticFS))
 }
 
