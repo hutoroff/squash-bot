@@ -282,6 +282,52 @@ func (r *GameRepo) GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID 
 	return games, rows.Err()
 }
 
+// GetGamesForPlayer returns all games in which playerID has any participation record
+// (registered or skipped), ordered newest-first. Each row is denormalised with the
+// group timezone, venue details, and the current registered-player count so the
+// caller does not need further queries.
+func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error) {
+	const q = `
+		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
+		       gp.status,
+		       (SELECT COUNT(*) FROM game_participations gp2
+		        WHERE gp2.game_id = g.id AND gp2.status = 'registered')
+		       + (SELECT COUNT(*) FROM guest_participations gst
+		          WHERE gst.game_id = g.id) AS participant_count,
+                       COALESCE(v.name, '')    AS venue_name,
+                       COALESCE(v.address, '') AS venue_address,
+                       COALESCE(NULLIF(bg.title, ''), 'Unknown group') AS group_title,
+                       COALESCE(NULLIF(bg.timezone, ''), 'UTC')        AS timezone
+                FROM games g
+                JOIN game_participations gp ON gp.game_id = g.id AND gp.player_id = $1
+                LEFT JOIN venues v ON v.id = g.venue_id
+                LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
+                ORDER BY g.game_date DESC`
+
+	slog.Debug("GameRepo.GetGamesForPlayer", "player_id", playerID)
+
+	rows, err := r.pool.Query(ctx, q, playerID)
+	if err != nil {
+		return nil, fmt.Errorf("query player games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []models.PlayerGame
+	for rows.Next() {
+		var pg models.PlayerGame
+		if err := rows.Scan(
+			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Completed,
+			&pg.ParticipationStatus, &pg.ParticipantCount,
+			&pg.VenueName, &pg.VenueAddress,
+			&pg.GroupTitle, &pg.Timezone,
+		); err != nil {
+			return nil, fmt.Errorf("scan player game: %w", err)
+		}
+		games = append(games, pg)
+	}
+	return games, rows.Err()
+}
+
 // UpdateCourts updates the courts and courts_count for a game.
 func (r *GameRepo) UpdateCourts(ctx context.Context, gameID int64, courts string, courtsCount int) error {
 	const q = `UPDATE games SET courts = $1, courts_count = $2 WHERE id = $3`

@@ -89,6 +89,32 @@ func LoadBooking() (*BookingConfig, error) {
 	return cfg, nil
 }
 
+// WebConfig holds configuration for the squash-web service.
+type WebConfig struct {
+	ServerPort string `env:"SERVER_PORT" envDefault:"8082"`
+	LogLevel   string `env:"LOG_LEVEL"   envDefault:"INFO"`
+	Timezone   string `env:"TIMEZONE"    envDefault:"UTC"`
+	// TelegramBotToken is used to verify Telegram Login Widget callbacks.
+	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
+	// TelegramBotName is the bot's username (without @), shown in the Login Widget.
+	TelegramBotName string `env:"TELEGRAM_BOT_NAME,required"`
+	// ManagementServiceURL is the base URL of squash-games-management.
+	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL,required"`
+	// InternalAPISecret is the shared bearer token for calling the management service.
+	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
+	// JWTSecret is used to sign and verify session JWT tokens (≥32 random bytes recommended).
+	JWTSecret string `env:"JWT_SECRET,required"`
+}
+
+func LoadWeb() (*WebConfig, error) {
+	cfg := &WebConfig{}
+	loadDotenv()
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func loadDotenv() {
 	if err := godotenv.Load(); err != nil {
 		slog.Debug("Error loading .env file")

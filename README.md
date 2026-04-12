@@ -13,6 +13,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and notifies the group
 - At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
+- **squash-web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
 
 ## Tech Stack
 
@@ -33,13 +34,15 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 ```
 telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
                                   →  sports-booking-service   →  eversports.de
+squash-web           →  HTTP API  →  squash-games-management
 ```
 
-Three independently deployable binaries in one Go module:
+Four independently deployable binaries in one Go module:
 
 - **squash-games-management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
 - **telegram-squash-bot** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
 - **sports-booking-service** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
+- **squash-web** — web UI (port 8082); Go backend serving an embedded React SPA
 
 ## Quick Start
 
@@ -59,11 +62,13 @@ Edit `.env` and fill in the required values:
 
 ```env
 TELEGRAM_BOT_TOKEN=     # from @BotFather
-INTERNAL_API_SECRET=    # shared secret between the two services — generate with: openssl rand -hex 32
+TELEGRAM_BOT_NAME=      # bot username without @ (e.g. SquashBot)
+INTERNAL_API_SECRET=    # shared secret between services — generate with: openssl rand -hex 32
+JWT_SECRET=             # secret for web session tokens — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
 
-`DATABASE_URL` is pre-configured in `docker-compose.yml` for the management service container and does not need to be in `.env` when running via Docker Compose.
+`DATABASE_URL` and `MANAGEMENT_SERVICE_URL` are pre-configured in `docker-compose.yml` for the relevant containers and do not need to be in `.env` when running via Docker Compose.
 
 ### 2. Start
 
@@ -128,11 +133,50 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   go run cmd/telegram-squash-bot/main.go
 ```
 
+### squash-web
+
+The Go backend embeds the compiled React frontend from `web/frontend/dist/`. Build the frontend once before running the Go binary locally — or any time the frontend source changes:
+
+```bash
+# Build the frontend (runs npm ci + vite build inside web/frontend)
+go generate ./web/...
+
+# Run the web service
+TELEGRAM_BOT_TOKEN=<token> \
+  TELEGRAM_BOT_NAME=<bot_username_without_@> \
+  MANAGEMENT_SERVICE_URL=http://localhost:8080 \
+  INTERNAL_API_SECRET=<secret> \
+  JWT_SECRET=$(openssl rand -hex 32) \
+  go run cmd/squash-web/main.go
+# → http://localhost:8082
+```
+
+For faster frontend iteration, run the Vite dev server instead:
+
+```bash
+cd web/frontend && npm run dev   # hot-reload dev server on http://localhost:5173
+```
+
+The Vite dev server talks directly to the browser; the Go backend is not involved during frontend development.
+
+#### Telegram Login Widget — BotFather domain setup
+
+The Login Widget only works on domains that are explicitly registered with Telegram. This is a one-time step per deployment:
+
+1. Open [@BotFather](https://t.me/BotFather) and send `/mybots`.
+2. Select your bot → **Bot Settings → Domain**.
+3. Enter the **hostname only** of your squash-web deployment — no `https://` prefix, no path (e.g. `squash.example.com`).
+
+> **Local development:** `localhost` is not accepted by the Telegram Login Widget. Use a tunnel such as [ngrok](https://ngrok.com/) (`ngrok http 8082`), register the generated hostname in BotFather, and set `TELEGRAM_BOT_NAME` accordingly before testing the login flow end-to-end.
+
 ## Testing
 
 ```bash
-go test ./...                                      # all tests
+go test ./...                                      # all Go tests
 go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
+
+# Frontend tests (Vitest + Testing Library)
+cd web/frontend && npm test
 ```
 
 ## Versioning & Releases
@@ -141,6 +185,7 @@ Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
 - `cmd/sports-booking-service/VERSION`
+- `cmd/squash-web/VERSION`
 
 The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. Each service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot additionally calls `GET /version` on the management service at startup and refuses to start if the major versions differ.
 
@@ -151,13 +196,14 @@ Trigger the relevant workflow from **GitHub Actions → Run workflow**:
 - **Release Management Service** — for `squash-games-management`
 - **Release Telegram Bot** — for `telegram-squash-bot`
 - **Release Booking Service** — for `sports-booking-service`
+- **Release Web Service** — for `squash-web`
 
 Select the bump type (`patch` / `minor` / `major`). The workflow will:
 
-1. Verify the `build-and-test` CI job passed for the exact commit being released (fails immediately otherwise).
+1. Verify CI passed for the exact commit being released (fails immediately otherwise). The web service release additionally checks the `frontend-test` job.
 2. Bump the `VERSION` file.
 3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
-4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, or `booking/vX.Y.Z`).
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
 ### One-time GitHub setup
 
@@ -176,11 +222,14 @@ ghcr.io/<github_owner>/squash-games-management:<version>
 
 <DOCKERHUB_USERNAME>/sports-booking-service:<version>
 ghcr.io/<github_owner>/sports-booking-service:<version>
+
+<DOCKERHUB_USERNAME>/squash-web:<version>
+ghcr.io/<github_owner>/squash-web:<version>
 ```
 
 ## Production Deployment
 
-The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All three services and PostgreSQL run on a single server.
+The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All four services and PostgreSQL run on a single server.
 
 ### Server setup
 
@@ -196,6 +245,7 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 #    Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
+openssl rand -hex 32   # → JWT_SECRET (squash-web session signing)
 
 # 4. Lock down the .env file
 chmod 600 .env
@@ -212,14 +262,19 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=20
 ```
 
+squash-web listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`).
+
+> **BotFather domain setup (required for squash-web login):** After the server is reachable at a public hostname, register it once with Telegram: `/mybots` → select bot → **Bot Settings → Domain** → enter the hostname only (no `https://`). The Telegram Login Widget will not work until this step is done.
+
 ### Updating a service
 
 After triggering a release workflow in GitHub Actions:
 
 ```bash
-# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2), then:
+# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2, WEB_VERSION=1.0.1), then:
 scripts/deploy.sh                        # pull all + restart changed
 scripts/deploy.sh squash-games-management  # or update a single service
+scripts/deploy.sh squash-web               # or update squash-web
 ```
 
 ### Database backups
@@ -321,6 +376,19 @@ Guest spots count toward capacity.
 
 See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the full list of environment variables, API endpoints, and local run instructions.
 
+### squash-web
+
+| Variable                 | Required | Default | Description                                                                                                             |
+|--------------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
+| `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
+| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of squash-games-management (e.g. `http://squash-games-management:8080`); pre-set in `docker-compose.yml`       |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on squash-games-management; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
+| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
+| `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
+| `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
+| `TIMEZONE`               | No       | `UTC`   | Timezone for date formatting                                                                                            |
+
 ## Scheduled Tasks
 
 A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using per-group timezone and per-venue configuration:
@@ -366,17 +434,23 @@ cmd/
   squash-games-management/  — management service entry point
   telegram-squash-bot/      — telegram bot entry point
   sports-booking-service/   — Eversports booking service entry point
+  squash-web/               — web UI entry point
 internal/
-  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig)
+  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig, WebConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
   models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
   storage/        — SQL repositories (games, players, participations, guests, groups)
-  service/        — business logic + scheduler
+  service/        — business logic + scheduler; GameNotifier for on-demand Telegram message edits
   api/            — HTTP handlers for the management service REST API
   client/         — typed HTTP client used by the telegram bot
   telegram/       — bot loop, handlers, commands, formatter
+  gameformat/     — shared game message formatter and keyboard builder (used by telegram bot and management service)
   eversports/     — Eversports HTTP client (GraphQL login/match, /api/slot for court availability, calendar HTML for court discovery)
   booking/        — HTTP server wrapping the Eversports client
+  webserver/      — HTTP server + SPA handler for the web UI
+web/
+  embed.go        — embeds web/frontend/dist into the Go binary (go:generate builds it)
+  frontend/       — React + Vite + TypeScript source; `npm run build` outputs to dist/
 migrations/       — embedded SQL migration files
 scripts/          — deploy.sh, healthcheck.sh (production ops)
 tests/            — integration and e2e tests

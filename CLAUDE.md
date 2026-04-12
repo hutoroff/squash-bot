@@ -21,7 +21,7 @@ telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQ
 sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
 **`squash-games-management`** (`cmd/squash-games-management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
@@ -39,9 +39,16 @@ Three independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 - **booking/**: REST API wrapping the Eversports client (port 8081)
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
+**`squash-web`** (`cmd/squash-web/`)
+- **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
+- **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
+- No DB access; authenticates users via Telegram Login Widget, calls squash-games-management for data
+- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`internal/service`)
+
 **Shared**
-- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags)
+- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
 - **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
+- **gameformat/**: Shared game message formatter and keyboard builder used by both the telegram bot and the management service. `FormatGameMessage(game, participations, guests, loc, now, lz)` produces the announcement text; `GameKeyboard(gameID, lz)` builds the inline keyboard; `PlayerDisplayName(p)` formats a player's display name.
 
 ### Database Schema
 - `games`: id, chat_id, message_id, game_date, courts_count, courts, venue_id (nullable FK→venues), notified_day_before, completed, created_at
@@ -99,6 +106,7 @@ Each service has its own independent version stored in a plain-text file:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
 - `cmd/sports-booking-service/VERSION`
+- `cmd/squash-web/VERSION`
 
 Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
 
@@ -111,12 +119,14 @@ Version is injected at build time via `-ldflags "-X main.Version=<ver>"` and log
 Trigger the relevant GitHub Actions workflow manually:
 - **Actions → Release Management Service** for `squash-games-management`
 - **Actions → Release Telegram Bot** for `telegram-squash-bot`
+- **Actions → Release Booking Service** for `sports-booking-service`
+- **Actions → Release Web Service** for `squash-web`
 
 Select bump type (`patch` / `minor` / `major`). The workflow will:
-1. Verify the CI job `build-and-test` passed for the exact HEAD commit (fails immediately otherwise).
+1. Verify CI passed for the exact HEAD commit (fails immediately otherwise). The web release additionally verifies the `frontend-test` job alongside `build-and-test`.
 2. Bump the `VERSION` file.
 3. Build and push Docker images tagged `<version>` and `latest` to both Docker Hub and GHCR.
-4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z` or `telegram/vX.Y.Z`).
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
 **Required GitHub configuration (one-time setup):**
 - Variable `DOCKERHUB_USERNAME` — Docker Hub org or username for image names.
@@ -252,6 +262,44 @@ Manual trigger via `/trigger` (service admins only) uses the event names `cancel
 - Players can remove their own most-recently-added guest
 - Admins can remove any guest via the `/games` management menu
 
+### Web Authentication (`squash-web`)
+Authentication uses the [Telegram Login Widget](https://core.telegram.org/widgets/login).
+
+**Flow:**
+1. `GET /api/config` returns `{"bot_name":"<TELEGRAM_BOT_NAME>"}` — frontend uses this to render the widget.
+2. User clicks the widget button and approves in the Telegram app.
+3. Telegram redirects the browser to `GET /api/auth/callback?id=…&first_name=…&auth_date=…&hash=…`.
+4. Backend verifies the HMAC-SHA256 hash: `key = SHA256(TELEGRAM_BOT_TOKEN)`, `sig = hex(HMAC-SHA256(key, sorted_key=value_pairs))`. Also checks `auth_date` is ≤ 86400 s old.
+5. Backend calls `GET /api/v1/players/{telegramID}` on squash-games-management (with `INTERNAL_API_SECRET`). Returns `player_id` if the user has previously used the Telegram bot; `nil` if not (login still succeeds).
+6. Backend issues a signed HS256 JWT (`JWT_SECRET`, 7-day expiry) and sets it as an HttpOnly, SameSite=Lax `session` cookie. The `Secure` flag is set when `r.TLS != nil` **or** `X-Forwarded-Proto: https` (covers TLS-terminating proxies).
+7. `GET /api/auth/me` — returns `200` + user JSON from the cookie, or `401` if absent/expired/invalid.
+8. `POST /api/auth/logout` — expires the cookie.
+9. `GET /api/games` — returns a JSON array of the authenticated user's games (see below). Player ID is read from the JWT claim only — never from a query parameter. If `player_id` is absent from the JWT (user logged in before their first bot interaction), a live `lookupPlayer` call is made by `TelegramID`; if a record is now found the session cookie is refreshed in the same response with an updated JWT so subsequent requests skip the re-lookup. Returns `[]` when no player record exists yet; returns `502` on management service errors.
+
+**BotFather setup (one-time per deployment):** `/mybots` → select bot → Bot Settings → Domain → enter the public hostname (no `https://`). `localhost` is not accepted; use a tunnel (e.g. ngrok) for local end-to-end testing.
+
+**Management service endpoints used by squash-web:**
+- `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Used during login to populate `player_id` in the JWT.
+- `GET /api/v1/players/{playerID}/games` — returns all `PlayerGame` records for a player (newest first). Each item: `id`, `game_date`, `courts_count`, `courts`, `completed`, `participation_status` (`registered`|`skipped`), `participant_count` (registered players + guests), `venue_name`, `venue_address`, `group_title`, `timezone`. Used by `GET /api/games`. Both endpoints require bearer auth.
+
+### Web Participation Flow (`squash-web`)
+
+The SPA lets authenticated users manage their participation from the browser. The past-games section is **collapsed by default**; `GameCard` components for past games are not mounted until the user expands the section, which avoids unnecessary `GET /api/games/{id}/participants` calls.
+
+**Web API endpoints (all require the `session` cookie; player ID taken from JWT only):**
+
+| Method   | Path                             | Action                                      |
+|----------|----------------------------------|---------------------------------------------|
+| `GET`    | `/api/games/{id}/participants`   | Return participants + guests for a game     |
+| `POST`   | `/api/games/{id}/join`           | Register the current user for the game      |
+| `POST`   | `/api/games/{id}/skip`           | Mark the current user as skipped            |
+| `POST`   | `/api/games/{id}/guests`         | Add a guest linked to the current user      |
+| `DELETE` | `/api/games/{id}/guests`         | Remove the current user's most-recent guest |
+
+Each mutating action (join/skip/+1/-1) calls the corresponding management service endpoint with the player ID from the JWT, then calls `GameNotifier.NotifyGameUpdated(gameID)` to re-fetch participants and edit the Telegram announcement in place. Returns the updated `GameParticipants` payload to the frontend so the UI refreshes without a second round-trip.
+
+**`GameNotifier`** (`internal/service/game_notifier.go`): fetches game + participants + guests, re-formats the message and keyboard, then calls `EditMessageText` on the Telegram Bot API. It resolves the group timezone via `resolveGroupTimezone` (falls back to the default location on invalid IANA strings).
+
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
 - Capacity line: `courts_count × 2`
@@ -295,6 +343,18 @@ SERVER_PORT=8081             # default 8081
 EVERSPORTS_FACILITY_ID=      # optional; numeric facility ID required for GET /matches and /courts endpoints
 EVERSPORTS_FACILITY_UUID=    # optional; UUID of the facility required for POST /matches booking creation (default: 6266968c-b0fd-4115-ad3b-ae225cc880f1)
 EVERSPORTS_FACILITY_SLUG=    # optional; facility slug from venue URL (e.g. "squash-house-berlin-03"); required for GET /matches and /courts
+LOG_LEVEL=INFO
+TIMEZONE=UTC
+```
+
+**`squash-web`:**
+```
+TELEGRAM_BOT_TOKEN=          # required; verifies Telegram Login Widget HMAC-SHA256 callbacks
+TELEGRAM_BOT_NAME=           # required; bot username without @ shown in the Login Widget (e.g. SquashBot)
+MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080); pre-set in docker-compose.yml
+INTERNAL_API_SECRET=         # required; shared bearer token for calling squash-games-management
+JWT_SECRET=                  # required; signs/verifies session cookies (HS256, 7-day expiry); generate with openssl rand -hex 32
+SERVER_PORT=8082             # default 8082
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 ```

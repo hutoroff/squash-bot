@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 // createGame handles POST /api/v1/games
@@ -147,6 +149,27 @@ func (h *Handler) getNextGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, game)
+}
+
+// listPlayerGames handles GET /api/v1/players/{playerID}/games.
+// Returns all games in which the player has any participation record, newest-first,
+// with participation status, registered count, venue info, and group timezone included.
+func (h *Handler) listPlayerGames(w http.ResponseWriter, r *http.Request) {
+	playerID, err := parseID(r.PathValue("playerID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid player id")
+		return
+	}
+	games, err := h.gameService.GetGamesForPlayer(r.Context(), playerID)
+	if err != nil {
+		h.logger.Error("listPlayerGames", "err", err, "player_id", playerID)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if games == nil {
+		games = []models.PlayerGame{}
+	}
+	writeJSON(w, http.StatusOK, games)
 }
 
 // parseID parses a string path value into int64.

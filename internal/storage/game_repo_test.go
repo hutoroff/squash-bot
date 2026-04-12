@@ -439,6 +439,83 @@ func TestGameRepo_GetNextGameForTelegramUser_ReturnsNearest(t *testing.T) {
 	}
 }
 
+// --- GetGamesForPlayer ---
+
+func TestGameRepo_GetGamesForPlayer_WithoutGroupRow(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 910001})
+	g, _ := gameRepo.Create(ctx, newGame(-991001, time.Now().Add(24*time.Hour), "1,2"))
+	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
+
+	games, err := gameRepo.GetGamesForPlayer(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetGamesForPlayer: %v", err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("got %d games, want 1", len(games))
+	}
+	if games[0].ID != g.ID {
+		t.Errorf("game ID: got %d, want %d", games[0].ID, g.ID)
+	}
+	if games[0].GroupTitle != "Unknown group" {
+		t.Errorf("group title fallback: got %q, want %q", games[0].GroupTitle, "Unknown group")
+	}
+	if games[0].Timezone != "UTC" {
+		t.Errorf("timezone fallback: got %q, want %q", games[0].Timezone, "UTC")
+	}
+	if games[0].ParticipationStatus != string(models.StatusRegistered) {
+		t.Errorf("participation status: got %q, want %q", games[0].ParticipationStatus, models.StatusRegistered)
+	}
+}
+
+func TestGameRepo_GetGamesForPlayer_UsesGroupMetadata(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+	groupRepo := storage.NewGroupRepo(testPool)
+
+	const (
+		chatID   = int64(-991002)
+		title    = "Evening Squash"
+		timezone = "Europe/Berlin"
+	)
+
+	if err := groupRepo.Upsert(ctx, chatID, title, true); err != nil {
+		t.Fatalf("Upsert group: %v", err)
+	}
+	if err := groupRepo.SetTimezone(ctx, chatID, timezone); err != nil {
+		t.Fatalf("SetTimezone: %v", err)
+	}
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 910002})
+	g, _ := gameRepo.Create(ctx, newGame(chatID, time.Now().Add(24*time.Hour), "3,4"))
+	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusSkipped)
+
+	games, err := gameRepo.GetGamesForPlayer(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetGamesForPlayer: %v", err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("got %d games, want 1", len(games))
+	}
+	if games[0].GroupTitle != title {
+		t.Errorf("group title: got %q, want %q", games[0].GroupTitle, title)
+	}
+	if games[0].Timezone != timezone {
+		t.Errorf("timezone: got %q, want %q", games[0].Timezone, timezone)
+	}
+	if games[0].ParticipationStatus != string(models.StatusSkipped) {
+		t.Errorf("participation status: got %q, want %q", games[0].ParticipationStatus, models.StatusSkipped)
+	}
+}
+
 // --- UpdateCourts ---
 
 func TestGameRepo_UpdateCourts(t *testing.T) {

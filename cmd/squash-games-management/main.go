@@ -100,6 +100,7 @@ func main() {
 	}
 
 	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, bookingClient, loc, logger, pollWindow, cfg.AutoBookingCourtsCount)
+	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
@@ -110,7 +111,7 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, groupRepo, scheduler, logger, Version)
+	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, gameNotifier, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("squash-games-management starting", "port", cfg.ServerPort, "version", Version)
