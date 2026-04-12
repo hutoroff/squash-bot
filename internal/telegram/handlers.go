@@ -212,9 +212,10 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 		return
 	}
 
-	// Use the group's language for the public announcement.
+	// Use the group's language and timezone for the public announcement.
 	groupLz := b.groupLocalizer(ctx, groupID)
-	msgText := FormatGameMessage(game, nil, nil, b.loc, time.Now(), groupLz)
+	groupLoc := b.groupLocation(ctx, groupID)
+	msgText := FormatGameMessage(game, nil, nil, groupLoc, time.Now(), groupLz)
 	keyboard := gameKeyboard(game.ID, groupLz)
 
 	announcement := tgbotapi.NewMessage(groupID, msgText)
@@ -645,7 +646,7 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 	}
 
 	groupLz := b.groupLocalizer(ctx, game.ChatID)
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
+	b.editGameMessage(ctx, cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
@@ -679,7 +680,7 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 	}
 
 	groupLz := b.groupLocalizer(ctx, game.ChatID)
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
+	b.editGameMessage(ctx, cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
@@ -707,7 +708,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 	}
 
 	groupLz := b.groupLocalizer(ctx, game.ChatID)
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
+	b.editGameMessage(ctx, cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
@@ -734,12 +735,13 @@ func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery,
 	}
 
 	groupLz := b.groupLocalizer(ctx, game.ChatID)
-	b.editGameMessage(cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
+	b.editGameMessage(ctx, cb.Message.Chat.ID, cb.Message.MessageID, game, participations, guests, groupLz)
 	b.answerCallback(cb.ID, "")
 }
 
-func (b *Bot) editGameMessage(chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation, lz *i18n.Localizer) {
-	msgText := FormatGameMessage(game, participations, guests, b.loc, time.Now(), lz)
+func (b *Bot) editGameMessage(ctx context.Context, chatID int64, messageID int, game *models.Game, participations []*models.GameParticipation, guests []*models.GuestParticipation, lz *i18n.Localizer) {
+	loc := b.groupLocation(ctx, game.ChatID)
+	msgText := FormatGameMessage(game, participations, guests, loc, time.Now(), lz)
 	keyboard := gameKeyboard(game.ID, lz)
 
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
@@ -1042,7 +1044,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 	// Update the group announcement using the group's language.
 	if game.MessageID != nil {
 		groupLz := b.groupLocalizer(ctx, game.ChatID)
-		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
+		b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
 	}
 
 	b.answerCallback(cb.ID, lz.T(i18n.MsgPlayerKicked))
@@ -1111,7 +1113,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 	// Update the group announcement using the group's language.
 	if game.MessageID != nil {
 		groupLz := b.groupLocalizer(ctx, game.ChatID)
-		b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
+		b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
 	}
 
 	b.answerCallback(cb.ID, lz.T(i18n.MsgGuestKicked))
@@ -1208,7 +1210,7 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 		return
 	}
 
-	text, keyboard := formatGamesListMessage(games, groups, b.loc, lz)
+	text, keyboard := formatGamesListMessage(games, groups, lz)
 	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = &keyboard
@@ -1394,7 +1396,7 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 				slog.Error("handleManageCourtsConfirm: get guests", "err", err)
 			} else {
 				groupLz := b.groupLocalizer(ctx, game.ChatID)
-				b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
+				b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
 			}
 		}
 	}

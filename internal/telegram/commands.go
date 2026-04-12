@@ -99,7 +99,8 @@ func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message, lz
 		return
 	}
 
-	text := lz.T(i18n.MsgYourNextGame) + FormatGameMessage(game, participations, guests, b.loc, time.Now(), lz)
+	loc := b.groupLocation(ctx, game.ChatID)
+	text := lz.T(i18n.MsgYourNextGame) + FormatGameMessage(game, participations, guests, loc, time.Now(), lz)
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, text)
 
@@ -146,7 +147,7 @@ func (b *Bot) handleCommandGames(ctx context.Context, msg *tgbotapi.Message, lz 
 		return
 	}
 
-	text, keyboard := formatGamesListMessage(games, groups, b.loc, lz)
+	text, keyboard := formatGamesListMessage(games, groups, lz)
 	out := tgbotapi.NewMessage(msg.Chat.ID, text)
 	out.ReplyMarkup = keyboard
 	out.ParseMode = "Markdown"
@@ -337,7 +338,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 				slog.Error("processCourtsEdit: get guests", "err", err)
 			} else {
 				groupLz := b.groupLocalizer(ctx, game.ChatID)
-				b.editGameMessage(game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
+				b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
 			}
 		}
 	}
@@ -357,10 +358,16 @@ func superGroupMessageLink(chatID, messageID int64) string {
 }
 
 // formatGamesListMessage builds the text and keyboard for the /games admin view.
-func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *time.Location, lz *i18n.Localizer) (string, tgbotapi.InlineKeyboardMarkup) {
+func formatGamesListMessage(games []*models.Game, groups []models.Group, lz *i18n.Localizer) (string, tgbotapi.InlineKeyboardMarkup) {
 	groupTitles := make(map[int64]string, len(groups))
+	groupLocs := make(map[int64]*time.Location, len(groups))
 	for _, g := range groups {
 		groupTitles[g.ChatID] = g.Title
+		loc, err := time.LoadLocation(g.Timezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		groupLocs[g.ChatID] = loc
 	}
 
 	var sb strings.Builder
@@ -368,6 +375,10 @@ func formatGamesListMessage(games []*models.Game, groups []models.Group, loc *ti
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, game := range games {
+		loc := groupLocs[game.ChatID]
+		if loc == nil {
+			loc = time.UTC
+		}
 		localDate := game.GameDate.In(loc)
 		title := groupTitles[game.ChatID]
 		if title == "" {

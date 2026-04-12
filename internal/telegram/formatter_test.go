@@ -258,6 +258,27 @@ func TestFormatGameMessage_NoVenue(t *testing.T) {
 	}
 }
 
+// TestFormatGameMessage_GameTimeInGroupTimezone is a regression test for the bug
+// where FormatGameMessage received b.loc (usually UTC) instead of the group's
+// configured timezone, causing the displayed game time to be wrong.
+// The game is stored at 17:00 UTC; the group timezone is UTC+3, so 20:00 must appear.
+func TestFormatGameMessage_GameTimeInGroupTimezone(t *testing.T) {
+	loc := time.FixedZone("UTC+3", 3*60*60)
+
+	// 17:00 UTC → 20:00 in UTC+3
+	gameDate := time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC)
+	game := makeGame("1,2", gameDate)
+
+	msg := telegram.FormatGameMessage(game, nil, nil, loc, time.Now(), enLz)
+
+	if !strings.Contains(msg, "20:00") {
+		t.Errorf("game time should be 20:00 in UTC+3, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "17:00") {
+		t.Errorf("UTC time 17:00 should NOT appear in group timezone UTC+3, got:\n%s", msg)
+	}
+}
+
 // TestFormatGameMessage_LastUpdatedUsesConfiguredTimezone is a regression test for
 // the bug where "Last updated" used time.Now() (server timezone) instead of
 // time.Now().In(loc). It uses a fixed UTC instant that falls on a different day,

@@ -9,6 +9,9 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 // --- superGroupMessageLink ---
@@ -308,6 +311,56 @@ func TestParseAdminCommand_ValidCourts(t *testing.T) {
 		if courts != tc.courts {
 			t.Errorf("parseAdminCommand(%q): got courts %q, want %q", tc.input, courts, tc.courts)
 		}
+	}
+}
+
+// --- formatGamesListMessage ---
+
+// TestFormatGamesListMessage_PerGroupTimezone is a regression test for the bug
+// where all games were displayed using b.loc (a single bot-wide timezone) instead
+// of each group's own timezone. Both games are at the same UTC instant but belong
+// to groups with different timezones, so the displayed times must differ.
+func TestFormatGamesListMessage_PerGroupTimezone(t *testing.T) {
+	// 17:00 UTC → 17:00 in UTC+0, 20:00 in UTC+3
+	utcTime := time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC)
+
+	games := []*models.Game{
+		{ID: 1, ChatID: -1001, Courts: "1", CourtsCount: 1, GameDate: utcTime},
+		{ID: 2, ChatID: -1002, Courts: "2", CourtsCount: 1, GameDate: utcTime},
+	}
+	groups := []models.Group{
+		{ChatID: -1001, Title: "Group UTC", Timezone: "UTC"},
+		{ChatID: -1002, Title: "Group UTC+3", Timezone: "Etc/GMT-3"},
+	}
+
+	lz := i18n.New(i18n.En)
+	text, _ := formatGamesListMessage(games, groups, lz)
+
+	if !strings.Contains(text, "17:00") {
+		t.Errorf("UTC group should display 17:00, got:\n%s", text)
+	}
+	if !strings.Contains(text, "20:00") {
+		t.Errorf("UTC+3 group should display 20:00, got:\n%s", text)
+	}
+}
+
+// TestFormatGamesListMessage_InvalidTimezone verifies that a game whose group has
+// an invalid or missing timezone falls back to UTC without panicking.
+func TestFormatGamesListMessage_InvalidTimezone(t *testing.T) {
+	utcTime := time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC)
+	games := []*models.Game{
+		{ID: 1, ChatID: -1001, Courts: "1", CourtsCount: 1, GameDate: utcTime},
+	}
+	groups := []models.Group{
+		{ChatID: -1001, Title: "Group Bad TZ", Timezone: "Not/AValidZone"},
+	}
+
+	lz := i18n.New(i18n.En)
+	// Must not panic; falls back to UTC and shows 17:00.
+	text, _ := formatGamesListMessage(games, groups, lz)
+
+	if !strings.Contains(text, "17:00") {
+		t.Errorf("invalid timezone should fall back to UTC (17:00), got:\n%s", text)
 	}
 }
 
