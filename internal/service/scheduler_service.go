@@ -300,9 +300,9 @@ func (s *SchedulerService) runBookingReminders(force bool) {
 
 			var sent bool
 			if autoBookedToday && venue.PreferredGameTime != "" {
-				sent = s.sendAutoBookingGroupNotification(ctx, g.ChatID, venue, localNow, lz)
+				sent = s.sendAutoBookingGroupNotification(g.ChatID, venue, localNow, lz)
 			} else {
-				sent = s.sendBookingReminderToAdmins(ctx, g.ChatID, venue, lz)
+				sent = s.sendBookingReminderToAdmins(g.ChatID, venue, lz)
 			}
 
 			if sent {
@@ -321,7 +321,7 @@ func (s *SchedulerService) runBookingReminders(force bool) {
 // SetLastBookingReminderAt should only be called when this returns true so that
 // a total delivery failure (e.g. network error) does not suppress retries within
 // the same scheduling window.
-func (s *SchedulerService) sendBookingReminderToAdmins(ctx context.Context, chatID int64, venue *models.Venue, lz *i18n.Localizer) bool {
+func (s *SchedulerService) sendBookingReminderToAdmins(chatID int64, venue *models.Venue, lz *i18n.Localizer) bool {
 	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
 		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
 	})
@@ -354,7 +354,6 @@ func (s *SchedulerService) sendBookingReminderToAdmins(ctx context.Context, chat
 // Used by RunBookingReminders when auto-booking already ran today for the venue.
 // Returns true if the message was sent successfully.
 func (s *SchedulerService) sendAutoBookingGroupNotification(
-	ctx context.Context,
 	chatID int64,
 	venue *models.Venue,
 	localNow time.Time,
