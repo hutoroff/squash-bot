@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Handler serves the squash-web HTTP API and the embedded React frontend.
+// Handler serves the web service HTTP API and the embedded React frontend.
 type Handler struct {
 	staticFS fs.FS
 	logger   *slog.Logger

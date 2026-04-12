@@ -17,32 +17,32 @@ A Telegram bot for managing squash game coordination among friends. The bot hand
 
 ### Core Architecture Pattern
 ```
-telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
-sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
+telegram  →  HTTP API  →  management  →  PostgreSQL
+booking   →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
 Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
-**`squash-games-management`** (`cmd/squash-games-management/`)
+**`management`** (`cmd/squash-games-management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
 - **service/**: Business logic for games, participation, guests, scheduling
 - **storage/**: SQL repositories (games, players, participations, guests, groups)
 - Runs the cron scheduler; sends Telegram messages directly via `tgbotapi`
 
-**`telegram-squash-bot`** (`cmd/telegram-squash-bot/`)
+**`telegram`** (`cmd/telegram-squash-bot/`)
 - **telegram/**: Bot loop, callback handlers, slash commands, message formatting
 - **client/**: Typed HTTP client that calls the management service API
 - No DB access; all data operations go through HTTP
 
-**`sports-booking-service`** (`cmd/sports-booking-service/`)
+**`booking`** (`cmd/sports-booking-service/`)
 - **eversports/**: Reverse-engineered Eversports HTTP client (login, bookings list, single match)
 - **booking/**: REST API wrapping the Eversports client (port 8081)
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
-**`squash-web`** (`cmd/squash-web/`)
+**`web`** (`cmd/squash-web/`)
 - **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
 - **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
-- No DB access; authenticates users via Telegram Login Widget, calls squash-games-management for data
+- No DB access; authenticates users via Telegram Login Widget, calls the management service for data
 - Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`internal/service`)
 
 **Shared**
@@ -79,7 +79,7 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 
-# Run sports-booking-service locally
+# Run booking service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
   INTERNAL_API_SECRET=<secret> \
@@ -117,10 +117,10 @@ Version is injected at build time via `-ldflags "-X main.Version=<ver>"` and log
 ### Releasing a service
 
 Trigger the relevant GitHub Actions workflow manually:
-- **Actions → Release Management Service** for `squash-games-management`
-- **Actions → Release Telegram Bot** for `telegram-squash-bot`
-- **Actions → Release Booking Service** for `sports-booking-service`
-- **Actions → Release Web Service** for `squash-web`
+- **Actions → Release Management Service** for `management`
+- **Actions → Release Telegram Bot** for `telegram`
+- **Actions → Release Booking Service** for `booking`
+- **Actions → Release Web Service** for `web`
 
 Select bump type (`patch` / `minor` / `major`). The workflow will:
 1. Verify CI passed for the exact HEAD commit (fails immediately otherwise). The web release additionally verifies the `frontend-test` job alongside `build-and-test`.
@@ -263,7 +263,7 @@ Manual trigger via `/trigger` (service admins only) uses the event names `cancel
 - Players can remove their own most-recently-added guest
 - Admins can remove any guest via the `/games` management menu
 
-### Web Authentication (`squash-web`)
+### Web Authentication (`web`)
 Authentication uses the [Telegram Login Widget](https://core.telegram.org/widgets/login).
 
 **Flow:**
@@ -271,7 +271,7 @@ Authentication uses the [Telegram Login Widget](https://core.telegram.org/widget
 2. User clicks the widget button and approves in the Telegram app.
 3. Telegram redirects the browser to `GET /api/auth/callback?id=…&first_name=…&auth_date=…&hash=…`.
 4. Backend verifies the HMAC-SHA256 hash: `key = SHA256(TELEGRAM_BOT_TOKEN)`, `sig = hex(HMAC-SHA256(key, sorted_key=value_pairs))`. Also checks `auth_date` is ≤ 86400 s old.
-5. Backend calls `GET /api/v1/players/{telegramID}` on squash-games-management (with `INTERNAL_API_SECRET`). Returns `player_id` if the user has previously used the Telegram bot; `nil` if not (login still succeeds).
+5. Backend calls `GET /api/v1/players/{telegramID}` on the management service (with `INTERNAL_API_SECRET`). Returns `player_id` if the user has previously used the Telegram bot; `nil` if not (login still succeeds).
 6. Backend issues a signed HS256 JWT (`JWT_SECRET`, 7-day expiry) and sets it as an HttpOnly, SameSite=Lax `session` cookie. The `Secure` flag is set when `r.TLS != nil` **or** `X-Forwarded-Proto: https` (covers TLS-terminating proxies).
 7. `GET /api/auth/me` — returns `200` + user JSON from the cookie, or `401` if absent/expired/invalid.
 8. `POST /api/auth/logout` — expires the cookie.
@@ -279,11 +279,11 @@ Authentication uses the [Telegram Login Widget](https://core.telegram.org/widget
 
 **BotFather setup (one-time per deployment):** `/mybots` → select bot → Bot Settings → Domain → enter the public hostname (no `https://`). `localhost` is not accepted; use a tunnel (e.g. ngrok) for local end-to-end testing.
 
-**Management service endpoints used by squash-web:**
+**Management service endpoints used by the web service:**
 - `GET /api/v1/players/{telegramID}` — returns the `players` row for the given Telegram user ID (`200` + JSON) or `404` if not found. Used during login to populate `player_id` in the JWT.
 - `GET /api/v1/players/{playerID}/games` — returns all `PlayerGame` records for a player (newest first). Each item: `id`, `game_date`, `courts_count`, `courts`, `completed`, `participation_status` (`registered`|`skipped`), `participant_count` (registered players + guests), `venue_name`, `venue_address`, `group_title`, `timezone`. Used by `GET /api/games`. Both endpoints require bearer auth.
 
-### Web Participation Flow (`squash-web`)
+### Web Participation Flow (`web`)
 
 The SPA lets authenticated users manage their participation from the browser. The past-games section is **collapsed by default**; `GameCard` components for past games are not mounted until the user expands the section, which avoids unnecessary `GET /api/games/{id}/participants` calls.
 
@@ -309,7 +309,7 @@ Each mutating action (join/skip/+1/-1) calls the corresponding management servic
 
 ## Environment Variables
 
-**`squash-games-management`:**
+**`management`:**
 ```
 DATABASE_URL=                # required
 TELEGRAM_BOT_TOKEN=          # required (scheduler sends Telegram messages)
@@ -318,24 +318,24 @@ SERVER_PORT=8080             # default 8080
 CRON_POLL=*/5 * * * *        # default every 5 minutes
 LOG_LEVEL=INFO
 TIMEZONE=UTC
-SPORTS_BOOKING_SERVICE_URL=  # optional; e.g. http://sports-booking-service:8081
+SPORTS_BOOKING_SERVICE_URL=  # optional; e.g. http://booking:8081
                              # when set, enables: cancellation reminder auto-cancels courts,
                              # and RunAutoBooking auto-books courts at midnight when booking opens
 AUTO_BOOKING_COURTS_COUNT=3  # optional; courts to auto-book at midnight (default 3)
                              # requires SPORTS_BOOKING_SERVICE_URL
 ```
 
-**`telegram-squash-bot`:**
+**`telegram`:**
 ```
 TELEGRAM_BOT_TOKEN=          # required
-MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080)
+MANAGEMENT_SERVICE_URL=      # required (e.g. http://management:8080)
 INTERNAL_API_SECRET=         # required; shared bearer token for service-to-service auth
 LOG_LEVEL=INFO
 TIMEZONE=UTC
 SERVICE_ADMIN_IDS=           # optional; comma-separated Telegram user IDs for /trigger
 ```
 
-**`sports-booking-service`:**
+**`booking`:**
 ```
 EVERSPORTS_EMAIL=            # required; Eversports account email
 EVERSPORTS_PASSWORD=         # required; Eversports account password
@@ -348,12 +348,12 @@ LOG_LEVEL=INFO
 TIMEZONE=UTC
 ```
 
-**`squash-web`:**
+**`web`:**
 ```
 TELEGRAM_BOT_TOKEN=          # required; verifies Telegram Login Widget HMAC-SHA256 callbacks
 TELEGRAM_BOT_NAME=           # required; bot username without @ shown in the Login Widget (e.g. SquashBot)
-MANAGEMENT_SERVICE_URL=      # required (e.g. http://squash-games-management:8080); pre-set in docker-compose.yml
-INTERNAL_API_SECRET=         # required; shared bearer token for calling squash-games-management
+MANAGEMENT_SERVICE_URL=      # required (e.g. http://management:8080); pre-set in docker-compose.yml
+INTERNAL_API_SECRET=         # required; shared bearer token for calling the management service
 JWT_SECRET=                  # required; signs/verifies session cookies (HS256, 7-day expiry); generate with openssl rand -hex 32
 SERVER_PORT=8082             # default 8082
 LOG_LEVEL=INFO

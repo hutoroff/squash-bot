@@ -15,7 +15,7 @@ services:
     ports:
       - "7432:5432"
 
-  squash-games-management:
+  management:  # was: squash-games-management
     build:
       context: .
       dockerfile: Dockerfile.management
@@ -34,20 +34,28 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - squash-games-management  # deprecated alias, will be removed in a future release
 
-  telegram-squash-bot:
+  telegram:  # was: telegram-squash-bot
     build:
       context: .
       dockerfile: Dockerfile.telegram
     env_file: .env
     environment:
-      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+      MANAGEMENT_SERVICE_URL: http://management:8080
     depends_on:
-      squash-games-management:
+      management:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - telegram-squash-bot  # deprecated alias, will be removed in a future release
 
-  sports-booking-service:
+  booking:  # was: sports-booking-service
     build:
       context: .
       dockerfile: Dockerfile.booking
@@ -62,17 +70,21 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - sports-booking-service  # deprecated alias, will be removed in a future release
 
-  squash-web:
+  web:  # was: squash-web
     build:
       context: .
       dockerfile: Dockerfile.web
     env_file: .env
     environment:
       SERVER_PORT: "8082"
-      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+      MANAGEMENT_SERVICE_URL: http://management:8080
     depends_on:
-      squash-games-management:
+      management:
         condition: service_healthy
     ports:
       - "8082:8082"
@@ -82,6 +94,10 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - squash-web  # deprecated alias, will be removed in a future release
 
 volumes:
   postgres_data:

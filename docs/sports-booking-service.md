@@ -1,6 +1,6 @@
 # Sports Booking Service
 
-**sports-booking-service** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It reverse-engineers the Eversports internal API to support listing, creating, and cancelling court bookings.
+**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It reverse-engineers the Eversports internal API to support listing, creating, and cancelling court bookings.
 
 ## Environment Variables
 

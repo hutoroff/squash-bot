@@ -1,4 +1,4 @@
-// Package client provides an HTTP client for the squash-games-management service.
+// Package client provides an HTTP client for the management service.
 package client
 
 import (
@@ -15,14 +15,14 @@ import (
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
-// Client wraps all HTTP calls to the squash-games-management service.
+// Client wraps all HTTP calls to the management service.
 type Client struct {
 	baseURL    string
 	apiSecret  string
 	httpClient *http.Client
 }
 
-// New creates a new Client targeting baseURL (e.g. "http://squash-games-management:8080").
+// New creates a new Client targeting baseURL (e.g. "http://management:8080").
 // apiSecret is sent as a Bearer token in every request.
 func New(baseURL, apiSecret string) *Client {
 	return &Client{

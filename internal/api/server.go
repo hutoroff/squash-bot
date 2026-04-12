@@ -12,7 +12,7 @@ import (
 	"github.com/vkhutorov/squash_bot/internal/storage"
 )
 
-// Handler wires all HTTP routes for the squash-games-management service.
+// Handler wires all HTTP routes for the management service.
 type Handler struct {
 	gameService  *service.GameService
 	partService  *service.ParticipationService

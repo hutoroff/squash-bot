@@ -27,7 +27,7 @@ services:
     networks:
       - internal
 
-  squash-games-management:
+  management:  # was: squash-games-management
     image: ${DOCKERHUB_USERNAME}/squash-games-management:${MANAGEMENT_VERSION:-latest}
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
@@ -42,7 +42,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      sports-booking-service:
+      booking:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
@@ -58,19 +58,21 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      - internal
+      internal:
+        aliases:
+          - squash-games-management  # deprecated alias, will be removed in a future release
 
-  telegram-squash-bot:
+  telegram:  # was: telegram-squash-bot
     image: ${DOCKERHUB_USERNAME}/telegram-squash-bot:${TELEGRAM_VERSION:-latest}
     environment:
-      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+      MANAGEMENT_SERVICE_URL: http://management:8080
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       SERVICE_ADMIN_IDS: ${SERVICE_ADMIN_IDS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
     depends_on:
-      squash-games-management:
+      management:
         condition: service_healthy
     restart: unless-stopped
     logging:
@@ -81,9 +83,11 @@ services:
     mem_limit: 64m
     cpus: 0.25
     networks:
-      - internal
+      internal:
+        aliases:
+          - telegram-squash-bot  # deprecated alias, will be removed in a future release
 
-  sports-booking-service:
+  booking:  # was: sports-booking-service
     image: ${DOCKERHUB_USERNAME}/sports-booking-service:${BOOKING_VERSION:-latest}
     environment:
       SERVER_PORT: "8081"
@@ -109,21 +113,23 @@ services:
     mem_limit: 64m
     cpus: 0.25
     networks:
-      - internal
+      internal:
+        aliases:
+          - sports-booking-service  # deprecated alias, will be removed in a future release
 
-  squash-web:
+  web:  # was: squash-web
     image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-latest}
     environment:
       SERVER_PORT: "8082"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME}
-      MANAGEMENT_SERVICE_URL: http://squash-games-management:8080
+      MANAGEMENT_SERVICE_URL: http://management:8080
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       JWT_SECRET: ${JWT_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
     depends_on:
-      squash-games-management:
+      management:
         condition: service_healthy
     ports:
       - "8082:8082"
@@ -141,7 +147,9 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      - internal
+      internal:
+        aliases:
+          - squash-web  # deprecated alias, will be removed in a future release
 
   db-backup:
     image: postgres:15-alpine

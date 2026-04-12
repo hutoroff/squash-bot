@@ -21,17 +21,17 @@ This file provides working instructions for coding agents in this repository.
 Four independently deployable binaries in one Go module:
 
 ```
-telegram-squash-bot  →  HTTP API  →  squash-games-management  →  PostgreSQL
-sports-booking-service  →  eversports.de  (reverse-engineered cookie-auth API)
-squash-web           →  HTTP API  →  squash-games-management
+telegram  →  HTTP API  →  management  →  PostgreSQL
+booking   →  eversports.de  (reverse-engineered cookie-auth API)
+web       →  HTTP API  →  management
 ```
 
 Key directories:
 
-- `cmd/squash-games-management` — management service entry point
-- `cmd/telegram-squash-bot` — telegram bot entry point
-- `cmd/sports-booking-service` — sports booking service entry point
-- `cmd/squash-web` — web UI entry point
+- `cmd/squash-games-management` — management service (`management`) entry point
+- `cmd/telegram-squash-bot` — telegram bot (`telegram`) entry point
+- `cmd/sports-booking-service` — booking service (`booking`) entry point
+- `cmd/squash-web` — web UI (`web`) entry point
 - `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig` / `BookingConfig` / `WebConfig`)
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, PlayerGame)
@@ -42,8 +42,8 @@ Key directories:
 - `internal/client` — typed HTTP client used by the telegram bot
 - `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
 - `internal/eversports` — reverse-engineered Eversports.de HTTP client (login, bookings, single match)
-- `internal/booking` — HTTP server and handlers for the sports-booking-service REST API
-- `internal/webserver` — HTTP server, SPA handler, Telegram Login Widget auth, JWT session management, and web API handlers for squash-web
+- `internal/booking` — HTTP server and handlers for the booking service REST API
+- `internal/webserver` — HTTP server, SPA handler, Telegram Login Widget auth, JWT session management, and web API handlers for the web service
 - `web/embed.go` — embeds `web/frontend/dist` into the Go binary; `go generate ./web/...` runs `npm ci && npm run build`
 - `web/frontend` — React + TypeScript SPA (Vite); `src/types.ts` for shared types, `src/api/` for API clients, `src/components/` for UI components
 - `migrations` — embedded SQL migrations
@@ -70,10 +70,10 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- `squash-games-management` requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
-- `telegram-squash-bot` requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
-- `sports-booking-service` requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
-- `squash-web` requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_NAME`, `MANAGEMENT_SERVICE_URL`, `INTERNAL_API_SECRET`, and `JWT_SECRET`. Serves the React SPA on port 8082. The frontend is embedded in the binary; build it first with `go generate ./web/...`.
+- The management service requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
+- The telegram bot requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
+- The booking service requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
+- The web service requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_NAME`, `MANAGEMENT_SERVICE_URL`, `INTERNAL_API_SECRET`, and `JWT_SECRET`. Serves the React SPA on port 8082. The frontend is embedded in the binary; build it first with `go generate ./web/...`.
 - `INTERNAL_API_SECRET` is a shared secret used to authenticate all HTTP requests between services (bearer token in `Authorization` header).
 - There is no `ADMIN_USER_ID` — admin rights are determined dynamically per group via `GetChatAdministrators`.
 - Local development typically uses Docker Compose for PostgreSQL.
@@ -96,16 +96,16 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/telegram-squash-bot/main.go
 
-# Run the sports-booking-service locally
+# Run the booking service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
   INTERNAL_API_SECRET=<secret> \
   go run cmd/sports-booking-service/main.go
 
-# Build the React frontend (required before running squash-web locally)
+# Build the React frontend (required before running the web service locally)
 go generate ./web/...
 
-# Run squash-web locally
+# Run the web service locally
 TELEGRAM_BOT_TOKEN=<token> \
   TELEGRAM_BOT_NAME=<bot_username> \
   MANAGEMENT_SERVICE_URL=http://localhost:8080 \

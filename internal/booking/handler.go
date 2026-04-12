@@ -33,7 +33,7 @@ const (
 	squashSportID   = "496"
 )
 
-// Handler wires all HTTP routes for the sports-booking-service.
+// Handler wires all HTTP routes for the booking service.
 type Handler struct {
 	eversports   eversportsClient
 	logger       *slog.Logger
