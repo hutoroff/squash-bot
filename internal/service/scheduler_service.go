@@ -429,6 +429,10 @@ func (s *SchedulerService) runDayAfterCleanup(force bool) {
 }
 
 func (s *SchedulerService) processDayAfter(ctx context.Context, game *models.Game, groupTZ *time.Location) {
+	if game.MessageID == nil {
+		s.logger.Warn("day-after cleanup: skipping game with nil message_id", "game_id", game.ID)
+		return
+	}
 	messageID := int(*game.MessageID)
 
 	unpin := tgbotapi.UnpinChatMessageConfig{
