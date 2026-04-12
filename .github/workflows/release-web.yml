@@ -1,0 +1,128 @@
+name: Release Web Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # RELEASE_PAT must be a PAT (classic or fine-grained) with `contents: write`
+          # and branch-protection bypass enabled, so the "Commit and tag" step can push
+          # directly to the protected main branch.
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0
+
+      - name: Verify CI passed for this commit
+        run: |
+          # Walk back past any release chore commits (created by previous release workflows)
+          # so we verify CI on the actual code commit, not a version-bump commit.
+          SHA=$(git rev-parse HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          while echo "${COMMIT_MSG}" | grep -q "^chore: release"; do
+            SHA=$(git rev-parse "${SHA}^")
+            COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          done
+          echo "Checking CI status for commit ${SHA} (${COMMIT_MSG})"
+
+          for JOB in build-and-test frontend-test; do
+            CONCLUSION=$(gh api \
+              "/repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+              --jq "[.check_runs[] | select(.name == \"${JOB}\")] | .[0].conclusion // \"not_found\"")
+            echo "CI job '${JOB}' conclusion: ${CONCLUSION}"
+            if [ "$CONCLUSION" != "success" ]; then
+              echo "ERROR: CI job '${JOB}' has not successfully completed for commit ${SHA} (found: ${CONCLUSION})"
+              exit 1
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version
+        id: bump
+        run: |
+          VERSION=$(cat cmd/squash-web/VERSION)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "$NEW_VERSION" > cmd/squash-web/VERSION
+          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Bumped ${VERSION} → ${NEW_VERSION}"
+
+      - name: Generate changelog
+        run: |
+          PREV_TAG=$(git tag --list "web/v*" --sort=-version:refname | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s (%h)" | head -30 > /tmp/changelog.md
+          else
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" > /tmp/changelog.md
+          fi
+          if [ ! -s /tmp/changelog.md ]; then
+            echo "No changes recorded." > /tmp/changelog.md
+          fi
+          echo "Changelog:"
+          cat /tmp/changelog.md
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          build-args: VERSION=${{ steps.bump.outputs.version }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-web:${{ steps.bump.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/squash-web:latest
+            ghcr.io/${{ github.repository_owner }}/squash-web:${{ steps.bump.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/squash-web:latest
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cmd/squash-web/VERSION
+          git commit -m "chore: release squash-web v${{ steps.bump.outputs.version }}"
+          git tag "web/v${{ steps.bump.outputs.version }}"
+          git push
+          git push origin "web/v${{ steps.bump.outputs.version }}"
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "web/v${{ steps.bump.outputs.version }}" \
+            --title "Web Service v${{ steps.bump.outputs.version }}" \
+            --notes-file /tmp/changelog.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

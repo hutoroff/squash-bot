@@ -185,6 +185,7 @@ Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
 - `cmd/sports-booking-service/VERSION`
+- `cmd/squash-web/VERSION`
 
 The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. Each service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot additionally calls `GET /version` on the management service at startup and refuses to start if the major versions differ.
 
@@ -195,13 +196,14 @@ Trigger the relevant workflow from **GitHub Actions → Run workflow**:
 - **Release Management Service** — for `squash-games-management`
 - **Release Telegram Bot** — for `telegram-squash-bot`
 - **Release Booking Service** — for `sports-booking-service`
+- **Release Web Service** — for `squash-web`
 
 Select the bump type (`patch` / `minor` / `major`). The workflow will:
 
-1. Verify the `build-and-test` CI job passed for the exact commit being released (fails immediately otherwise).
+1. Verify CI passed for the exact commit being released (fails immediately otherwise). The web service release additionally checks the `frontend-test` job.
 2. Bump the `VERSION` file.
 3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
-4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, or `booking/vX.Y.Z`).
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
 ### One-time GitHub setup
 
@@ -220,11 +222,14 @@ ghcr.io/<github_owner>/squash-games-management:<version>
 
 <DOCKERHUB_USERNAME>/sports-booking-service:<version>
 ghcr.io/<github_owner>/sports-booking-service:<version>
+
+<DOCKERHUB_USERNAME>/squash-web:<version>
+ghcr.io/<github_owner>/squash-web:<version>
 ```
 
 ## Production Deployment
 
-The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All three services and PostgreSQL run on a single server.
+The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All four services and PostgreSQL run on a single server.
 
 ### Server setup
 
@@ -240,6 +245,7 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 #    Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
+openssl rand -hex 32   # → JWT_SECRET (squash-web session signing)
 
 # 4. Lock down the .env file
 chmod 600 .env
@@ -256,14 +262,19 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=20
 ```
 
+squash-web listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`).
+
+> **BotFather domain setup (required for squash-web login):** After the server is reachable at a public hostname, register it once with Telegram: `/mybots` → select bot → **Bot Settings → Domain** → enter the hostname only (no `https://`). The Telegram Login Widget will not work until this step is done.
+
 ### Updating a service
 
 After triggering a release workflow in GitHub Actions:
 
 ```bash
-# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2), then:
+# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2, WEB_VERSION=1.0.1), then:
 scripts/deploy.sh                        # pull all + restart changed
 scripts/deploy.sh squash-games-management  # or update a single service
+scripts/deploy.sh squash-web               # or update squash-web
 ```
 
 ### Database backups

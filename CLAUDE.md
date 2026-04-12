@@ -106,6 +106,7 @@ Each service has its own independent version stored in a plain-text file:
 - `cmd/squash-games-management/VERSION`
 - `cmd/telegram-squash-bot/VERSION`
 - `cmd/sports-booking-service/VERSION`
+- `cmd/squash-web/VERSION`
 
 Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
 
@@ -118,12 +119,14 @@ Version is injected at build time via `-ldflags "-X main.Version=<ver>"` and log
 Trigger the relevant GitHub Actions workflow manually:
 - **Actions → Release Management Service** for `squash-games-management`
 - **Actions → Release Telegram Bot** for `telegram-squash-bot`
+- **Actions → Release Booking Service** for `sports-booking-service`
+- **Actions → Release Web Service** for `squash-web`
 
 Select bump type (`patch` / `minor` / `major`). The workflow will:
-1. Verify the CI job `build-and-test` passed for the exact HEAD commit (fails immediately otherwise).
+1. Verify CI passed for the exact HEAD commit (fails immediately otherwise). The web release additionally verifies the `frontend-test` job alongside `build-and-test`.
 2. Bump the `VERSION` file.
 3. Build and push Docker images tagged `<version>` and `latest` to both Docker Hub and GHCR.
-4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z` or `telegram/vX.Y.Z`).
+4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
 **Required GitHub configuration (one-time setup):**
 - Variable `DOCKERHUB_USERNAME` — Docker Hub org or username for image names.
