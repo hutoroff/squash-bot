@@ -145,6 +145,10 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		return false
 	}
 
+	j.logger.Debug("auto-booking: slots received",
+		"venue_id", venue.ID, "date", checkDateLocal, "start", checkStartHHMM, "end", checkEndHHMM,
+		"count", len(slots))
+
 	// Build the set of court IDs configured for this venue.
 	venueCourts := make(map[int]bool)
 	for _, c := range strings.Split(venue.Courts, ",") {
@@ -162,8 +166,23 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
 
 	if len(available) == 0 {
-		j.logger.Info("auto-booking: no available courts",
-			"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime)
+		if j.logger.Enabled(ctx, slog.LevelDebug) {
+			// Log a breakdown to help diagnose why no courts are available.
+			var nBooked, nNoUUID, nNotInVenue int
+			for _, sl := range slots {
+				if sl.Booking != nil {
+					nBooked++
+				} else if sl.CourtUUID == "" {
+					nNoUUID++
+				} else if !venueCourts[sl.Court] {
+					nNotInVenue++
+				}
+			}
+			j.logger.Info("auto-booking: no available courts",
+				"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime,
+				"slots_total", len(slots), "booked", nBooked, "no_uuid", nNoUUID, "not_in_venue", nNotInVenue,
+				"venue_courts", venue.Courts, "auto_booking_courts", venue.AutoBookingCourts)
+		}
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
