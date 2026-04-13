@@ -28,22 +28,22 @@ web       →  HTTP API  →  management
 
 Key directories:
 
-- `cmd/squash-games-management` — management service (`management`) entry point
-- `cmd/telegram-squash-bot` — telegram bot (`telegram`) entry point
-- `cmd/sports-booking-service` — booking service (`booking`) entry point
-- `cmd/squash-web` — web UI (`web`) entry point
+- `cmd/management` — management service (`management`) entry point
+- `cmd/telegram` — telegram bot (`telegram`) entry point
+- `cmd/booking` — booking service (`booking`) entry point
+- `cmd/web` — web UI (`web`) entry point
 - `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig` / `BookingConfig` / `WebConfig`)
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, PlayerGame)
-- `internal/storage` — SQL repositories (games, players, participations, guests, groups)
+- `cmd/management/api` — HTTP handlers for the management service REST API
+- `cmd/management/service` — business logic layer; defines repository and Telegram interfaces (`TelegramAPI`, `Notifier`, `GameRepository`, …); four focused job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; `ParticipationService` fires async Telegram edits via the injected `Notifier`; shared timezone/language helpers in `group_resolver.go`
+- `cmd/management/storage` — SQL repository implementations satisfying the interfaces defined in the service package
+- `cmd/telegram/telegram` — bot core (`bot.go`, `handlers.go`), slash commands (`commands.go`), message formatting (`formatter.go`), and domain-focused handler files: `participation_handlers.go`, `game_manage_handlers.go`, `newgame_handlers.go`, `settings_handlers.go`, `venue_handlers.go`; callback routing via `callback_router.go` (map-based dispatch replacing the original if-chain)
+- `cmd/telegram/client` — typed HTTP client used by the telegram bot; `interface.go` defines `ManagementClient` (the interface `Bot` depends on) so tests can inject mocks without a running HTTP server
+- `cmd/booking/eversports` — reverse-engineered Eversports.de HTTP client; `client.go` (auth, `withAuth` retry helper), `matches.go` (GetMatchByID, CancelMatch), `slots.go` (GetCourts, GetSlots), `checkout.go` (CreateBooking), `facility.go` (GetFacility), `models.go` (public domain types + shared GQL types)
+- `cmd/booking/booking` — HTTP server and handlers for the booking service REST API; `NewHandler` accepts the `eversportsClient` interface defined in `handler.go`
+- `cmd/web/webserver` — HTTP server, SPA handler, Telegram Login Widget auth, JWT session management, and web API handlers for the web service
 - `internal/gameformat` — shared game message formatter and keyboard builder (`FormatGameMessage`, `GameKeyboard`, `PlayerDisplayName`); used by both the telegram bot and the management service scheduler
-- `internal/service` — business logic and scheduled jobs; includes `GameNotifier` for on-demand Telegram message editing triggered from the web API
-- `internal/api` — HTTP handlers for the management service REST API
-- `internal/client` — typed HTTP client used by the telegram bot
-- `internal/telegram` — bot handlers, callbacks, slash commands, message formatting
-- `internal/eversports` — reverse-engineered Eversports.de HTTP client (login, bookings, single match)
-- `internal/booking` — HTTP server and handlers for the booking service REST API
-- `internal/webserver` — HTTP server, SPA handler, Telegram Login Widget auth, JWT session management, and web API handlers for the web service
 - `web/embed.go` — embeds `web/frontend/dist` into the Go binary; `go generate ./web/...` runs `npm ci && npm run build`
 - `web/frontend` — React + TypeScript SPA (Vite); `src/types.ts` for shared types, `src/api/` for API clients, `src/components/` for UI components
 - `migrations` — embedded SQL migrations
@@ -55,7 +55,7 @@ Key directories:
 
 - Keep changes minimal and consistent with the existing Go style.
 - Prefer fixing root causes over adding defensive patches around symptoms.
-- Preserve the current package boundaries: transport/bot logic in `internal/telegram`, HTTP API in `internal/api`, HTTP client in `internal/client`, business rules in `internal/service`, persistence in `internal/storage`.
+- Preserve the current package boundaries: transport/bot logic in `cmd/telegram/telegram`, HTTP API in `cmd/management/api`, HTTP client in `cmd/telegram/client`, business rules in `cmd/management/service`, persistence in `cmd/management/storage`.
 - Do not introduce new dependencies unless clearly necessary.
 - Use structured logging patterns already present in the codebase.
 - Avoid unrelated refactors while implementing a task.
@@ -88,19 +88,19 @@ docker-compose up -d postgres
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/squash-games-management/main.go
+  go run cmd/management/main.go
 
 # Run the telegram bot locally
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/telegram-squash-bot/main.go
+  go run cmd/telegram/main.go
 
 # Run the booking service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/sports-booking-service/main.go
+  go run cmd/booking/main.go
 
 # Build the React frontend (required before running the web service locally)
 go generate ./web/...
@@ -111,7 +111,7 @@ TELEGRAM_BOT_TOKEN=<token> \
   MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   JWT_SECRET=$(openssl rand -hex 32) \
-  go run cmd/squash-web/main.go
+  go run cmd/web/main.go
 
 # Run Go tests
 go test ./...
@@ -121,9 +121,9 @@ go test -tags integration -timeout 120s ./...
 cd web/frontend && npm test
 
 # Build binaries
-go build ./cmd/squash-games-management/
-go build ./cmd/telegram-squash-bot/
-go build ./cmd/sports-booking-service/
+go build ./cmd/management/
+go build ./cmd/telegram/
+go build ./cmd/booking/
 ```
 
 ## Testing Guidance

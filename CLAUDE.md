@@ -21,29 +21,29 @@ telegram  →  HTTP API  →  management  →  PostgreSQL
 booking   →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`):
 
-**`management`** (`cmd/squash-games-management/`)
+**`management`** (`cmd/management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
-- **service/**: Business logic for games, participation, guests, scheduling
-- **storage/**: SQL repositories (games, players, participations, guests, groups)
-- Runs the cron scheduler; sends Telegram messages directly via `tgbotapi`
+- **service/**: Business logic layer; defines `TelegramAPI`, `Notifier`, and repository interfaces (`GameRepository`, `PlayerRepository`, `ParticipationRepository`, `GuestRepository`, `GroupRepository`, `VenueRepository`) in `interfaces.go`; four focused scheduled-job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; shared timezone/language helpers in `group_resolver.go`; `ParticipationService` fires async Telegram message edits via an injected `Notifier`
+- **storage/**: SQL repository implementations satisfying the interfaces defined in `service/`
+- Runs the cron scheduler; sends Telegram messages via `TelegramAPI` interface (wired to `*tgbotapi.BotAPI` in `main.go`)
 
-**`telegram`** (`cmd/telegram-squash-bot/`)
+**`telegram`** (`cmd/telegram/`)
 - **telegram/**: Bot loop, callback handlers, slash commands, message formatting
 - **client/**: Typed HTTP client that calls the management service API
 - No DB access; all data operations go through HTTP
 
-**`booking`** (`cmd/sports-booking-service/`)
-- **eversports/**: Reverse-engineered Eversports HTTP client (login, bookings list, single match)
-- **booking/**: REST API wrapping the Eversports client (port 8081)
+**`booking`** (`cmd/booking/`)
+- **eversports/**: Reverse-engineered Eversports HTTP client; `client.go` (auth + `withAuth` retry helper), `matches.go` (GetMatchByID, CancelMatch), `slots.go` (GetCourts, GetSlots), `checkout.go` (CreateBooking), `facility.go` (GetFacility), `models.go` (public types + shared GQL types)
+- **booking/**: REST API wrapping the Eversports client (port 8081); `NewHandler` accepts the `eversportsClient` interface
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
-**`web`** (`cmd/squash-web/`)
+**`web`** (`cmd/web/`)
 - **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
 - **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
 - No DB access; authenticates users via Telegram Login Widget, calls the management service for data
-- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`internal/service`)
+- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`cmd/management/service`)
 
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
@@ -71,42 +71,42 @@ docker-compose up -d postgres
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/squash-games-management/main.go
+  go run cmd/management/main.go
 
 # Run telegram bot locally
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/telegram-squash-bot/main.go
+  go run cmd/telegram/main.go
 
 # Run booking service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/sports-booking-service/main.go
+  go run cmd/booking/main.go
 
 # Testing
 go test ./...
 go test -tags integration -timeout 120s ./...
 
 # Build all binaries
-go build ./cmd/squash-games-management/
-go build ./cmd/telegram-squash-bot/
-go build ./cmd/sports-booking-service/
+go build ./cmd/management/
+go build ./cmd/telegram/
+go build ./cmd/booking/
 
 # Build with explicit version (mirrors what Docker does)
-go build -ldflags="-X main.Version=1.2.3" ./cmd/squash-games-management/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram-squash-bot/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/sports-booking-service/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/management/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/booking/
 ```
 
 ## Versioning & Release
 
 Each service has its own independent version stored in a plain-text file:
-- `cmd/squash-games-management/VERSION`
-- `cmd/telegram-squash-bot/VERSION`
-- `cmd/sports-booking-service/VERSION`
-- `cmd/squash-web/VERSION`
+- `cmd/management/VERSION`
+- `cmd/telegram/VERSION`
+- `cmd/booking/VERSION`
+- `cmd/web/VERSION`
 
 Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
 
@@ -148,7 +148,7 @@ web         →  <DOCKERHUB_USERNAME>/squash-web:<version>
 - **Group messages** (game announcements, scheduled notifications) use the language stored in `bot_groups.language`; fetched via `groupLocalizer(ctx, chatID)` which calls `GET /api/v1/groups/{chatID}`.
 - **Private messages** use the language from the Telegram user's `LanguageCode` field via `userLocalizer(langCode)`, falling back to English.
 - Three languages are supported: `en` (default), `de`, `ru`. `i18n.Normalize()` maps any Telegram locale string to one of these.
-- Scheduler notifications (`RunCancellationReminders`, `RunDayAfterCleanup`) use `groupRepo.GetByID()` directly to resolve group language. Booking reminders use `userLocalizer` with the admin's Telegram `LanguageCode`.
+- Scheduler notifications (`CancellationReminderJob`, `DayAfterCleanupJob`) use `groupRepo.GetByID()` directly to resolve group language via the `groupLang` helper in `group_resolver.go`. Booking reminders use `userLocalizer` with the admin's Telegram `LanguageCode`.
 - Date formatting is locale-aware: English "Sunday, March 22", German "Sonntag, 22. März", Russian "Воскресенье, 22 марта".
 
 ### Language & Timezone Selection (`/language`)
@@ -221,9 +221,9 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 6. Log action at INFO level
 
 ### Scheduled Tasks (Cron-based)
-A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunScheduledTasks()` which dispatches to four methods:
+A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `Scheduler.RunScheduledTasks()` which calls `run(false)` on each registered job. `Scheduler.ForceRun(event)` calls `run(true)` on the named job, bypassing time-window gates. Each job is an independent struct implementing the unexported `scheduledJob` interface (`run(force bool)` + `name() string`).
 
-- **`RunCancellationReminders()`**: Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity, attempts automatic court cancellation (if `SPORTS_BOOKING_SERVICE_URL` is configured), and **always** sends a group notification. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
+- **`CancellationReminderJob`** (`cancellation_reminder.go`): Loads all upcoming unnotified games. For each game, computes `reminderAt = game_date - (gracePeriodHours + 6) * hour`. If `|now - reminderAt| ≤ 2m30s`, checks capacity, attempts automatic court cancellation (if `SPORTS_BOOKING_SERVICE_URL` is configured), and **always** sends a group notification. Uses `notified_day_before` flag to prevent duplicates. `gracePeriodHours` defaults to 24 if venue has none configured.
 
   **Court cancellation flow** (when booking service URL is configured):
   1. Computes `courtsToCancel = floor((capacity − count) / 2)` — fully unused courts (each needs 2 free spots).
@@ -242,18 +242,18 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `RunSched
   - `all_canceled` — all courts canceled: "game will not happen".
   - `even_no_cancel` — even player count, count < capacity, nothing (or not enough) canceled: "please cancel unused courts". Fires when the booking service is absent or found no owned bookings.
 
-- **`RunBookingReminders()`**: Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). After the dedup check, queries `GetUncompletedGamesByGroupAndDay` for the target date (`today + booking_opens_days`); if a game already exists for that day the reminder is skipped entirely (dedup guard is NOT updated, so the check retries on the next poll). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`, using Markdown formatting. The DM message reads: *"Booking is open now! Game in N days — don't forget to reserve courts."*
+- **`BookingReminderJob`** (`booking_reminder.go`): Iterates all groups. For each group, checks if local time (using `bot_groups.timezone`) is in the `[10:00, 10:05)` window. For each venue of that group with `game_days` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_booking_reminder_at` (date-scoped). After the dedup check, queries `GetUncompletedGamesByGroupAndDay` for the target date (`today + booking_opens_days`); if a game already exists for that day the reminder is skipped entirely (dedup guard is NOT updated, so the check retries on the next poll). If `venues.last_auto_booking_at` is set for today, sends a group notification instead of DM (confirming auto-booking was done). Otherwise DMs all group admins with the venue name and `booking_opens_days`, using Markdown formatting. The DM message reads: *"Booking is open now! Game in N days — don't forget to reserve courts."*
 
-- **`RunAutoBooking()`**: Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `auto_booking_enabled = true` and `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
+- **`AutoBookingJob`** (`auto_booking.go`): Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `auto_booking_enabled = true` and `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
   1. Fetches available (unbooked) slots at `preferred_game_time` ± 10 min via `ListMatches(my=false)` for the date `today + booking_opens_days`.
   2. Selects courts via `filterAvailableCourts`: if `auto_booking_courts` is set, returns only those IDs in declared order (priority booking); otherwise returns all available venue courts in API response order.
   3. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (1 hour each) via `BookMatch`.
   4. On success: sends group notification; sets `last_auto_booking_at`.
   5. On partial/full failure: immediately DMs all group admins silently (no notification sound).
 
-- **`RunDayAfterCleanup()`**: Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
+- **`DayAfterCleanupJob`** (`day_after_cleanup.go`): Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.
 
-Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`, `auto_booking`. Each event routes to a `ForceRun*` method that bypasses the time-window scheduling gate (e.g. `[00:00, 00:05)` for auto-booking, `±pollWindow` for cancellation reminders) but still respects `game_days` validation and same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`).
+Manual trigger via `/trigger` (service admins only) uses the event names `cancellation_reminder`, `booking_reminder`, `day_after_cleanup`, `auto_booking`. Each event routes to `Scheduler.ForceRun(event)` which calls `run(true)` on the matching job, bypassing the time-window scheduling gate (e.g. `[00:00, 00:05)` for auto-booking, `±pollWindow` for cancellation reminders) but still respects `game_days` validation and same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`).
 
 ### Admin & Group Management
 - **Group admin rights** are verified dynamically per group via `GetChatAdministrators` — no hardcoded IDs; this controls game creation, player/guest management, and all `/games` actions
@@ -300,9 +300,9 @@ The SPA lets authenticated users manage their participation from the browser. Th
 | `POST`   | `/api/games/{id}/guests`         | Add a guest linked to the current user      |
 | `DELETE` | `/api/games/{id}/guests`         | Remove the current user's most-recent guest |
 
-Each mutating action (join/skip/+1/-1) calls the corresponding management service endpoint with the player ID from the JWT, then calls `GameNotifier.NotifyGameUpdated(gameID)` to re-fetch participants and edit the Telegram announcement in place. Returns the updated `GameParticipants` payload to the frontend so the UI refreshes without a second round-trip.
+Each mutating action (join/skip/+1/-1) calls the corresponding management service endpoint with the player ID from the JWT. The management service's `ParticipationService` fires `Notifier.EditGameMessage(ctx, gameID)` asynchronously after each mutation to re-fetch participants and edit the Telegram announcement in place. Returns the updated `GameParticipants` payload to the frontend so the UI refreshes without a second round-trip.
 
-**`GameNotifier`** (`internal/service/game_notifier.go`): fetches game + participants + guests, re-formats the message and keyboard, then calls `EditMessageText` on the Telegram Bot API. It resolves the group timezone via `resolveGroupTimezone` (falls back to the default location on invalid IANA strings).
+**`GameNotifier`** (`cmd/management/service/game_notifier.go`): concrete implementation of the `Notifier` interface. Fetches game + participants + guests, re-formats the message and keyboard via `gameformat`, then calls `EditMessageText` via the `TelegramAPI` interface. Resolves the group timezone via `resolveGroupTimezone` in `group_resolver.go` (falls back to the default location on invalid IANA strings).
 
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
@@ -377,15 +377,16 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 **Single match** — `POST https://www.eversports.de/api/checkout` (GraphQL `Match` query by UUID)
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
-**Client API** (`internal/eversports`):
+**Client API** (`cmd/booking/eversports`):
 - `New(email, password string, logger) *Client`
 - `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
 - `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
-- `GetMatchByID(ctx, matchID string) (*Booking, error)` — auto-logins if needed, single match via GraphQL; retries once on HTTP 401
-- `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — auto-logins if needed; retries once on HTTP 401
-- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401
-- `CreateBooking(ctx, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*BookingResult, error)` — 5-step checkout flow: reserve court → pay-offline → create-from-booking → getMPFeeForCourtBooking → trackCheckoutCompleted; returns `BookingResult{BookingUUID, BookingID, MatchID}` (`MatchID` is best-effort, empty on failure); serialised access via internal mutex
-- `CancelMatch(ctx, matchID string) (*CancellationResult, error)` — cancels a booking via GraphQL `CancelMatch` mutation; retries once on HTTP 401
+- `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL; retries once on HTTP 401 via `withAuth`
+- `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — retries once on HTTP 401 via `withAuth`
+- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401 via `withAuth`
+- `CreateBooking(ctx, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*BookingResult, error)` — 5-step checkout flow: reserve court → pay-offline → create-from-booking → getMPFeeForCourtBooking → trackCheckoutCompleted; returns `BookingResult{BookingUUID, BookingID, MatchID}` (`MatchID` is best-effort, empty on failure); serialised access via internal mutex; retries once on HTTP 401 from step 1 only (mid-flow 401 returns error without retry to avoid duplicate bookings)
+- `CancelMatch(ctx, matchID string) (*CancellationResult, error)` — cancels a booking via GraphQL `CancelMatch` mutation; retries once on HTTP 401 via `withAuth`
+- `withAuth[T any](ctx, c, do)` — package-level generic helper used by all methods except `CreateBooking`; ensures login, executes `do()`, retries once on `errUnauthorized`
 
 ### HTTP endpoints
 

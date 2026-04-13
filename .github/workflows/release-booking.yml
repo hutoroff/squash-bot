@@ -54,7 +54,7 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          VERSION=$(cat cmd/sports-booking-service/VERSION)
+          VERSION=$(cat cmd/booking/VERSION)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           case "${{ inputs.bump }}" in
             major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
@@ -62,7 +62,7 @@ jobs:
             patch) PATCH=$((PATCH+1)) ;;
           esac
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "$NEW_VERSION" > cmd/sports-booking-service/VERSION
+          echo "$NEW_VERSION" > cmd/booking/VERSION
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Bumped ${VERSION} → ${NEW_VERSION}"
 
@@ -110,7 +110,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cmd/sports-booking-service/VERSION
+          git add cmd/booking/VERSION
           git commit -m "[chore]: release squash-booking-eversports v${{ steps.bump.outputs.version }}"
           git tag "booking/v${{ steps.bump.outputs.version }}"
           git push

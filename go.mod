@@ -1,4 +1,4 @@
-module github.com/vkhutorov/squash_bot
+module github.com/hutoroff/squash-bot
 
 go 1.25.0
 

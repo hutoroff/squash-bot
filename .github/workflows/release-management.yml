@@ -54,7 +54,7 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          VERSION=$(cat cmd/squash-games-management/VERSION)
+          VERSION=$(cat cmd/management/VERSION)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           case "${{ inputs.bump }}" in
             major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
@@ -62,7 +62,7 @@ jobs:
             patch) PATCH=$((PATCH+1)) ;;
           esac
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "$NEW_VERSION" > cmd/squash-games-management/VERSION
+          echo "$NEW_VERSION" > cmd/management/VERSION
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Bumped ${VERSION} → ${NEW_VERSION}"
 
@@ -110,7 +110,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cmd/squash-games-management/VERSION
+          git add cmd/management/VERSION
           git commit -m "[chore]: release squash-management v${{ steps.bump.outputs.version }}"
           git tag "management/v${{ steps.bump.outputs.version }}"
           git push

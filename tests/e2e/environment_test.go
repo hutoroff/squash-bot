@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/service"
-	"github.com/vkhutorov/squash_bot/internal/storage"
-	"github.com/vkhutorov/squash_bot/internal/testutil"
 )
 
 const (

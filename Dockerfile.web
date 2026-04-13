@@ -19,7 +19,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend-builder /app/web/frontend/dist ./web/frontend/dist
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /squash-web ./cmd/squash-web/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /web ./cmd/web/main.go
 
 
 FROM alpine:3.18
@@ -28,6 +28,6 @@ RUN apk --no-cache add ca-certificates tzdata wget
 
 WORKDIR /app
 
-COPY --from=builder /squash-web .
+COPY --from=builder /web .
 
-CMD ["./squash-web"]
+CMD ["./web"]

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vkhutorov/squash_bot/internal/gameformat"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
+	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 func strPtr(s string) *string { return &s }

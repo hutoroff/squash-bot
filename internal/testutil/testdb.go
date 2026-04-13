@@ -10,10 +10,10 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/vkhutorov/squash_bot/migrations"
 )
 
 // SetupTestDB starts a PostgreSQL container, runs all migrations, and returns

@@ -44,7 +44,7 @@ EVERSPORTS_EMAIL=you@example.com \
   EVERSPORTS_FACILITY_ID=76443 \
   EVERSPORTS_FACILITY_SLUG=squash-house-berlin-03 \
   EVERSPORTS_FACILITY_UUID=6266968c-b0fd-4115-ad3b-ae225cc880f1 \
-  go run cmd/sports-booking-service/main.go
+  go run cmd/booking/main.go
 
 # List court slots for a date (service logs in automatically on first request)
 curl -H "Authorization: Bearer test" "http://localhost:8081/api/v1/eversports/matches?date=2026-04-12"
