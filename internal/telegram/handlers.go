@@ -432,6 +432,32 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	// venue auto-booking enable/disable callbacks
+	if action == "venue_wiz_autobooking" {
+		b.handleVenueWizAutoBookingPick(ctx, cb, rawID)
+		return
+	}
+	if action == "venue_toggle_autobooking" {
+		// format: venueID:groupID
+		subparts := strings.SplitN(rawID, ":", 2)
+		if len(subparts) != 2 {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		venueID, err := strconv.ParseInt(subparts[0], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		groupID, err := strconv.ParseInt(subparts[1], 10, 64)
+		if err != nil {
+			b.answerCallback(cb.ID, "")
+			return
+		}
+		b.handleVenueToggleAutoBooking(ctx, cb, venueID, groupID)
+		return
+	}
+
 	// venue preferred time callbacks
 	if action == "venue_wiz_ptime" {
 		b.handleVenueWizPreferredTimePick(ctx, cb, rawID)

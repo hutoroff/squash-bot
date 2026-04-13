@@ -1,0 +1,1 @@
+ALTER TABLE venues ADD COLUMN auto_booking_enabled BOOLEAN NOT NULL DEFAULT FALSE;
