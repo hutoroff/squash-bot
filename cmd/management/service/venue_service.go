@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/storage"
 )
 
 type VenueService struct {

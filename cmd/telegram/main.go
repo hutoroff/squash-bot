@@ -11,9 +11,9 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/client"
+	"github.com/vkhutorov/squash_bot/cmd/telegram/client"
+	"github.com/vkhutorov/squash_bot/cmd/telegram/telegram"
 	"github.com/vkhutorov/squash_bot/internal/config"
-	"github.com/vkhutorov/squash_bot/internal/telegram"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".
@@ -65,9 +65,9 @@ func main() {
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, cfg.ServiceAdminIDs, logger)
 
-	slog.Info("telegram-squash-bot starting", "version", Version)
+	slog.Info("telegram starting", "version", Version)
 	bot.Start(ctx)
-	slog.Info("telegram-squash-bot stopped")
+	slog.Info("telegram stopped")
 }
 
 func majorPart(v string) string {

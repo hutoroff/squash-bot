@@ -27,7 +27,7 @@ services:
     networks:
       - internal
 
-  management:  # was: squash-games-management
+  management:
     image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-latest}
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
@@ -58,11 +58,9 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      internal:
-        aliases:
-          - squash-games-management  # deprecated alias, will be removed in a future release
+      - internal
 
-  telegram:  # was: telegram-squash-bot
+  telegram:
     image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-latest}
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
@@ -83,11 +81,9 @@ services:
     mem_limit: 64m
     cpus: 0.25
     networks:
-      internal:
-        aliases:
-          - telegram-squash-bot  # deprecated alias, will be removed in a future release
+      - internal
 
-  booking:  # was: sports-booking-service
+  booking:
     image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-latest}
     environment:
       SERVER_PORT: "8081"
@@ -113,11 +109,9 @@ services:
     mem_limit: 64m
     cpus: 0.25
     networks:
-      internal:
-        aliases:
-          - sports-booking-service  # deprecated alias, will be removed in a future release
+      - internal
 
-  web:  # was: squash-web
+  web:
     image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-latest}
     environment:
       SERVER_PORT: "8082"
@@ -147,9 +141,7 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      internal:
-        aliases:
-          - squash-web  # deprecated alias, will be removed in a future release
+      - internal
 
   db-backup:
     image: postgres:15-alpine

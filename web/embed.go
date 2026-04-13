@@ -1,6 +1,6 @@
 // Package web embeds the compiled React frontend.
 //
-// Before running `go build ./cmd/squash-web`, populate frontend/dist by running:
+// Before running `go build ./cmd/web`, populate frontend/dist by running:
 //
 //	go generate ./web/...
 //

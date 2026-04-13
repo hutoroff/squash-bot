@@ -7,8 +7,8 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/storage"
 )
 
 type ParticipationService struct {

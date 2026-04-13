@@ -15,7 +15,7 @@ services:
     ports:
       - "7432:5432"
 
-  management:  # was: squash-games-management
+  management:
     build:
       context: .
       dockerfile: Dockerfile.management
@@ -34,12 +34,8 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
-    networks:
-      default:
-        aliases:
-          - squash-games-management  # deprecated alias, will be removed in a future release
 
-  telegram:  # was: telegram-squash-bot
+  telegram:
     build:
       context: .
       dockerfile: Dockerfile.telegram
@@ -50,12 +46,8 @@ services:
       management:
         condition: service_healthy
     restart: unless-stopped
-    networks:
-      default:
-        aliases:
-          - telegram-squash-bot  # deprecated alias, will be removed in a future release
 
-  booking:  # was: sports-booking-service
+  booking:
     build:
       context: .
       dockerfile: Dockerfile.booking
@@ -70,12 +62,8 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
-    networks:
-      default:
-        aliases:
-          - sports-booking-service  # deprecated alias, will be removed in a future release
 
-  web:  # was: squash-web
+  web:
     build:
       context: .
       dockerfile: Dockerfile.web
@@ -94,10 +82,6 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
-    networks:
-      default:
-        aliases:
-          - squash-web  # deprecated alias, will be removed in a future release
 
 volumes:
   postgres_data:

@@ -124,13 +124,13 @@ export PATH="/opt/homebrew/bin:$PATH"   # if Go installed via Homebrew on macOS
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/squash-games-management/main.go
+  go run cmd/management/main.go
 
 # Run the telegram bot (in another terminal)
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/telegram-squash-bot/main.go
+  go run cmd/telegram/main.go
 ```
 
 ### web
@@ -147,7 +147,7 @@ TELEGRAM_BOT_TOKEN=<token> \
   MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   INTERNAL_API_SECRET=<secret> \
   JWT_SECRET=$(openssl rand -hex 32) \
-  go run cmd/squash-web/main.go
+  go run cmd/web/main.go
 # → http://localhost:8082
 ```
 
@@ -182,10 +182,10 @@ cd web/frontend && npm test
 ## Versioning & Releases
 
 Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
-- `cmd/squash-games-management/VERSION`
-- `cmd/telegram-squash-bot/VERSION`
-- `cmd/sports-booking-service/VERSION`
-- `cmd/squash-web/VERSION`
+- `cmd/management/VERSION`
+- `cmd/telegram/VERSION`
+- `cmd/booking/VERSION`
+- `cmd/web/VERSION`
 
 The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. Each service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot additionally calls `GET /version` on the management service at startup and refuses to start if the major versions differ.
 
@@ -434,10 +434,10 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API end
 
 ```
 cmd/
-  squash-games-management/  — management service (management) entry point
-  telegram-squash-bot/      — telegram bot (telegram) entry point
-  sports-booking-service/   — booking service entry point
-  squash-web/               — web service (web) entry point
+  management/  — management service entry point
+  telegram/    — telegram bot entry point
+  booking/     — booking service entry point
+  web/         — web service entry point
 internal/
   config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig, WebConfig)
   i18n/           — localisation (en/de/ru strings, Localizer, date formatting)

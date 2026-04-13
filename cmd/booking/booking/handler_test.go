@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/eversports"
+	"github.com/vkhutorov/squash_bot/cmd/booking/eversports"
 )
 
 // testLogger silences all log output during tests.

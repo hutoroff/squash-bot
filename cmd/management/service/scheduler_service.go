@@ -9,10 +9,10 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/gameformat"
 	"github.com/vkhutorov/squash_bot/internal/i18n"
 	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/storage"
 )
 
 type SchedulerService struct {

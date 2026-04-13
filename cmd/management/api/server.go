@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/service"
-	"github.com/vkhutorov/squash_bot/internal/storage"
+	"github.com/vkhutorov/squash_bot/cmd/management/service"
+	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 )
 
 // Handler wires all HTTP routes for the management service.

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/eversports"
+	"github.com/vkhutorov/squash_bot/cmd/booking/eversports"
 )
 
 // eversportsClient is the subset of *eversports.Client methods used by Handler.

@@ -23,27 +23,27 @@ booking   →  eversports.de  (reverse-engineered cookie-auth API)
 
 Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
 
-**`management`** (`cmd/squash-games-management/`)
+**`management`** (`cmd/management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)
 - **service/**: Business logic for games, participation, guests, scheduling
 - **storage/**: SQL repositories (games, players, participations, guests, groups)
 - Runs the cron scheduler; sends Telegram messages directly via `tgbotapi`
 
-**`telegram`** (`cmd/telegram-squash-bot/`)
+**`telegram`** (`cmd/telegram/`)
 - **telegram/**: Bot loop, callback handlers, slash commands, message formatting
 - **client/**: Typed HTTP client that calls the management service API
 - No DB access; all data operations go through HTTP
 
-**`booking`** (`cmd/sports-booking-service/`)
+**`booking`** (`cmd/booking/`)
 - **eversports/**: Reverse-engineered Eversports HTTP client (login, bookings list, single match)
 - **booking/**: REST API wrapping the Eversports client (port 8081)
 - No DB access; stateless except for the in-memory cookie jar that holds the session
 
-**`web`** (`cmd/squash-web/`)
+**`web`** (`cmd/web/`)
 - **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
 - **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
 - No DB access; authenticates users via Telegram Login Widget, calls the management service for data
-- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`internal/service`)
+- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`cmd/management/service`)
 
 **Shared**
 - **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
@@ -71,42 +71,42 @@ docker-compose up -d postgres
 DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/squash-games-management/main.go
+  go run cmd/management/main.go
 
 # Run telegram bot locally
 MANAGEMENT_SERVICE_URL=http://localhost:8080 \
   TELEGRAM_BOT_TOKEN=<token> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/telegram-squash-bot/main.go
+  go run cmd/telegram/main.go
 
 # Run booking service locally
 EVERSPORTS_EMAIL=<email> \
   EVERSPORTS_PASSWORD=<password> \
   INTERNAL_API_SECRET=<secret> \
-  go run cmd/sports-booking-service/main.go
+  go run cmd/booking/main.go
 
 # Testing
 go test ./...
 go test -tags integration -timeout 120s ./...
 
 # Build all binaries
-go build ./cmd/squash-games-management/
-go build ./cmd/telegram-squash-bot/
-go build ./cmd/sports-booking-service/
+go build ./cmd/management/
+go build ./cmd/telegram/
+go build ./cmd/booking/
 
 # Build with explicit version (mirrors what Docker does)
-go build -ldflags="-X main.Version=1.2.3" ./cmd/squash-games-management/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram-squash-bot/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/sports-booking-service/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/management/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram/
+go build -ldflags="-X main.Version=1.2.3" ./cmd/booking/
 ```
 
 ## Versioning & Release
 
 Each service has its own independent version stored in a plain-text file:
-- `cmd/squash-games-management/VERSION`
-- `cmd/telegram-squash-bot/VERSION`
-- `cmd/sports-booking-service/VERSION`
-- `cmd/squash-web/VERSION`
+- `cmd/management/VERSION`
+- `cmd/telegram/VERSION`
+- `cmd/booking/VERSION`
+- `cmd/web/VERSION`
 
 Format: `MAJOR.MINOR.BUILD` (e.g. `1.0.33`).
 
@@ -302,7 +302,7 @@ The SPA lets authenticated users manage their participation from the browser. Th
 
 Each mutating action (join/skip/+1/-1) calls the corresponding management service endpoint with the player ID from the JWT, then calls `GameNotifier.NotifyGameUpdated(gameID)` to re-fetch participants and edit the Telegram announcement in place. Returns the updated `GameParticipants` payload to the frontend so the UI refreshes without a second round-trip.
 
-**`GameNotifier`** (`internal/service/game_notifier.go`): fetches game + participants + guests, re-formats the message and keyboard, then calls `EditMessageText` on the Telegram Bot API. It resolves the group timezone via `resolveGroupTimezone` (falls back to the default location on invalid IANA strings).
+**`GameNotifier`** (`cmd/management/service/game_notifier.go`): fetches game + participants + guests, re-formats the message and keyboard, then calls `EditMessageText` on the Telegram Bot API. It resolves the group timezone via `resolveGroupTimezone` (falls back to the default location on invalid IANA strings).
 
 ### Message Formatting
 - Emoji header, game date/time, court list, optional venue line (`📍 Name`), numbered player list, guest list
@@ -377,7 +377,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 **Single match** — `POST https://www.eversports.de/api/checkout` (GraphQL `Match` query by UUID)
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
-**Client API** (`internal/eversports`):
+**Client API** (`cmd/booking/eversports`):
 - `New(email, password string, logger) *Client`
 - `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
 - `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use

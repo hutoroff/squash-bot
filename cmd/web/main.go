@@ -3,22 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/booking"
+	"github.com/vkhutorov/squash_bot/cmd/web/webserver"
 	"github.com/vkhutorov/squash_bot/internal/config"
-	"github.com/vkhutorov/squash_bot/internal/eversports"
+	squashweb "github.com/vkhutorov/squash_bot/web"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".
 var Version = "dev"
 
 func main() {
-	cfg, err := config.LoadBooking()
+	cfg, err := config.LoadWeb()
 	if err != nil {
 		slog.Error("load config", "err", err)
 		os.Exit(1)
@@ -38,20 +39,33 @@ func main() {
 	}
 	time.Local = loc
 
+	distFS, err := fs.Sub(squashweb.FS, "frontend/dist")
+	if err != nil {
+		slog.Error("sub frontend/dist", "err", err)
+		os.Exit(1)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, logger)
+	auth := webserver.NewAuthHandler(
+		cfg.TelegramBotToken,
+		cfg.TelegramBotName,
+		cfg.JWTSecret,
+		cfg.ManagementServiceURL,
+		cfg.InternalAPISecret,
+		logger,
+	)
+	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	h := webserver.NewHandler(distFS, Version, logger, auth, games)
+	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
-	h := booking.NewHandler(esClient, logger, Version, cfg.EversportsFacilityID, cfg.EversportsFacilityUUID, cfg.EversportsFacilitySlug)
-	srv := booking.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
-
-	slog.Info("sports-booking-service starting", "port", cfg.ServerPort, "version", Version)
-	if err := booking.Run(ctx, srv, logger); err != nil {
+	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)
+	if err := webserver.Run(ctx, srv, logger); err != nil {
 		slog.Error("HTTP server error", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("sports-booking-service stopped")
+	slog.Info("web stopped")
 }
 
 func loadTimezone(name string) (*time.Location, error) {

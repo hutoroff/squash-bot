@@ -16,10 +16,10 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/robfig/cron/v3"
-	"github.com/vkhutorov/squash_bot/internal/api"
+	"github.com/vkhutorov/squash_bot/cmd/management/api"
+	"github.com/vkhutorov/squash_bot/cmd/management/service"
+	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/config"
-	"github.com/vkhutorov/squash_bot/internal/service"
-	"github.com/vkhutorov/squash_bot/internal/storage"
 	"github.com/vkhutorov/squash_bot/migrations"
 )
 
@@ -114,12 +114,12 @@ func main() {
 	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, gameNotifier, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
-	slog.Info("squash-games-management starting", "port", cfg.ServerPort, "version", Version)
+	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
 	if err := api.Run(ctx, srv, logger); err != nil {
 		slog.Error("HTTP server error", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("squash-games-management stopped")
+	slog.Info("management stopped")
 }
 
 func loadTimezone(name string) (*time.Location, error) {

@@ -54,7 +54,7 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          VERSION=$(cat cmd/telegram-squash-bot/VERSION)
+          VERSION=$(cat cmd/telegram/VERSION)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           case "${{ inputs.bump }}" in
             major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
@@ -62,7 +62,7 @@ jobs:
             patch) PATCH=$((PATCH+1)) ;;
           esac
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "$NEW_VERSION" > cmd/telegram-squash-bot/VERSION
+          echo "$NEW_VERSION" > cmd/telegram/VERSION
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Bumped ${VERSION} → ${NEW_VERSION}"
 
@@ -110,7 +110,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cmd/telegram-squash-bot/VERSION
+          git add cmd/telegram/VERSION
           git commit -m "[chore]: release squash-telegram-bot v${{ steps.bump.outputs.version }}"
           git tag "telegram/v${{ steps.bump.outputs.version }}"
           git push

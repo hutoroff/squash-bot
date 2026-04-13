@@ -8,7 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /squash-games-management ./cmd/squash-games-management/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /management ./cmd/management/main.go
 
 
 FROM alpine:3.18
@@ -17,6 +17,6 @@ RUN apk --no-cache add ca-certificates tzdata wget
 
 WORKDIR /app
 
-COPY --from=builder /squash-games-management .
+COPY --from=builder /management .
 
-CMD ["./squash-games-management"]
+CMD ["./management"]
