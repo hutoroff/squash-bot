@@ -14,8 +14,8 @@ import (
 )
 
 // autoBookingCourtDuration is the duration of a court booking created automatically.
-// Standard squash booking is 1 hour.
-const autoBookingCourtDuration = 60 * time.Minute
+// Standard squash slot at this facility is 45 minutes.
+const autoBookingCourtDuration = 45 * time.Minute
 
 // AutoBookingJob attempts to automatically book courts for upcoming game days
 // when booking opens. Fires in the [00:00, 00:05) window of each group's timezone
@@ -196,7 +196,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		courtUUID := available[i]
 		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
 			j.logger.Error("auto-booking: book court failed",
-				"venue_id", venue.ID, "court_uuid", courtUUID, "err", err)
+				"venue_id", venue.ID, "court_uuid", courtUUID,
+				"start", startRFC, "end", endRFC, "err", err)
 			continue
 		}
 		j.logger.Info("auto-booking: court booked",
