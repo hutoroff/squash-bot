@@ -189,24 +189,6 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 	}
 }
 
-// buildDateSelectionKeyboard returns an inline keyboard with the next 14 days (2 per row).
-// loc determines which timezone is used to compute "today"; use the group's timezone when known.
-func (b *Bot) buildDateSelectionKeyboard(lz *i18n.Localizer, loc *time.Location) tgbotapi.InlineKeyboardMarkup {
-	today := time.Now().In(loc)
-	var rows [][]tgbotapi.InlineKeyboardButton
-	for i := 0; i < 14; i += 2 {
-		var row []tgbotapi.InlineKeyboardButton
-		for j := 0; j < 2; j++ {
-			date := today.AddDate(0, 0, i+j)
-			label := lz.ShortWeekday(date.Weekday()) + " " + date.Format("02.01")
-			dateStr := date.Format("2006-01-02")
-			row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, "ng_date:"+dateStr))
-		}
-		rows = append(rows, row)
-	}
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
-}
-
 // handleCommandLanguage lets a group admin set the language for one of their groups.
 func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	adminGroupIDs := b.adminGroups(msg.From.ID)
@@ -268,82 +250,6 @@ func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, l
 	if _, err := b.api.Send(out); err != nil {
 		slog.Error("handleCommandTrigger: send", "err", err)
 	}
-}
-
-// processCourtsEdit handles the admin's text response after clicking "Edit Courts".
-func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, gameID int64) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
-	courts := strings.TrimSpace(msg.Text)
-	if courts == "" {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
-		return
-	}
-
-	// Validate: must be non-empty comma-separated values within length limit.
-	if len(courts) > maxCourtsLen {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsStringTooLong, maxCourtsLen))
-		return
-	}
-	parts := strings.Split(courts, ",")
-	for _, p := range parts {
-		if strings.TrimSpace(p) == "" {
-			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
-			return
-		}
-	}
-
-	// Re-fetch the game to get the chat ID needed for the admin check.
-	game, err := b.client.GetGameByID(ctx, gameID)
-	if err != nil {
-		slog.Error("processCourtsEdit: get game", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgGameNotFoundPeriod))
-		return
-	}
-
-	// Re-verify admin status before persisting changes.
-	isAdmin, err := b.isAdminInGroup(msg.From.ID, game.ChatID)
-	if err != nil {
-		slog.Error("processCourtsEdit: check admin", "err", err, "user_id", msg.From.ID, "chat_id", game.ChatID)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedVerifyPermissionsPeriod))
-		return
-	}
-	if !isAdmin {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgLostAdminAccessPeriod))
-		return
-	}
-
-	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
-		slog.Error("processCourtsEdit: update courts", "err", err, "game_id", gameID)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedUpdateCourts))
-		return
-	}
-
-	slog.Info("Courts updated", "game_id", gameID, "courts", courts)
-
-	// Re-fetch the game to pick up the new courts value for the group message.
-	game, err = b.client.GetGameByID(ctx, gameID)
-	if err != nil {
-		slog.Error("processCourtsEdit: get game after update", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgCourtsUpdatedRefreshFailed))
-		return
-	}
-
-	if game.MessageID != nil {
-		participations, err := b.client.GetParticipations(ctx, gameID)
-		if err != nil {
-			slog.Error("processCourtsEdit: get participations", "err", err)
-		} else {
-			gameGuests, err := b.client.GetGuests(ctx, gameID)
-			if err != nil {
-				slog.Error("processCourtsEdit: get guests", "err", err)
-			} else {
-				groupLz := b.groupLocalizer(ctx, game.ChatID)
-				b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
-			}
-		}
-	}
-
-	b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsUpdated, courts))
 }
 
 // superGroupMessageLink returns a t.me deep link for a supergroup message.

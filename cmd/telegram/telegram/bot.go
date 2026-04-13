@@ -155,7 +155,7 @@ const maxConcurrentHandlers = 50
 
 type Bot struct {
 	api                           *tgbotapi.BotAPI
-	client                        *client.Client
+	client                        client.ManagementClient
 	serviceAdminIDs               map[int64]bool
 	loc                           *time.Location
 	logger                        *slog.Logger
@@ -169,10 +169,11 @@ type Bot struct {
 	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
 	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
 	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
+	callbackRouter                map[string]callbackHandler
 }
 
-func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient *client.Client, serviceAdminIDs string, logger *slog.Logger) *Bot {
-	return &Bot{
+func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, serviceAdminIDs string, logger *slog.Logger) *Bot {
+	b := &Bot{
 		api:             api,
 		client:          mgmtClient,
 		serviceAdminIDs: parseServiceAdminIDs(serviceAdminIDs),
@@ -180,6 +181,8 @@ func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient *client.Client, se
 		logger:          logger,
 		handlerSem:      make(chan struct{}, maxConcurrentHandlers),
 	}
+	b.callbackRouter = b.buildCallbackRouter()
+	return b
 }
 
 // parseServiceAdminIDs converts a comma-separated string of Telegram user IDs
