@@ -196,6 +196,42 @@ func TestFilterAvailableCourts_EmptySlots(t *testing.T) {
 	}
 }
 
+func TestFilterAvailableCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
+	// Venue stores sequential labels 1–9; Eversports returns facility-specific IDs
+	// like 77385. When no slot matches venueCourts, all available courts are returned.
+	venueCourts := map[int]bool{1: true, 2: true, 3: true}
+	slots := []BookingSlot{
+		{Court: 77385, CourtUUID: "uuid-a", Booking: nil},
+		{Court: 77386, CourtUUID: "uuid-b", Booking: nil},
+		{Court: 77387, CourtUUID: "uuid-c", Booking: intPtrAB(1)}, // booked — excluded
+	}
+	got := filterAvailableCourts(slots, venueCourts, nil)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
+	}
+	if got[0] != "uuid-a" || got[1] != "uuid-b" {
+		t.Errorf("expected [uuid-a uuid-b], got %v", got)
+	}
+}
+
+func TestFilterAvailableCourts_FallbackWhenPreferredIDsMismatch(t *testing.T) {
+	// Preferred courts are labels (1, 2) that don't match Eversports IDs (77385, 77386).
+	// When no preferred court is found, all available courts are returned in API order.
+	venueCourts := map[int]bool{77385: true, 77386: true}
+	slots := []BookingSlot{
+		{Court: 77385, CourtUUID: "uuid-a", Booking: nil},
+		{Court: 77386, CourtUUID: "uuid-b", Booking: nil},
+	}
+	orderedPreferred := []int{1, 2} // labels, not Eversports IDs
+	got := filterAvailableCourts(slots, venueCourts, orderedPreferred)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
+	}
+	if got[0] != "uuid-a" || got[1] != "uuid-b" {
+		t.Errorf("expected [uuid-a uuid-b], got %v", got)
+	}
+}
+
 // ── processAutoBookingForVenue ────────────────────────────────────────────────
 
 func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T) {
