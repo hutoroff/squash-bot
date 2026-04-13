@@ -378,7 +378,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
 **Client API** (`cmd/booking/eversports`):
-- `New(email, password string, logger) *Client`
+- `New(email, password string, loc *time.Location, logger) *Client` — `loc` is the facility timezone; used to format booking timestamps as local-time with offset (e.g. `+02:00`) which Eversports requires. Pass `time.UTC` when `TIMEZONE` is not set.
 - `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
 - `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
 - `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL; retries once on HTTP 401 via `withAuth`
