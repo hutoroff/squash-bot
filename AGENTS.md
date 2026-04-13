@@ -36,8 +36,8 @@ Key directories:
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
 - `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, PlayerGame)
 - `cmd/management/api` — HTTP handlers for the management service REST API
-- `cmd/management/service` — business logic and scheduled jobs; includes `GameNotifier` for on-demand Telegram message editing triggered from the web API
-- `cmd/management/storage` — SQL repositories (games, players, participations, guests, groups)
+- `cmd/management/service` — business logic layer; defines repository and Telegram interfaces (`TelegramAPI`, `Notifier`, `GameRepository`, …); four focused job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; `ParticipationService` fires async Telegram edits via the injected `Notifier`; shared timezone/language helpers in `group_resolver.go`
+- `cmd/management/storage` — SQL repository implementations satisfying the interfaces defined in the service package
 - `cmd/telegram/telegram` — bot handlers, callbacks, slash commands, message formatting
 - `cmd/telegram/client` — typed HTTP client used by the telegram bot
 - `cmd/booking/eversports` — reverse-engineered Eversports.de HTTP client (login, bookings, single match)

@@ -63,7 +63,7 @@ func matchPtr(uuid string) *SlotMatchID { return &SlotMatchID{UUID: uuid} }
 // ── cancelUnusedCourtsLogicOnly tests ────────────────────────────────────────
 
 func TestCancelUnusedCourts_NilClient(t *testing.T) {
-	s := &SchedulerService{bookingClient: nil, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: nil, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
@@ -80,7 +80,7 @@ func TestCancelUnusedCourts_NilClient(t *testing.T) {
 
 func TestCancelUnusedCourts_ZeroCourtsToCancel(t *testing.T) {
 	client := &mockBookingClient{}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 0, time.UTC, noopUpdate)
@@ -97,7 +97,7 @@ func TestCancelUnusedCourts_ZeroCourtsToCancel(t *testing.T) {
 
 func TestCancelUnusedCourts_ListError(t *testing.T) {
 	client := &mockBookingClient{listErr: errors.New("network error")}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
@@ -112,7 +112,7 @@ func TestCancelUnusedCourts_NoOwnedSlots(t *testing.T) {
 			{Court: 1, IsUserBookingOwner: false, Match: matchPtr("uuid-1")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1", 1, time.Now().Add(time.Hour))
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
@@ -134,7 +134,7 @@ func TestCancelUnusedCourts_CancelsCorrectCourts(t *testing.T) {
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("5,6,8,9", 4, time.Now().Add(time.Hour))
 
 	var updatedCourts string
@@ -172,7 +172,7 @@ func TestCancelUnusedCourts_Cancel2Courts_SpecExample(t *testing.T) {
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,7,8,9", 4, time.Now().Add(time.Hour))
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
@@ -205,7 +205,7 @@ func TestCancelUnusedCourts_DBWriteFailure_ReturnsError(t *testing.T) {
 			{Court: 2, IsUserBookingOwner: true, Match: matchPtr("uuid-2")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
 	dbErr := errors.New("connection reset")
@@ -228,7 +228,7 @@ func TestCancelUnusedCourts_MismatchedLengths_ReturnsError(t *testing.T) {
 			{Court: 3, IsUserBookingOwner: true, Match: matchPtr("uuid-3")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	// Game says 2 courts but Eversports has 3 bookings.
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
@@ -254,7 +254,7 @@ func TestCancelUnusedCourts_CancelError_PartialSuccess(t *testing.T) {
 			return nil
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
@@ -294,7 +294,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("5,7,8,9", 4, time.Now().Add(time.Hour), "5,7,8,9")
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
@@ -330,7 +330,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testi
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("7,8,9", 3, time.Now().Add(time.Hour), "7")
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
@@ -366,7 +366,7 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
 	}
-	s := &SchedulerService{bookingClient: client, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("5,9", 2, time.Now().Add(time.Hour), "5,7,8,9")
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
@@ -495,7 +495,7 @@ func TestCancelUnusedCourts_UsesLocalTimeForSlotQuery(t *testing.T) {
 
 	gameDate := time.Date(2026, 1, 15, 23, 30, 0, 0, time.UTC)
 	recorder := &recordingBookingClient{slots: nil} // empty → no-op, but ListMatches is still called
-	s := &SchedulerService{bookingClient: recorder, logger: noopLogger()}
+	s := &CancellationReminderJob{bookingClient: recorder, logger: noopLogger()}
 	game := makeGame("1,2", 2, gameDate)
 
 	_, _ = s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, berlin, noopUpdate)

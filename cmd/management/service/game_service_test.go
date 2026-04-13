@@ -101,6 +101,7 @@ func TestGameService_GetNextGameForTelegramUser_Registered(t *testing.T) {
 		storage.NewPlayerRepo(testPool),
 		storage.NewParticipationRepo(testPool),
 		storage.NewGuestRepo(testPool),
+		nil,
 	)
 
 	game, _ := gameSvc.CreateGame(ctx, -1, time.Now().Add(48*time.Hour), "1,2", nil)

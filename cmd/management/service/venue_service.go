@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type VenueService struct {
-	repo *storage.VenueRepo
+	repo VenueRepository
 }
 
-func NewVenueService(repo *storage.VenueRepo) *VenueService {
+func NewVenueService(repo VenueRepository) *VenueService {
 	return &VenueService{repo: repo}
 }
 

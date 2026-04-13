@@ -6,16 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type GameService struct {
-	gameRepo  *storage.GameRepo
-	venueRepo *storage.VenueRepo
+	gameRepo  GameRepository
+	venueRepo VenueRepository
 }
 
-func NewGameService(gameRepo *storage.GameRepo, venueRepo *storage.VenueRepo) *GameService {
+func NewGameService(gameRepo GameRepository, venueRepo VenueRepository) *GameService {
 	return &GameService{gameRepo: gameRepo, venueRepo: venueRepo}
 }
 

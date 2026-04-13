@@ -30,32 +30,28 @@ type courtsUpdater func(ctx context.Context, gameID int64, courts string, count 
 //
 // courtsToCancel is the number of courts that should be freed up.
 // loc is the group's timezone used to convert the game time to local HHMM for the slot query.
-// Returns the cancellation result and any error that aborted the operation.
-// Partial cancellations (some courts canceled, then an error) are reflected in the result.
-func (s *SchedulerService) cancelUnusedCourts(
+func (j *CancellationReminderJob) cancelUnusedCourts(
 	ctx context.Context,
 	game *models.Game,
 	courtsToCancel int,
 	loc *time.Location,
 ) (*courtCancellationResult, error) {
-	return s.cancelUnusedCourtsLogicOnly(ctx, game, courtsToCancel, loc,
+	return j.cancelUnusedCourtsLogicOnly(ctx, game, courtsToCancel, loc,
 		func(ctx context.Context, gameID int64, courts string, count int) error {
-			return s.gameRepo.UpdateCourts(ctx, gameID, courts, count)
+			return j.gameRepo.UpdateCourts(ctx, gameID, courts, count)
 		})
 }
 
 // cancelUnusedCourtsLogicOnly is the testable core of cancelUnusedCourts.
 // It accepts a courtsUpdater callback instead of using gameRepo directly.
-// loc is the group's timezone; the Eversports /api/slot endpoint returns times in
-// the venue's local timezone, so date and HHMM parameters must be in local time too.
-func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
+func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 	ctx context.Context,
 	game *models.Game,
 	courtsToCancel int,
 	loc *time.Location,
 	updateFn courtsUpdater,
 ) (*courtCancellationResult, error) {
-	if s.bookingClient == nil || courtsToCancel == 0 {
+	if j.bookingClient == nil || courtsToCancel == 0 {
 		return buildNoOpResult(game), nil
 	}
 
@@ -63,7 +59,7 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	// slot Start values in the venue's local timezone, not UTC.
 	date, startHHMM, endHHMM := slotQueryWindow(game.GameDate.In(loc))
 
-	slots, err := s.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
+	slots, err := j.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
 	if err != nil {
 		return nil, fmt.Errorf("list matches: %w", err)
 	}
@@ -81,12 +77,12 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	}
 
 	if len(booked) == 0 {
-		s.logger.Info("court cancellation: no owned bookings found", "game_id", game.ID)
+		j.logger.Info("court cancellation: no owned bookings found", "game_id", game.ID)
 		return buildNoOpResult(game), nil
 	}
 
 	// Sort by court ID for deterministic grouping.
-	sort.Slice(booked, func(i, j int) bool { return booked[i].courtID < booked[j].courtID })
+	sort.Slice(booked, func(i, k int) bool { return booked[i].courtID < booked[k].courtID })
 
 	// Build ordered list of court IDs for the selection algorithm.
 	courtIDs := make([]int, len(booked))
@@ -97,8 +93,7 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	// Select which courts to cancel.
 	// When the venue has auto_booking_courts configured, first cancel in reversed priority
 	// order (lowest-priority court first). Then fall back to the consecutive-grouping
-	// algorithm for any remaining slots — this covers courts booked outside the priority
-	// list (e.g. manually added) and the no-preference case (empty auto_booking_courts).
+	// algorithm for any remaining slots.
 	var selected []int
 	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
 		bookedSet := make(map[int]bool, len(booked))
@@ -132,13 +127,13 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	var canceled []int
 	for _, cID := range selected {
 		uuid := uuidByCourtID[cID]
-		if err := s.bookingClient.CancelMatch(ctx, uuid); err != nil {
-			s.logger.Error("court cancellation: cancel match failed",
+		if err := j.bookingClient.CancelMatch(ctx, uuid); err != nil {
+			j.logger.Error("court cancellation: cancel match failed",
 				"game_id", game.ID, "court_id", cID, "match_uuid", uuid, "err", err)
 			// Continue trying remaining courts.
 			continue
 		}
-		s.logger.Info("court cancellation: canceled",
+		j.logger.Info("court cancellation: canceled",
 			"game_id", game.ID, "court_id", cID, "match_uuid", uuid)
 		canceled = append(canceled, cID)
 	}
@@ -148,14 +143,10 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	}
 
 	// Rebuild game courts string by removing canceled court entries.
-	// The game stores courts as names (e.g. "1,2,3"), and the canceled list uses Eversports
-	// numeric IDs — by convention they match (the venue courts list uses the same identifiers).
 	gameCourts := splitCourts(game.Courts)
 	newCourts, err := removeCanceledFromGameCourts(gameCourts, canceled, courtIDs)
 	if err != nil {
-		// Cannot unambiguously determine the updated court list; treat as no-op so the
-		// DB record and the notification remain consistent with each other.
-		s.logger.Error("court cancellation: cannot map canceled courts to game record",
+		j.logger.Error("court cancellation: cannot map canceled courts to game record",
 			"game_id", game.ID,
 			"game_courts", len(gameCourts),
 			"booked_courts", len(courtIDs),
@@ -166,10 +157,8 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 	newCourtsStr := strings.Join(newCourts, ",")
 	newCount := len(newCourts)
 
-	// Persist updated court list. If the write fails, treat as no-op so the notification
-	// sent to the group reflects the DB state and not a court list that was never stored.
 	if err := updateFn(ctx, game.ID, newCourtsStr, newCount); err != nil {
-		s.logger.Error("court cancellation: update game courts", "game_id", game.ID, "err", err)
+		j.logger.Error("court cancellation: update game courts", "game_id", game.ID, "err", err)
 		return nil, fmt.Errorf("persist updated courts: %w", err)
 	}
 
@@ -182,25 +171,15 @@ func (s *SchedulerService) cancelUnusedCourtsLogicOnly(
 
 // selectCourtsToCancel applies the consecutive-grouping algorithm and returns up to n court IDs
 // to cancel from the sorted input list.
-//
-// Algorithm:
-//  1. Split sortedCourtIDs into consecutive groups (gap > 1 between neighbours = new group).
-//  2. Repeatedly pick the group with the fewest courts; break ties by picking the group whose
-//     first court has the lowest ID.
-//  3. Cancel from the END of the chosen group.
-//
-// Repeats until n courts are selected or all courts are exhausted.
 func selectCourtsToCancel(sortedCourtIDs []int, n int) []int {
 	if n <= 0 || len(sortedCourtIDs) == 0 {
 		return nil
 	}
 
-	// Build mutable groups (slices, sorted ascending within each group).
 	groups := buildConsecutiveGroups(sortedCourtIDs)
 
 	var selected []int
 	for len(selected) < n {
-		// Find the smallest group; tie-break by smallest first element.
 		best := -1
 		for i, g := range groups {
 			if len(g) == 0 {
@@ -216,10 +195,9 @@ func selectCourtsToCancel(sortedCourtIDs []int, n int) []int {
 			}
 		}
 		if best == -1 {
-			break // all groups exhausted
+			break
 		}
 
-		// Cancel from the end of the chosen group.
 		g := groups[best]
 		last := g[len(g)-1]
 		groups[best] = g[:len(g)-1]
@@ -244,8 +222,7 @@ func selectCourtsByCancellationPriority(orderedPreferred []int, bookedSet map[in
 	return selected
 }
 
-// buildConsecutiveGroups splits a sorted int slice into runs of consecutive integers
-// (where consecutive means adjacent values differ by exactly 1).
+// buildConsecutiveGroups splits a sorted int slice into runs of consecutive integers.
 func buildConsecutiveGroups(sorted []int) [][]int {
 	if len(sorted) == 0 {
 		return nil
@@ -277,14 +254,7 @@ func splitCourts(courts string) []string {
 }
 
 // removeCanceledFromGameCourts removes from gameCourts the entries that correspond
-// to the canceled Eversports court IDs.
-//
-// Matching strategy: the game courts list and the Eversports numeric IDs are matched
-// positionally after sorting. gameCourts[i] corresponds to sortedBookedIDs[i].
-// Any game court whose booked counterpart appears in canceledIDs is removed.
-//
-// Returns an error when the lengths of gameCourts and sortedBookedIDs differ, because
-// the positional mapping would be ambiguous and the wrong courts could be removed.
+// to the canceled Eversports court IDs, using positional matching after sorting.
 func removeCanceledFromGameCourts(gameCourts []string, canceledIDs []int, sortedBookedIDs []int) ([]string, error) {
 	if len(gameCourts) != len(sortedBookedIDs) {
 		return nil, fmt.Errorf(

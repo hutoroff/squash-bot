@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -32,7 +31,6 @@ func (h *Handler) joinGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, participations)
-	go h.gameNotifier.EditGameMessage(context.Background(), id)
 }
 
 // skipGame handles POST /api/v1/games/{id}/skip
@@ -57,9 +55,6 @@ func (h *Handler) skipGame(w http.ResponseWriter, r *http.Request) {
 		"skipped":        skipped,
 		"participations": participations,
 	})
-	if skipped {
-		go h.gameNotifier.EditGameMessage(context.Background(), id)
-	}
 }
 
 // addGuest handles POST /api/v1/games/{id}/guests
@@ -85,9 +80,6 @@ func (h *Handler) addGuest(w http.ResponseWriter, r *http.Request) {
 		"participations": participations,
 		"guests":         guests,
 	})
-	if added {
-		go h.gameNotifier.EditGameMessage(context.Background(), id)
-	}
 }
 
 // removeGuest handles DELETE /api/v1/games/{id}/guests
@@ -116,9 +108,6 @@ func (h *Handler) removeGuest(w http.ResponseWriter, r *http.Request) {
 		"participations": participations,
 		"guests":         guests,
 	})
-	if removed {
-		go h.gameNotifier.EditGameMessage(context.Background(), id)
-	}
 }
 
 // getParticipations handles GET /api/v1/games/{id}/participations

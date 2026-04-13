@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -16,33 +17,59 @@ import (
 // Standard squash booking is 1 hour.
 const autoBookingCourtDuration = 60 * time.Minute
 
-// RunAutoBooking attempts to automatically book courts for upcoming game days
+// AutoBookingJob attempts to automatically book courts for upcoming game days
 // when booking opens. Fires in the [00:00, 00:05) window of each group's timezone
-// on configured game days. Requires bookingClient to be set.
-func (s *SchedulerService) RunAutoBooking() { s.runAutoBooking(false) }
+// on configured game days. Requires bookingClient to be non-nil.
+type AutoBookingJob struct {
+	api           TelegramAPI
+	groupRepo     GroupRepository
+	venueRepo     VenueRepository
+	bookingClient BookingServiceClient
+	loc           *time.Location
+	logger        *slog.Logger
+	courtsCount   int // number of courts to book automatically
+}
 
-// ForceRunAutoBooking bypasses the [00:00, 00:05) time window check.
-// game_days validation and the same-day dedup guard (last_auto_booking_at)
-// still apply. Intended for manual triggers.
-func (s *SchedulerService) ForceRunAutoBooking() { s.runAutoBooking(true) }
+func NewAutoBookingJob(
+	api TelegramAPI,
+	groupRepo GroupRepository,
+	venueRepo VenueRepository,
+	bookingClient BookingServiceClient,
+	loc *time.Location,
+	logger *slog.Logger,
+	courtsCount int,
+) *AutoBookingJob {
+	return &AutoBookingJob{
+		api:           api,
+		groupRepo:     groupRepo,
+		venueRepo:     venueRepo,
+		bookingClient: bookingClient,
+		loc:           loc,
+		logger:        logger,
+		courtsCount:   courtsCount,
+	}
+}
 
-func (s *SchedulerService) runAutoBooking(force bool) {
-	if s.bookingClient == nil {
+func (j *AutoBookingJob) name() string   { return "auto_booking" }
+func (j *AutoBookingJob) run(force bool) { j.runAutoBooking(force) }
+
+func (j *AutoBookingJob) runAutoBooking(force bool) {
+	if j.bookingClient == nil {
 		return
 	}
-	s.logger.Info("auto-booking check started")
+	j.logger.Info("auto-booking check started")
 	ctx := context.Background()
 	now := time.Now()
 
-	groups, err := s.groupRepo.GetAll(ctx)
+	groups, err := j.groupRepo.GetAll(ctx)
 	if err != nil {
-		s.logger.Error("auto-booking: get groups", "err", err)
+		j.logger.Error("auto-booking: get groups", "err", err)
 		return
 	}
 
 	booked := 0
 	for _, g := range groups {
-		groupTZ := s.groupTimezone(&g)
+		groupTZ := resolveGroupTimezone(&g, j.loc, j.logger)
 		localNow := now.In(groupTZ)
 
 		// Only fire in the [00:00, 00:05) window in the group's local time.
@@ -50,9 +77,9 @@ func (s *SchedulerService) runAutoBooking(force bool) {
 			continue
 		}
 
-		venues, err := s.venueRepo.GetByGroupID(ctx, g.ChatID)
+		venues, err := j.venueRepo.GetByGroupID(ctx, g.ChatID)
 		if err != nil {
-			s.logger.Error("auto-booking: get venues", "chat_id", g.ChatID, "err", err)
+			j.logger.Error("auto-booking: get venues", "chat_id", g.ChatID, "err", err)
 			continue
 		}
 
@@ -69,21 +96,21 @@ func (s *SchedulerService) runAutoBooking(force bool) {
 			// Dedup: skip if already booked today in this group's timezone.
 			if venue.LastAutoBookingAt != nil &&
 				venue.LastAutoBookingAt.In(groupTZ).Format("2006-01-02") == todayStr {
-				s.logger.Info("auto-booking: already done today", "venue_id", venue.ID)
+				j.logger.Info("auto-booking: already done today", "venue_id", venue.ID)
 				continue
 			}
 
-			if s.processAutoBookingForVenue(ctx, g.ChatID, venue, localNow, groupTZ, lz) {
+			if j.processAutoBookingForVenue(ctx, g.ChatID, venue, localNow, groupTZ, lz) {
 				booked++
 			}
 		}
 	}
-	s.logger.Info("auto-booking done", "venues_booked", booked)
+	j.logger.Info("auto-booking done", "venues_booked", booked)
 }
 
 // processAutoBookingForVenue attempts to book courts for a single venue.
 // Returns true if the auto-booking timestamp should be updated (at least one court booked).
-func (s *SchedulerService) processAutoBookingForVenue(
+func (j *AutoBookingJob) processAutoBookingForVenue(
 	ctx context.Context,
 	chatID int64,
 	venue *models.Venue,
@@ -101,7 +128,7 @@ func (s *SchedulerService) processAutoBookingForVenue(
 	// Parse preferred game time "HH:MM" into a concrete time.Time for booking.
 	gameStart, err := parsePreferredTime(gameDateStr, venue.PreferredGameTime, groupTZ)
 	if err != nil {
-		s.logger.Error("auto-booking: parse preferred time",
+		j.logger.Error("auto-booking: parse preferred time",
 			"venue_id", venue.ID, "preferred_time", venue.PreferredGameTime, "err", err)
 		return false
 	}
@@ -110,11 +137,11 @@ func (s *SchedulerService) processAutoBookingForVenue(
 	checkDateLocal, checkStartHHMM, checkEndHHMM := slotQueryWindow(gameStart)
 
 	// Fetch all non-user-owned slots at the preferred time to find available courts.
-	slots, err := s.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkEndHHMM, false)
+	slots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkEndHHMM, false)
 	if err != nil {
-		s.logger.Error("auto-booking: list available slots",
+		j.logger.Error("auto-booking: list available slots",
 			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
-		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
 
@@ -135,14 +162,14 @@ func (s *SchedulerService) processAutoBookingForVenue(
 	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
 
 	if len(available) == 0 {
-		s.logger.Info("auto-booking: no available courts",
+		j.logger.Info("auto-booking: no available courts",
 			"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime)
-		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
 
-	// Book up to autoBookingCourtsCount courts.
-	target := s.autoBookingCourtsCount
+	// Book up to courtsCount courts.
+	target := j.courtsCount
 	if target > len(available) {
 		target = len(available)
 	}
@@ -154,37 +181,37 @@ func (s *SchedulerService) processAutoBookingForVenue(
 	bookedCount := 0
 	for i := 0; i < target; i++ {
 		courtUUID := available[i]
-		if _, err := s.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
-			s.logger.Error("auto-booking: book court failed",
+		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
+			j.logger.Error("auto-booking: book court failed",
 				"venue_id", venue.ID, "court_uuid", courtUUID, "err", err)
 			continue
 		}
-		s.logger.Info("auto-booking: court booked",
+		j.logger.Info("auto-booking: court booked",
 			"venue_id", venue.ID, "court_uuid", courtUUID, "date", gameDateStr, "time", venue.PreferredGameTime)
 		bookedCount++
 	}
 
 	if bookedCount == 0 {
-		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, s.autoBookingCourtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
 
 	// Set dedup timestamp before sending notifications (so partial success is still recorded).
-	if err := s.venueRepo.SetLastAutoBookingAt(ctx, venue.ID); err != nil {
-		s.logger.Error("auto-booking: update last auto booking at", "venue_id", venue.ID, "err", err)
+	if err := j.venueRepo.SetLastAutoBookingAt(ctx, venue.ID); err != nil {
+		j.logger.Error("auto-booking: update last auto booking at", "venue_id", venue.ID, "err", err)
 	}
 
 	// Notify the group about the successful auto-booking.
 	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, venue.PreferredGameTime)
 	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := s.api.Send(msg); err != nil {
-		s.logger.Error("auto-booking: send group notification",
+	if _, err := j.api.Send(msg); err != nil {
+		j.logger.Error("auto-booking: send group notification",
 			"venue_id", venue.ID, "chat_id", chatID, "err", err)
 	}
 
 	// If fewer courts were booked than requested, notify admins about the shortfall.
-	if bookedCount < s.autoBookingCourtsCount {
-		s.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, s.autoBookingCourtsCount, lz)
+	if bookedCount < j.courtsCount {
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, j.courtsCount, lz)
 	}
 
 	return true
@@ -192,7 +219,7 @@ func (s *SchedulerService) processAutoBookingForVenue(
 
 // notifyAutoBookingFailure DMs all group admins about an auto-booking failure or partial success.
 // Messages are sent silently (DisableNotification=true).
-func (s *SchedulerService) notifyAutoBookingFailure(
+func (j *AutoBookingJob) notifyAutoBookingFailure(
 	ctx context.Context,
 	chatID int64,
 	venue *models.Venue,
@@ -200,11 +227,11 @@ func (s *SchedulerService) notifyAutoBookingFailure(
 	bookedCount, targetCount int,
 	lz *i18n.Localizer,
 ) {
-	admins, err := s.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
 		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
 	})
 	if err != nil {
-		s.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
 		return
 	}
 
@@ -217,23 +244,21 @@ func (s *SchedulerService) notifyAutoBookingFailure(
 		seen[admin.User.ID] = true
 		msg := tgbotapi.NewMessage(admin.User.ID, text)
 		msg.DisableNotification = true
-		if _, err := s.api.Send(msg); err != nil {
-			s.logger.Error("auto-booking: send failure DM",
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send failure DM",
 				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
 			continue
 		}
-		s.logger.Info("auto-booking: failure DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+		j.logger.Info("auto-booking: failure DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
 	}
 }
 
 // filterAvailableCourts returns the UUIDs of available (unbooked) courts from
-// slots, restricted to venue courts. Each court is represented at most once
-// (multiple slots for the same court within the query window are deduplicated).
+// slots, restricted to venue courts. Each court is represented at most once.
 //
 // orderedPreferred, if non-empty, defines both the eligible subset and the
-// booking priority order — only courts listed there are returned, in that
-// order. When orderedPreferred is empty all venue courts are eligible and
-// results follow the API response order.
+// booking priority order. When empty all venue courts are eligible and results
+// follow the API response order.
 func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, orderedPreferred []int) []string {
 	// Build courtID → UUID map for all available venue courts (first UUID wins).
 	courtUUIDs := make(map[int]string)
@@ -268,8 +293,8 @@ func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, ordere
 	return result
 }
 
-// parseCourtIDs splits a comma-separated court ID string (e.g. "5,6,7") into
-// a slice of ints. Invalid tokens are silently skipped.
+// parseCourtIDs splits a comma-separated court ID string (e.g. "5,6,7") into a slice of ints.
+// Invalid tokens are silently skipped.
 func parseCourtIDs(s string) []int {
 	if s == "" {
 		return nil
@@ -285,8 +310,7 @@ func parseCourtIDs(s string) []int {
 
 // slotQueryWindow returns the date (YYYY-MM-DD), startHHMM, and endHHMM (start+10 min)
 // parameters for a BookingServiceClient.ListMatches call targeting gameStart.
-// All values are in the timezone carried by gameStart because the Eversports /api/slot
-// endpoint returns slot Start values in the venue's local timezone, not UTC.
+// All values are in the timezone carried by gameStart.
 func slotQueryWindow(gameStart time.Time) (date, startHHMM, endHHMM string) {
 	return gameStart.Format("2006-01-02"),
 		gameStart.Format("1504"),

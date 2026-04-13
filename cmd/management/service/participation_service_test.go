@@ -29,7 +29,7 @@ func setupParticipationTest(t *testing.T, ctx context.Context) (
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool))
-	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
+	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
 
 	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
 	if err != nil {
@@ -395,7 +395,7 @@ func TestParticipationService_AddGuest_AtCapacity(t *testing.T) {
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
-	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
+	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
 	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool))
 
 	// 1 court → capacity 2.
@@ -574,7 +574,7 @@ func TestParticipationService_KickGuestByID_WrongGame(t *testing.T) {
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
-	svc := service.NewParticipationService(playerRepo, partRepo, guestRepo)
+	svc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
 
 	venueRepo := storage.NewVenueRepo(testPool)
 	gA, _ := service.NewGameService(gameRepo, venueRepo).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)

@@ -7,21 +7,22 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
 	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type ParticipationService struct {
-	playerRepo        *storage.PlayerRepo
-	participationRepo *storage.ParticipationRepo
-	guestRepo         *storage.GuestRepo
+	playerRepo        PlayerRepository
+	participationRepo ParticipationRepository
+	guestRepo         GuestRepository
+	notifier          Notifier // optional; nil disables async Telegram message edits
 }
 
-func NewParticipationService(playerRepo *storage.PlayerRepo, participationRepo *storage.ParticipationRepo, guestRepo *storage.GuestRepo) *ParticipationService {
+func NewParticipationService(playerRepo PlayerRepository, participationRepo ParticipationRepository, guestRepo GuestRepository, notifier Notifier) *ParticipationService {
 	return &ParticipationService{
 		playerRepo:        playerRepo,
 		participationRepo: participationRepo,
 		guestRepo:         guestRepo,
+		notifier:          notifier,
 	}
 }
 
@@ -48,7 +49,14 @@ func (s *ParticipationService) Join(ctx context.Context, gameID, telegramID int6
 
 	slog.Info("Player joined", "player", displayName(username, firstName, lastName), "game_id", gameID)
 
-	return s.participationRepo.GetByGame(ctx, gameID)
+	parts, err := s.participationRepo.GetByGame(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if s.notifier != nil {
+		go s.notifier.EditGameMessage(context.Background(), gameID)
+	}
+	return parts, nil
 }
 
 // Skip marks a player as skipped. Returns (participations, skipped, error).
@@ -86,12 +94,17 @@ func (s *ParticipationService) Skip(ctx context.Context, gameID, telegramID int6
 	slog.Info("Player skipped", "player", displayName(username, firstName, lastName), "game_id", gameID)
 
 	updated, err := s.participationRepo.GetByGame(ctx, gameID)
-	return updated, true, err
+	if err != nil {
+		return nil, true, err
+	}
+	if s.notifier != nil {
+		go s.notifier.EditGameMessage(context.Background(), gameID)
+	}
+	return updated, true, nil
 }
 
 // AddGuest records a +1 for the given Telegram user and returns the refreshed
-// participant and guest lists for message update. Any group member may add guests
-// regardless of their own registration status; guests are managed independently.
+// participant and guest lists for message update.
 // Returns (false, nil, nil, nil) when the game is already at full capacity.
 func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
 	player := &models.Player{TelegramID: telegramID}
@@ -128,12 +141,14 @@ func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID 
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("get guests: %w", err)
 	}
+	if s.notifier != nil {
+		go s.notifier.EditGameMessage(context.Background(), gameID)
+	}
 	return true, parts, guests, nil
 }
 
 // RemoveGuest removes the most recently added guest for the given Telegram user.
-// Returns (removed, participations, guests, error). removed=false means the user
-// had no guests to remove. Only the player who added a guest can remove it.
+// Returns (removed, participations, guests, error). removed=false means the user had no guests.
 func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, telegramID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
 	player, err := s.playerRepo.GetByTelegramID(ctx, telegramID)
 	if err != nil {
@@ -160,6 +175,9 @@ func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, telegram
 	guests, err := s.guestRepo.GetByGame(ctx, gameID)
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("get guests: %w", err)
+	}
+	if s.notifier != nil {
+		go s.notifier.EditGameMessage(context.Background(), gameID)
 	}
 	return true, parts, guests, nil
 }

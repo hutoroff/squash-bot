@@ -77,7 +77,6 @@ func main() {
 	venueRepo := storage.NewVenueRepo(pool)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
-	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo)
 	venueService := service.NewVenueService(venueRepo)
 	pollWindow, err := parsePollWindow(cfg.CronPoll)
 	if err != nil {
@@ -99,8 +98,14 @@ func main() {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
 
-	scheduler := service.NewSchedulerService(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, venueRepo, bookingClient, loc, logger, pollWindow, cfg.AutoBookingCourtsCount)
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
+	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
+
+	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, bookingClient, loc, logger, pollWindow)
+	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, loc, logger)
+	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, loc, logger, cfg.AutoBookingCourtsCount)
+	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
@@ -111,7 +116,7 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, gameNotifier, logger, Version)
+	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
