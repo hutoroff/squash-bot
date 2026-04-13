@@ -249,7 +249,6 @@ const (
 	BtnVenueDisableAutoBooking     = "btn.venue_disable_auto_booking"
 
 	// Auto-booking courts priority
-	// Args for MsgVenueAskAutoBookingCourts: %s = courts list (from venue.Courts)
 	MsgVenueAskAutoBookingCourts     = "msg.venue_ask_auto_booking_courts"
 	MsgVenueAutoBookingCourtsLine    = "msg.venue_auto_booking_courts_line"
 	MsgVenueInvalidAutoBookingCourts = "msg.venue_invalid_auto_booking_courts"
@@ -490,9 +489,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAskAutoBookingEnabled:    "Enable automatic court booking for this venue?",
 		BtnVenueEnableAutoBooking:        "✅ Enable",
 		BtnVenueDisableAutoBooking:       "❌ Disable",
-		MsgVenueAskAutoBookingCourts:     "Enter court IDs for auto-booking in priority order (comma-separated subset of %s). Send - to book any available court:",
+		MsgVenueAskAutoBookingCourts:     "Enter Eversports court IDs for auto-booking in priority order (comma-separated integers). Send - to book any available court:",
 		MsgVenueAutoBookingCourtsLine:    "Auto-booking courts: %s",
-		MsgVenueInvalidAutoBookingCourts: "Invalid courts — each ID must be in the venue's court list. Please try again:",
+		MsgVenueInvalidAutoBookingCourts: "Invalid format — enter comma-separated numeric court IDs with no duplicates. Please try again:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-booking Courts",
 
 		MsgVenueAskBookingOpensDays:  "How many days in advance does booking open? (default: 14). Send - to use default:",
@@ -731,9 +730,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAskAutoBookingEnabled:    "Automatische Platzbuchung für diesen Ort aktivieren?",
 		BtnVenueEnableAutoBooking:        "✅ Aktivieren",
 		BtnVenueDisableAutoBooking:       "❌ Deaktivieren",
-		MsgVenueAskAutoBookingCourts:     "Platz-IDs für die automatische Buchung in Prioritätsreihenfolge eingeben (kommagetrennte Teilmenge von %s). - senden, um einen beliebigen freien Platz zu buchen:",
+		MsgVenueAskAutoBookingCourts:     "Eversports-Platz-IDs für die automatische Buchung in Prioritätsreihenfolge eingeben (kommagetrennte ganze Zahlen). - senden, um einen beliebigen freien Platz zu buchen:",
 		MsgVenueAutoBookingCourtsLine:    "Auto-Buchungsplätze: %s",
-		MsgVenueInvalidAutoBookingCourts: "Ungültige Plätze — jede ID muss in der Platzkonfiguration des Ortes enthalten sein. Bitte erneut versuchen:",
+		MsgVenueInvalidAutoBookingCourts: "Ungültiges Format — kommagetrennte numerische Platz-IDs ohne Duplikate eingeben. Bitte erneut versuchen:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-Buchungsplätze",
 
 		MsgVenueAskBookingOpensDays:  "Wie viele Tage im Voraus öffnet die Buchung? (Standard: 14). Sende - für Standard:",
@@ -971,9 +970,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAskAutoBookingEnabled:    "Включить автоматическое бронирование кортов для этой площадки?",
 		BtnVenueEnableAutoBooking:        "✅ Включить",
 		BtnVenueDisableAutoBooking:       "❌ Отключить",
-		MsgVenueAskAutoBookingCourts:     "Введи ID кортов для автобронирования в порядке приоритета (через запятую, подмножество %s). Отправь - для бронирования любого свободного корта:",
+		MsgVenueAskAutoBookingCourts:     "Введи Eversports ID кортов для автобронирования в порядке приоритета (целые числа через запятую). Отправь - для бронирования любого свободного корта:",
 		MsgVenueAutoBookingCourtsLine:    "Корты автобронирования: %s",
-		MsgVenueInvalidAutoBookingCourts: "Неверные корты — каждый ID должен быть в списке кортов площадки. Попробуй снова:",
+		MsgVenueInvalidAutoBookingCourts: "Неверный формат — введи числовые ID кортов через запятую без повторений. Попробуй снова:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Корты автобронирования",
 
 		MsgVenueAskBookingOpensDays:  "За сколько дней открывается бронирование? (по умолчанию: 14). Отправь - для значения по умолчанию:",

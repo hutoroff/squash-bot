@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -30,15 +31,12 @@ func validatePreferredGameTime(preferredGameTime, timeSlots string) error {
 	return fmt.Errorf("preferred_game_time %q is not present in time_slots %q", preferredGameTime, timeSlots)
 }
 
-// validateAutoBookingCourts returns an error if any court in autoBookingCourts
-// is not present in the venue's courts list, or if duplicates are present.
-func validateAutoBookingCourts(autoBookingCourts, courts string) error {
+// validateAutoBookingCourts returns an error if autoBookingCourts contains
+// non-integer values or duplicates. Values are Eversports facility court IDs
+// and are not constrained to the venue's courts label list.
+func validateAutoBookingCourts(autoBookingCourts string) error {
 	if autoBookingCourts == "" {
 		return nil
-	}
-	courtSet := make(map[string]bool)
-	for _, c := range strings.Split(courts, ",") {
-		courtSet[strings.TrimSpace(c)] = true
 	}
 	seen := make(map[string]bool)
 	for _, c := range strings.Split(autoBookingCourts, ",") {
@@ -46,8 +44,8 @@ func validateAutoBookingCourts(autoBookingCourts, courts string) error {
 		if c == "" {
 			continue
 		}
-		if !courtSet[c] {
-			return fmt.Errorf("auto_booking_courts contains %q which is not in courts %q", c, courts)
+		if _, err := strconv.Atoi(c); err != nil {
+			return fmt.Errorf("auto_booking_courts contains non-integer value %q", c)
 		}
 		if seen[c] {
 			return fmt.Errorf("auto_booking_courts contains duplicate court %q", c)
@@ -61,7 +59,7 @@ func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, cou
 	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
 		return nil, err
 	}
-	if err := validateAutoBookingCourts(autoBookingCourts, courts); err != nil {
+	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
 		return nil, err
 	}
 	venue := &models.Venue{
@@ -96,7 +94,7 @@ func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name,
 	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
 		return nil, err
 	}
-	if err := validateAutoBookingCourts(autoBookingCourts, courts); err != nil {
+	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
 		return nil, err
 	}
 	venue := &models.Venue{
