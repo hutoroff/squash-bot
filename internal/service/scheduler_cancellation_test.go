@@ -24,9 +24,11 @@ type mockBookingClient struct {
 	listErr     error
 	cancelErr   error
 	cancelCalls []string // UUIDs passed to CancelMatch
+	listCalls   int      // number of times ListMatches was called
 }
 
 func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string, _ bool) ([]BookingSlot, error) {
+	m.listCalls++
 	return m.slots, m.listErr
 }
 
