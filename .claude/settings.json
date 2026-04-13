@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/service-context.sh\"",
+        "timeout": 10,
+        "statusMessage": "Loading service architecture context..."
+      }
+    ]
+  }
+}
