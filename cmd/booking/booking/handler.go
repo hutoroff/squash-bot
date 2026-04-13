@@ -43,7 +43,7 @@ type Handler struct {
 	facilitySlug string
 }
 
-func NewHandler(es *eversports.Client, logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
+func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
 	return &Handler{
 		eversports:   es,
 		logger:       logger,

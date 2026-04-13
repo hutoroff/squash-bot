@@ -40,8 +40,8 @@ Key directories:
 - `cmd/management/storage` — SQL repository implementations satisfying the interfaces defined in the service package
 - `cmd/telegram/telegram` — bot core (`bot.go`, `handlers.go`), slash commands (`commands.go`), message formatting (`formatter.go`), and domain-focused handler files: `participation_handlers.go`, `game_manage_handlers.go`, `newgame_handlers.go`, `settings_handlers.go`, `venue_handlers.go`; callback routing via `callback_router.go` (map-based dispatch replacing the original if-chain)
 - `cmd/telegram/client` — typed HTTP client used by the telegram bot; `interface.go` defines `ManagementClient` (the interface `Bot` depends on) so tests can inject mocks without a running HTTP server
-- `cmd/booking/eversports` — reverse-engineered Eversports.de HTTP client (login, bookings, single match)
-- `cmd/booking/booking` — HTTP server and handlers for the booking service REST API
+- `cmd/booking/eversports` — reverse-engineered Eversports.de HTTP client; `client.go` (auth, `withAuth` retry helper), `matches.go` (GetMatchByID, CancelMatch), `slots.go` (GetCourts, GetSlots), `checkout.go` (CreateBooking), `facility.go` (GetFacility), `models.go` (public domain types + shared GQL types)
+- `cmd/booking/booking` — HTTP server and handlers for the booking service REST API; `NewHandler` accepts the `eversportsClient` interface defined in `handler.go`
 - `cmd/web/webserver` — HTTP server, SPA handler, Telegram Login Widget auth, JWT session management, and web API handlers for the web service
 - `internal/gameformat` — shared game message formatter and keyboard builder (`FormatGameMessage`, `GameKeyboard`, `PlayerDisplayName`); used by both the telegram bot and the management service scheduler
 - `web/embed.go` — embeds `web/frontend/dist` into the Go binary; `go generate ./web/...` runs `npm ci && npm run build`

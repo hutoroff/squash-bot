@@ -34,112 +34,6 @@ type Booking struct {
 	} `json:"price"`
 }
 
-// ─── GraphQL request envelope ─────────────────────────────────────────────────
-
-// gqlRequest is the generic GraphQL request body sent to /api/checkout.
-type gqlRequest struct {
-	OperationName string         `json:"operationName"`
-	Variables     map[string]any `json:"variables"`
-	Query         string         `json:"query"`
-}
-
-// ─── Login types ──────────────────────────────────────────────────────────────
-
-// gqlLoginResponse is the GraphQL response envelope for LoginCredentialLogin.
-type gqlLoginResponse struct {
-	Data struct {
-		CredentialLogin struct {
-			Typename string `json:"__typename"`
-			// AuthResult fields
-			APIToken string `json:"apiToken"`
-			User     struct {
-				ID string `json:"id"`
-			} `json:"user"`
-			// ExpectedErrors fields
-			Errors []struct {
-				ID      string `json:"id"`
-				Message string `json:"message"`
-			} `json:"errors"`
-		} `json:"credentialLogin"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
-}
-
-// ─── Match (single booking) GraphQL types ─────────────────────────────────────
-
-// rawMatch is the GraphQL response shape for the Match query.
-// Field names are confirmed from a live API capture.
-type rawMatch struct {
-	ID    string `json:"id"`
-	Start string `json:"start"` // RFC3339 / ISO-8601
-	End   string `json:"end"`
-	State string `json:"state"`
-	Sport struct {
-		Name string `json:"name"`
-		Slug string `json:"slug"`
-	} `json:"sport"`
-	Venue struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Address string `json:"address"`
-		ShortID string `json:"shortId"`
-		Slug    string `json:"slug"`
-	} `json:"venue"`
-	Court struct {
-		Name    string `json:"name"`
-		Area    string `json:"area"`
-		Surface string `json:"surface"`
-	} `json:"court"`
-	Price struct {
-		Value    int    `json:"value"`
-		Currency string `json:"currency"`
-	} `json:"price"`
-}
-
-func (r rawMatch) toBooking() (Booking, error) {
-	start, err := parseTime(r.Start)
-	if err != nil {
-		return Booking{}, err
-	}
-	end, err := parseTime(r.End)
-	if err != nil {
-		return Booking{}, err
-	}
-	b := Booking{
-		ID:    r.ID,
-		Start: start,
-		End:   end,
-		State: r.State,
-	}
-	b.Sport.Name = r.Sport.Name
-	b.Sport.Slug = r.Sport.Slug
-	b.Venue.ID = r.Venue.ID
-	b.Venue.Name = r.Venue.Name
-	b.Venue.Address = r.Venue.Address
-	b.Venue.ShortID = r.Venue.ShortID
-	b.Venue.Slug = r.Venue.Slug
-	b.Court.Name = r.Court.Name
-	b.Court.Area = r.Court.Area
-	b.Court.Surface = r.Court.Surface
-	b.Price.Value = r.Price.Value
-	b.Price.Currency = r.Price.Currency
-	return b, nil
-}
-
-// gqlMatchResponse is the GraphQL response envelope for the Match query.
-type gqlMatchResponse struct {
-	Data struct {
-		Match rawMatch `json:"match"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
-}
-
-// ─── Court ───────────────────────────────────────────────────────────────────
-
 // Court represents a bookable court at the facility, as returned by the
 // booking calendar update endpoint.
 type Court struct {
@@ -147,8 +41,6 @@ type Court struct {
 	UUID string `json:"uuid"` // court UUID, e.g. "32ef2369-cf50-427f-8bdf-d380189584e8"
 	Name string `json:"name"` // display name, e.g. "Court 1"
 }
-
-// ─── Slot (court availability) ───────────────────────────────────────────────
 
 // Slot represents a single available court time slot returned by the
 // /api/slot endpoint.
@@ -173,61 +65,12 @@ type SlotMatch struct {
 	CurParticipants int    `json:"curParticipants"`
 }
 
-// rawSlotsResponse is the JSON envelope returned by GET /api/slot.
-type rawSlotsResponse struct {
-	Slots []Slot `json:"slots"`
-}
-
-// ─── CreateBooking types ──────────────────────────────────────────────────────
-
 // BookingResult is returned by CreateBooking.
 type BookingResult struct {
 	BookingUUID string `json:"bookingUuid"`
 	BookingID   int    `json:"bookingId"`
 	MatchID     string `json:"matchId,omitempty"`
 }
-
-// courtBookingRequest is the payload for POST /checkout/api/payableitem/courtbooking.
-type courtBookingRequest struct {
-	FacilityUUID               string `json:"facilityUuid"`
-	CourtUUID                  string `json:"courtUuid"`
-	SportUUID                  string `json:"sportUuid"`
-	Start                      string `json:"start"`
-	End                        string `json:"end"`
-	Origin                     string `json:"origin"`
-	UseBudgetIfAvailable       bool   `json:"useBudgetIfAvailable"`
-	UseSpecialPriceIfAvailable bool   `json:"useSpecialPriceIfAvailable"`
-}
-
-// courtBookingResponse is the JSON response from POST /checkout/api/payableitem/courtbooking.
-type courtBookingResponse struct {
-	BookingUUID string `json:"bookingUuid"`
-	BookingID   int    `json:"bookingId"`
-	Payment     struct {
-		ID int `json:"id"`
-	} `json:"payment"`
-	Success bool   `json:"success"`
-	Status  string `json:"status"`
-}
-
-// createMatchRequest is the payload for POST /checkout/api/match/create-from-booking.
-// Despite the field name, bookingId holds the booking UUID string (not a numeric ID).
-type createMatchRequest struct {
-	BookingID string `json:"bookingId"`
-}
-
-// createMatchResponse is the JSON response from POST /checkout/api/match/create-from-booking.
-type createMatchResponse struct {
-	MatchID string `json:"matchId"`
-}
-
-// mpFeeRequest is the payload for POST /checkout/api/tracking/getMPFeeForCourtBooking.
-type mpFeeRequest struct {
-	BookingID int    `json:"bookingId"`
-	VenueUUID string `json:"venueUuid"`
-}
-
-// ─── CancelMatch types ────────────────────────────────────────────────────────
 
 // CancellationResult is returned by CancelMatch. It contains the minimal
 // fields from the BallsportMatch fragment in the CancelMatch mutation response.
@@ -236,30 +79,6 @@ type CancellationResult struct {
 	State        string `json:"state"`
 	RelativeLink string `json:"relativeLink"`
 }
-
-// gqlCancelMatchResponse is the GraphQL response envelope for the CancelMatch mutation.
-type gqlCancelMatchResponse struct {
-	Data struct {
-		CancelMatch struct {
-			Typename string `json:"__typename"`
-			// BallsportMatch fields
-			ID           string `json:"id"`
-			State        string `json:"state"`
-			RelativeLink string `json:"relativeLink"`
-			// ExpectedErrors fields
-			Errors []struct {
-				ID      string `json:"id"`
-				Message string `json:"message"`
-				Path    string `json:"path"`
-			} `json:"errors"`
-		} `json:"cancelMatch"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
-}
-
-// ─── Facility (venue profile) ─────────────────────────────────────────────────
 
 // Facility is the public response type for GET /api/v1/eversports/facility.
 // Fields excluded from the raw GraphQL response: social, about, amenities,
@@ -327,53 +146,44 @@ type FacilityVenueLocation struct {
 	Country string `json:"country"`
 }
 
-// gqlFacilityResponse is the GraphQL response envelope for VenueProfileVenueContext.
-type gqlFacilityResponse struct {
+// ─── Shared GraphQL types ─────────────────────────────────────────────────────
+
+// gqlRequest is the generic GraphQL request body sent to /api/checkout.
+type gqlRequest struct {
+	OperationName string         `json:"operationName"`
+	Variables     map[string]any `json:"variables"`
+	Query         string         `json:"query"`
+}
+
+// gqlLoginResponse is the GraphQL response envelope for LoginCredentialLogin.
+type gqlLoginResponse struct {
 	Data struct {
-		VenueContext struct {
-			Venue struct {
-				ID          string  `json:"id"`
-				Slug        string  `json:"slug"`
-				Name        string  `json:"name"`
-				Rating      float64 `json:"rating"`
-				ReviewCount int     `json:"reviewCount"`
-				Address     string  `json:"address"`
-				HideAddress bool    `json:"hideAddress"`
-				Tags        []struct {
-					Name string `json:"name"`
-				} `json:"tags"`
-				Contact struct {
-					Email     string `json:"email"`
-					Facebook  string `json:"facebook"`
-					Instagram string `json:"instagram"`
-					Website   string `json:"website"`
-					Telephone string `json:"telephone"`
-				} `json:"contact"`
-				Sports []struct {
-					ID   string `json:"id"`
-					Name string `json:"name"`
-					Slug string `json:"slug"`
-				} `json:"sports"`
-				City struct {
-					ID   string `json:"id"`
-					Slug string `json:"slug"`
-				} `json:"city"`
-				Company struct {
-					Venues []struct {
-						ID       string `json:"id"`
-						Name     string `json:"name"`
-						Slug     string `json:"slug"`
-						Location struct {
-							City    string `json:"city"`
-							Zip     string `json:"zip"`
-							Country string `json:"country"`
-						} `json:"location"`
-					} `json:"venues"`
-				} `json:"company"`
-			} `json:"venue"`
-		} `json:"venueContext"`
+		CredentialLogin struct {
+			Typename string `json:"__typename"`
+			// AuthResult fields
+			APIToken string `json:"apiToken"`
+			User     struct {
+				ID string `json:"id"`
+			} `json:"user"`
+			// ExpectedErrors fields
+			Errors []struct {
+				ID      string `json:"id"`
+				Message string `json:"message"`
+			} `json:"errors"`
+		} `json:"credentialLogin"`
 	} `json:"data"`
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+// parseTime parses an RFC3339 timestamp, tolerating the millisecond variant
+// ("2026-03-30T18:45:00.000Z") that Eversports sometimes returns.
+func parseTime(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02T15:04:05.999Z07:00", s)
 }

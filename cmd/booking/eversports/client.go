@@ -233,3 +233,23 @@ func setBrowserHeaders(req *http.Request) {
 		req.Header.Set(k, v)
 	}
 }
+
+// withAuth ensures the client is logged in, executes do(), and retries once on
+// errUnauthorized. Used by every public method except CreateBooking, which has
+// mid-flow 401 handling that cannot safely retry from step 1.
+func withAuth[T any](ctx context.Context, c *Client, do func() (T, error)) (T, error) {
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		var zero T
+		return zero, err
+	}
+	result, err := do()
+	if err != nil && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			var zero T
+			return zero, loginErr
+		}
+		return do()
+	}
+	return result, err
+}
