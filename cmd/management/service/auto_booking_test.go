@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/i18n"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // ── parsePreferredTime ────────────────────────────────────────────────────────
@@ -200,7 +200,7 @@ func TestFilterAvailableCourts_EmptySlots(t *testing.T) {
 
 func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T) {
 	client := &mockBookingClient{}
-	s := &SchedulerService{
+	s := &AutoBookingJob{
 		bookingClient: client,
 		logger:        noopLogger(),
 	}
@@ -223,7 +223,7 @@ func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T
 
 func TestProcessAutoBookingForVenue_InvalidPreferredTime_DoesNotCallListMatches(t *testing.T) {
 	client := &mockBookingClient{}
-	s := &SchedulerService{
+	s := &AutoBookingJob{
 		bookingClient: client,
 		logger:        noopLogger(),
 	}

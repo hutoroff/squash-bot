@@ -38,10 +38,10 @@ type ManagementClient interface {
 	SetGroupTimezone(ctx context.Context, chatID int64, timezone string) error
 
 	// Venues
-	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error)
+	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error)
 	GetVenuesByGroup(ctx context.Context, groupID int64) ([]*models.Venue, error)
 	GetVenueByID(ctx context.Context, id int64) (*models.Venue, error)
-	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string) (*models.Venue, error)
+	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error)
 	DeleteVenue(ctx context.Context, id, groupID int64) error
 
 	// Scheduler
