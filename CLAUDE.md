@@ -247,7 +247,7 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `Schedule
 - **`AutoBookingJob`** (`auto_booking.go`): Iterates all groups. For each group, checks if local time is in the `[00:00, 00:05)` window. For each venue with `auto_booking_enabled = true` and `game_days` and `preferred_game_time` configured, checks if today's weekday is in `game_days`. Deduplicates via `venues.last_auto_booking_at` (date-scoped). If conditions met and `bookingClient` is set:
   1. Fetches available (unbooked) slots at `preferred_game_time` ± 10 min via `ListMatches(my=false)` for the date `today + booking_opens_days`.
   2. Selects courts via `filterAvailableCourts`: prefers courts in `courts` (venue-scoped filter); if none of the slot court IDs match `courts` (e.g. venue stores sequential labels while Eversports uses facility-specific IDs), falls back to all available courts from the API response. Within the eligible set, if `auto_booking_courts` is set and any preferred court is available, returns those in declared priority order; otherwise returns all eligible courts in API response order.
-  3. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (1 hour each) via `BookMatch`.
+  3. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (45 min each, matching the facility's slot length) via `BookMatch`.
   4. On success: sends group notification; sets `last_auto_booking_at`.
   5. On partial/full failure: immediately DMs all group admins silently (no notification sound).
 
