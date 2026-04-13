@@ -43,58 +43,44 @@ func TestValidatePreferredGameTime_SingleSlotList_NoMatch(t *testing.T) {
 // ── validateAutoBookingCourts ─────────────────────────────────────────────────
 
 func TestValidateAutoBookingCourts_Empty_AlwaysValid(t *testing.T) {
-	// Empty auto_booking_courts means "any available court" — always valid.
-	if err := validateAutoBookingCourts("", "1,2,3,4"); err != nil {
+	if err := validateAutoBookingCourts(""); err != nil {
 		t.Errorf("empty auto-booking courts: got error %v, want nil", err)
 	}
-	if err := validateAutoBookingCourts("", ""); err != nil {
-		t.Errorf("empty auto-booking courts with empty courts: got error %v, want nil", err)
+}
+
+func TestValidateAutoBookingCourts_ValidIntegers(t *testing.T) {
+	// Accepts any comma-separated integers, including large Eversports facility IDs.
+	if err := validateAutoBookingCourts("77385,77386,77387"); err != nil {
+		t.Errorf("valid Eversports IDs: got error %v, want nil", err)
 	}
 }
 
-func TestValidateAutoBookingCourts_ValidSubset(t *testing.T) {
-	if err := validateAutoBookingCourts("2,4", "1,2,3,4,5,6"); err != nil {
-		t.Errorf("valid subset: got error %v, want nil", err)
+func TestValidateAutoBookingCourts_SmallLabels(t *testing.T) {
+	// Small sequential labels (legacy configuration) are also accepted.
+	if err := validateAutoBookingCourts("4,2,1"); err != nil {
+		t.Errorf("small sequential labels: got error %v, want nil", err)
 	}
 }
 
-func TestValidateAutoBookingCourts_FullList(t *testing.T) {
-	if err := validateAutoBookingCourts("1,2,3", "1,2,3"); err != nil {
-		t.Errorf("auto-booking courts = full courts list: got error %v, want nil", err)
-	}
-}
-
-func TestValidateAutoBookingCourts_SingleCourt(t *testing.T) {
-	if err := validateAutoBookingCourts("5", "1,2,3,4,5,6"); err != nil {
-		t.Errorf("single court in list: got error %v, want nil", err)
-	}
-}
-
-func TestValidateAutoBookingCourts_CourtNotInVenue(t *testing.T) {
-	err := validateAutoBookingCourts("7", "1,2,3,4,5,6")
+func TestValidateAutoBookingCourts_NonInteger(t *testing.T) {
+	err := validateAutoBookingCourts("court-a,2")
 	if err == nil {
-		t.Error("court not in venue list: got nil, want error")
-	}
-}
-
-func TestValidateAutoBookingCourts_OneCourtNotInVenue(t *testing.T) {
-	// "2,7" — court 2 is valid but court 7 is not.
-	err := validateAutoBookingCourts("2,7", "1,2,3,4,5,6")
-	if err == nil {
-		t.Error("partially invalid auto-booking courts: got nil, want error")
+		t.Error("non-integer value: got nil, want error")
 	}
 }
 
 func TestValidateAutoBookingCourts_DuplicateCourt(t *testing.T) {
-	err := validateAutoBookingCourts("2,3,2", "1,2,3,4,5,6")
+	err := validateAutoBookingCourts("77385,77386,77385")
 	if err == nil {
 		t.Error("duplicate court in auto-booking list: got nil, want error")
 	}
 }
 
-func TestValidateAutoBookingCourts_OrderPreserved(t *testing.T) {
-	// Validation must not reorder courts: "4,2,1" is a valid (reversed) priority.
-	if err := validateAutoBookingCourts("4,2,1", "1,2,3,4"); err != nil {
-		t.Errorf("reversed priority order: got error %v, want nil", err)
+func TestValidateAutoBookingCourts_LargeIDNotSubsetConstraint(t *testing.T) {
+	// Eversports IDs (77385) are no longer required to be in venue.Courts (1,2,3).
+	// This was the root cause of the auto-booking failure: the old validator
+	// rejected Eversports IDs because they weren't in the venue labels list.
+	if err := validateAutoBookingCourts("77385,77386"); err != nil {
+		t.Errorf("Eversports IDs should not be rejected: got error %v, want nil", err)
 	}
 }
