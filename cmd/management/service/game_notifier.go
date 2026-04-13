@@ -6,8 +6,8 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/gameformat"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
+	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
 // GameNotifier edits the Telegram group message for a game to reflect current

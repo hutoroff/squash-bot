@@ -5,7 +5,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // TelegramAPI is the subset of the Telegram Bot API used by service-layer types.

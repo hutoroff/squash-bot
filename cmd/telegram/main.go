@@ -11,9 +11,9 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/cmd/telegram/client"
-	"github.com/vkhutorov/squash_bot/cmd/telegram/telegram"
-	"github.com/vkhutorov/squash_bot/internal/config"
+	"github.com/hutoroff/squash-bot/cmd/telegram/client"
+	"github.com/hutoroff/squash-bot/cmd/telegram/telegram"
+	"github.com/hutoroff/squash-bot/internal/config"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".

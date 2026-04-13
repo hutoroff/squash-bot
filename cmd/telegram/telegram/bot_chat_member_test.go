@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
 func TestMembershipNotifyText(t *testing.T) {

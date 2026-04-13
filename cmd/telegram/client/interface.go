@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // ManagementClient is the interface the telegram Bot uses to communicate with

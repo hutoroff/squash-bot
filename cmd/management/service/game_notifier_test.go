@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 var testLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

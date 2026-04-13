@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // createVenue handles POST /api/v1/venues

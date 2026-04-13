@@ -9,8 +9,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/hutoroff/squash-bot/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/vkhutorov/squash_bot/internal/testutil"
 )
 
 // testPool is shared across all storage integration tests in this package.

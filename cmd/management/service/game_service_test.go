@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/management/service"
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
-	"github.com/vkhutorov/squash_bot/internal/testutil"
+	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
 func TestGameService_CreateGame(t *testing.T) {

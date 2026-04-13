@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type GameRepo struct {

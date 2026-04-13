@@ -3,9 +3,9 @@ package storage
 import (
 	"context"
 
+	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type GroupRepo struct {

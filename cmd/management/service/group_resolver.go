@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/i18n"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // groupTZByID loads the IANA timezone for the group identified by chatID.

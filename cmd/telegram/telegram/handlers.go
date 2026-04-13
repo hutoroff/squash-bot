@@ -9,8 +9,8 @@ import (
 	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/internal/gameformat"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
+	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {

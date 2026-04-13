@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
-	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 type ParticipationService struct {

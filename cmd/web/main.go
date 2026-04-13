@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/web/webserver"
-	"github.com/vkhutorov/squash_bot/internal/config"
-	squashweb "github.com/vkhutorov/squash_bot/web"
+	"github.com/hutoroff/squash-bot/cmd/web/webserver"
+	"github.com/hutoroff/squash-bot/internal/config"
+	squashweb "github.com/hutoroff/squash-bot/web"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/vkhutorov/squash_bot/cmd/telegram/client"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/cmd/telegram/client"
+	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
 // pendingGameKey uniquely identifies a pending group-selection request.

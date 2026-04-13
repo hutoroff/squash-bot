@@ -15,12 +15,12 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/hutoroff/squash-bot/cmd/management/api"
+	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/robfig/cron/v3"
-	"github.com/vkhutorov/squash_bot/cmd/management/api"
-	"github.com/vkhutorov/squash_bot/cmd/management/service"
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
-	"github.com/vkhutorov/squash_bot/internal/config"
-	"github.com/vkhutorov/squash_bot/migrations"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".

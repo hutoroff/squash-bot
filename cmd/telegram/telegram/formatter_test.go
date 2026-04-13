@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/telegram/telegram"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/cmd/telegram/telegram"
+	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 var enLz = i18n.New(i18n.En)

@@ -21,7 +21,7 @@ telegram  →  HTTP API  →  management  →  PostgreSQL
 booking   →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Four independent binaries in one Go module (`github.com/vkhutorov/squash_bot`):
+Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`):
 
 **`management`** (`cmd/management/`)
 - **api/**: HTTP handlers (REST JSON API on port 8080)

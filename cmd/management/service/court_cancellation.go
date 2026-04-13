@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // courtCancellationResult holds the outcome of attempting court cancellations.

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/management/storage"
-	"github.com/vkhutorov/squash_bot/internal/models"
-	"github.com/vkhutorov/squash_bot/internal/testutil"
+	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
 func mustTruncate(t *testing.T) {

@@ -3,9 +3,9 @@ package telegram
 import (
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/gameformat"
-	"github.com/vkhutorov/squash_bot/internal/i18n"
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
+	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // FormatGameMessage produces the announcement text for a squash game.

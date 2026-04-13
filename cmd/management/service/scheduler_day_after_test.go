@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // TestProcessDayAfter_NilMessageID is a regression test for the panic that occurred

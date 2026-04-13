@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vkhutorov/squash_bot/cmd/booking/booking"
-	"github.com/vkhutorov/squash_bot/cmd/booking/eversports"
-	"github.com/vkhutorov/squash_bot/internal/config"
+	"github.com/hutoroff/squash-bot/cmd/booking/booking"
+	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
+	"github.com/hutoroff/squash-bot/internal/config"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".
