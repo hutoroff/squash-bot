@@ -91,6 +91,9 @@ func (s *SchedulerService) processAutoBookingForVenue(
 	groupTZ *time.Location,
 	lz *i18n.Localizer,
 ) bool {
+	if !venue.AutoBookingEnabled {
+		return false
+	}
 	// Game date = today + BookingOpensDays in group timezone.
 	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
 	gameDateStr := fmt.Sprintf("%d-%02d-%02d", gameDate.Year(), gameDate.Month(), gameDate.Day())

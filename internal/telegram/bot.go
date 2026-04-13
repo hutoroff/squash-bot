@@ -69,23 +69,25 @@ const (
 	venueStepAddress
 	venueStepGameDays
 	venueStepGracePeriod
-	venueStepAutoBookingCourts // ordered subset of courts for auto-booking
-	venueStepBookingOpensDays  // days in advance booking opens
+	venueStepAutoBookingEnabled // enable/disable automatic booking
+	venueStepAutoBookingCourts  // ordered subset of courts for auto-booking; only shown when auto-booking is enabled
+	venueStepBookingOpensDays   // days in advance booking opens
 )
 
 // venueWizard holds state for the add-venue multi-step dialog.
 type venueWizard struct {
-	groupID           int64
-	step              venueWizardStep
-	name              string
-	courts            string
-	timeSlots         string
-	preferredGameTime string // chosen from timeSlots; empty = no preference
-	address           string
-	gameDays          []int  // weekday ints (0=Sun..6=Sat)
-	gracePeriod       int    // hours, 0 means use default (24)
-	autoBookingCourts string // ordered subset of courts for auto-booking; empty = any
-	bookingOpensDays  int    // days in advance booking opens; 0 means use default (14)
+	groupID            int64
+	step               venueWizardStep
+	name               string
+	courts             string
+	timeSlots          string
+	preferredGameTime  string // chosen from timeSlots; empty = no preference
+	address            string
+	gameDays           []int  // weekday ints (0=Sun..6=Sat)
+	gracePeriod        int    // hours, 0 means use default (24)
+	autoBookingEnabled bool   // whether automatic court booking is enabled
+	autoBookingCourts  string // ordered subset of courts for auto-booking; empty = any
+	bookingOpensDays   int    // days in advance booking opens; 0 means use default (14)
 }
 
 // venueEditField identifies which venue field is being edited.

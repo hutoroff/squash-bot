@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/vkhutorov/squash_bot/internal/i18n"
+	"github.com/vkhutorov/squash_bot/internal/models"
 )
 
 // ── parsePreferredTime ────────────────────────────────────────────────────────
@@ -189,5 +193,52 @@ func TestFilterAvailableCourts_EmptySlots(t *testing.T) {
 	got := filterAvailableCourts(nil, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty result for nil slots, got %v", got)
+	}
+}
+
+// ── processAutoBookingForVenue ────────────────────────────────────────────────
+
+func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T) {
+	client := &mockBookingClient{}
+	s := &SchedulerService{
+		bookingClient: client,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: false,
+		Courts:             "1,2",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+	got := s.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+	if got {
+		t.Error("expected false when AutoBookingEnabled is false")
+	}
+	if client.listCalls != 0 {
+		t.Errorf("ListMatches should not be called, got %d calls", client.listCalls)
+	}
+}
+
+func TestProcessAutoBookingForVenue_InvalidPreferredTime_DoesNotCallListMatches(t *testing.T) {
+	client := &mockBookingClient{}
+	s := &SchedulerService{
+		bookingClient: client,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                1,
+		Courts:            "1,2",
+		PreferredGameTime: "not-valid-time", // parsePreferredTime will fail
+		BookingOpensDays:  14,
+	}
+	lz := i18n.New(i18n.En)
+	got := s.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+	if got {
+		t.Error("expected false when PreferredGameTime is invalid")
+	}
+	if client.listCalls != 0 {
+		t.Errorf("ListMatches should not be called, got %d calls", client.listCalls)
 	}
 }

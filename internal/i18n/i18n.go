@@ -242,6 +242,12 @@ const (
 	BtnVenueEditPreferredTime  = "btn.venue_edit_preferred_time"
 	BtnVenueClearPreferredTime = "btn.venue_clear_preferred_time"
 
+	// Auto-booking enable/disable
+	MsgVenueAutoBookingEnabledLine = "msg.venue_auto_booking_enabled_line"
+	MsgVenueAskAutoBookingEnabled  = "msg.venue_ask_auto_booking_enabled"
+	BtnVenueEnableAutoBooking      = "btn.venue_enable_auto_booking"
+	BtnVenueDisableAutoBooking     = "btn.venue_disable_auto_booking"
+
 	// Auto-booking courts priority
 	// Args for MsgVenueAskAutoBookingCourts: %s = courts list (from venue.Courts)
 	MsgVenueAskAutoBookingCourts     = "msg.venue_ask_auto_booking_courts"
@@ -480,6 +486,10 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Grace Period",
 		BtnVenueEditPreferredTime:        "⭐ Preferred Time",
 		BtnVenueClearPreferredTime:       "✕ No preference",
+		MsgVenueAutoBookingEnabledLine:   "Auto-booking: %s",
+		MsgVenueAskAutoBookingEnabled:    "Enable automatic court booking for this venue?",
+		BtnVenueEnableAutoBooking:        "✅ Enable",
+		BtnVenueDisableAutoBooking:       "❌ Disable",
 		MsgVenueAskAutoBookingCourts:     "Enter court IDs for auto-booking in priority order (comma-separated subset of %s). Send - to book any available court:",
 		MsgVenueAutoBookingCourtsLine:    "Auto-booking courts: %s",
 		MsgVenueInvalidAutoBookingCourts: "Invalid courts — each ID must be in the venue's court list. Please try again:",
@@ -717,6 +727,10 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Kulanzzeit",
 		BtnVenueEditPreferredTime:        "⭐ Bevorzugte Zeit",
 		BtnVenueClearPreferredTime:       "✕ Keine Präferenz",
+		MsgVenueAutoBookingEnabledLine:   "Automatische Buchung: %s",
+		MsgVenueAskAutoBookingEnabled:    "Automatische Platzbuchung für diesen Ort aktivieren?",
+		BtnVenueEnableAutoBooking:        "✅ Aktivieren",
+		BtnVenueDisableAutoBooking:       "❌ Deaktivieren",
 		MsgVenueAskAutoBookingCourts:     "Platz-IDs für die automatische Buchung in Prioritätsreihenfolge eingeben (kommagetrennte Teilmenge von %s). - senden, um einen beliebigen freien Platz zu buchen:",
 		MsgVenueAutoBookingCourtsLine:    "Auto-Buchungsplätze: %s",
 		MsgVenueInvalidAutoBookingCourts: "Ungültige Plätze — jede ID muss in der Platzkonfiguration des Ortes enthalten sein. Bitte erneut versuchen:",
@@ -953,6 +967,10 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Период отмены",
 		BtnVenueEditPreferredTime:        "⭐ Предпочт. время",
 		BtnVenueClearPreferredTime:       "✕ Без предпочтений",
+		MsgVenueAutoBookingEnabledLine:   "Автобронирование: %s",
+		MsgVenueAskAutoBookingEnabled:    "Включить автоматическое бронирование кортов для этой площадки?",
+		BtnVenueEnableAutoBooking:        "✅ Включить",
+		BtnVenueDisableAutoBooking:       "❌ Отключить",
 		MsgVenueAskAutoBookingCourts:     "Введи ID кортов для автобронирования в порядке приоритета (через запятую, подмножество %s). Отправь - для бронирования любого свободного корта:",
 		MsgVenueAutoBookingCourtsLine:    "Корты автобронирования: %s",
 		MsgVenueInvalidAutoBookingCourts: "Неверные корты — каждый ID должен быть в списке кортов площадки. Попробуй снова:",
