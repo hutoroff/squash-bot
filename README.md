@@ -88,7 +88,7 @@ In private chat with the bot, run `/venues`. You can add one or more venues for 
 - **Name**, **courts** (comma-separated), **time slots** (preset HH:MM options), **address** (optional)
 - **Game days** — weekdays when games are played (toggle keyboard; press Confirm with nothing selected to skip). Used for booking and auto-booking reminders.
 - **Preferred game time** — one of the configured time slots marked as the default (highlighted ⭐ in the new-game wizard). Used by auto-booking to pick the target slot at midnight.
-- **Auto-booking courts** — ordered subset of courts tried first when auto-booking at midnight (priority order). Leave blank to book any available court.
+- **Auto-booking courts** — ordered subset of courts tried first when auto-booking at midnight (priority order). Leave blank to book any available court. Priority selection only takes effect when the stored IDs match the Eversports facility court IDs; otherwise the bot books any available court at the preferred time. To find the correct IDs, call `GET /api/v1/eversports/courts` on the booking service.
 - **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
 - **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM and used by auto-booking to compute the target date.
 

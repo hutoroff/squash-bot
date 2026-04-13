@@ -166,23 +166,17 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
 
 	if len(available) == 0 {
-		if j.logger.Enabled(ctx, slog.LevelDebug) {
-			// Log a breakdown to help diagnose why no courts are available.
-			var nBooked, nNoUUID, nNotInVenue int
-			for _, sl := range slots {
-				if sl.Booking != nil {
-					nBooked++
-				} else if sl.CourtUUID == "" {
-					nNoUUID++
-				} else if !venueCourts[sl.Court] {
-					nNotInVenue++
-				}
+		var nBooked, nNoUUID int
+		for _, sl := range slots {
+			if sl.Booking != nil {
+				nBooked++
+			} else if sl.CourtUUID == "" {
+				nNoUUID++
 			}
-			j.logger.Info("auto-booking: no available courts",
-				"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime,
-				"slots_total", len(slots), "booked", nBooked, "no_uuid", nNoUUID, "not_in_venue", nNotInVenue,
-				"venue_courts", venue.Courts, "auto_booking_courts", venue.AutoBookingCourts)
 		}
+		j.logger.Info("auto-booking: no available courts",
+			"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime,
+			"slots_total", len(slots), "booked", nBooked, "no_uuid", nNoUUID)
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
@@ -273,34 +267,56 @@ func (j *AutoBookingJob) notifyAutoBookingFailure(
 }
 
 // filterAvailableCourts returns the UUIDs of available (unbooked) courts from
-// slots, restricted to venue courts. Each court is represented at most once.
+// slots. Each court is represented at most once.
 //
-// orderedPreferred, if non-empty, defines both the eligible subset and the
-// booking priority order. When empty all venue courts are eligible and results
-// follow the API response order.
+// venueCourts restricts eligible courts to those in the configured venue set.
+// If none of the returned slots match venueCourts (e.g. venue stores sequential
+// labels 1–N while Eversports uses facility-specific IDs like 77385), the filter
+// is skipped and all available courts from the response are used.
+//
+// orderedPreferred, if non-empty, defines booking priority order by court ID.
+// If none of the preferred IDs match available courts, priority is ignored and
+// all eligible courts are returned in API response order.
 func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, orderedPreferred []int) []string {
-	// Build courtID → UUID map for all available venue courts (first UUID wins).
-	courtUUIDs := make(map[int]string)
+	// Build two maps: all available courts, and the venue-scoped subset.
+	allAvailable := make(map[int]string)   // courtID → UUID, all unbooked courts
+	venueAvailable := make(map[int]string) // courtID → UUID, only courts in venueCourts
 	for _, sl := range slots {
-		if sl.Booking == nil && sl.CourtUUID != "" && venueCourts[sl.Court] {
-			if _, seen := courtUUIDs[sl.Court]; !seen {
-				courtUUIDs[sl.Court] = sl.CourtUUID
+		if sl.Booking == nil && sl.CourtUUID != "" {
+			if _, seen := allAvailable[sl.Court]; !seen {
+				allAvailable[sl.Court] = sl.CourtUUID
+			}
+			if venueCourts[sl.Court] {
+				if _, seen := venueAvailable[sl.Court]; !seen {
+					venueAvailable[sl.Court] = sl.CourtUUID
+				}
 			}
 		}
 	}
 
+	// Use venue-scoped courts when at least one slot matched; fall back to all
+	// available courts when venueCourts IDs don't match the API response IDs.
+	courtUUIDs := venueAvailable
+	if len(courtUUIDs) == 0 {
+		courtUUIDs = allAvailable
+	}
+
 	if len(orderedPreferred) > 0 {
-		// Ordered subset mode: emit only preferred courts, in declared order.
+		// Ordered subset mode: emit only preferred courts in declared priority order.
 		var result []string
 		for _, courtID := range orderedPreferred {
 			if uuid, ok := courtUUIDs[courtID]; ok {
 				result = append(result, uuid)
 			}
 		}
-		return result
+		// If preferred IDs matched nothing (e.g. labels vs Eversports IDs), fall
+		// through to emit all eligible courts in API response order.
+		if len(result) > 0 {
+			return result
+		}
 	}
 
-	// No preference: emit all available venue courts in API response order.
+	// Emit all eligible courts in API response order.
 	seen := make(map[int]bool)
 	var result []string
 	for _, sl := range slots {
