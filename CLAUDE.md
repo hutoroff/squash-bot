@@ -249,7 +249,7 @@ A single 5-minute poll cron (`CRON_POLL`, default `*/5 * * * *`) calls `Schedule
   2. Calls `ListMatches(date, HHMM, HHMM, false)` (same value for both startTime and endTime) for the exact `preferred_game_time`. **Courts appearing in this response are occupied** (reserved, training, or club-blocked — including those showing `booking: null`). Courts **absent** from this response are truly free for ad-hoc booking.
   3. Selects free courts via `filterFreeCourts`: matches by **name-extracted number** (`extractCourtNumber("Court 7") → 7`) against the numbers in `courts`; falls back to all free courts if no name-numbers match `courts`. Within the eligible set, if `auto_booking_courts` is set and any preferred court is free, returns those in declared priority order; otherwise returns all eligible free courts in API response order. Occupancy is checked by Eversports numeric ID (integer `sl.Court` from `ListMatches` vs `strconv.Atoi(c.ID)` from `ListCourts`).
   4. Books up to `AUTO_BOOKING_COURTS_COUNT` courts (45 min each, matching the facility's slot length) via `BookMatch`.
-  5. On success: sends group notification; sets `last_auto_booking_at`.
+  5. On success: DMs all group admins silently (`DisableNotification=true`); sets `last_auto_booking_at`.
   6. On partial/full failure: immediately DMs all group admins silently (no notification sound).
 
 - **`DayAfterCleanupJob`** (`day_after_cleanup.go`): Iterates all groups. For each group, checks if local time is in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games for that group. Unpins message, removes keyboard, marks game complete.

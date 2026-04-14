@@ -2,12 +2,40 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
+
+// ── mockTelegramAPI ───────────────────────────────────────────────────────────
+
+type mockTelegramAPI struct {
+	sendCalls []tgbotapi.Chattable
+	sendErr   error
+	admins    []tgbotapi.ChatMember
+	adminsErr error
+}
+
+func (m *mockTelegramAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	m.sendCalls = append(m.sendCalls, c)
+	return tgbotapi.Message{}, m.sendErr
+}
+
+func (m *mockTelegramAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTelegramAPI) GetChatAdministrators(config tgbotapi.ChatAdministratorsConfig) ([]tgbotapi.ChatMember, error) {
+	return m.admins, m.adminsErr
+}
+
+func makeChatMember(id int64, isBot bool) tgbotapi.ChatMember {
+	return tgbotapi.ChatMember{User: &tgbotapi.User{ID: id, IsBot: isBot}}
+}
 
 // ── parsePreferredTime ────────────────────────────────────────────────────────
 
@@ -310,5 +338,76 @@ func TestProcessAutoBookingForVenue_InvalidPreferredTime_DoesNotCallListMatches(
 	}
 	if client.listCalls != 0 {
 		t.Errorf("ListMatches should not be called, got %d calls", client.listCalls)
+	}
+}
+
+// ── notifyAutoBookingSuccess ──────────────────────────────────────────────────
+
+func TestNotifyAutoBookingSuccess_SendsSilentDMToEachAdmin(t *testing.T) {
+	const groupChatID int64 = -1001
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{
+			makeChatMember(101, false),
+			makeChatMember(102, false),
+		},
+	}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyAutoBookingSuccess(context.Background(), groupChatID, venue, "2026-05-01", "18:00", 2, lz)
+
+	if len(api.sendCalls) != 2 {
+		t.Fatalf("expected 2 Send calls, got %d", len(api.sendCalls))
+	}
+	for i, c := range api.sendCalls {
+		msg, ok := c.(tgbotapi.MessageConfig)
+		if !ok {
+			t.Fatalf("call %d: expected MessageConfig, got %T", i, c)
+		}
+		if !msg.DisableNotification {
+			t.Errorf("call %d: DisableNotification should be true (silent DM)", i)
+		}
+		if msg.ChatID == groupChatID {
+			t.Errorf("call %d: message sent to group chat ID %d — expected admin DM", i, groupChatID)
+		}
+	}
+}
+
+func TestNotifyAutoBookingSuccess_SkipsBotAdmins(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{
+			makeChatMember(101, false), // human — should receive DM
+			makeChatMember(200, true),  // bot — should be skipped
+		},
+	}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyAutoBookingSuccess(context.Background(), -1001, venue, "2026-05-01", "18:00", 2, lz)
+
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 Send call (human admin only), got %d", len(api.sendCalls))
+	}
+	msg, ok := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected MessageConfig, got %T", api.sendCalls[0])
+	}
+	if msg.ChatID != 101 {
+		t.Errorf("expected DM to user 101, got ChatID %d", msg.ChatID)
+	}
+}
+
+func TestNotifyAutoBookingSuccess_GetAdminsFails_NoSend(t *testing.T) {
+	api := &mockTelegramAPI{adminsErr: errors.New("telegram error")}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyAutoBookingSuccess(context.Background(), -1001, venue, "2026-05-01", "18:00", 2, lz)
+
+	if len(api.sendCalls) != 0 {
+		t.Errorf("expected no Send calls when GetChatAdministrators fails, got %d", len(api.sendCalls))
 	}
 }

@@ -265,13 +265,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		j.logger.Error("auto-booking: update last auto booking at", "venue_id", venue.ID, "err", err)
 	}
 
-	// Notify the group about the successful auto-booking.
-	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, venue.PreferredGameTime)
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := j.api.Send(msg); err != nil {
-		j.logger.Error("auto-booking: send group notification",
-			"venue_id", venue.ID, "chat_id", chatID, "err", err)
-	}
+	// Notify admins about the successful auto-booking via silent DM.
+	j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, lz)
 
 	// If fewer courts were booked than requested, notify admins about the shortfall.
 	if bookedCount < j.courtsCount {
@@ -279,6 +274,42 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	}
 
 	return true
+}
+
+// notifyAutoBookingSuccess DMs all group admins about a successful auto-booking.
+// Messages are sent silently (DisableNotification=true).
+func (j *AutoBookingJob) notifyAutoBookingSuccess(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDateStr, preferredHHMM string,
+	bookedCount int,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+
+	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, preferredHHMM)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.DisableNotification = true
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send success DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+			continue
+		}
+		j.logger.Info("auto-booking: success DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+	}
 }
 
 // notifyAutoBookingFailure DMs all group admins about an auto-booking failure or partial success.
