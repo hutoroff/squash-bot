@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,7 +18,8 @@ const calendarUpdateEndpoint = "/api/booking/calendar/update"
 
 var (
 	// calendarCourtRowRe matches each court row in the booking calendar HTML.
-	calendarCourtRowRe = regexp.MustCompile(`(?s)<tr[^>]+class="court"[^>]*>(.*?)</tr>`)
+	// The outer <tr> tag is captured separately so we can log the full row attributes.
+	calendarCourtRowRe = regexp.MustCompile(`(?s)(<tr[^>]+class="court"[^>]*>)(.*?)</tr>`)
 
 	// calendarCourtNameRe extracts the court display name from its <div>.
 	calendarCourtNameRe = regexp.MustCompile(`<div class="court-name[^"]*">([^<]+)<`)
@@ -27,6 +29,12 @@ var (
 
 	// calendarCourtUUIDRe extracts the court UUID from a data-court-uuid attribute.
 	calendarCourtUUIDRe = regexp.MustCompile(`data-court-uuid="([^"]+)"`)
+
+	// calendarVenueUUIDRe extracts the venue/facility UUID from a data-venue-uuid attribute.
+	calendarVenueUUIDRe = regexp.MustCompile(`data-venue-uuid="([^"]+)"`)
+
+	// calendarDataAttrsRe extracts all data-* attributes from a tag for debug logging.
+	calendarDataAttrsRe = regexp.MustCompile(`data-[a-z-]+=(?:"[^"]*"|'[^']*'|\S+)`)
 )
 
 // rawSlotsResponse is the JSON envelope returned by GET /api/slot.
@@ -76,11 +84,19 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 			return nil, fmt.Errorf("eversports: GetCourts HTTP %d: %s", resp.StatusCode, string(respBytes))
 		}
 
-		courts := parseCalendarHTML(string(respBytes))
+		courts := parseCalendarHTML(string(respBytes), c.logger)
 		if len(courts) == 0 {
 			c.logger.Warn("eversports: GetCourts: no courts found in calendar response — facility may be closed on this date, or check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID config")
 		}
 		c.logger.Info("eversports courts fetched", "count", len(courts))
+		for _, court := range courts {
+			c.logger.Debug("eversports court detail",
+				"id", court.ID,
+				"uuid", court.UUID,
+				"name", court.Name,
+				"venue_uuid", court.VenueUUID,
+			)
+		}
 		return courts, nil
 	}
 
@@ -91,14 +107,18 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 // returned by POST /api/booking/calendar/update.
 // Each court row contains a numeric ID, a UUID, and a display name; courts
 // are deduplicated by ID because the HTML repeats each court for every date.
-func parseCalendarHTML(html string) []Court {
+// logger is used for debug-level output only; pass nil to suppress.
+func parseCalendarHTML(html string, logger *slog.Logger) []Court {
 	rows := calendarCourtRowRe.FindAllStringSubmatch(html, -1)
 	seen := make(map[string]struct{})
 	courts := make([]Court, 0, len(rows))
+	loggedFirst := false
 	for _, row := range rows {
-		content := row[1]
+		// row[1] = the opening <tr ...> tag, row[2] = inner content
+		trTag := row[1]
+		content := row[2]
 
-		idMatch := calendarCourtIDRe.FindStringSubmatch(content)
+		idMatch := calendarCourtIDRe.FindStringSubmatch(trTag + content)
 		if len(idMatch) < 2 {
 			continue
 		}
@@ -107,7 +127,7 @@ func parseCalendarHTML(html string) []Court {
 			continue
 		}
 
-		uuidMatch := calendarCourtUUIDRe.FindStringSubmatch(content)
+		uuidMatch := calendarCourtUUIDRe.FindStringSubmatch(trTag + content)
 		if len(uuidMatch) < 2 {
 			continue
 		}
@@ -117,11 +137,26 @@ func parseCalendarHTML(html string) []Court {
 			continue
 		}
 
+		// Extract the per-court venue UUID (data-venue-uuid attribute on the <tr>).
+		venueUUID := ""
+		if m := calendarVenueUUIDRe.FindStringSubmatch(trTag + content); len(m) >= 2 {
+			venueUUID = m[1]
+		}
+
+		// Log all data-* attributes from the first unseen court row so we can
+		// see what Eversports puts in the HTML without having to dump everything.
+		if logger != nil && !loggedFirst {
+			loggedFirst = true
+			dataAttrs := calendarDataAttrsRe.FindAllString(trTag, -1)
+			logger.Debug("eversports: first court row data-attributes", "attrs", dataAttrs)
+		}
+
 		seen[id] = struct{}{}
 		courts = append(courts, Court{
-			ID:   id,
-			UUID: uuidMatch[1],
-			Name: strings.TrimSpace(nameMatch[1]),
+			ID:        id,
+			UUID:      uuidMatch[1],
+			Name:      strings.TrimSpace(nameMatch[1]),
+			VenueUUID: venueUUID,
 		})
 	}
 	return courts

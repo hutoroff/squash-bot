@@ -16,6 +16,7 @@ import (
 type BookingSlot struct {
 	Court              int          `json:"court"`               // numeric Eversports court ID
 	CourtUUID          string       `json:"courtUuid,omitempty"` // court UUID required for booking
+	VenueUUID          string       `json:"venueUuid,omitempty"` // per-court venue UUID (may differ from EVERSPORTS_FACILITY_UUID)
 	IsUserBookingOwner bool         `json:"isUserBookingOwner"`
 	Booking            *int         `json:"booking"` // nil = not booked by anyone
 	Match              *SlotMatchID `json:"match,omitempty"`
@@ -43,8 +44,9 @@ type BookingServiceClient interface {
 	// CancelMatch cancels the booking identified by the match UUID.
 	CancelMatch(ctx context.Context, matchUUID string) error
 	// BookMatch creates a new court booking. courtUUID is the Eversports court UUID,
+	// venueUUID is the per-court venue UUID (empty = use booking service default),
 	// start and end are RFC 3339 timestamps. Returns booking result on success.
-	BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error)
+	BookMatch(ctx context.Context, courtUUID, venueUUID, start, end string) (*BookMatchResult, error)
 }
 
 // httpBookingClient is the production implementation of BookingServiceClient.
@@ -118,14 +120,18 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID string) e
 	return nil
 }
 
-func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error) {
+func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, venueUUID, start, end string) (*BookMatchResult, error) {
 	url := fmt.Sprintf("%s/api/v1/eversports/matches", c.baseURL)
 
-	body, err := json.Marshal(map[string]string{
+	reqBody := map[string]string{
 		"courtUuid": courtUUID,
 		"start":     start,
 		"end":       end,
-	})
+	}
+	if venueUUID != "" {
+		reqBody["venueUuid"] = venueUUID
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

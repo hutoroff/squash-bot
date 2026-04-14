@@ -93,8 +93,9 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 // createMatchRequest is the JSON body expected by POST /api/v1/eversports/matches.
 type createMatchRequest struct {
 	CourtUUID string `json:"courtUuid"`
-	Start     string `json:"start"` // RFC 3339, e.g. "2026-04-12T06:45:00Z"
-	End       string `json:"end"`   // RFC 3339
+	Start     string `json:"start"`     // RFC 3339, e.g. "2026-04-12T06:45:00Z"
+	End       string `json:"end"`       // RFC 3339
+	VenueUUID string `json:"venueUuid"` // optional per-court venue UUID; overrides EVERSPORTS_FACILITY_UUID when set
 }
 
 func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
@@ -127,19 +128,28 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use per-court venueUuid when the caller provides it; fall back to the
+	// globally configured EVERSPORTS_FACILITY_UUID. Different courts at the same
+	// physical location may belong to different Eversports sub-facilities.
+	facilityUUID := h.facilityUUID
+	if req.VenueUUID != "" {
+		facilityUUID = req.VenueUUID
+	}
+
 	h.logger.Debug("booking: create match request",
-		"facilityUuid", h.facilityUUID,
+		"facilityUuid", facilityUUID,
 		"courtUuid", req.CourtUUID,
+		"venue_uuid_source", map[bool]string{true: "per-court", false: "global"}[req.VenueUUID != ""],
 		"start_raw", req.Start,
 		"end_raw", req.End,
 		"start_parsed", start.Format(time.RFC3339),
 		"end_parsed", end.Format(time.RFC3339),
 		"start_offset", start.Format("-07:00"),
 	)
-	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
+	result, err := h.eversports.CreateBooking(r.Context(), facilityUUID, req.CourtUUID, squashSportUUID, start, end)
 	if err != nil {
 		h.logger.Error("eversports create booking failed",
-			"facilityUuid", h.facilityUUID,
+			"facilityUuid", facilityUUID,
 			"courtUuid", req.CourtUUID,
 			"start", req.Start,
 			"err", err,
@@ -235,9 +245,13 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 	}
 	courtIDs := make([]string, len(courts))
 	courtUUIDByID := make(map[string]string, len(courts))
+	courtVenueUUIDByID := make(map[string]string, len(courts))
 	for i, c := range courts {
 		courtIDs[i] = c.ID
 		courtUUIDByID[c.ID] = c.UUID
+		if c.VenueUUID != "" {
+			courtVenueUUIDByID[c.ID] = c.VenueUUID
+		}
 	}
 
 	slots, err := h.eversports.GetSlots(r.Context(), h.facilityID, courtIDs, date)
@@ -249,16 +263,20 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 
 	slots = filterSlots(slots, date, startTime, endTime, myFilter)
 
-	// Enrich each slot with the court UUID so callers can book without a separate /courts call.
+	// Enrich each slot with the court UUID (and per-court venue UUID when available)
+	// so callers can book without a separate /courts call.
 	type slotWithCourtUUID struct {
 		eversports.Slot
 		CourtUUID string `json:"courtUuid,omitempty"`
+		VenueUUID string `json:"venueUuid,omitempty"`
 	}
 	enriched := make([]slotWithCourtUUID, len(slots))
 	for i, s := range slots {
+		courtKey := strconv.Itoa(s.Court)
 		enriched[i] = slotWithCourtUUID{
 			Slot:      s,
-			CourtUUID: courtUUIDByID[strconv.Itoa(s.Court)],
+			CourtUUID: courtUUIDByID[courtKey],
+			VenueUUID: courtVenueUUIDByID[courtKey],
 		}
 	}
 

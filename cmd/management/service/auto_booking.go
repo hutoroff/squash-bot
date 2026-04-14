@@ -186,6 +186,18 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	// Parse the ordered preference list (empty = no preference, all venue courts eligible).
 	orderedPreferred := parseCourtIDs(venue.AutoBookingCourts)
 
+	// Build courtUUID → venueUUID index from the slot list for use at booking time.
+	// Different courts at the same physical location may belong to different
+	// Eversports sub-facilities and require a different facilityUuid in the
+	// checkout payload. The per-court VenueUUID is extracted from the calendar
+	// HTML by the booking service and returned alongside each slot.
+	slotVenueUUID := make(map[string]string) // courtUUID → venueUUID
+	for _, sl := range slots {
+		if sl.CourtUUID != "" && sl.VenueUUID != "" {
+			slotVenueUUID[sl.CourtUUID] = sl.VenueUUID
+		}
+	}
+
 	// Collect available (unbooked) court UUIDs restricted to venue courts, in priority order.
 	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
 
@@ -235,13 +247,15 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		if bookedCount >= j.courtsCount {
 			break
 		}
+		courtVenueUUID := slotVenueUUID[courtUUID]
 		j.logger.Debug("auto-booking: attempting court",
 			"venue_id", venue.ID,
 			"court_uuid", courtUUID,
+			"court_venue_uuid", courtVenueUUID,
 			"start", startRFC,
 			"end", endRFC,
 		)
-		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
+		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, courtVenueUUID, startRFC, endRFC); err != nil {
 			j.logger.Error("auto-booking: book court failed",
 				"venue_id", venue.ID, "court_uuid", courtUUID,
 				"start", startRFC, "end", endRFC, "err", err)
