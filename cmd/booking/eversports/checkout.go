@@ -95,6 +95,13 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 		if err != nil {
 			return nil, fmt.Errorf("eversports: marshal court booking request: %w", err)
 		}
+		c.logger.Debug("eversports: booking step 1 request",
+			"facilityUuid", payload.FacilityUUID,
+			"courtUuid", payload.CourtUUID,
+			"sportUuid", payload.SportUUID,
+			"start", payload.Start,
+			"end", payload.End,
+		)
 		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+courtBookingEndpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: court booking request: %w", err)

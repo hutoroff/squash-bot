@@ -127,9 +127,23 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logger.Debug("booking: create match request",
+		"facilityUuid", h.facilityUUID,
+		"courtUuid", req.CourtUUID,
+		"start_raw", req.Start,
+		"end_raw", req.End,
+		"start_parsed", start.Format(time.RFC3339),
+		"end_parsed", end.Format(time.RFC3339),
+		"start_offset", start.Format("-07:00"),
+	)
 	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
 	if err != nil {
-		h.logger.Error("eversports create booking failed", "courtUuid", req.CourtUUID, "start", req.Start, "err", err)
+		h.logger.Error("eversports create booking failed",
+			"facilityUuid", h.facilityUUID,
+			"courtUuid", req.CourtUUID,
+			"start", req.Start,
+			"err", err,
+		)
 		writeError(w, http.StatusBadGateway, "create booking failed: "+err.Error())
 		return
 	}

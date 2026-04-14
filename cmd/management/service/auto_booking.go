@@ -133,8 +133,21 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		return false
 	}
 
-	// Time window for availability check: preferred time +0/+10 min (narrow window).
+	j.logger.Debug("auto-booking: game time resolved",
+		"venue_id", venue.ID,
+		"game_date", gameDateStr,
+		"preferred_time", venue.PreferredGameTime,
+		"game_start", gameStart.Format(time.RFC3339),
+		"game_start_tz", gameStart.Location().String(),
+	)
+
+	// Time window for availability check: preferred time ±10 min.
 	checkDateLocal, checkStartHHMM, checkEndHHMM := slotQueryWindow(gameStart)
+
+	j.logger.Debug("auto-booking: querying slots",
+		"venue_id", venue.ID,
+		"date", checkDateLocal, "start_hhmm", checkStartHHMM, "end_hhmm", checkEndHHMM,
+	)
 
 	// Fetch all non-user-owned slots at the preferred time to find available courts.
 	slots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkEndHHMM, false)
@@ -148,6 +161,17 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	j.logger.Debug("auto-booking: slots received",
 		"venue_id", venue.ID, "date", checkDateLocal, "start", checkStartHHMM, "end", checkEndHHMM,
 		"count", len(slots))
+	if j.logger.Enabled(ctx, slog.LevelDebug) {
+		for _, sl := range slots {
+			j.logger.Debug("auto-booking: slot detail",
+				"venue_id", venue.ID,
+				"court", sl.Court,
+				"court_uuid", sl.CourtUUID,
+				"booked", sl.Booking != nil,
+				"is_owner", sl.IsUserBookingOwner,
+			)
+		}
+	}
 
 	// Build the set of court IDs configured for this venue.
 	venueCourts := make(map[int]bool)
@@ -164,6 +188,14 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 
 	// Collect available (unbooked) court UUIDs restricted to venue courts, in priority order.
 	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
+
+	j.logger.Debug("auto-booking: courts selected for booking",
+		"venue_id", venue.ID,
+		"venue_courts_config", venue.Courts,
+		"auto_booking_courts_config", venue.AutoBookingCourts,
+		"available_count", len(available),
+		"available_uuids", available,
+	)
 
 	if len(available) == 0 {
 		var nBooked, nNoUUID int
@@ -191,9 +223,24 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	startRFC := gameStart.Format(time.RFC3339)
 	endRFC := gameEnd.Format(time.RFC3339)
 
+	j.logger.Debug("auto-booking: booking params",
+		"venue_id", venue.ID,
+		"start_rfc", startRFC,
+		"end_rfc", endRFC,
+		"courts_target", j.courtsCount,
+	)
+
 	bookedCount := 0
-	for i := 0; i < target; i++ {
-		courtUUID := available[i]
+	for _, courtUUID := range available {
+		if bookedCount >= j.courtsCount {
+			break
+		}
+		j.logger.Debug("auto-booking: attempting court",
+			"venue_id", venue.ID,
+			"court_uuid", courtUUID,
+			"start", startRFC,
+			"end", endRFC,
+		)
 		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
 			j.logger.Error("auto-booking: book court failed",
 				"venue_id", venue.ID, "court_uuid", courtUUID,

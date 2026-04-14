@@ -5,10 +5,10 @@ bin/
 *.dll
 *.so
 *.dylib
-/squash-games-management
-/telegram-squash-bot
-/sports-booking-service
-/squash-web
+/management
+/telegram
+/booking
+/web
 
 # Frontend
 web/frontend/node_modules/
