@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -141,13 +142,14 @@ func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end
 		return nil, fmt.Errorf("book match: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("book match: unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("book match: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result BookMatchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("decode booking result: %w", err)
 	}
 	return &result, nil
