@@ -90,20 +90,52 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		courtIDs[i] = b.courtID
 	}
 
-	// Select which courts to cancel.
-	// When the venue has auto_booking_courts configured, first cancel in reversed priority
-	// order (lowest-priority court first). Then fall back to the consecutive-grouping
-	// algorithm for any remaining slots.
-	var selected []int
+	// Build Eversports ID → court name-number mapping (needed for priority-based selection).
+	// auto_booking_courts stores sequential numbers that match court names ("Court 7" → 7),
+	// but booked slots carry Eversports facility-specific IDs. Fetching the court list lets
+	// us bridge the two numbering schemes. If this call fails, Phase 1 is skipped gracefully.
+	var nameNumByID map[int]int
 	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
-		bookedSet := make(map[int]bool, len(booked))
-		for _, b := range booked {
-			bookedSet[b.courtID] = true
+		courts, listErr := j.bookingClient.ListCourts(ctx, date)
+		if listErr != nil {
+			j.logger.Warn("court cancellation: list courts failed, skipping priority selection",
+				"game_id", game.ID, "err", listErr)
+		} else {
+			nameNumByID = make(map[int]int, len(courts))
+			for _, c := range courts {
+				id, err := strconv.Atoi(c.ID)
+				if err != nil {
+					continue
+				}
+				if n := extractCourtNumber(c.Name); n > 0 && id > 0 {
+					nameNumByID[id] = n
+				}
+			}
 		}
-		selected = selectCourtsByCancellationPriority(parseCourtIDs(game.Venue.AutoBookingCourts), bookedSet, courtsToCancel)
+	}
+
+	// Select which courts to cancel in two phases:
+	//   Phase 1 — priority order: cancel lowest-priority courts first using name-number
+	//              matching when venue has auto_booking_courts and a court map is available.
+	//   Phase 2 — consecutive-grouping fallback: handles courts not covered by Phase 1,
+	//              or when no name mapping was available.
+	var selected []int
+	if game.Venue != nil && game.Venue.AutoBookingCourts != "" && len(nameNumByID) > 0 {
+		// Map booked court Eversports IDs → name-numbers, then select in reverse priority order.
+		bookedByNameNum := make(map[int]int, len(booked)) // name-num → Eversports ID
+		for _, b := range booked {
+			if n := nameNumByID[b.courtID]; n > 0 {
+				bookedByNameNum[n] = b.courtID
+			}
+		}
+		orderedPreferred := parseCourtIDs(game.Venue.AutoBookingCourts)
+		for i := len(orderedPreferred) - 1; i >= 0 && len(selected) < courtsToCancel; i-- {
+			if eversportsID, ok := bookedByNameNum[orderedPreferred[i]]; ok {
+				selected = append(selected, eversportsID)
+			}
+		}
 	}
 	if len(selected) < courtsToCancel {
-		// Build the set of courts already selected to exclude them from the fallback input.
 		selectedSet := make(map[int]bool, len(selected))
 		for _, cID := range selected {
 			selectedSet[cID] = true
@@ -204,21 +236,6 @@ func selectCourtsToCancel(sortedCourtIDs []int, n int) []int {
 		selected = append(selected, last)
 	}
 
-	return selected
-}
-
-// selectCourtsByCancellationPriority returns up to n court IDs to cancel, selected from
-// bookedSet in the reversed order of orderedPreferred (lowest-priority first).
-func selectCourtsByCancellationPriority(orderedPreferred []int, bookedSet map[int]bool, n int) []int {
-	if n <= 0 || len(orderedPreferred) == 0 {
-		return nil
-	}
-	var selected []int
-	for i := len(orderedPreferred) - 1; i >= 0 && len(selected) < n; i-- {
-		if bookedSet[orderedPreferred[i]] {
-			selected = append(selected, orderedPreferred[i])
-		}
-	}
 	return selected
 }
 

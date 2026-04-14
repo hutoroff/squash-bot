@@ -21,6 +21,7 @@ func noopLogger() *slog.Logger {
 
 type mockBookingClient struct {
 	slots       []BookingSlot
+	courts      []BookingCourt // returned by ListCourts (nil = no court name mapping)
 	listErr     error
 	cancelErr   error
 	cancelCalls []string // UUIDs passed to CancelMatch
@@ -38,7 +39,7 @@ func (m *mockBookingClient) CancelMatch(_ context.Context, uuid string) error {
 }
 
 func (m *mockBookingClient) ListCourts(_ context.Context, _ string) ([]BookingCourt, error) {
-	return nil, nil
+	return m.courts, nil
 }
 
 func (m *mockBookingClient) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
@@ -294,12 +295,19 @@ func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _ str
 func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
 	// auto_booking_courts = "5,7,8,9" (priority: 5 highest, 9 lowest)
 	// All 4 are booked; cancel 2 → should cancel 9 first, then 8 (lowest priority first).
+	// Courts list maps Eversports IDs to name-numbers so Phase 1 priority matching works.
 	client := &mockBookingClient{
 		slots: []BookingSlot{
 			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
 			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
 			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
+		},
+		courts: []BookingCourt{
+			{ID: "5", UUID: "u5", Name: "Court 5"},
+			{ID: "7", UUID: "u7", Name: "Court 7"},
+			{ID: "8", UUID: "u8", Name: "Court 8"},
+			{ID: "9", UUID: "u9", Name: "Court 9"},
 		},
 	}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
@@ -337,6 +345,11 @@ func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testi
 			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
 		},
+		courts: []BookingCourt{
+			{ID: "7", UUID: "u7", Name: "Court 7"},
+			{ID: "8", UUID: "u8", Name: "Court 8"},
+			{ID: "9", UUID: "u9", Name: "Court 9"},
+		},
 	}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGameWithVenue("7,8,9", 3, time.Now().Add(time.Hour), "7")
@@ -372,6 +385,10 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 		slots: []BookingSlot{
 			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
 			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
+		},
+		courts: []BookingCourt{
+			{ID: "5", UUID: "u5", Name: "Court 5"},
+			{ID: "9", UUID: "u9", Name: "Court 9"},
 		},
 	}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
