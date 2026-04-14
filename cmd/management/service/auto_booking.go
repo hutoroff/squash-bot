@@ -319,33 +319,41 @@ func (j *AutoBookingJob) notifyAutoBookingFailure(
 
 // filterFreeCourts returns the UUIDs of courts that are free at the target time.
 // allCourts is the full court list from ListCourts.
-// occupied is the set of court IDs that appeared in the ListMatches response —
+// occupied is the set of Eversports court IDs that appeared in the ListMatches response —
 // any court in this set is not free (reserved, training, club-blocked).
-// venueCourts restricts eligible courts to those in the configured venue set.
-// If none of the courts match venueCourts (e.g. venue stores sequential labels 1–N
-// while Eversports uses facility-specific IDs like 77385), the filter is skipped
-// and all free courts from the API response are used.
-// orderedPreferred, if non-empty, defines booking priority order by court ID.
+// venueCourts and orderedPreferred are keyed by the sequential court number extracted
+// from the court name (e.g. "Court 7" → 7), which aligns with how users configure
+// venue.Courts and venue.AutoBookingCourts.
+// If none of the courts' name-numbers match venueCourts, the filter is skipped and all
+// free courts are used. orderedPreferred falls back the same way if nothing matches.
 func filterFreeCourts(allCourts []BookingCourt, occupied map[int]bool, venueCourts map[int]bool, orderedPreferred []int) []string {
-	allFree := make(map[int]string)   // courtID → UUID, all free courts
-	venueFree := make(map[int]string) // courtID → UUID, free courts in venueCourts
+	allFree := make(map[int]string)   // courtNum → UUID, all free courts
+	venueFree := make(map[int]string) // courtNum → UUID, free courts matching venueCourts
 
 	for _, c := range allCourts {
-		id, err := strconv.Atoi(c.ID)
+		// Occupancy check uses the Eversports numeric court ID (matches sl.Court from ListMatches).
+		courtID, err := strconv.Atoi(c.ID)
 		if err != nil || c.UUID == "" {
 			continue
 		}
-		if occupied[id] {
+		if occupied[courtID] {
 			continue
 		}
-		allFree[id] = c.UUID
-		if venueCourts[id] {
-			venueFree[id] = c.UUID
+		// Venue filtering and priority matching use the number in the court name
+		// (e.g. "Court 7" → 7), which matches what users store in venue.Courts and
+		// venue.AutoBookingCourts.
+		courtNum := extractCourtNumber(c.Name)
+		if courtNum <= 0 {
+			continue
+		}
+		allFree[courtNum] = c.UUID
+		if venueCourts[courtNum] {
+			venueFree[courtNum] = c.UUID
 		}
 	}
 
 	// Use venue-scoped courts when at least one matched; fall back to all free courts
-	// when venue IDs don't match the Eversports court IDs.
+	// when none of the name-numbers match the configured venue court numbers.
 	courtUUIDs := venueFree
 	if len(courtUUIDs) == 0 {
 		courtUUIDs = allFree
@@ -354,13 +362,12 @@ func filterFreeCourts(allCourts []BookingCourt, occupied map[int]bool, venueCour
 	if len(orderedPreferred) > 0 {
 		// Ordered subset mode: emit only preferred courts in declared priority order.
 		var result []string
-		for _, courtID := range orderedPreferred {
-			if uuid, ok := courtUUIDs[courtID]; ok {
+		for _, courtNum := range orderedPreferred {
+			if uuid, ok := courtUUIDs[courtNum]; ok {
 				result = append(result, uuid)
 			}
 		}
-		// If preferred IDs matched nothing (e.g. labels vs Eversports IDs), fall
-		// through to emit all eligible courts in API response order.
+		// If no preferred number matched, fall through to emit all eligible courts.
 		if len(result) > 0 {
 			return result
 		}
@@ -370,13 +377,31 @@ func filterFreeCourts(allCourts []BookingCourt, occupied map[int]bool, venueCour
 	seen := make(map[int]bool)
 	var result []string
 	for _, c := range allCourts {
-		id, _ := strconv.Atoi(c.ID)
-		if _, ok := courtUUIDs[id]; ok && !seen[id] {
-			seen[id] = true
-			result = append(result, courtUUIDs[id])
+		courtID, _ := strconv.Atoi(c.ID)
+		if occupied[courtID] {
+			continue
+		}
+		courtNum := extractCourtNumber(c.Name)
+		if _, ok := courtUUIDs[courtNum]; ok && !seen[courtNum] {
+			seen[courtNum] = true
+			result = append(result, courtUUIDs[courtNum])
 		}
 	}
 	return result
+}
+
+// extractCourtNumber extracts the trailing integer from a court name like "Court 7".
+// Returns -1 if the name is empty or its last word is not a positive integer.
+func extractCourtNumber(name string) int {
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return -1
+	}
+	n, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil || n <= 0 {
+		return -1
+	}
+	return n
 }
 
 // parseCourtIDs splits a comma-separated court ID string (e.g. "5,6,7") into a slice of ints.

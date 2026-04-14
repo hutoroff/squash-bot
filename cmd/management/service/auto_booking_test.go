@@ -103,12 +103,43 @@ func TestSlotQueryWindow_DayBoundary(t *testing.T) {
 	}
 }
 
+// ── extractCourtNumber ────────────────────────────────────────────────────────
+
+func TestExtractCourtNumber_Valid(t *testing.T) {
+	cases := []struct {
+		name string
+		want int
+	}{
+		{"Court 1", 1},
+		{"Court 7", 7},
+		{"Court 12", 12},
+		{"  Court 3  ", 3}, // extra whitespace handled by Fields
+	}
+	for _, tc := range cases {
+		if got := extractCourtNumber(tc.name); got != tc.want {
+			t.Errorf("extractCourtNumber(%q) = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestExtractCourtNumber_Invalid(t *testing.T) {
+	// Names with no trailing positive integer should return -1.
+	cases := []string{"", "Main Court", "Court", "Court 0", "Court -1"}
+	for _, name := range cases {
+		if got := extractCourtNumber(name); got > 0 {
+			t.Errorf("extractCourtNumber(%q) = %d, want <=0", name, got)
+		}
+	}
+}
+
 // ── filterFreeCourts ──────────────────────────────────────────────────────────
 
 func TestFilterFreeCourts_AllFree(t *testing.T) {
+	// Court names drive the matching; Eversports IDs (77385/77386) are only used
+	// for the occupancy check — not for venue or preference matching.
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: "uuid-1", Name: "Court 1"},
-		{ID: "2", UUID: "uuid-2", Name: "Court 2"},
+		{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
 	}
 	venueCourts := map[int]bool{1: true, 2: true}
 	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
@@ -121,12 +152,13 @@ func TestFilterFreeCourts_AllFree(t *testing.T) {
 }
 
 func TestFilterFreeCourts_ExcludesOccupied(t *testing.T) {
+	// occupied is keyed by the Eversports court ID (from sl.Court in ListMatches).
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: "uuid-1"},
-		{ID: "2", UUID: "uuid-2"},
+		{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
 	}
 	venueCourts := map[int]bool{1: true, 2: true}
-	occupied := map[int]bool{2: true}
+	occupied := map[int]bool{77386: true} // Court 2 occupied
 	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 1 || got[0] != "uuid-1" {
 		t.Errorf("expected [uuid-1], got %v", got)
@@ -134,10 +166,10 @@ func TestFilterFreeCourts_ExcludesOccupied(t *testing.T) {
 }
 
 func TestFilterFreeCourts_ExcludesNonVenueCourts(t *testing.T) {
-	// Court 3 is in allCourts but not in the venue configuration.
+	// Court 3 (name-number 3) is not in venueCourts → excluded.
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: "uuid-1"},
-		{ID: "3", UUID: "uuid-3"},
+		{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "77387", UUID: "uuid-3", Name: "Court 3"},
 	}
 	venueCourts := map[int]bool{1: true, 2: true}
 	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
@@ -148,7 +180,7 @@ func TestFilterFreeCourts_ExcludesNonVenueCourts(t *testing.T) {
 
 func TestFilterFreeCourts_ExcludesMissingUUID(t *testing.T) {
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: ""}, // no UUID
+		{ID: "77385", UUID: "", Name: "Court 1"}, // no UUID
 	}
 	venueCourts := map[int]bool{1: true}
 	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
@@ -159,11 +191,11 @@ func TestFilterFreeCourts_ExcludesMissingUUID(t *testing.T) {
 
 func TestFilterFreeCourts_NoneAvailable(t *testing.T) {
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: "uuid-1"},
-		{ID: "2", UUID: "uuid-2"},
+		{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
 	}
 	venueCourts := map[int]bool{1: true, 2: true}
-	occupied := map[int]bool{1: true, 2: true}
+	occupied := map[int]bool{77385: true, 77386: true}
 	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty result, got %v", got)
@@ -178,16 +210,17 @@ func TestFilterFreeCourts_EmptyCourts(t *testing.T) {
 	}
 }
 
-func TestFilterFreeCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
-	// Venue stores sequential labels 1–3; Eversports returns facility-specific IDs.
-	// When no court matches venueCourts, all free courts are returned.
+func TestFilterFreeCourts_FallbackWhenVenueNumbersMismatch(t *testing.T) {
+	// Venue configured with court numbers 10,11 but actual court names are
+	// "Court 1", "Court 2" — name-numbers don't match venueCourts →
+	// falls back to returning all free courts.
 	allCourts := []BookingCourt{
-		{ID: "77385", UUID: "uuid-a"},
-		{ID: "77386", UUID: "uuid-b"},
-		{ID: "77387", UUID: "uuid-c"},
+		{ID: "77385", UUID: "uuid-a", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-b", Name: "Court 2"},
+		{ID: "77387", UUID: "uuid-c", Name: "Court 3"},
 	}
-	venueCourts := map[int]bool{1: true, 2: true, 3: true}
-	occupied := map[int]bool{77387: true} // court c is occupied
+	venueCourts := map[int]bool{10: true, 11: true}
+	occupied := map[int]bool{77387: true} // Court 3 occupied
 	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
@@ -198,11 +231,11 @@ func TestFilterFreeCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
 }
 
 func TestFilterFreeCourts_OrderedPreferred(t *testing.T) {
-	// orderedPreferred = [3, 2, 1] → emit in that priority order.
+	// orderedPreferred [3, 2, 1] matched against name-numbers → priority order.
 	allCourts := []BookingCourt{
-		{ID: "1", UUID: "uuid-1"},
-		{ID: "2", UUID: "uuid-2"},
-		{ID: "3", UUID: "uuid-3"},
+		{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
+		{ID: "77387", UUID: "uuid-3", Name: "Court 3"},
 	}
 	venueCourts := map[int]bool{1: true, 2: true, 3: true}
 	orderedPreferred := []int{3, 2, 1}
@@ -215,15 +248,15 @@ func TestFilterFreeCourts_OrderedPreferred(t *testing.T) {
 	}
 }
 
-func TestFilterFreeCourts_FallbackWhenPreferredIDsMismatch(t *testing.T) {
-	// Preferred courts are labels (1, 2) that don't match Eversports IDs.
-	// When no preferred court is found, all eligible courts are returned in API order.
+func TestFilterFreeCourts_FallbackWhenPreferredNumbersMismatch(t *testing.T) {
+	// orderedPreferred contains numbers (5, 6) that don't match any court name →
+	// falls back to all eligible courts in response order.
 	allCourts := []BookingCourt{
-		{ID: "77385", UUID: "uuid-a"},
-		{ID: "77386", UUID: "uuid-b"},
+		{ID: "77385", UUID: "uuid-a", Name: "Court 1"},
+		{ID: "77386", UUID: "uuid-b", Name: "Court 2"},
 	}
-	venueCourts := map[int]bool{77385: true, 77386: true}
-	orderedPreferred := []int{1, 2} // labels, not Eversports IDs
+	venueCourts := map[int]bool{1: true, 2: true}
+	orderedPreferred := []int{5, 6}
 	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, orderedPreferred)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
