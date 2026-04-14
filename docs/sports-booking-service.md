@@ -14,7 +14,7 @@
 | `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
 | `LOG_LEVEL`                 | No       | `INFO`            | `INFO` or `DEBUG`                                              |
-| `TIMEZONE`                  | No       | `UTC`             | **Must match the facility's local timezone** (e.g. `Europe/Berlin`). Used to format booking timestamps sent to Eversports — the API requires local-time with UTC offset (e.g. `2026-04-27T20:45:00.000+02:00`). Using `UTC` causes bookings to fail with a misleading "just booked by another player" 400 error. Also controls log timestamps. |
+| `TIMEZONE`                  | No       | `UTC`             | Timezone for log timestamps                                    |
 
 ## API Endpoints
 
@@ -44,7 +44,6 @@ EVERSPORTS_EMAIL=you@example.com \
   EVERSPORTS_FACILITY_ID=76443 \
   EVERSPORTS_FACILITY_SLUG=squash-house-berlin-03 \
   EVERSPORTS_FACILITY_UUID=6266968c-b0fd-4115-ad3b-ae225cc880f1 \
-  TIMEZONE=Europe/Berlin \
   go run cmd/booking/main.go
 
 # List court slots for a date (service logs in automatically on first request)

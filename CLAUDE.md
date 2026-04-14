@@ -378,13 +378,13 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
 **Client API** (`cmd/booking/eversports`):
-- `New(email, password string, loc *time.Location, logger) *Client` — `loc` is the facility timezone; used to format booking timestamps as local-time with offset (e.g. `+02:00`) which Eversports requires. Pass `time.UTC` when `TIMEZONE` is not set.
+- `New(email, password string, logger) *Client`
 - `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
 - `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
 - `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL; retries once on HTTP 401 via `withAuth`
 - `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — retries once on HTTP 401 via `withAuth`
 - `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401 via `withAuth`
-- `CreateBooking(ctx, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*BookingResult, error)` — 5-step checkout flow: reserve court → pay-offline → create-from-booking → getMPFeeForCourtBooking → trackCheckoutCompleted; returns `BookingResult{BookingUUID, BookingID, MatchID}` (`MatchID` is best-effort, empty on failure); serialised access via internal mutex; retries once on HTTP 401 from step 1 only (mid-flow 401 returns error without retry to avoid duplicate bookings)
+- `CreateBooking(ctx, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*BookingResult, error)` — 5-step checkout flow: reserve court → pay-offline → create-from-booking → getMPFeeForCourtBooking → trackCheckoutCompleted; returns `BookingResult{BookingUUID, BookingID, MatchID}` (`MatchID` is best-effort, empty on failure); serialised access via internal mutex; retries once on HTTP 401 from step 1 only (mid-flow 401 returns error without retry to avoid duplicate bookings). **`start`/`end` must carry the facility's local timezone offset** — Eversports rejects UTC (`Z`) timestamps; callers must pass times in the group's local timezone (e.g. `time.ParseInLocation(..., groupTZ)`) and must NOT call `.UTC()` before passing.
 - `CancelMatch(ctx, matchID string) (*CancellationResult, error)` — cancels a booking via GraphQL `CancelMatch` mutation; retries once on HTTP 401 via `withAuth`
 - `withAuth[T any](ctx, c, do)` — package-level generic helper used by all methods except `CreateBooking`; ensures login, executes `do()`, retries once on `errUnauthorized`
 
