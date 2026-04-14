@@ -18,7 +18,8 @@ const calendarUpdateEndpoint = "/api/booking/calendar/update"
 
 var (
 	// calendarCourtRowRe matches each court row in the booking calendar HTML.
-	// The outer <tr> tag is captured separately so we can log the full row attributes.
+	// The outer <tr> tag is captured separately so court attributes on the <tr>
+	// itself (e.g. data-court) are searched alongside the inner content.
 	calendarCourtRowRe = regexp.MustCompile(`(?s)(<tr[^>]+class="court"[^>]*>)(.*?)</tr>`)
 
 	// calendarCourtNameRe extracts the court display name from its <div>.
@@ -29,12 +30,6 @@ var (
 
 	// calendarCourtUUIDRe extracts the court UUID from a data-court-uuid attribute.
 	calendarCourtUUIDRe = regexp.MustCompile(`data-court-uuid="([^"]+)"`)
-
-	// calendarVenueUUIDRe extracts the venue/facility UUID from a data-venue-uuid attribute.
-	calendarVenueUUIDRe = regexp.MustCompile(`data-venue-uuid="([^"]+)"`)
-
-	// calendarDataAttrsRe extracts all data-* attributes from a tag for debug logging.
-	calendarDataAttrsRe = regexp.MustCompile(`data-[a-z-]+=(?:"[^"]*"|'[^']*'|\S+)`)
 )
 
 // rawSlotsResponse is the JSON envelope returned by GET /api/slot.
@@ -84,7 +79,7 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 			return nil, fmt.Errorf("eversports: GetCourts HTTP %d: %s", resp.StatusCode, string(respBytes))
 		}
 
-		courts := parseCalendarHTML(string(respBytes), c.logger)
+		courts := parseCalendarHTML(string(respBytes))
 		if len(courts) == 0 {
 			c.logger.Warn("eversports: GetCourts: no courts found in calendar response — facility may be closed on this date, or check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID config")
 		}
@@ -94,7 +89,6 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 				"id", court.ID,
 				"uuid", court.UUID,
 				"name", court.Name,
-				"venue_uuid", court.VenueUUID,
 			)
 		}
 		return courts, nil
@@ -107,12 +101,10 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 // returned by POST /api/booking/calendar/update.
 // Each court row contains a numeric ID, a UUID, and a display name; courts
 // are deduplicated by ID because the HTML repeats each court for every date.
-// logger is used for debug-level output only; pass nil to suppress.
-func parseCalendarHTML(html string, logger *slog.Logger) []Court {
+func parseCalendarHTML(html string) []Court {
 	rows := calendarCourtRowRe.FindAllStringSubmatch(html, -1)
 	seen := make(map[string]struct{})
 	courts := make([]Court, 0, len(rows))
-	loggedFirst := false
 	for _, row := range rows {
 		// row[1] = the opening <tr ...> tag, row[2] = inner content
 		trTag := row[1]
@@ -137,26 +129,11 @@ func parseCalendarHTML(html string, logger *slog.Logger) []Court {
 			continue
 		}
 
-		// Extract the per-court venue UUID (data-venue-uuid attribute on the <tr>).
-		venueUUID := ""
-		if m := calendarVenueUUIDRe.FindStringSubmatch(trTag + content); len(m) >= 2 {
-			venueUUID = m[1]
-		}
-
-		// Log all data-* attributes from the first unseen court row so we can
-		// see what Eversports puts in the HTML without having to dump everything.
-		if logger != nil && !loggedFirst {
-			loggedFirst = true
-			dataAttrs := calendarDataAttrsRe.FindAllString(trTag, -1)
-			logger.Debug("eversports: first court row data-attributes", "attrs", dataAttrs)
-		}
-
 		seen[id] = struct{}{}
 		courts = append(courts, Court{
-			ID:        id,
-			UUID:      uuidMatch[1],
-			Name:      strings.TrimSpace(nameMatch[1]),
-			VenueUUID: venueUUID,
+			ID:   id,
+			UUID: uuidMatch[1],
+			Name: strings.TrimSpace(nameMatch[1]),
 		})
 	}
 	return courts
@@ -203,6 +180,35 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 			return nil, fmt.Errorf("eversports: GetSlots decode response: %w", err)
 		}
 		c.logger.Info("eversports slots fetched", "count", len(slotsResp.Slots), "date", startDate)
+
+		// At DEBUG level, decode each slot as a raw map and log ALL fields so we
+		// can see fields not captured by the typed Slot struct (e.g. price, type,
+		// bookable flags, membership restrictions).
+		if c.logger.Enabled(ctx, slog.LevelDebug) {
+			var rawResp struct {
+				Slots []json.RawMessage `json:"slots"`
+			}
+			if err := json.Unmarshal(respBytes, &rawResp); err == nil {
+				logged := 0
+				for _, raw := range rawResp.Slots {
+					var m map[string]json.RawMessage
+					if err := json.Unmarshal(raw, &m); err != nil {
+						continue
+					}
+					// Log the first slot and any slot whose start is "2045" (target time).
+					startVal, _ := m["start"]
+					isTarget := string(startVal) == `"2045"`
+					if logged == 0 || isTarget {
+						c.logger.Debug("eversports: raw slot", "json", string(raw))
+						logged++
+						if logged >= 6 { // cap: 1 sample + up to 5 target-time slots
+							break
+						}
+					}
+				}
+			}
+		}
+
 		return slotsResp.Slots, nil
 	}
 

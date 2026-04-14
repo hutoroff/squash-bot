@@ -103,109 +103,92 @@ func TestSlotQueryWindow_DayBoundary(t *testing.T) {
 	}
 }
 
-// ── filterAvailableCourts ─────────────────────────────────────────────────────
+// ── filterFreeCourts ──────────────────────────────────────────────────────────
 
-func intPtrAB(v int) *int { return &v }
-
-func TestFilterAvailableCourts_AllAvailable(t *testing.T) {
-	venueCourts := map[int]bool{1: true, 2: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
-		{Court: 2, CourtUUID: "uuid-2", Booking: nil},
+func TestFilterFreeCourts_AllFree(t *testing.T) {
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: "uuid-1", Name: "Court 1"},
+		{ID: "2", UUID: "uuid-2", Name: "Court 2"},
 	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	venueCourts := map[int]bool{1: true, 2: true}
+	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
 	if len(got) != 2 {
-		t.Fatalf("expected 2 available courts, got %d: %v", len(got), got)
+		t.Fatalf("expected 2 free courts, got %d: %v", len(got), got)
 	}
 	if got[0] != "uuid-1" || got[1] != "uuid-2" {
 		t.Errorf("expected [uuid-1 uuid-2], got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_DeduplicatesSameCourt(t *testing.T) {
-	// Two slots for the same court UUID (e.g. two 5-min windows within the 10-min query)
-	// must collapse to a single booking attempt.
+func TestFilterFreeCourts_ExcludesOccupied(t *testing.T) {
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: "uuid-1"},
+		{ID: "2", UUID: "uuid-2"},
+	}
 	venueCourts := map[int]bool{1: true, 2: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
-		{Court: 1, CourtUUID: "uuid-1", Booking: nil}, // duplicate
-		{Court: 2, CourtUUID: "uuid-2", Booking: nil},
-	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 distinct UUIDs after dedup, got %d: %v", len(got), got)
-	}
-	if got[0] != "uuid-1" || got[1] != "uuid-2" {
-		t.Errorf("expected [uuid-1 uuid-2], got %v", got)
-	}
-}
-
-func TestFilterAvailableCourts_ExcludesBooked(t *testing.T) {
-	venueCourts := map[int]bool{1: true, 2: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
-		{Court: 2, CourtUUID: "uuid-2", Booking: intPtrAB(99)}, // booked
-	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	occupied := map[int]bool{2: true}
+	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 1 || got[0] != "uuid-1" {
 		t.Errorf("expected [uuid-1], got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_ExcludesNonVenueCourts(t *testing.T) {
-	// Court 3 is in the slots but not in the venue configuration.
-	venueCourts := map[int]bool{1: true, 2: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "uuid-1", Booking: nil},
-		{Court: 3, CourtUUID: "uuid-3", Booking: nil}, // not in venue
+func TestFilterFreeCourts_ExcludesNonVenueCourts(t *testing.T) {
+	// Court 3 is in allCourts but not in the venue configuration.
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: "uuid-1"},
+		{ID: "3", UUID: "uuid-3"},
 	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	venueCourts := map[int]bool{1: true, 2: true}
+	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
 	if len(got) != 1 || got[0] != "uuid-1" {
 		t.Errorf("expected [uuid-1], got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_ExcludesMissingUUID(t *testing.T) {
+func TestFilterFreeCourts_ExcludesMissingUUID(t *testing.T) {
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: ""}, // no UUID
+	}
 	venueCourts := map[int]bool{1: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "", Booking: nil}, // no UUID
-	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected no results for missing UUID, got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_NoneAvailable(t *testing.T) {
-	venueCourts := map[int]bool{1: true, 2: true}
-	slots := []BookingSlot{
-		{Court: 1, CourtUUID: "uuid-1", Booking: intPtrAB(1)},
-		{Court: 2, CourtUUID: "uuid-2", Booking: intPtrAB(2)},
+func TestFilterFreeCourts_NoneAvailable(t *testing.T) {
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: "uuid-1"},
+		{ID: "2", UUID: "uuid-2"},
 	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	venueCourts := map[int]bool{1: true, 2: true}
+	occupied := map[int]bool{1: true, 2: true}
+	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty result, got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_EmptySlots(t *testing.T) {
+func TestFilterFreeCourts_EmptyCourts(t *testing.T) {
 	venueCourts := map[int]bool{1: true}
-	got := filterAvailableCourts(nil, venueCourts, nil)
+	got := filterFreeCourts(nil, map[int]bool{}, venueCourts, nil)
 	if len(got) != 0 {
-		t.Errorf("expected empty result for nil slots, got %v", got)
+		t.Errorf("expected empty result for nil courts, got %v", got)
 	}
 }
 
-func TestFilterAvailableCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
-	// Venue stores sequential labels 1–9; Eversports returns facility-specific IDs
-	// like 77385. When no slot matches venueCourts, all available courts are returned.
-	venueCourts := map[int]bool{1: true, 2: true, 3: true}
-	slots := []BookingSlot{
-		{Court: 77385, CourtUUID: "uuid-a", Booking: nil},
-		{Court: 77386, CourtUUID: "uuid-b", Booking: nil},
-		{Court: 77387, CourtUUID: "uuid-c", Booking: intPtrAB(1)}, // booked — excluded
+func TestFilterFreeCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
+	// Venue stores sequential labels 1–3; Eversports returns facility-specific IDs.
+	// When no court matches venueCourts, all free courts are returned.
+	allCourts := []BookingCourt{
+		{ID: "77385", UUID: "uuid-a"},
+		{ID: "77386", UUID: "uuid-b"},
+		{ID: "77387", UUID: "uuid-c"},
 	}
-	got := filterAvailableCourts(slots, venueCourts, nil)
+	venueCourts := map[int]bool{1: true, 2: true, 3: true}
+	occupied := map[int]bool{77387: true} // court c is occupied
+	got := filterFreeCourts(allCourts, occupied, venueCourts, nil)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
 	}
@@ -214,16 +197,34 @@ func TestFilterAvailableCourts_FallbackWhenVenueIDsMismatch(t *testing.T) {
 	}
 }
 
-func TestFilterAvailableCourts_FallbackWhenPreferredIDsMismatch(t *testing.T) {
-	// Preferred courts are labels (1, 2) that don't match Eversports IDs (77385, 77386).
-	// When no preferred court is found, all available courts are returned in API order.
-	venueCourts := map[int]bool{77385: true, 77386: true}
-	slots := []BookingSlot{
-		{Court: 77385, CourtUUID: "uuid-a", Booking: nil},
-		{Court: 77386, CourtUUID: "uuid-b", Booking: nil},
+func TestFilterFreeCourts_OrderedPreferred(t *testing.T) {
+	// orderedPreferred = [3, 2, 1] → emit in that priority order.
+	allCourts := []BookingCourt{
+		{ID: "1", UUID: "uuid-1"},
+		{ID: "2", UUID: "uuid-2"},
+		{ID: "3", UUID: "uuid-3"},
 	}
+	venueCourts := map[int]bool{1: true, 2: true, 3: true}
+	orderedPreferred := []int{3, 2, 1}
+	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, orderedPreferred)
+	if len(got) != 3 {
+		t.Fatalf("expected 3, got %d: %v", len(got), got)
+	}
+	if got[0] != "uuid-3" || got[1] != "uuid-2" || got[2] != "uuid-1" {
+		t.Errorf("expected [uuid-3 uuid-2 uuid-1], got %v", got)
+	}
+}
+
+func TestFilterFreeCourts_FallbackWhenPreferredIDsMismatch(t *testing.T) {
+	// Preferred courts are labels (1, 2) that don't match Eversports IDs.
+	// When no preferred court is found, all eligible courts are returned in API order.
+	allCourts := []BookingCourt{
+		{ID: "77385", UUID: "uuid-a"},
+		{ID: "77386", UUID: "uuid-b"},
+	}
+	venueCourts := map[int]bool{77385: true, 77386: true}
 	orderedPreferred := []int{1, 2} // labels, not Eversports IDs
-	got := filterAvailableCourts(slots, venueCourts, orderedPreferred)
+	got := filterFreeCourts(allCourts, map[int]bool{}, venueCourts, orderedPreferred)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 courts via fallback, got %d: %v", len(got), got)
 	}

@@ -16,10 +16,18 @@ import (
 type BookingSlot struct {
 	Court              int          `json:"court"`               // numeric Eversports court ID
 	CourtUUID          string       `json:"courtUuid,omitempty"` // court UUID required for booking
-	VenueUUID          string       `json:"venueUuid,omitempty"` // per-court venue UUID (may differ from EVERSPORTS_FACILITY_UUID)
 	IsUserBookingOwner bool         `json:"isUserBookingOwner"`
+	Present            bool         `json:"present"`
+	Title              *string      `json:"title"`
 	Booking            *int         `json:"booking"` // nil = not booked by anyone
 	Match              *SlotMatchID `json:"match,omitempty"`
+}
+
+// BookingCourt is a court returned by the booking service GET /api/v1/eversports/courts endpoint.
+type BookingCourt struct {
+	ID   string `json:"id"`   // numeric court ID as string, e.g. "77385"
+	UUID string `json:"uuid"` // court UUID used in booking requests
+	Name string `json:"name"` // display name, e.g. "Court 1"
 }
 
 // SlotMatchID holds the UUID needed to cancel a booking.
@@ -37,16 +45,18 @@ type BookMatchResult struct {
 // BookingServiceClient is the interface for interacting with the booking service.
 // It is an interface to allow test doubles.
 type BookingServiceClient interface {
+	// ListCourts returns all courts at the facility for the given date.
+	ListCourts(ctx context.Context, date string) ([]BookingCourt, error)
 	// ListMatches returns slots for the given date filtered to the time window.
+	// Pass empty startTime/endTime for no time filter.
 	// When my=true, only slots owned by the service user are returned.
-	// When my=false, slots not owned by the service user are returned (includes unbooked).
+	// When my=false, all slots (including unbooked) are returned.
 	ListMatches(ctx context.Context, date, startTime, endTime string, my bool) ([]BookingSlot, error)
 	// CancelMatch cancels the booking identified by the match UUID.
 	CancelMatch(ctx context.Context, matchUUID string) error
 	// BookMatch creates a new court booking. courtUUID is the Eversports court UUID,
-	// venueUUID is the per-court venue UUID (empty = use booking service default),
 	// start and end are RFC 3339 timestamps. Returns booking result on success.
-	BookMatch(ctx context.Context, courtUUID, venueUUID, start, end string) (*BookMatchResult, error)
+	BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error)
 }
 
 // httpBookingClient is the production implementation of BookingServiceClient.
@@ -66,6 +76,33 @@ func NewHTTPBookingClient(baseURL, apiSecret string) BookingServiceClient {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+func (c *httpBookingClient) ListCourts(ctx context.Context, date string) ([]BookingCourt, error) {
+	url := fmt.Sprintf("%s/api/v1/eversports/courts?date=%s", c.baseURL, date)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list courts: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list courts: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var courts []BookingCourt
+	if err := json.Unmarshal(respBody, &courts); err != nil {
+		return nil, fmt.Errorf("decode courts: %w", err)
+	}
+	return courts, nil
 }
 
 func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, endTime string, my bool) ([]BookingSlot, error) {
@@ -120,18 +157,14 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID string) e
 	return nil
 }
 
-func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, venueUUID, start, end string) (*BookMatchResult, error) {
+func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error) {
 	url := fmt.Sprintf("%s/api/v1/eversports/matches", c.baseURL)
 
-	reqBody := map[string]string{
+	body, err := json.Marshal(map[string]string{
 		"courtUuid": courtUUID,
 		"start":     start,
 		"end":       end,
-	}
-	if venueUUID != "" {
-		reqBody["venueUuid"] = venueUUID
-	}
-	body, err := json.Marshal(reqBody)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

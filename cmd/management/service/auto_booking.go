@@ -110,6 +110,13 @@ func (j *AutoBookingJob) runAutoBooking(force bool) {
 
 // processAutoBookingForVenue attempts to book courts for a single venue.
 // Returns true if the auto-booking timestamp should be updated (at least one court booked).
+//
+// Algorithm:
+//  1. Call ListCourts to get all courts at the facility for the game date.
+//  2. Call ListMatches for the exact target start time — courts appearing in the
+//     response are occupied (reserved, training, club-blocked). Courts ABSENT
+//     from the response are truly free for ad-hoc booking.
+//  3. Book free courts up to courtsCount using their UUID from step 1.
 func (j *AutoBookingJob) processAutoBookingForVenue(
 	ctx context.Context,
 	chatID int64,
@@ -141,36 +148,46 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		"game_start_tz", gameStart.Location().String(),
 	)
 
-	// Time window for availability check: preferred time ±10 min.
-	checkDateLocal, checkStartHHMM, checkEndHHMM := slotQueryWindow(gameStart)
+	checkDateLocal := gameStart.Format("2006-01-02")
+	checkStartHHMM := gameStart.Format("1504")
 
-	j.logger.Debug("auto-booking: querying slots",
+	j.logger.Debug("auto-booking: querying availability",
 		"venue_id", venue.ID,
-		"date", checkDateLocal, "start_hhmm", checkStartHHMM, "end_hhmm", checkEndHHMM,
+		"date", checkDateLocal, "start_hhmm", checkStartHHMM,
 	)
 
-	// Fetch all non-user-owned slots at the preferred time to find available courts.
-	slots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkEndHHMM, false)
+	// Step 1: Fetch all courts at the facility for the game date.
+	allCourts, err := j.bookingClient.ListCourts(ctx, checkDateLocal)
 	if err != nil {
-		j.logger.Error("auto-booking: list available slots",
+		j.logger.Error("auto-booking: list courts",
 			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
+	j.logger.Debug("auto-booking: courts fetched",
+		"venue_id", venue.ID, "date", checkDateLocal, "count", len(allCourts))
 
-	j.logger.Debug("auto-booking: slots received",
-		"venue_id", venue.ID, "date", checkDateLocal, "start", checkStartHHMM, "end", checkEndHHMM,
-		"count", len(slots))
-	if j.logger.Enabled(ctx, slog.LevelDebug) {
-		for _, sl := range slots {
-			j.logger.Debug("auto-booking: slot detail",
-				"venue_id", venue.ID,
-				"court", sl.Court,
-				"court_uuid", sl.CourtUUID,
-				"booked", sl.Booking != nil,
-				"is_owner", sl.IsUserBookingOwner,
-			)
-		}
+	// Step 2: Fetch all matches at the exact target start time.
+	// A court appearing in this response is occupied (reserved, training, club-blocked).
+	// Courts ABSENT from this response are truly free for ad-hoc booking.
+	occupiedSlots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkStartHHMM, false)
+	if err != nil {
+		j.logger.Error("auto-booking: list matches",
+			"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM, "err", err)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
+		return false
+	}
+	j.logger.Debug("auto-booking: matches at target time",
+		"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM,
+		"occupied_count", len(occupiedSlots))
+
+	// Build the occupied set: any court ID appearing in the matches response is not free.
+	occupied := make(map[int]bool, len(occupiedSlots))
+	for _, sl := range occupiedSlots {
+		occupied[sl.Court] = true
+		j.logger.Debug("auto-booking: occupied court",
+			"venue_id", venue.ID, "court", sl.Court,
+			"booked", sl.Booking != nil, "present", sl.Present, "title", sl.Title)
 	}
 
 	// Build the set of court IDs configured for this venue.
@@ -186,20 +203,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	// Parse the ordered preference list (empty = no preference, all venue courts eligible).
 	orderedPreferred := parseCourtIDs(venue.AutoBookingCourts)
 
-	// Build courtUUID → venueUUID index from the slot list for use at booking time.
-	// Different courts at the same physical location may belong to different
-	// Eversports sub-facilities and require a different facilityUuid in the
-	// checkout payload. The per-court VenueUUID is extracted from the calendar
-	// HTML by the booking service and returned alongside each slot.
-	slotVenueUUID := make(map[string]string) // courtUUID → venueUUID
-	for _, sl := range slots {
-		if sl.CourtUUID != "" && sl.VenueUUID != "" {
-			slotVenueUUID[sl.CourtUUID] = sl.VenueUUID
-		}
-	}
-
-	// Collect available (unbooked) court UUIDs restricted to venue courts, in priority order.
-	available := filterAvailableCourts(slots, venueCourts, orderedPreferred)
+	// Step 3: Free courts = courts from ListCourts NOT in the occupied set.
+	available := filterFreeCourts(allCourts, occupied, venueCourts, orderedPreferred)
 
 	j.logger.Debug("auto-booking: courts selected for booking",
 		"venue_id", venue.ID,
@@ -210,25 +215,11 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	)
 
 	if len(available) == 0 {
-		var nBooked, nNoUUID int
-		for _, sl := range slots {
-			if sl.Booking != nil {
-				nBooked++
-			} else if sl.CourtUUID == "" {
-				nNoUUID++
-			}
-		}
 		j.logger.Info("auto-booking: no available courts",
 			"venue_id", venue.ID, "date", gameDateStr, "time", venue.PreferredGameTime,
-			"slots_total", len(slots), "booked", nBooked, "no_uuid", nNoUUID)
+			"total_courts", len(allCourts), "occupied", len(occupiedSlots))
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
-	}
-
-	// Book up to courtsCount courts.
-	target := j.courtsCount
-	if target > len(available) {
-		target = len(available)
 	}
 
 	gameEnd := gameStart.Add(autoBookingCourtDuration)
@@ -247,15 +238,13 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		if bookedCount >= j.courtsCount {
 			break
 		}
-		courtVenueUUID := slotVenueUUID[courtUUID]
 		j.logger.Debug("auto-booking: attempting court",
 			"venue_id", venue.ID,
 			"court_uuid", courtUUID,
-			"court_venue_uuid", courtVenueUUID,
 			"start", startRFC,
 			"end", endRFC,
 		)
-		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, courtVenueUUID, startRFC, endRFC); err != nil {
+		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
 			j.logger.Error("auto-booking: book court failed",
 				"venue_id", venue.ID, "court_uuid", courtUUID,
 				"start", startRFC, "end", endRFC, "err", err)
@@ -328,39 +317,38 @@ func (j *AutoBookingJob) notifyAutoBookingFailure(
 	}
 }
 
-// filterAvailableCourts returns the UUIDs of available (unbooked) courts from
-// slots. Each court is represented at most once.
-//
+// filterFreeCourts returns the UUIDs of courts that are free at the target time.
+// allCourts is the full court list from ListCourts.
+// occupied is the set of court IDs that appeared in the ListMatches response —
+// any court in this set is not free (reserved, training, club-blocked).
 // venueCourts restricts eligible courts to those in the configured venue set.
-// If none of the returned slots match venueCourts (e.g. venue stores sequential
-// labels 1–N while Eversports uses facility-specific IDs like 77385), the filter
-// is skipped and all available courts from the response are used.
-//
+// If none of the courts match venueCourts (e.g. venue stores sequential labels 1–N
+// while Eversports uses facility-specific IDs like 77385), the filter is skipped
+// and all free courts from the API response are used.
 // orderedPreferred, if non-empty, defines booking priority order by court ID.
-// If none of the preferred IDs match available courts, priority is ignored and
-// all eligible courts are returned in API response order.
-func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, orderedPreferred []int) []string {
-	// Build two maps: all available courts, and the venue-scoped subset.
-	allAvailable := make(map[int]string)   // courtID → UUID, all unbooked courts
-	venueAvailable := make(map[int]string) // courtID → UUID, only courts in venueCourts
-	for _, sl := range slots {
-		if sl.Booking == nil && sl.CourtUUID != "" {
-			if _, seen := allAvailable[sl.Court]; !seen {
-				allAvailable[sl.Court] = sl.CourtUUID
-			}
-			if venueCourts[sl.Court] {
-				if _, seen := venueAvailable[sl.Court]; !seen {
-					venueAvailable[sl.Court] = sl.CourtUUID
-				}
-			}
+func filterFreeCourts(allCourts []BookingCourt, occupied map[int]bool, venueCourts map[int]bool, orderedPreferred []int) []string {
+	allFree := make(map[int]string)   // courtID → UUID, all free courts
+	venueFree := make(map[int]string) // courtID → UUID, free courts in venueCourts
+
+	for _, c := range allCourts {
+		id, err := strconv.Atoi(c.ID)
+		if err != nil || c.UUID == "" {
+			continue
+		}
+		if occupied[id] {
+			continue
+		}
+		allFree[id] = c.UUID
+		if venueCourts[id] {
+			venueFree[id] = c.UUID
 		}
 	}
 
-	// Use venue-scoped courts when at least one slot matched; fall back to all
-	// available courts when venueCourts IDs don't match the API response IDs.
-	courtUUIDs := venueAvailable
+	// Use venue-scoped courts when at least one matched; fall back to all free courts
+	// when venue IDs don't match the Eversports court IDs.
+	courtUUIDs := venueFree
 	if len(courtUUIDs) == 0 {
-		courtUUIDs = allAvailable
+		courtUUIDs = allFree
 	}
 
 	if len(orderedPreferred) > 0 {
@@ -378,13 +366,14 @@ func filterAvailableCourts(slots []BookingSlot, venueCourts map[int]bool, ordere
 		}
 	}
 
-	// Emit all eligible courts in API response order.
+	// Emit all eligible courts in API response order (preserves facility ordering).
 	seen := make(map[int]bool)
 	var result []string
-	for _, sl := range slots {
-		if _, ok := courtUUIDs[sl.Court]; ok && !seen[sl.Court] {
-			seen[sl.Court] = true
-			result = append(result, courtUUIDs[sl.Court])
+	for _, c := range allCourts {
+		id, _ := strconv.Atoi(c.ID)
+		if _, ok := courtUUIDs[id]; ok && !seen[id] {
+			seen[id] = true
+			result = append(result, courtUUIDs[id])
 		}
 	}
 	return result
@@ -408,6 +397,7 @@ func parseCourtIDs(s string) []int {
 // slotQueryWindow returns the date (YYYY-MM-DD), startHHMM, and endHHMM (start+10 min)
 // parameters for a BookingServiceClient.ListMatches call targeting gameStart.
 // All values are in the timezone carried by gameStart.
+// Used by the cancellation reminder to query a ±10 min window around the game time.
 func slotQueryWindow(gameStart time.Time) (date, startHHMM, endHHMM string) {
 	return gameStart.Format("2006-01-02"),
 		gameStart.Format("1504"),
