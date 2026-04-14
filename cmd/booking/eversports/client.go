@@ -78,7 +78,6 @@ type Client struct {
 	http     *http.Client
 	email    string
 	password string
-	loc      *time.Location // timezone used to format booking timestamps for the Eversports API
 	loginMu  sync.Mutex
 	loggedIn atomic.Bool
 	userID   atomic.Value // string — GraphQL UUID from login response
@@ -93,11 +92,8 @@ type Client struct {
 	logger *slog.Logger
 }
 
-// New creates a new Eversports client. loc is the facility's timezone; it is
-// used when formatting booking timestamps for the Eversports API, which
-// requires local-time with UTC offset (e.g. "2026-04-27T20:45:00.000+02:00").
-// Pass time.UTC when no facility timezone is configured.
-func New(email, password string, loc *time.Location, logger *slog.Logger) *Client {
+// New creates a new Eversports client.
+func New(email, password string, logger *slog.Logger) *Client {
 	jar, _ := cookiejar.New(nil) // never errors with nil options
 	return &Client{
 		http: &http.Client{
@@ -106,7 +102,6 @@ func New(email, password string, loc *time.Location, logger *slog.Logger) *Clien
 		},
 		email:    email,
 		password: password,
-		loc:      loc,
 		logger:   logger,
 	}
 }

@@ -41,7 +41,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, loc, logger)
+	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, logger)
 
 	h := booking.NewHandler(esClient, logger, Version, cfg.EversportsFacilityID, cfg.EversportsFacilityUUID, cfg.EversportsFacilitySlug)
 	srv := booking.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)

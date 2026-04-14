@@ -188,8 +188,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	}
 
 	gameEnd := gameStart.Add(autoBookingCourtDuration)
-	startRFC := gameStart.UTC().Format(time.RFC3339)
-	endRFC := gameEnd.UTC().Format(time.RFC3339)
+	startRFC := gameStart.Format(time.RFC3339)
+	endRFC := gameEnd.Format(time.RFC3339)
 
 	bookedCount := 0
 	for i := 0; i < target; i++ {
