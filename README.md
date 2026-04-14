@@ -10,8 +10,8 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
 - The night before the game the bot auto-cancels unused courts (if `SPORTS_BOOKING_SERVICE_URL` is set) and notifies the group with the outcome
-- At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured) and silently DMs group admins with the outcome
-- At 10 AM on configured game days, the bot DMs group admins when court booking opens (or posts a group message if auto-booking already ran)
+- At midnight when booking opens, the bot auto-books courts for the preferred time (if `SPORTS_BOOKING_SERVICE_URL` and `preferred_game_time` are configured), stores the result, and silently DMs group admins with the outcome
+- At 10 AM on configured game days: if courts were auto-booked, the bot creates a game and posts the standard announcement to the group (pinned); otherwise it DMs group admins with a booking reminder
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
 

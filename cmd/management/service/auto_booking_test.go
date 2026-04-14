@@ -14,15 +14,16 @@ import (
 // ── mockTelegramAPI ───────────────────────────────────────────────────────────
 
 type mockTelegramAPI struct {
-	sendCalls []tgbotapi.Chattable
-	sendErr   error
-	admins    []tgbotapi.ChatMember
-	adminsErr error
+	sendCalls  []tgbotapi.Chattable
+	sendErr    error
+	sendResult tgbotapi.Message // returned by Send (zero value by default)
+	admins     []tgbotapi.ChatMember
+	adminsErr  error
 }
 
 func (m *mockTelegramAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	m.sendCalls = append(m.sendCalls, c)
-	return tgbotapi.Message{}, m.sendErr
+	return m.sendResult, m.sendErr
 }
 
 func (m *mockTelegramAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {

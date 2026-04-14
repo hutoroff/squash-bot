@@ -71,6 +71,16 @@ type GroupRepository interface {
 	GetAll(ctx context.Context) ([]models.Group, error)
 }
 
+// AutoBookingResultRepository is the data access interface for auto-booking results.
+type AutoBookingResultRepository interface {
+	// Save persists the courts booked by AutoBookingJob for a venue on a specific game date.
+	// Silently ignores duplicate entries (same venue_id + game_date).
+	Save(ctx context.Context, venueID int64, gameDate time.Time, courts string, courtsCount int) error
+	// GetByVenueAndDate returns the stored result for the given venue and game date,
+	// or (nil, nil) when no booking was recorded for that combination.
+	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) (*models.AutoBookingResult, error)
+}
+
 // VenueRepository is the data access interface for venues.
 type VenueRepository interface {
 	Create(ctx context.Context, venue *models.Venue) (*models.Venue, error)

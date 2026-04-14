@@ -2,26 +2,29 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
-// BookingReminderJob sends DMs to group admins when court booking opens for a venue.
-// Fires at 10:00–10:05 in each group's timezone on configured game days.
+// BookingReminderJob fires at 10:00–10:05 in each group's timezone on configured game days.
+// If courts were auto-booked for the target date (recorded in auto_booking_results), it creates
+// a game and posts the standard announcement to the group. Otherwise it DMs group admins with
+// a booking reminder.
 type BookingReminderJob struct {
-	api       TelegramAPI
-	gameRepo  GameRepository
-	groupRepo GroupRepository
-	venueRepo VenueRepository
-	loc       *time.Location
-	logger    *slog.Logger
+	api                   TelegramAPI
+	gameRepo              GameRepository
+	groupRepo             GroupRepository
+	venueRepo             VenueRepository
+	autoBookingResultRepo AutoBookingResultRepository
+	loc                   *time.Location
+	logger                *slog.Logger
 }
 
 func NewBookingReminderJob(
@@ -29,16 +32,18 @@ func NewBookingReminderJob(
 	gameRepo GameRepository,
 	groupRepo GroupRepository,
 	venueRepo VenueRepository,
+	autoBookingResultRepo AutoBookingResultRepository,
 	loc *time.Location,
 	logger *slog.Logger,
 ) *BookingReminderJob {
 	return &BookingReminderJob{
-		api:       api,
-		gameRepo:  gameRepo,
-		groupRepo: groupRepo,
-		venueRepo: venueRepo,
-		loc:       loc,
-		logger:    logger,
+		api:                   api,
+		gameRepo:              gameRepo,
+		groupRepo:             groupRepo,
+		venueRepo:             venueRepo,
+		autoBookingResultRepo: autoBookingResultRepo,
+		loc:                   loc,
+		logger:                logger,
 	}
 }
 
@@ -94,19 +99,30 @@ func (j *BookingReminderJob) runBookingReminders(force bool) {
 			existingGames, err := j.gameRepo.GetUncompletedGamesByGroupAndDay(ctx, g.ChatID, targetStart, targetEnd)
 			if err != nil {
 				j.logger.Error("booking reminder: check existing games", "venue_id", venue.ID, "err", err)
-				// Fail-open: proceed with the reminder rather than silently suppressing it.
+				// Fail-open: proceed rather than silently suppressing.
 			} else if len(existingGames) > 0 {
 				j.logger.Info("booking reminder: game already created for target date, skipping",
 					"venue_id", venue.ID, "target_date", targetStart.Format("2006-01-02"))
 				continue
 			}
 
-			autoBookedToday := venue.LastAutoBookingAt != nil &&
-				venue.LastAutoBookingAt.In(groupTZ).Format("2006-01-02") == todayStr
+			// Check if auto-booking stored courts for the target game date.
+			gameDate := time.Date(targetStart.Year(), targetStart.Month(), targetStart.Day(), 0, 0, 0, 0, groupTZ)
+			autoResult, err := j.autoBookingResultRepo.GetByVenueAndDate(ctx, venue.ID, gameDate)
+			if err != nil {
+				j.logger.Error("booking reminder: check auto-booking result", "venue_id", venue.ID, "err", err)
+				// Fail-open: fall through to admin DM.
+			}
 
 			var sent bool
-			if autoBookedToday && venue.PreferredGameTime != "" {
-				sent = j.sendAutoBookingGroupNotification(g.ChatID, venue, localNow, lz)
+			if autoResult != nil {
+				sent = j.createGameAndAnnounce(ctx, g.ChatID, venue, autoResult, localNow, groupTZ, lz)
+				if !sent {
+					// Game creation failed — fall back to admin DM so the booking isn't lost.
+					j.logger.Warn("booking reminder: game creation failed, falling back to admin DM",
+						"venue_id", venue.ID)
+					sent = j.sendBookingReminderToAdmins(g.ChatID, venue, lz)
+				}
 			} else {
 				sent = j.sendBookingReminderToAdmins(g.ChatID, venue, lz)
 			}
@@ -120,6 +136,86 @@ func (j *BookingReminderJob) runBookingReminders(force bool) {
 		}
 	}
 	j.logger.Info("booking reminder done", "venues_notified", notified)
+}
+
+// createGameAndAnnounce creates a game from the stored auto-booking result and posts the
+// standard game announcement to the group chat, pinned silently.
+// Returns true if both the game record and the Telegram message were created successfully.
+func (j *BookingReminderJob) createGameAndAnnounce(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	result *models.AutoBookingResult,
+	localNow time.Time,
+	groupTZ *time.Location,
+	lz *i18n.Localizer,
+) bool {
+	gameDate := result.GameDate
+
+	// Attach preferred game time when available so the game has a proper start time.
+	if venue.PreferredGameTime != "" {
+		parts := strings.SplitN(venue.PreferredGameTime, ":", 2)
+		if len(parts) == 2 {
+			h, errH := strconv.Atoi(parts[0])
+			m, errM := strconv.Atoi(parts[1])
+			if errH == nil && errM == nil {
+				gameDate = time.Date(
+					gameDate.Year(), gameDate.Month(), gameDate.Day(),
+					h, m, 0, 0, groupTZ,
+				)
+			}
+		}
+	}
+
+	venueID := venue.ID
+	created, err := j.gameRepo.Create(ctx, &models.Game{
+		ChatID:      chatID,
+		GameDate:    gameDate,
+		Courts:      result.Courts,
+		CourtsCount: result.CourtsCount,
+		VenueID:     &venueID,
+	})
+	if err != nil {
+		j.logger.Error("booking reminder: create game", "venue_id", venue.ID, "err", err)
+		return false
+	}
+
+	// Re-fetch with hydrated venue so the formatter has venue name and address.
+	game, err := j.gameRepo.GetByID(ctx, created.ID)
+	if err != nil {
+		j.logger.Error("booking reminder: fetch created game", "game_id", created.ID, "err", err)
+		return false
+	}
+
+	msgText := gameformat.FormatGameMessage(game, nil, nil, groupTZ, localNow.UTC(), lz)
+	keyboard := gameformat.GameKeyboard(game.ID, lz)
+
+	announcement := tgbotapi.NewMessage(chatID, msgText)
+	announcement.ReplyMarkup = keyboard
+	sent, err := j.api.Send(announcement)
+	if err != nil {
+		j.logger.Error("booking reminder: send game announcement", "game_id", game.ID, "chat_id", chatID, "err", err)
+		return false
+	}
+
+	pin := tgbotapi.PinChatMessageConfig{
+		ChatID:              chatID,
+		MessageID:           sent.MessageID,
+		DisableNotification: true,
+	}
+	if _, err := j.api.Request(pin); err != nil {
+		j.logger.Error("booking reminder: pin game message", "game_id", game.ID, "err", err)
+		// Non-fatal: game is still created and announced.
+	}
+
+	if err := j.gameRepo.UpdateMessageID(ctx, game.ID, int64(sent.MessageID)); err != nil {
+		j.logger.Error("booking reminder: update message_id", "game_id", game.ID, "err", err)
+	}
+
+	j.logger.Info("booking reminder: game created and announced",
+		"game_id", game.ID, "chat_id", chatID, "venue_id", venue.ID,
+		"game_date", gameDate.Format(time.DateOnly), "courts", result.Courts)
+	return true
 }
 
 // sendBookingReminderToAdmins DMs all non-bot group admins with the booking reminder.
@@ -151,28 +247,6 @@ func (j *BookingReminderJob) sendBookingReminderToAdmins(chatID int64, venue *mo
 		sent++
 	}
 	return sent > 0
-}
-
-// sendAutoBookingGroupNotification sends a group message confirming auto-booking was done.
-func (j *BookingReminderJob) sendAutoBookingGroupNotification(
-	chatID int64,
-	venue *models.Venue,
-	localNow time.Time,
-	lz *i18n.Localizer,
-) bool {
-	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
-	gameDateStr := fmt.Sprintf("%d-%02d-%02d", gameDate.Year(), gameDate.Month(), gameDate.Day())
-
-	text := lz.Tf(i18n.SchedBookingReminderAutoBooked, venue.Name, gameDateStr, venue.PreferredGameTime)
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := j.api.Send(msg); err != nil {
-		j.logger.Error("booking reminder: send auto-booking group notification",
-			"chat_id", chatID, "venue_id", venue.ID, "err", err)
-		return false
-	}
-	j.logger.Info("booking reminder: auto-booking group notification sent",
-		"chat_id", chatID, "venue_id", venue.ID)
-	return true
 }
 
 // bookingTargetWindow returns the [start, end) time range covering the target game day.
