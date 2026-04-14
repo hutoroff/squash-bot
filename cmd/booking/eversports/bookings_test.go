@@ -46,7 +46,7 @@ const calendarHTML = `
 </table>`
 
 func TestParseCalendarHTML_Deduplicates(t *testing.T) {
-	courts := parseCalendarHTML(calendarHTML)
+	courts := parseCalendarHTML(calendarHTML, nil)
 	if len(courts) != 2 {
 		t.Fatalf("count: want 2, got %d", len(courts))
 	}
@@ -59,7 +59,7 @@ func TestParseCalendarHTML_Deduplicates(t *testing.T) {
 }
 
 func TestParseCalendarHTML_Empty(t *testing.T) {
-	courts := parseCalendarHTML("")
+	courts := parseCalendarHTML("", nil)
 	if len(courts) != 0 {
 		t.Errorf("count: want 0, got %d", len(courts))
 	}
@@ -68,7 +68,7 @@ func TestParseCalendarHTML_Empty(t *testing.T) {
 func TestParseCalendarHTML_MissingID(t *testing.T) {
 	// Row missing data-court attribute should be skipped.
 	html := `<tr class="court"><td data-court-uuid="uuid-x"><div class="court-name">X</div></td></tr>`
-	courts := parseCalendarHTML(html)
+	courts := parseCalendarHTML(html, nil)
 	if len(courts) != 0 {
 		t.Errorf("count: want 0 (row skipped), got %d", len(courts))
 	}
