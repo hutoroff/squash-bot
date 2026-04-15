@@ -21,13 +21,14 @@ const autoBookingCourtDuration = 45 * time.Minute
 // when booking opens. Fires in the [00:00, 00:05) window of each group's timezone
 // on configured game days. Requires bookingClient to be non-nil.
 type AutoBookingJob struct {
-	api           TelegramAPI
-	groupRepo     GroupRepository
-	venueRepo     VenueRepository
-	bookingClient BookingServiceClient
-	loc           *time.Location
-	logger        *slog.Logger
-	courtsCount   int // number of courts to book automatically
+	api                   TelegramAPI
+	groupRepo             GroupRepository
+	venueRepo             VenueRepository
+	bookingClient         BookingServiceClient
+	autoBookingResultRepo AutoBookingResultRepository
+	loc                   *time.Location
+	logger                *slog.Logger
+	courtsCount           int // number of courts to book automatically
 }
 
 func NewAutoBookingJob(
@@ -35,18 +36,20 @@ func NewAutoBookingJob(
 	groupRepo GroupRepository,
 	venueRepo VenueRepository,
 	bookingClient BookingServiceClient,
+	autoBookingResultRepo AutoBookingResultRepository,
 	loc *time.Location,
 	logger *slog.Logger,
 	courtsCount int,
 ) *AutoBookingJob {
 	return &AutoBookingJob{
-		api:           api,
-		groupRepo:     groupRepo,
-		venueRepo:     venueRepo,
-		bookingClient: bookingClient,
-		loc:           loc,
-		logger:        logger,
-		courtsCount:   courtsCount,
+		api:                   api,
+		groupRepo:             groupRepo,
+		venueRepo:             venueRepo,
+		bookingClient:         bookingClient,
+		autoBookingResultRepo: autoBookingResultRepo,
+		loc:                   loc,
+		logger:                logger,
+		courtsCount:           courtsCount,
 	}
 }
 
@@ -233,7 +236,23 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		"courts_target", j.courtsCount,
 	)
 
+	// Build UUID → court-number map so we can record human-readable court numbers.
+	uuidToCourtNum := make(map[string]string, len(allCourts))
+	for _, c := range allCourts {
+		if c.UUID == "" {
+			continue
+		}
+		num := extractCourtNumber(c.Name)
+		if num > 0 {
+			uuidToCourtNum[c.UUID] = strconv.Itoa(num)
+		} else {
+			// Fallback: use the UUID itself so no booking is silently dropped.
+			uuidToCourtNum[c.UUID] = c.UUID
+		}
+	}
+
 	bookedCount := 0
+	var bookedCourtLabels []string
 	for _, courtUUID := range available {
 		if bookedCount >= j.courtsCount {
 			break
@@ -253,6 +272,9 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		j.logger.Info("auto-booking: court booked",
 			"venue_id", venue.ID, "court_uuid", courtUUID, "date", gameDateStr, "time", venue.PreferredGameTime)
 		bookedCount++
+		if label, ok := uuidToCourtNum[courtUUID]; ok {
+			bookedCourtLabels = append(bookedCourtLabels, label)
+		}
 	}
 
 	if bookedCount == 0 {
@@ -265,13 +287,14 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		j.logger.Error("auto-booking: update last auto booking at", "venue_id", venue.ID, "err", err)
 	}
 
-	// Notify the group about the successful auto-booking.
-	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, venue.PreferredGameTime)
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := j.api.Send(msg); err != nil {
-		j.logger.Error("auto-booking: send group notification",
-			"venue_id", venue.ID, "chat_id", chatID, "err", err)
+	// Persist booked courts for the BookingReminderJob to consume at 10:00.
+	courtsStr := strings.Join(bookedCourtLabels, ",")
+	if err := j.autoBookingResultRepo.Save(ctx, venue.ID, gameDate, courtsStr, bookedCount); err != nil {
+		j.logger.Error("auto-booking: save result", "venue_id", venue.ID, "err", err)
 	}
+
+	// Notify admins about the successful auto-booking via silent DM.
+	j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, lz)
 
 	// If fewer courts were booked than requested, notify admins about the shortfall.
 	if bookedCount < j.courtsCount {
@@ -279,6 +302,42 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	}
 
 	return true
+}
+
+// notifyAutoBookingSuccess DMs all group admins about a successful auto-booking.
+// Messages are sent silently (DisableNotification=true).
+func (j *AutoBookingJob) notifyAutoBookingSuccess(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDateStr, preferredHHMM string,
+	bookedCount int,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+
+	text := lz.Tf(i18n.SchedAutoBookingSuccess, bookedCount, venue.Name, gameDateStr, preferredHHMM)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.DisableNotification = true
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send success DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+			continue
+		}
+		j.logger.Info("auto-booking: success DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+	}
 }
 
 // notifyAutoBookingFailure DMs all group admins about an auto-booking failure or partial success.

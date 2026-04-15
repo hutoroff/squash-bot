@@ -75,6 +75,7 @@ func main() {
 	guestRepo := storage.NewGuestRepo(pool)
 	groupRepo := storage.NewGroupRepo(pool)
 	venueRepo := storage.NewVenueRepo(pool)
+	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
 	venueService := service.NewVenueService(venueRepo)
@@ -102,9 +103,9 @@ func main() {
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, bookingClient, loc, logger, pollWindow)
-	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, loc, logger)
+	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, loc, logger, cfg.AutoBookingCourtsCount)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, autoBookingResultRepo, loc, logger, cfg.AutoBookingCourtsCount)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))
