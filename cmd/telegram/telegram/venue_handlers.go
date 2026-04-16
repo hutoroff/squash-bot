@@ -1083,7 +1083,7 @@ func (b *Bot) renderVenueCredsList(ctx context.Context, chatID int64, messageID 
 	} else {
 		for _, c := range creds {
 			dateStr := c.CreatedAt.Format("2006-01-02")
-			label := fmt.Sprintf("P:%d  %s  (%s)", c.Priority, maskLogin(c.Login), dateStr)
+			label := fmt.Sprintf("P:%d  max:%d  %s  (%s)", c.Priority, c.MaxCourts, maskLogin(c.Login), dateStr)
 			deleteLabel := lz.T(i18n.BtnVenueCredDelete)
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
@@ -1181,6 +1181,23 @@ func (b *Bot) processVenueCredWizard(ctx context.Context, msg *tgbotapi.Message,
 			priority = n
 		}
 		wiz.priority = priority
+		wiz.step = venueCredStepMaxCourts
+		b.pendingVenueCredAdd.Store(msg.Chat.ID, wiz)
+		const defaultMaxCourts = 3
+		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgVenueCredAskMaxCourts, defaultMaxCourts))
+
+	case venueCredStepMaxCourts:
+		const defaultMaxCourts = 3
+		maxCourts := defaultMaxCourts
+		if text != "-" && text != "" {
+			n, err := strconv.Atoi(text)
+			if err != nil || n <= 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			maxCourts = n
+		}
+		wiz.maxCourts = maxCourts
 		wiz.step = venueCredStepPassword
 		b.pendingVenueCredAdd.Store(msg.Chat.ID, wiz)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueCredAskPassword))
@@ -1194,7 +1211,7 @@ func (b *Bot) processVenueCredWizard(ctx context.Context, msg *tgbotapi.Message,
 
 		b.pendingVenueCredAdd.Delete(msg.Chat.ID)
 
-		cred, err := b.client.AddVenueCredential(ctx, wiz.venueID, wiz.groupID, wiz.login, text, wiz.priority)
+		cred, err := b.client.AddVenueCredential(ctx, wiz.venueID, wiz.groupID, wiz.login, text, wiz.priority, wiz.maxCourts)
 		if err != nil {
 			slog.Error("processVenueCredWizard: add credential", "err", err)
 			if strings.Contains(err.Error(), "already exists") {
@@ -1233,7 +1250,7 @@ func (b *Bot) sendVenueCredsList(ctx context.Context, chatID int64, venue *model
 	} else {
 		for _, c := range creds {
 			dateStr := c.CreatedAt.Format("2006-01-02")
-			label := fmt.Sprintf("P:%d  %s  (%s)", c.Priority, maskLogin(c.Login), dateStr)
+			label := fmt.Sprintf("P:%d  max:%d  %s  (%s)", c.Priority, c.MaxCourts, maskLogin(c.Login), dateStr)
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
 				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredDelete), fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),

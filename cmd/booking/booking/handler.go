@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
@@ -41,6 +42,10 @@ type Handler struct {
 	facilityID   string
 	facilityUUID string
 	facilitySlug string
+
+	// credClients caches per-credential Eversports clients keyed by email.
+	// This avoids re-logging in on every booking request for the same account.
+	credClients sync.Map // map[email string]*eversports.Client
 }
 
 func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
@@ -52,6 +57,18 @@ func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, f
 		facilityUUID: facilityUUID,
 		facilitySlug: facilitySlug,
 	}
+}
+
+// getOrCreateCredClient returns a cached *eversports.Client for the given credentials,
+// creating and storing one if none exists yet. The returned client may not be logged in yet;
+// its EnsureLoggedIn / withAuth pattern handles that transparently.
+func (h *Handler) getOrCreateCredClient(email, password string) *eversports.Client {
+	if v, ok := h.credClients.Load(email); ok {
+		return v.(*eversports.Client)
+	}
+	c := eversports.New(email, password, h.logger)
+	h.credClients.Store(email, c)
+	return c
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -91,10 +108,14 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // createMatchRequest is the JSON body expected by POST /api/v1/eversports/matches.
+// Email and Password are optional: when present the booking is made using a
+// per-credential Eversports client instead of the service-level default client.
 type createMatchRequest struct {
 	CourtUUID string `json:"courtUuid"`
-	Start     string `json:"start"` // RFC 3339, e.g. "2026-04-12T06:45:00Z"
-	End       string `json:"end"`   // RFC 3339
+	Start     string `json:"start"`    // RFC 3339, e.g. "2026-04-12T06:45:00Z"
+	End       string `json:"end"`      // RFC 3339
+	Email     string `json:"email"`    // optional: credential login
+	Password  string `json:"password"` // optional: credential password
 }
 
 func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
@@ -135,8 +156,16 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		"start_parsed", start.Format(time.RFC3339),
 		"end_parsed", end.Format(time.RFC3339),
 		"start_offset", start.Format("-07:00"),
+		"has_credentials", req.Email != "",
 	)
-	result, err := h.eversports.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
+
+	// Select which Eversports client to use: per-credential or service default.
+	var es eversportsClient = h.eversports
+	if req.Email != "" && req.Password != "" {
+		es = h.getOrCreateCredClient(req.Email, req.Password)
+	}
+
+	result, err := es.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
 	if err != nil {
 		h.logger.Error("eversports create booking failed",
 			"facilityUuid", h.facilityUUID,

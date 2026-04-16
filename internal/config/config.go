@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/caarlos0/env/v10"
 	"github.com/joho/godotenv"
@@ -41,6 +42,9 @@ type ManagementConfig struct {
 	// encrypt venue booking credentials at rest. Optional at startup — credential
 	// operations will fail gracefully if this is not set.
 	CredentialsEncryptionKey string `env:"CREDENTIALS_ENCRYPTION_KEY"`
+	// CredentialErrorCooldown is how long a credential must sit out after a booking
+	// error before the auto-booking job will try it again. Defaults to 24 hours.
+	CredentialErrorCooldown time.Duration `env:"CREDENTIAL_ERROR_COOLDOWN" envDefault:"24h"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {

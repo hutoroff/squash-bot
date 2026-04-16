@@ -177,7 +177,9 @@ Preferred-time uses: `pendingVenuePreferredTimeEdit` (chatID → `*venuePreferre
 ### Venue Credential Wizard (`venue_handlers.go`)
 State: `pendingVenueCredAdd sync.Map` (chatID → `*venueCredWizard`)
 
-Steps: `venueCredStepLogin` → `venueCredStepPriority` → `venueCredStepPassword` (password message deleted immediately before any API call)
+Steps: `venueCredStepLogin` → `venueCredStepPriority` → `venueCredStepMaxCourts` (integer or `-` for default 3) → `venueCredStepPassword` (password message deleted immediately before any API call)
+
+`venueCredWizard` struct: `venueID, groupID int64`, `login string`, `priority int`, `maxCourts int` (0 = use default 3), `step venueCredStep`, `suggested int`, `inUse []int`
 
 The "🔑 Credentials" button in the venue edit menu is only shown when `venue.AutoBookingEnabled = true`. Credentials button requires `CREDENTIALS_ENCRYPTION_KEY` on the management service; omitting it returns 503. Callbacks: `venue_creds:{venueID}:{groupID}`, `venue_cred_add:{venueID}:{groupID}`, `venue_cred_del:{credID}:{venueID}:{groupID}`, `venue_cred_del_ok:{credID}:{venueID}:{groupID}`.
 
@@ -198,8 +200,8 @@ Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
                 SetGroupLanguage, SetGroupTimezone
 Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue
-VenueCredentials: AddVenueCredential, ListVenueCredentials, DeleteVenueCredential,
-                  ListVenueCredentialPriorities
+VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),
+                  ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
 Scheduler:      TriggerScheduledEvent
 ```
 

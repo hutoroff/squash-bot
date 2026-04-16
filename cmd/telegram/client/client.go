@@ -357,12 +357,13 @@ func (c *Client) DeleteVenue(ctx context.Context, id, groupID int64) error {
 
 // ── Venue credentials ─────────────────────────────────────────────────────────
 
-func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority int) (*models.VenueCredential, error) {
+func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int) (*models.VenueCredential, error) {
 	body := map[string]any{
-		"group_id": groupID,
-		"login":    login,
-		"password": password,
-		"priority": priority,
+		"group_id":   groupID,
+		"login":      login,
+		"password":   password,
+		"priority":   priority,
+		"max_courts": maxCourts,
 	}
 	var cred models.VenueCredential
 	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/venues/%d/credentials", venueID), body, &cred); err != nil {

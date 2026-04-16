@@ -67,7 +67,20 @@ GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCoun
 GroupRepository  — Upsert, SetLanguage, SetTimezone, Remove, Exists, GetByID, GetAll
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
                    SetLastBookingReminderAt, SetLastAutoBookingAt
+VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxCourts),
+                   ListByVenueID, ListWithPasswordByVenueID, Delete(id, venueID),
+                   ExistsByLogin(venueID, login), PrioritiesInUse(venueID), SetLastErrorAt(id)
 ```
+
+`VenueCredentialService` (`service/venue_credential_service.go`) wraps the repository with:
+- `Add(ctx, venueID, groupID, login, password, priority, maxCourts)` — validates venue ownership, deduplicates by login, encrypts password via `Encryptor`, stores via repo
+- `List(ctx, venueID, groupID)` — validates ownership, returns credentials without passwords
+- `Remove(ctx, credID, venueID, groupID)` — validates ownership, deletes
+- `PrioritiesInUse(ctx, venueID, groupID)` — returns sorted priority list for wizard UI
+- `ListForBooking(ctx, venueID, cooldown)` — returns `[]DecryptedCredential` ordered by priority, excluding credentials where `last_error_at > NOW() - cooldown`; decrypts passwords
+- `MarkError(ctx, credID)` — sets `last_error_at = NOW()` via `SetLastErrorAt`
+
+`DecryptedCredential` (internal, never serialised): `ID, VenueID int64`, `Login, Password string`, `Priority, MaxCourts int`.
 
 **Rule:** If a new operation is needed, add a method to the correct interface first, then implement it in the storage package, then use it in the service. Do not bypass interfaces.
 
@@ -114,7 +127,7 @@ GET    /api/v1/venues/{id}                         — getVenue
 PATCH  /api/v1/venues/{id}                         — updateVenue
 DELETE /api/v1/venues/{id}                         — deleteVenue
 
-POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority); 503 when CREDENTIALS_ENCRYPTION_KEY unset
+POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority, max_courts); 503 when CREDENTIALS_ENCRYPTION_KEY unset
 GET    /api/v1/venues/{id}/credentials             — listCredentials (query: group_id); passwords never returned
 DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id)
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
@@ -182,7 +195,8 @@ venues:             id, group_id FK→bot_groups, name, courts, time_slots, addr
                     last_booking_reminder_at, preferred_game_time, last_auto_booking_at,
                     auto_booking_courts, auto_booking_enabled DEFAULT FALSE, UNIQUE(group_id, name)
 venue_credentials:  id, venue_id FK→venues ON DELETE CASCADE, login, enc_password (AES-256-GCM),
-                    priority DEFAULT 0, created_at, UNIQUE(venue_id, login)
+                    priority DEFAULT 0, max_courts DEFAULT 3, last_error_at (nullable TIMESTAMPTZ),
+                    created_at, UNIQUE(venue_id, login)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
@@ -195,5 +209,6 @@ Adding a new column always requires a new migration file in `migrations/`. Test 
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`
 - `ParticipationService.Notifier` call pattern: always async (`go notifier.EditGameMessage(...)`) so a slow Telegram API never blocks the HTTP response
-- `BookingServiceClient` interface in `booking_client.go`: methods are `ListMatches`, `CancelMatch`, `BookMatch` — any new booking API call must extend this interface first
+- `BookingServiceClient` interface in `booking_client.go`: methods are `ListMatches`, `CancelMatch`, `BookMatch(ctx, courtUUID, start, end, login, password string)` — `login`/`password` select a per-credential Eversports session on the booking service; empty strings fall back to the service-level default account
+- `VenueCredentialService` is injected into `AutoBookingJob`; `credCooldown` (`CREDENTIAL_ERROR_COOLDOWN`, default 24h) gates which credentials are eligible; `MarkError` sets `last_error_at` on failure
 - Version is read from `cmd/management/VERSION` file, injected at build time via `-ldflags "-X main.Version=<ver>"`

@@ -29,10 +29,11 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		GroupID  int64  `json:"group_id"`
-		Login    string `json:"login"`
-		Password string `json:"password"`
-		Priority int    `json:"priority"`
+		GroupID   int64  `json:"group_id"`
+		Login     string `json:"login"`
+		Password  string `json:"password"`
+		Priority  int    `json:"priority"`
+		MaxCourts int    `json:"max_courts"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -42,8 +43,11 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "group_id, login, and password are required")
 		return
 	}
+	if req.MaxCourts <= 0 {
+		req.MaxCourts = 3 // default
+	}
 
-	cred, err := h.venueCredService.Add(r.Context(), venueID, req.GroupID, req.Login, req.Password, req.Priority)
+	cred, err := h.venueCredService.Add(r.Context(), venueID, req.GroupID, req.Login, req.Password, req.Priority, req.MaxCourts)
 	if err != nil {
 		if errors.Is(err, service.ErrDuplicateCredentialLogin) {
 			writeError(w, http.StatusConflict, "a credential with this login already exists for this venue")

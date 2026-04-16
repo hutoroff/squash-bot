@@ -45,7 +45,7 @@ type ManagementClient interface {
 	DeleteVenue(ctx context.Context, id, groupID int64) error
 
 	// Venue credentials
-	AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority int) (*models.VenueCredential, error)
+	AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int) (*models.VenueCredential, error)
 	ListVenueCredentials(ctx context.Context, venueID, groupID int64) ([]*models.VenueCredential, error)
 	DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID int64) error
 	ListVenueCredentialPriorities(ctx context.Context, venueID, groupID int64) ([]int, error)
