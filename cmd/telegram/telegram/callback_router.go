@@ -273,6 +273,60 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			}
 			b.handleVenueToggleAutoBooking(ctx, cb, venueID, groupID)
 		},
+		// ── Venue credentials ─────────────────────────────────────────────────────
+		"venue_creds": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)
+			if !ok {
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenueCredsList(ctx, cb, venueID, groupID)
+		},
+		"venue_cred_add": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)
+			if !ok {
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenueCredAdd(ctx, cb, venueID, groupID)
+		},
+		"venue_cred_del": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			// rawID: credID:venueID:groupID
+			sub := strings.SplitN(rawID, ":", 3)
+			if len(sub) != 3 {
+				slog.Debug("invalid venue_cred_del callback format", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			credID, err1 := strconv.ParseInt(sub[0], 10, 64)
+			venueID, err2 := strconv.ParseInt(sub[1], 10, 64)
+			groupID, err3 := strconv.ParseInt(sub[2], 10, 64)
+			if err1 != nil || err2 != nil || err3 != nil {
+				slog.Debug("invalid IDs in venue_cred_del callback", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenueCredDelConfirm(ctx, cb, credID, venueID, groupID)
+		},
+		"venue_cred_del_ok": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			// rawID: credID:venueID:groupID
+			sub := strings.SplitN(rawID, ":", 3)
+			if len(sub) != 3 {
+				slog.Debug("invalid venue_cred_del_ok callback format", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			credID, err1 := strconv.ParseInt(sub[0], 10, 64)
+			venueID, err2 := strconv.ParseInt(sub[1], 10, 64)
+			groupID, err3 := strconv.ParseInt(sub[2], 10, 64)
+			if err1 != nil || err2 != nil || err3 != nil {
+				slog.Debug("invalid IDs in venue_cred_del_ok callback", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenueCredDelete(ctx, cb, credID, venueID, groupID)
+		},
+
 		"venue_wiz_ptime": b.handleVenueWizPreferredTimePick,
 		"venue_ptime_set": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			// rawID: venueID:slot  (slot may contain ":")

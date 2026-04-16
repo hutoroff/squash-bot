@@ -75,10 +75,24 @@ func main() {
 	guestRepo := storage.NewGuestRepo(pool)
 	groupRepo := storage.NewGroupRepo(pool)
 	venueRepo := storage.NewVenueRepo(pool)
+	venueCredRepo := storage.NewVenueCredentialRepo(pool)
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
 	venueService := service.NewVenueService(venueRepo)
+
+	var venueCredService *service.VenueCredentialService
+	if cfg.CredentialsEncryptionKey != "" {
+		enc, err := service.NewEncryptor(cfg.CredentialsEncryptionKey)
+		if err != nil {
+			slog.Error("init credentials encryptor", "err", err)
+			os.Exit(1)
+		}
+		venueCredService = service.NewVenueCredentialService(venueCredRepo, venueRepo, enc)
+		slog.Info("venue credentials encryption enabled")
+	} else {
+		slog.Info("venue credentials encryption disabled (CREDENTIALS_ENCRYPTION_KEY not set)")
+	}
 	pollWindow, err := parsePollWindow(cfg.CronPoll)
 	if err != nil {
 		slog.Error("unsupported CRON_POLL value", "spec", cfg.CronPoll, "err", err)
@@ -117,7 +131,7 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, groupRepo, playerRepo, scheduler, logger, Version)
+	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

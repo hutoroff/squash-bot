@@ -260,6 +260,29 @@ const (
 	MsgVenueBookingOpensDaysLine = "msg.venue_booking_opens_days_line"
 	BtnVenueEditBookingOpensDays = "btn.venue_edit_booking_opens_days"
 
+	// Venue credentials management
+	// MsgVenueCredsList: Args: %s = venue name
+	MsgVenueCredsList = "msg.venue_creds_list"
+	// MsgVenueCredsNone: shown when no credentials exist
+	MsgVenueCredsNone = "msg.venue_creds_none"
+	// MsgVenueCredRow: Args: %d = priority, %s = masked login, %s = date (YYYY-MM-DD)
+	MsgVenueCredRow               = "msg.venue_cred_row"
+	MsgVenueCredAskLogin          = "msg.venue_cred_ask_login"
+	MsgVenueCredAskPriority       = "msg.venue_cred_ask_priority"
+	MsgVenueCredPrioritiesInUse   = "msg.venue_cred_priorities_in_use"
+	MsgVenueCredDuplicatePriority = "msg.venue_cred_duplicate_priority"
+	MsgVenueCredAskPassword       = "msg.venue_cred_ask_password"
+	MsgVenueCredAdded             = "msg.venue_cred_added"
+	MsgVenueCredDeleted           = "msg.venue_cred_deleted"
+	MsgVenueCredConfirmDelete     = "msg.venue_cred_confirm_delete"
+	MsgVenueCredDuplicateLogin    = "msg.venue_cred_duplicate_login"
+	MsgVenueCredNotFound          = "msg.venue_cred_not_found"
+	MsgVenueCredDisabled          = "msg.venue_cred_disabled"
+	BtnVenueCredentials           = "btn.venue_credentials"
+	BtnVenueCredAdd               = "btn.venue_cred_add"
+	BtnVenueCredDelete            = "btn.venue_cred_delete"
+	BtnVenueCredConfirmDelete     = "btn.venue_cred_confirm_delete"
+
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
@@ -497,6 +520,26 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAskBookingOpensDays:  "How many days in advance does booking open? (default: 14). Send - to use default:",
 		MsgVenueBookingOpensDaysLine: "Booking opens: %d days before",
 		BtnVenueEditBookingOpensDays: "📆 Booking Opens",
+
+		// Venue credentials
+		MsgVenueCredsList:             "*🔑 Credentials for %s:*\n\n",
+		MsgVenueCredsNone:             "No credentials configured yet.",
+		MsgVenueCredRow:               "P:%d  %s  (%s)",
+		MsgVenueCredAskLogin:          "Enter the Eversports login (email) for this credential:",
+		MsgVenueCredAskPriority:       "Enter the priority (integer, lower = higher priority). Suggested: %d\nCurrently in use: %s\nSend - to use the suggested value:",
+		MsgVenueCredPrioritiesInUse:   "Priorities in use: %s",
+		MsgVenueCredDuplicatePriority: "⚠️ Priority %d is already used by another credential. Enter a different value or send the same to continue:",
+		MsgVenueCredAskPassword:       "Enter the password.\n\n⚠️ Your message will be deleted immediately for security.",
+		MsgVenueCredAdded:             "✅ Credential added (Login: %s, Priority: %d)",
+		MsgVenueCredDeleted:           "Credential deleted ✓",
+		MsgVenueCredConfirmDelete:     "Delete credential for *%s*?",
+		MsgVenueCredDuplicateLogin:    "A credential with this login already exists for this venue. Please use a different login:",
+		MsgVenueCredNotFound:          "Credential not found.",
+		MsgVenueCredDisabled:          "Credential management is disabled. Set CREDENTIALS_ENCRYPTION_KEY on the management service to enable it.",
+		BtnVenueCredentials:           "🔑 Credentials",
+		BtnVenueCredAdd:               "+ Add Credential",
+		BtnVenueCredDelete:            "🗑 Delete",
+		BtnVenueCredConfirmDelete:     "Yes, delete",
 
 		// Game message — venue
 		GameVenueLine: "📍 %s",
@@ -739,6 +782,26 @@ var translations = map[Lang]map[string]string{
 		MsgVenueBookingOpensDaysLine: "Buchung öffnet: %d Tage vorher",
 		BtnVenueEditBookingOpensDays: "📆 Buchung öffnet",
 
+		// Venue credentials
+		MsgVenueCredsList:             "*🔑 Zugangsdaten für %s:*\n\n",
+		MsgVenueCredsNone:             "Noch keine Zugangsdaten konfiguriert.",
+		MsgVenueCredRow:               "P:%d  %s  (%s)",
+		MsgVenueCredAskLogin:          "Eversports-Login (E-Mail) für diese Zugangsdaten eingeben:",
+		MsgVenueCredAskPriority:       "Priorität eingeben (Integer, niedriger = höhere Priorität). Empfohlen: %d\nBereits vergeben: %s\nSende - für den empfohlenen Wert:",
+		MsgVenueCredPrioritiesInUse:   "Verwendete Prioritäten: %s",
+		MsgVenueCredDuplicatePriority: "⚠️ Priorität %d wird bereits von einer anderen Zugangsdaten verwendet. Anderen Wert eingeben oder gleichen senden um fortzufahren:",
+		MsgVenueCredAskPassword:       "Passwort eingeben.\n\n⚠️ Deine Nachricht wird sofort aus Sicherheitsgründen gelöscht.",
+		MsgVenueCredAdded:             "✅ Zugangsdaten hinzugefügt (Login: %s, Priorität: %d)",
+		MsgVenueCredDeleted:           "Zugangsdaten gelöscht ✓",
+		MsgVenueCredConfirmDelete:     "Zugangsdaten für *%s* löschen?",
+		MsgVenueCredDuplicateLogin:    "Zugangsdaten mit diesem Login existieren bereits für diesen Ort. Bitte anderen Login verwenden:",
+		MsgVenueCredNotFound:          "Zugangsdaten nicht gefunden.",
+		MsgVenueCredDisabled:          "Zugangsdatenverwaltung ist deaktiviert. CREDENTIALS_ENCRYPTION_KEY setzen um sie zu aktivieren.",
+		BtnVenueCredentials:           "🔑 Zugangsdaten",
+		BtnVenueCredAdd:               "+ Zugangsdaten hinzufügen",
+		BtnVenueCredDelete:            "🗑 Löschen",
+		BtnVenueCredConfirmDelete:     "Ja, löschen",
+
 		GameVenueLine: "📍 %s",
 
 		// Weekdays
@@ -978,6 +1041,26 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAskBookingOpensDays:  "За сколько дней открывается бронирование? (по умолчанию: 14). Отправь - для значения по умолчанию:",
 		MsgVenueBookingOpensDaysLine: "Бронирование: за %d дней",
 		BtnVenueEditBookingOpensDays: "📆 Бронирование",
+
+		// Venue credentials
+		MsgVenueCredsList:             "*🔑 Учётные данные для %s:*\n\n",
+		MsgVenueCredsNone:             "Учётные данные ещё не настроены.",
+		MsgVenueCredRow:               "P:%d  %s  (%s)",
+		MsgVenueCredAskLogin:          "Введи Eversports логин (email) для этих учётных данных:",
+		MsgVenueCredAskPriority:       "Введи приоритет (целое число, меньше = выше приоритет). Рекомендуется: %d\nУже используются: %s\nОтправь - для использования рекомендуемого значения:",
+		MsgVenueCredPrioritiesInUse:   "Используемые приоритеты: %s",
+		MsgVenueCredDuplicatePriority: "⚠️ Приоритет %d уже используется другими учётными данными. Введи другое значение или отправь то же самое для продолжения:",
+		MsgVenueCredAskPassword:       "Введи пароль.\n\n⚠️ Твоё сообщение будет немедленно удалено в целях безопасности.",
+		MsgVenueCredAdded:             "✅ Учётные данные добавлены (Логин: %s, Приоритет: %d)",
+		MsgVenueCredDeleted:           "Учётные данные удалены ✓",
+		MsgVenueCredConfirmDelete:     "Удалить учётные данные для *%s*?",
+		MsgVenueCredDuplicateLogin:    "Учётные данные с этим логином уже существуют для этой площадки. Используй другой логин:",
+		MsgVenueCredNotFound:          "Учётные данные не найдены.",
+		MsgVenueCredDisabled:          "Управление учётными данными отключено. Установи CREDENTIALS_ENCRYPTION_KEY для активации.",
+		BtnVenueCredentials:           "🔑 Учётные данные",
+		BtnVenueCredAdd:               "+ Добавить учётные данные",
+		BtnVenueCredDelete:            "🗑 Удалить",
+		BtnVenueCredConfirmDelete:     "Да, удалить",
 
 		GameVenueLine: "📍 %s",
 

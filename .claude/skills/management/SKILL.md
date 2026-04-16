@@ -114,6 +114,11 @@ GET    /api/v1/venues/{id}                         — getVenue
 PATCH  /api/v1/venues/{id}                         — updateVenue
 DELETE /api/v1/venues/{id}                         — deleteVenue
 
+POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority); 503 when CREDENTIALS_ENCRYPTION_KEY unset
+GET    /api/v1/venues/{id}/credentials             — listCredentials (query: group_id); passwords never returned
+DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id)
+GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
+
 POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
 ```
 
@@ -175,7 +180,9 @@ bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', time
 venues:             id, group_id FK→bot_groups, name, courts, time_slots, address,
                     grace_period_hours DEFAULT 24, game_days, booking_opens_days DEFAULT 14,
                     last_booking_reminder_at, preferred_game_time, last_auto_booking_at,
-                    auto_booking_courts, UNIQUE(group_id, name)
+                    auto_booking_courts, auto_booking_enabled DEFAULT FALSE, UNIQUE(group_id, name)
+venue_credentials:  id, venue_id FK→venues ON DELETE CASCADE, login, enc_password (AES-256-GCM),
+                    priority DEFAULT 0, created_at, UNIQUE(venue_id, login)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
