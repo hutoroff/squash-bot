@@ -360,6 +360,12 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourts), fmt.Sprintf("venue_edit_auto_booking_courts:%d:%d", venue.ID, venue.GroupID)),
 		))
 	}
+	// Only show "Credentials" button when auto-booking is enabled.
+	if venue.AutoBookingEnabled {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredentials), fmt.Sprintf("venue_creds:%d:%d", venue.ID, venue.GroupID)),
+		))
+	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_list:%d", venue.GroupID)),
 	))
@@ -1018,4 +1024,301 @@ func (b *Bot) sendText(chatID int64, text string, keyboard *tgbotapi.InlineKeybo
 		msg.ReplyMarkup = *keyboard
 	}
 	b.api.Send(msg) //nolint:errcheck
+}
+
+// ── Venue credentials management ─────────────────────────────────────────────
+
+// maskLogin returns a masked version of an email login for display.
+// "user@example.com" → "user***@example.com"
+func maskLogin(login string) string {
+	at := strings.Index(login, "@")
+	if at <= 0 {
+		if len(login) <= 4 {
+			return login + "***"
+		}
+		return login[:4] + "***"
+	}
+	local := login[:at]
+	domain := login[at:]
+	if len(local) <= 4 {
+		return local + "***" + domain
+	}
+	return local[:4] + "***" + domain
+}
+
+// handleVenueCredsList shows the credentials list for a venue.
+// Callback: venue_creds:<venueID>:<groupID>
+func (b *Bot) handleVenueCredsList(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil || venue.GroupID != groupID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderVenueCredsList(ctx, cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
+}
+
+func (b *Bot) renderVenueCredsList(ctx context.Context, chatID int64, messageID int, venue *models.Venue, lz *i18n.Localizer) {
+	creds, err := b.client.ListVenueCredentials(ctx, venue.ID, venue.GroupID)
+	if err != nil {
+		slog.Error("renderVenueCredsList: list credentials", "err", err)
+		b.editText(chatID, messageID, lz.T(i18n.MsgVenueCredDisabled), nil)
+		return
+	}
+
+	text := lz.Tf(i18n.MsgVenueCredsList, escapeMarkdown(venue.Name))
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	if len(creds) == 0 {
+		text += lz.T(i18n.MsgVenueCredsNone)
+	} else {
+		for _, c := range creds {
+			dateStr := c.CreatedAt.Format("2006-01-02")
+			label := fmt.Sprintf("P:%d  %s  (%s)", c.Priority, maskLogin(c.Login), dateStr)
+			deleteLabel := lz.T(i18n.BtnVenueCredDelete)
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
+				tgbotapi.NewInlineKeyboardButtonData(deleteLabel, fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
+			))
+		}
+	}
+
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredAdd), fmt.Sprintf("venue_cred_add:%d:%d", venue.ID, venue.GroupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_edit:%d", venue.ID)),
+		),
+	)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.editText(chatID, messageID, text, &keyboard)
+}
+
+// handleVenueCredAdd starts the add-credential wizard.
+// Callback: venue_cred_add:<venueID>:<groupID>
+func (b *Bot) handleVenueCredAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+
+	b.pendingVenueCredAdd.Store(cb.Message.Chat.ID, &venueCredWizard{
+		venueID: venueID,
+		groupID: groupID,
+		step:    venueCredStepLogin,
+	})
+	b.answerCallback(cb.ID, "")
+
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueCredAskLogin))
+	edit.ReplyMarkup = &emptyKeyboard
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// processVenueCredWizard handles free-text input for the credential wizard.
+func (b *Bot) processVenueCredWizard(ctx context.Context, msg *tgbotapi.Message, wiz *venueCredWizard) {
+	lz := b.userLocalizer(msg.From.LanguageCode)
+	text := strings.TrimSpace(msg.Text)
+
+	switch wiz.step {
+	case venueCredStepLogin:
+		if text == "" {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+			return
+		}
+		wiz.login = text
+
+		// Fetch priorities in use to suggest the next one.
+		priorities, err := b.client.ListVenueCredentialPriorities(ctx, wiz.venueID, wiz.groupID)
+		if err != nil {
+			slog.Error("processVenueCredWizard: get priorities", "err", err)
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueCredDisabled))
+			b.pendingVenueCredAdd.Delete(msg.Chat.ID)
+			return
+		}
+
+		suggested := 0
+		if len(priorities) > 0 {
+			suggested = priorities[len(priorities)-1] + 1
+		}
+		wiz.suggested = suggested
+		wiz.inUse = priorities
+		wiz.step = venueCredStepPriority
+		b.pendingVenueCredAdd.Store(msg.Chat.ID, wiz)
+
+		inUseStr := "-"
+		if len(priorities) > 0 {
+			parts := make([]string, len(priorities))
+			for i, p := range priorities {
+				parts[i] = strconv.Itoa(p)
+			}
+			inUseStr = strings.Join(parts, ", ")
+		}
+		b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgVenueCredAskPriority, suggested, inUseStr))
+
+	case venueCredStepPriority:
+		priority := wiz.suggested
+		if text != "-" && text != "" {
+			n, err := strconv.Atoi(text)
+			if err != nil || n < 0 {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			priority = n
+		}
+		wiz.priority = priority
+		wiz.step = venueCredStepPassword
+		b.pendingVenueCredAdd.Store(msg.Chat.ID, wiz)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueCredAskPassword))
+
+	case venueCredStepPassword:
+		// Delete the user's message FIRST — before any other action.
+		b.api.Request(tgbotapi.DeleteMessageConfig{ //nolint:errcheck
+			ChatID:    msg.Chat.ID,
+			MessageID: msg.MessageID,
+		})
+
+		b.pendingVenueCredAdd.Delete(msg.Chat.ID)
+
+		cred, err := b.client.AddVenueCredential(ctx, wiz.venueID, wiz.groupID, wiz.login, text, wiz.priority)
+		if err != nil {
+			slog.Error("processVenueCredWizard: add credential", "err", err)
+			if strings.Contains(err.Error(), "already exists") {
+				b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueCredDuplicateLogin), nil)
+			} else {
+				b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			}
+			return
+		}
+
+		slog.Info("Venue credential added", "venue_id", wiz.venueID, "login", cred.Login, "priority", cred.Priority)
+		b.sendText(msg.Chat.ID, lz.Tf(i18n.MsgVenueCredAdded, maskLogin(cred.Login), cred.Priority), nil)
+
+		// Re-render credentials list.
+		venue, err := b.client.GetVenueByID(ctx, wiz.venueID)
+		if err == nil {
+			b.sendVenueCredsList(ctx, msg.Chat.ID, venue, lz)
+		}
+	}
+}
+
+// sendVenueCredsList sends a new credentials list message (no edit).
+func (b *Bot) sendVenueCredsList(ctx context.Context, chatID int64, venue *models.Venue, lz *i18n.Localizer) {
+	creds, err := b.client.ListVenueCredentials(ctx, venue.ID, venue.GroupID)
+	if err != nil {
+		slog.Error("sendVenueCredsList: list credentials", "err", err)
+		b.sendText(chatID, lz.T(i18n.MsgVenueCredDisabled), nil)
+		return
+	}
+
+	text := lz.Tf(i18n.MsgVenueCredsList, escapeMarkdown(venue.Name))
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	if len(creds) == 0 {
+		text += lz.T(i18n.MsgVenueCredsNone)
+	} else {
+		for _, c := range creds {
+			dateStr := c.CreatedAt.Format("2006-01-02")
+			label := fmt.Sprintf("P:%d  %s  (%s)", c.Priority, maskLogin(c.Login), dateStr)
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
+				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredDelete), fmt.Sprintf("venue_cred_del:%d:%d:%d", c.ID, venue.ID, venue.GroupID)),
+			))
+		}
+	}
+
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredAdd), fmt.Sprintf("venue_cred_add:%d:%d", venue.ID, venue.GroupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_edit:%d", venue.ID)),
+		),
+	)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.sendText(chatID, text, &keyboard)
+}
+
+// handleVenueCredDelConfirm shows delete confirmation.
+// Callback: venue_cred_del:<credID>:<venueID>:<groupID>
+func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, credID, venueID, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+
+	// Find the credential in the list to get the login for the confirmation message.
+	creds, err := b.client.ListVenueCredentials(ctx, venueID, groupID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	login := ""
+	for _, c := range creds {
+		if c.ID == credID {
+			login = maskLogin(c.Login)
+			break
+		}
+	}
+	if login == "" {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCredNotFound))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+
+	text := lz.Tf(i18n.MsgVenueCredConfirmDelete, escapeMarkdown(login))
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredConfirmDelete), fmt.Sprintf("venue_cred_del_ok:%d:%d:%d", credID, venueID, groupID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_creds:%d:%d", venueID, groupID)),
+		),
+	)
+	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, text, &keyboard)
+}
+
+// handleVenueCredDelete executes credential deletion.
+// Callback: venue_cred_del_ok:<credID>:<venueID>:<groupID>
+func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQuery, credID, venueID, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+
+	if err := b.client.DeleteVenueCredential(ctx, venueID, credID, groupID); err != nil {
+		slog.Error("handleVenueCredDelete: delete", "err", err, "cred_id", credID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Venue credential deleted", "cred_id", credID, "venue_id", venueID, "by_user", cb.From.ID)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCredDeleted))
+
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil {
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgVenueNotFound), nil)
+		return
+	}
+	b.renderVenueCredsList(ctx, cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
 }

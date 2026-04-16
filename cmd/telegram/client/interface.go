@@ -44,6 +44,12 @@ type ManagementClient interface {
 	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error)
 	DeleteVenue(ctx context.Context, id, groupID int64) error
 
+	// Venue credentials
+	AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority int) (*models.VenueCredential, error)
+	ListVenueCredentials(ctx context.Context, venueID, groupID int64) ([]*models.VenueCredential, error)
+	DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID int64) error
+	ListVenueCredentialPriorities(ctx context.Context, venueID, groupID int64) ([]int, error)
+
 	// Scheduler
 	TriggerScheduledEvent(ctx context.Context, event string) error
 }

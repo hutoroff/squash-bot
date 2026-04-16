@@ -66,6 +66,7 @@ type Bot struct {
     pendingVenueGameDaysEdit      sync.Map  // chatID → *venueGameDaysEditState
     pendingVenuePreferredTimeEdit sync.Map  // chatID → *venuePreferredTimeEditState
     pendingGroupVenuePick         sync.Map  // chatID → *groupVenuePickState
+    pendingVenueCredAdd           sync.Map  // chatID → *venueCredWizard
     handlerSem                    chan struct{}  // semaphore, maxConcurrentHandlers=50
     callbackRouter                map[string]callbackHandler
 }
@@ -173,6 +174,13 @@ type venueEditState struct {
 Game-days uses a separate toggle state: `pendingVenueGameDaysEdit` (chatID → `*venueGameDaysEditState`)
 Preferred-time uses: `pendingVenuePreferredTimeEdit` (chatID → `*venuePreferredTimeEditState`)
 
+### Venue Credential Wizard (`venue_handlers.go`)
+State: `pendingVenueCredAdd sync.Map` (chatID → `*venueCredWizard`)
+
+Steps: `venueCredStepLogin` → `venueCredStepPriority` → `venueCredStepPassword` (password message deleted immediately before any API call)
+
+The "🔑 Credentials" button in the venue edit menu is only shown when `venue.AutoBookingEnabled = true`. Credentials button requires `CREDENTIALS_ENCRYPTION_KEY` on the management service; omitting it returns 503. Callbacks: `venue_creds:{venueID}:{groupID}`, `venue_cred_add:{venueID}:{groupID}`, `venue_cred_del:{credID}:{venueID}:{groupID}`, `venue_cred_del_ok:{credID}:{venueID}:{groupID}`.
+
 ### Courts Edit (`game_manage_handlers.go`)
 State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleState`)
 
@@ -180,7 +188,7 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 
 ## ManagementClient interface (`client/interface.go`)
 
-37 methods across 5 groups. `*client.Client` satisfies this structurally — no explicit declaration.
+41 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
 
 ```
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
@@ -190,6 +198,8 @@ Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
                 SetGroupLanguage, SetGroupTimezone
 Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue
+VenueCredentials: AddVenueCredential, ListVenueCredentials, DeleteVenueCredential,
+                  ListVenueCredentialPriorities
 Scheduler:      TriggerScheduledEvent
 ```
 

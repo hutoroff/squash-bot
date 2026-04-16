@@ -34,9 +34,9 @@ Key directories:
 - `cmd/web` — web UI (`web`) entry point
 - `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig` / `BookingConfig` / `WebConfig`)
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
-- `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, PlayerGame)
+- `internal/models` — core domain models (Game, Player, GameParticipation, GuestParticipation, Group, Venue, VenueCredential, PlayerGame)
 - `cmd/management/api` — HTTP handlers for the management service REST API
-- `cmd/management/service` — business logic layer; defines repository and Telegram interfaces (`TelegramAPI`, `Notifier`, `GameRepository`, …); four focused job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; `ParticipationService` fires async Telegram edits via the injected `Notifier`; shared timezone/language helpers in `group_resolver.go`
+- `cmd/management/service` — business logic layer; defines repository and Telegram interfaces (`TelegramAPI`, `Notifier`, `GameRepository`, `VenueCredentialRepository`, …); four focused job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; `ParticipationService` fires async Telegram edits via the injected `Notifier`; `VenueCredentialService` manages AES-256-GCM encrypted per-venue booking credentials; `Encryptor` (encryptor.go) provides `Encrypt`/`Decrypt` using `CREDENTIALS_ENCRYPTION_KEY`; shared timezone/language helpers in `group_resolver.go`
 - `cmd/management/storage` — SQL repository implementations satisfying the interfaces defined in the service package
 - `cmd/telegram/telegram` — bot core (`bot.go`, `handlers.go`), slash commands (`commands.go`), message formatting (`formatter.go`), and domain-focused handler files: `participation_handlers.go`, `game_manage_handlers.go`, `newgame_handlers.go`, `settings_handlers.go`, `venue_handlers.go`; callback routing via `callback_router.go` (map-based dispatch replacing the original if-chain)
 - `cmd/telegram/client` — typed HTTP client used by the telegram bot; `interface.go` defines `ManagementClient` (the interface `Bot` depends on) so tests can inject mocks without a running HTTP server
@@ -70,7 +70,7 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- The management service requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`.
+- The management service requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`. `CREDENTIALS_ENCRYPTION_KEY` (64 hex chars = 32 bytes) is optional but required to enable the venue credential management API; omitting it causes those endpoints to return 503.
 - The telegram bot requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
 - The booking service requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
 - The web service requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_NAME`, `MANAGEMENT_SERVICE_URL`, `INTERNAL_API_SECRET`, and `JWT_SECRET`. Serves the React SPA on port 8082. The frontend is embedded in the binary; build it first with `go generate ./web/...`.

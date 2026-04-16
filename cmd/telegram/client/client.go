@@ -355,6 +355,45 @@ func (c *Client) DeleteVenue(ctx context.Context, id, groupID int64) error {
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// ── Venue credentials ─────────────────────────────────────────────────────────
+
+func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority int) (*models.VenueCredential, error) {
+	body := map[string]any{
+		"group_id": groupID,
+		"login":    login,
+		"password": password,
+		"priority": priority,
+	}
+	var cred models.VenueCredential
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/venues/%d/credentials", venueID), body, &cred); err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+func (c *Client) ListVenueCredentials(ctx context.Context, venueID, groupID int64) ([]*models.VenueCredential, error) {
+	path := fmt.Sprintf("/api/v1/venues/%d/credentials?group_id=%d", venueID, groupID)
+	var creds []*models.VenueCredential
+	if err := c.do(ctx, http.MethodGet, path, nil, &creds); err != nil {
+		return nil, err
+	}
+	return creds, nil
+}
+
+func (c *Client) DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID int64) error {
+	path := fmt.Sprintf("/api/v1/venues/%d/credentials/%d?group_id=%d", venueID, credentialID, groupID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (c *Client) ListVenueCredentialPriorities(ctx context.Context, venueID, groupID int64) ([]int, error) {
+	path := fmt.Sprintf("/api/v1/venues/%d/credentials/priorities?group_id=%d", venueID, groupID)
+	var priorities []int
+	if err := c.do(ctx, http.MethodGet, path, nil, &priorities); err != nil {
+		return nil, err
+	}
+	return priorities, nil
+}
+
 // ── Version ───────────────────────────────────────────────────────────────────
 
 // GetVersion returns the version string reported by the management service.

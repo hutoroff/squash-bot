@@ -134,6 +134,71 @@ func TestVenueWizardStep_BookingOpensDays_IsAfterAutoBookingCourts(t *testing.T)
 	}
 }
 
+// ── maskLogin ─────────────────────────────────────────────────────────────────
+
+func TestMaskLogin_StandardEmail(t *testing.T) {
+	got := maskLogin("user@example.com")
+	want := "user***@example.com"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "user@example.com", got, want)
+	}
+}
+
+func TestMaskLogin_LongLocalPart(t *testing.T) {
+	got := maskLogin("verylonguser@domain.org")
+	want := "very***@domain.org"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "verylonguser@domain.org", got, want)
+	}
+}
+
+func TestMaskLogin_ShortLocalPart(t *testing.T) {
+	// Local part ≤ 4 chars: keep whole local, add ***
+	got := maskLogin("ab@x.com")
+	want := "ab***@x.com"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "ab@x.com", got, want)
+	}
+}
+
+func TestMaskLogin_ExactlyFourCharLocalPart(t *testing.T) {
+	got := maskLogin("abcd@x.com")
+	want := "abcd***@x.com"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "abcd@x.com", got, want)
+	}
+}
+
+func TestMaskLogin_NoAtSign_ShortInput(t *testing.T) {
+	// No @ and short: append *** directly
+	got := maskLogin("hi")
+	want := "hi***"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "hi", got, want)
+	}
+}
+
+func TestMaskLogin_NoAtSign_LongInput(t *testing.T) {
+	got := maskLogin("plaintext")
+	want := "plai***"
+	if got != want {
+		t.Errorf("maskLogin(%q) = %q, want %q", "plaintext", got, want)
+	}
+}
+
+// ── venueCredStep ordering ────────────────────────────────────────────────────
+
+func TestVenueCredStep_PasswordIsLast(t *testing.T) {
+	if venueCredStepPassword <= venueCredStepPriority {
+		t.Errorf("venueCredStepPassword (%d) must come after venueCredStepPriority (%d)",
+			venueCredStepPassword, venueCredStepPriority)
+	}
+	if venueCredStepPriority <= venueCredStepLogin {
+		t.Errorf("venueCredStepPriority (%d) must come after venueCredStepLogin (%d)",
+			venueCredStepPriority, venueCredStepLogin)
+	}
+}
+
 // ── processVenueWizard text input at venueStepAutoBookingEnabled ──────────────
 
 // TestProcessVenueWizard_TextAtAutoBookingEnabledStep verifies that typing text

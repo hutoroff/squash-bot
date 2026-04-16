@@ -35,6 +35,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.pendingVenueGameDaysEdit.Delete(msg.Chat.ID)
 		b.pendingVenuePreferredTimeEdit.Delete(msg.Chat.ID)
 		b.pendingGroupVenuePick.Delete(msg.Chat.ID)
+		b.pendingVenueCredAdd.Delete(msg.Chat.ID)
 		b.handleCommand(ctx, msg)
 		return
 	}
@@ -55,6 +56,10 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		if raw, ok := b.pendingVenueEdit.Load(msg.Chat.ID); ok {
 			b.processVenueEdit(ctx, msg, raw.(*venueEditState))
+			return
+		}
+		if raw, ok := b.pendingVenueCredAdd.Load(msg.Chat.ID); ok {
+			b.processVenueCredWizard(ctx, msg, raw.(*venueCredWizard))
 			return
 		}
 		// Non-command, non-wizard private messages are ignored.

@@ -58,6 +58,7 @@ Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`):
 - `bot_groups`: chat_id PK, title, bot_is_admin, language (VARCHAR(5) DEFAULT 'en'), timezone (VARCHAR(64) DEFAULT 'UTC'), added_at
 - `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), last_auto_booking_at (TIMESTAMPTZ nullable), auto_booking_courts (TEXT DEFAULT ''), auto_booking_enabled (BOOLEAN DEFAULT FALSE), created_at, UNIQUE(group_id, name)
 - `auto_booking_results`: id, venue_id (FK→venues ON DELETE CASCADE), game_date (DATE), courts (comma-separated court numbers), courts_count (INT), created_at, UNIQUE(venue_id, game_date)
+- `venue_credentials`: id, venue_id (FK→venues ON DELETE CASCADE), login (TEXT NOT NULL), enc_password (TEXT NOT NULL, AES-256-GCM encrypted, never returned by API), priority (INT NOT NULL DEFAULT 0), created_at, UNIQUE(venue_id, login)
 
 ## Development Commands
 
@@ -168,8 +169,9 @@ Works in **private chat only**.
 1. Admin sends `/venues` → shows venue list for their group (or group picker if multiple groups).
 2. Each venue row shows "Edit" and "Delete" buttons; "Add Venue" button at the bottom.
 3. **Add venue wizard**: name → courts (comma-separated) → time slots (comma-separated HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if no time_slots entered) → address (optional, `-` to skip) → game days (toggle inline keyboard; tap days to toggle, press "✓ Confirm" to proceed — confirming with nothing selected skips the field) → grace period hours (integer or `-` for default 24) → **auto-booking enabled** (inline "Enable"/"Disable" buttons; default disabled) → auto-booking courts (ordered subset or `-`; only shown when auto-booking was enabled) → booking opens days (integer or `-` for default 14) → venue created.
-4. **Edit venue**: clicking a venue opens an edit menu showing current values and buttons for each field. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens): admin sends new value as a message. Inline-keyboard fields: Game Days uses the toggle keyboard (tap days + Confirm); Preferred Time shows buttons for each configured time slot plus a "✕ No preference" option.
+4. **Edit venue**: clicking a venue opens an edit menu showing current values and buttons for each field. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens): admin sends new value as a message. Inline-keyboard fields: Game Days uses the toggle keyboard (tap days + Confirm); Preferred Time shows buttons for each configured time slot plus a "✕ No preference" option. When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears (see below).
 5. **Delete venue**: two-step confirmation; linked games retain their `venue_id` as NULL (ON DELETE SET NULL).
+6. **Credential management**: Tapping "🔑 Credentials" shows a list of stored credentials (masked login, priority) and "Add" / "Delete" buttons. The "🔑 Credentials" button is only shown when the venue has `auto_booking_enabled = true`; disabling auto-booking hides the button but never deletes credentials. Credentials require `CREDENTIALS_ENCRYPTION_KEY` to be set on the management service. The add-credential wizard collects: login (email) → priority (integer; current in-use values are shown) → password (message deleted immediately for security). Passwords are encrypted with AES-256-GCM before storage and are never returned by the API or bot. Deletion requires a two-step confirmation.
 
 **Venue fields:**
 - `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder time = `game_date - (grace_period_hours + 6) hours`.
@@ -179,8 +181,8 @@ Works in **private chat only**.
 - `auto_booking_enabled`: whether automatic court booking is enabled for this venue (default false). `RunAutoBooking` skips venues where this is false. Toggled via `venue_toggle_autobooking:<venueID>:<groupID>` callback or set during venue creation wizard.
 - `auto_booking_courts`: ordered comma-separated court numbers (subset of `courts`) that `RunAutoBooking` will attempt to book, in declared priority order. Empty means any eligible free court is booked in API response order. Validated: each number must be present in `courts`. Only editable (via `venue_edit_auto_booking_courts` button) when `auto_booking_enabled = true`. Set in venue creation wizard only if auto-booking was enabled at the enable/disable step. **Matching is done by name-extracted number**: `filterFreeCourts` calls `extractCourtNumber("Court 7") → 7` and matches that against the numbers stored in `courts`/`auto_booking_courts`. This avoids the Eversports facility-specific ID mismatch (e.g. Eversports ID `77385` vs user label `1`). Occupancy, by contrast, is checked by Eversports numeric court ID (`sl.Court` from `ListMatches` vs `strconv.Atoi(c.ID)` from `ListCourts`). If no courts from `ListCourts` match the name-number set in `courts`, `filterFreeCourts` falls back to all free courts in API response order.
 
-Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time/auto_booking_courts/booking_opens_days:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`, `venue_wiz_autobooking:{enable|disable}`, `venue_toggle_autobooking:{venueID}:{groupID}`.
-State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`), `pendingVenuePreferredTimeEdit sync.Map` (chatID → `*venuePreferredTimeEditState`).
+Callbacks: `venue_list:{groupID}`, `venue_add:{groupID}`, `venue_edit:{venueID}`, `venue_edit_name/courts/slots/addr/gamedays/graceperiod/preferred_time/auto_booking_courts/booking_opens_days:{venueID}:{groupID}`, `venue_delete:{venueID}:{groupID}`, `venue_delete_ok:{venueID}:{groupID}`, `venue_day_toggle:{dayNum}`, `venue_day_confirm:_`, `venue_wiz_ptime:{slot|_skip}`, `venue_ptime_set:{venueID}:{slot|_clear}`, `venue_wiz_autobooking:{enable|disable}`, `venue_toggle_autobooking:{venueID}:{groupID}`, `venue_creds:{venueID}:{groupID}`, `venue_cred_add:{venueID}:{groupID}`, `venue_cred_del:{credID}:{venueID}:{groupID}`, `venue_cred_del_ok:{credID}:{venueID}:{groupID}`.
+State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`), `pendingVenueEdit sync.Map` (chatID → `*venueEditState`), `pendingVenueGameDaysEdit sync.Map` (chatID → `*venueGameDaysEditState`), `pendingVenuePreferredTimeEdit sync.Map` (chatID → `*venuePreferredTimeEditState`), `pendingVenueCredAdd sync.Map` (chatID → `*venueCredWizard` — steps: `venueCredStepLogin` → `venueCredStepPriority` → `venueCredStepPassword`).
 
 ### New Game Wizard (`/newGame`)
 Works in **private chat only**. Group @mentions are redirected to private chat.
@@ -330,6 +332,9 @@ SPORTS_BOOKING_SERVICE_URL=  # optional; e.g. http://booking:8081
                              # and RunAutoBooking auto-books courts at midnight when booking opens
 AUTO_BOOKING_COURTS_COUNT=3  # optional; courts to auto-book at midnight (default 3)
                              # requires SPORTS_BOOKING_SERVICE_URL
+CREDENTIALS_ENCRYPTION_KEY=  # optional; 64 hex chars (32 bytes) for AES-256-GCM encryption of
+                             # venue booking credentials at rest; generate with: openssl rand -hex 32
+                             # when unset, credential management API returns 503
 ```
 
 **`telegram`:**

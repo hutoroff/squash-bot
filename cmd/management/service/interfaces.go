@@ -81,6 +81,21 @@ type AutoBookingResultRepository interface {
 	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) (*models.AutoBookingResult, error)
 }
 
+// VenueCredentialRepository is the data access interface for venue booking credentials.
+// Passwords are stored encrypted; this interface never exposes raw passwords.
+type VenueCredentialRepository interface {
+	// Create inserts a new credential. enc_password must already be encrypted.
+	Create(ctx context.Context, venueID int64, login, encPassword string, priority int) (*models.VenueCredential, error)
+	// ListByVenueID returns all credentials for a venue ordered by priority ASC.
+	ListByVenueID(ctx context.Context, venueID int64) ([]*models.VenueCredential, error)
+	// Delete removes a credential scoped to venueID (prevents cross-venue deletions).
+	Delete(ctx context.Context, id, venueID int64) error
+	// ExistsByLogin reports whether a credential with the given login already exists for the venue.
+	ExistsByLogin(ctx context.Context, venueID int64, login string) (bool, error)
+	// PrioritiesInUse returns all priority values currently in use for the venue.
+	PrioritiesInUse(ctx context.Context, venueID int64) ([]int, error)
+}
+
 // VenueRepository is the data access interface for venues.
 type VenueRepository interface {
 	Create(ctx context.Context, venue *models.Venue) (*models.Venue, error)

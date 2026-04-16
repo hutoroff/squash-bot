@@ -14,20 +14,22 @@ import (
 
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
-	gameService  *service.GameService
-	partService  *service.ParticipationService
-	venueService *service.VenueService
-	groupRepo    *storage.GroupRepo
-	playerRepo   *storage.PlayerRepo
-	scheduler    *service.Scheduler
-	logger       *slog.Logger
-	version      string
+	gameService      *service.GameService
+	partService      *service.ParticipationService
+	venueService     *service.VenueService
+	venueCredService *service.VenueCredentialService
+	groupRepo        *storage.GroupRepo
+	playerRepo       *storage.PlayerRepo
+	scheduler        *service.Scheduler
+	logger           *slog.Logger
+	version          string
 }
 
 func NewHandler(
 	gameService *service.GameService,
 	partService *service.ParticipationService,
 	venueService *service.VenueService,
+	venueCredService *service.VenueCredentialService,
 	groupRepo *storage.GroupRepo,
 	playerRepo *storage.PlayerRepo,
 	scheduler *service.Scheduler,
@@ -35,14 +37,15 @@ func NewHandler(
 	version string,
 ) *Handler {
 	return &Handler{
-		gameService:  gameService,
-		partService:  partService,
-		venueService: venueService,
-		groupRepo:    groupRepo,
-		playerRepo:   playerRepo,
-		scheduler:    scheduler,
-		logger:       logger,
-		version:      version,
+		gameService:      gameService,
+		partService:      partService,
+		venueService:     venueService,
+		venueCredService: venueCredService,
+		groupRepo:        groupRepo,
+		playerRepo:       playerRepo,
+		scheduler:        scheduler,
+		logger:           logger,
+		version:          version,
 	}
 }
 
@@ -85,6 +88,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/venues/{id}", h.getVenue)
 	mux.HandleFunc("PATCH /api/v1/venues/{id}", h.updateVenue)
 	mux.HandleFunc("DELETE /api/v1/venues/{id}", h.deleteVenue)
+
+	// Venue credentials
+	mux.HandleFunc("POST /api/v1/venues/{id}/credentials", h.addCredential)
+	mux.HandleFunc("GET /api/v1/venues/{id}/credentials", h.listCredentials)
+	mux.HandleFunc("DELETE /api/v1/venues/{id}/credentials/{cid}", h.removeCredential)
+	mux.HandleFunc("GET /api/v1/venues/{id}/credentials/priorities", h.listCredentialPriorities)
 
 	// Scheduler triggers
 	mux.HandleFunc("POST /api/v1/scheduler/trigger/{event}", h.triggerScheduler)

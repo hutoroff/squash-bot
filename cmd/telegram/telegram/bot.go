@@ -148,6 +148,27 @@ type manageCourtsToggleState struct {
 	selectedCourts map[string]bool
 }
 
+// venueCredStep tracks which input the credential-add wizard is waiting for.
+type venueCredStep int
+
+const (
+	venueCredStepLogin    venueCredStep = iota // waiting for login (email)
+	venueCredStepPriority                      // waiting for priority integer
+	venueCredStepPassword                      // waiting for password (deleted immediately)
+)
+
+// venueCredWizard holds state for the add-credential multi-step dialog.
+// Keyed by private chat ID in pendingVenueCredAdd.
+type venueCredWizard struct {
+	venueID   int64
+	groupID   int64
+	login     string
+	priority  int
+	step      venueCredStep
+	suggested int   // suggested next priority (fetched after login step)
+	inUse     []int // priorities already in use
+}
+
 // maxConcurrentHandlers caps the number of update goroutines running in parallel.
 // This prevents memory exhaustion if Telegram delivers a burst of updates while
 // the DB or network is slow.
@@ -168,6 +189,7 @@ type Bot struct {
 	pendingVenueGameDaysEdit      sync.Map      // map[chatID int64]*venueGameDaysEditState
 	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
 	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
+	pendingVenueCredAdd           sync.Map      // map[chatID int64]*venueCredWizard
 	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
 	callbackRouter                map[string]callbackHandler
 }

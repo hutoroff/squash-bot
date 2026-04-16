@@ -91,6 +91,7 @@ In private chat with the bot, run `/venues`. You can add one or more venues for 
 - **Auto-booking courts** — ordered subset of courts tried first when auto-booking at midnight (priority order). Leave blank to book any available court. Priority selection only takes effect when the stored IDs match the Eversports facility court IDs; otherwise the bot books any available court at the preferred time. To find the correct IDs, call `GET /api/v1/eversports/courts` on the booking service.
 - **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
 - **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM and used by auto-booking to compute the target date.
+- **Booking credentials** — per-venue login/password pairs for the booking platform. The "🔑 Credentials" button appears in the venue edit menu only when auto-booking is enabled. Multiple credentials can be stored with user-assigned priority (lower = higher priority). Passwords are encrypted at rest (AES-256-GCM); they cannot be viewed or edited after creation — only added or deleted. The `CREDENTIALS_ENCRYPTION_KEY` environment variable must be set on the management service to enable this feature.
 
 **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
 
@@ -363,6 +364,7 @@ Guest spots count toward capacity.
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `AUTO_BOOKING_COURTS_COUNT`  | No | `3`              | Number of courts to book automatically at midnight; requires `SPORTS_BOOKING_SERVICE_URL` |
+| `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 
 ### telegram
 
