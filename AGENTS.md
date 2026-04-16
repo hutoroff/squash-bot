@@ -70,7 +70,7 @@ Key directories:
 ## Data And Config Notes
 
 - Main configuration is environment-variable based via `.env`.
-- The management service requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`. `CREDENTIALS_ENCRYPTION_KEY` (64 hex chars = 32 bytes) is optional but required to enable the venue credential management API; omitting it causes those endpoints to return 503.
+- The management service requires `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, and `INTERNAL_API_SECRET`. `CREDENTIALS_ENCRYPTION_KEY` (64 hex chars = 32 bytes) is optional but required to enable the venue credential management API; omitting it causes those endpoints to return 503. `CREDENTIAL_ERROR_COOLDOWN` (Go duration, default `24h`) controls how long a credential is excluded from auto-booking after a booking error.
 - The telegram bot requires `TELEGRAM_BOT_TOKEN`, `MANAGEMENT_SERVICE_URL`, and `INTERNAL_API_SECRET`.
 - The booking service requires `EVERSPORTS_EMAIL`, `EVERSPORTS_PASSWORD`, and `INTERNAL_API_SECRET`. It has no database; session state is held in an in-memory cookie jar.
 - The web service requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_NAME`, `MANAGEMENT_SERVICE_URL`, `INTERNAL_API_SECRET`, and `JWT_SECRET`. Serves the React SPA on port 8082. The frontend is embedded in the binary; build it first with `go generate ./web/...`.

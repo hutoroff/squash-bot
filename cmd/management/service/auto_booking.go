@@ -25,10 +25,12 @@ type AutoBookingJob struct {
 	groupRepo             GroupRepository
 	venueRepo             VenueRepository
 	bookingClient         BookingServiceClient
+	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
 	loc                   *time.Location
 	logger                *slog.Logger
-	courtsCount           int // number of courts to book automatically
+	courtsCount           int // total courts to book per venue
+	credCooldown          time.Duration
 }
 
 func NewAutoBookingJob(
@@ -36,20 +38,24 @@ func NewAutoBookingJob(
 	groupRepo GroupRepository,
 	venueRepo VenueRepository,
 	bookingClient BookingServiceClient,
+	credService *VenueCredentialService,
 	autoBookingResultRepo AutoBookingResultRepository,
 	loc *time.Location,
 	logger *slog.Logger,
 	courtsCount int,
+	credCooldown time.Duration,
 ) *AutoBookingJob {
 	return &AutoBookingJob{
 		api:                   api,
 		groupRepo:             groupRepo,
 		venueRepo:             venueRepo,
 		bookingClient:         bookingClient,
+		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
 		loc:                   loc,
 		logger:                logger,
 		courtsCount:           courtsCount,
+		credCooldown:          credCooldown,
 	}
 }
 
@@ -251,34 +257,74 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		}
 	}
 
+	// ── Credential-rotation booking loop ─────────────────────────────────────
+
+	// Fetch usable credentials (skips those within the error cooldown window).
+	creds, err := j.credService.ListForBooking(ctx, venue.ID, j.credCooldown)
+	if err != nil {
+		j.logger.Error("auto-booking: list credentials", "venue_id", venue.ID, "err", err)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
+		return false
+	}
+
+	// EARLY BAIL-OUT: no usable credentials → notify and stop immediately.
+	if len(creds) == 0 {
+		j.logger.Warn("auto-booking: no usable credentials", "venue_id", venue.ID)
+		j.notifyNoCredentials(ctx, chatID, venue, lz)
+		return false
+	}
+
+	remaining := j.courtsCount
 	bookedCount := 0
 	var bookedCourtLabels []string
-	for _, courtUUID := range available {
-		if bookedCount >= j.courtsCount {
+
+	for _, cred := range creds {
+		if remaining == 0 || len(available) == 0 {
 			break
 		}
-		j.logger.Debug("auto-booking: attempting court",
-			"venue_id", venue.ID,
-			"court_uuid", courtUUID,
-			"start", startRFC,
-			"end", endRFC,
-		)
-		if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC); err != nil {
-			j.logger.Error("auto-booking: book court failed",
-				"venue_id", venue.ID, "court_uuid", courtUUID,
-				"start", startRFC, "end", endRFC, "err", err)
-			continue
+		courtLimit := cred.MaxCourts
+		if courtLimit > remaining {
+			courtLimit = remaining
 		}
-		j.logger.Info("auto-booking: court booked",
-			"venue_id", venue.ID, "court_uuid", courtUUID, "date", gameDateStr, "time", venue.PreferredGameTime)
-		bookedCount++
-		if label, ok := uuidToCourtNum[courtUUID]; ok {
-			bookedCourtLabels = append(bookedCourtLabels, label)
+		for i := 0; i < courtLimit && len(available) > 0; i++ {
+			courtUUID := available[0]
+			available = available[1:]
+
+			j.logger.Debug("auto-booking: attempting court",
+				"venue_id", venue.ID,
+				"court_uuid", courtUUID,
+				"login", cred.Login,
+				"start", startRFC,
+				"end", endRFC,
+			)
+			if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC, cred.Login, cred.Password); err != nil {
+				j.logger.Error("auto-booking: book court failed",
+					"venue_id", venue.ID, "court_uuid", courtUUID, "login", cred.Login,
+					"start", startRFC, "end", endRFC, "err", err)
+				if markErr := j.credService.MarkError(ctx, cred.ID); markErr != nil {
+					j.logger.Error("auto-booking: mark credential error", "cred_id", cred.ID, "err", markErr)
+				}
+				j.notifyCredentialError(ctx, chatID, venue, cred.Login, err, j.credCooldown, lz)
+				// Put the court back so the next credential can try it.
+				available = append([]string{courtUUID}, available...)
+				break
+			}
+			j.logger.Info("auto-booking: court booked",
+				"venue_id", venue.ID, "court_uuid", courtUUID, "login", cred.Login,
+				"date", gameDateStr, "time", venue.PreferredGameTime)
+			bookedCount++
+			remaining--
+			if label, ok := uuidToCourtNum[courtUUID]; ok {
+				bookedCourtLabels = append(bookedCourtLabels, label)
+			}
 		}
 	}
 
+	if remaining > 0 && bookedCount < j.courtsCount {
+		j.notifyCredentialsExhausted(ctx, chatID, venue, bookedCount, j.courtsCount, lz)
+	}
+
 	if bookedCount == 0 {
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
 		return false
 	}
 
@@ -295,11 +341,6 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 
 	// Notify admins about the successful auto-booking via silent DM.
 	j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, lz)
-
-	// If fewer courts were booked than requested, notify admins about the shortfall.
-	if bookedCount < j.courtsCount {
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, bookedCount, j.courtsCount, lz)
-	}
 
 	return true
 }
@@ -373,6 +414,102 @@ func (j *AutoBookingJob) notifyAutoBookingFailure(
 			continue
 		}
 		j.logger.Info("auto-booking: failure DM sent", "user_id", admin.User.ID, "venue_id", venue.ID)
+	}
+}
+
+// notifyNoCredentials DMs all group admins WITH notification when no usable credentials exist.
+func (j *AutoBookingJob) notifyNoCredentials(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+	text := lz.Tf(i18n.SchedAutoBookingNoCredentials, venue.Name)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.ParseMode = "Markdown"
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send no-credentials DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+		}
+	}
+}
+
+// notifyCredentialError DMs all group admins WITH notification when a credential fails.
+func (j *AutoBookingJob) notifyCredentialError(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	login string,
+	bookingErr error,
+	cooldown time.Duration,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+	text := lz.Tf(i18n.SchedAutoBookingCredError, venue.Name, login, bookingErr.Error(), cooldown.String())
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.ParseMode = "Markdown"
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send credential-error DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+		}
+	}
+}
+
+// notifyCredentialsExhausted DMs all group admins silently when all credentials
+// have been tried but courts remain unbooked.
+func (j *AutoBookingJob) notifyCredentialsExhausted(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	bookedCount, targetCount int,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators", "chat_id", chatID, "err", err)
+		return
+	}
+	text := lz.Tf(i18n.SchedAutoBookingCredExhausted, venue.Name, bookedCount, targetCount)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.ParseMode = "Markdown"
+		msg.DisableNotification = true
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send credentials-exhausted DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+		}
 	}
 }
 

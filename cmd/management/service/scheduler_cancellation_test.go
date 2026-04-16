@@ -42,7 +42,7 @@ func (m *mockBookingClient) ListCourts(_ context.Context, _ string) ([]BookingCo
 	return m.courts, nil
 }
 
-func (m *mockBookingClient) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+func (m *mockBookingClient) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
 	return nil, nil
 }
 
@@ -288,7 +288,7 @@ func (m *mockBookingClientCustomCancel) ListCourts(_ context.Context, _ string) 
 	return nil, nil
 }
 
-func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
 	return nil, nil
 }
 
@@ -500,7 +500,7 @@ func (r *recordingBookingClient) CancelMatch(_ context.Context, _ string) error 
 func (r *recordingBookingClient) ListCourts(_ context.Context, _ string) ([]BookingCourt, error) {
 	return nil, nil
 }
-func (r *recordingBookingClient) BookMatch(_ context.Context, _, _, _ string) (*BookMatchResult, error) {
+func (r *recordingBookingClient) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
 	return nil, nil
 }
 

@@ -412,3 +412,192 @@ func TestNotifyAutoBookingSuccess_GetAdminsFails_NoSend(t *testing.T) {
 		t.Errorf("expected no Send calls when GetChatAdministrators fails, got %d", len(api.sendCalls))
 	}
 }
+
+// ── notifyNoCredentials ───────────────────────────────────────────────────────
+
+func TestNotifyNoCredentials_SendsAudibleDMToHumanAdmins(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{
+			makeChatMember(101, false),
+			makeChatMember(200, true), // bot — must be skipped
+		},
+	}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyNoCredentials(context.Background(), -1001, venue, lz)
+
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 Send call (human only), got %d", len(api.sendCalls))
+	}
+	msg, ok := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected MessageConfig, got %T", api.sendCalls[0])
+	}
+	if msg.DisableNotification {
+		t.Error("notifyNoCredentials should NOT disable notification (sound must be on)")
+	}
+	if msg.ChatID != 101 {
+		t.Errorf("expected DM to user 101, got ChatID %d", msg.ChatID)
+	}
+}
+
+// ── notifyCredentialError ─────────────────────────────────────────────────────
+
+func TestNotifyCredentialError_SendsAudibleDMToHumanAdmins(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{
+			makeChatMember(101, false),
+			makeChatMember(200, true), // bot — must be skipped
+		},
+	}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyCredentialError(context.Background(), -1001, venue, "user@example.com", errors.New("invalid credentials"), 24*time.Hour, lz)
+
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 Send call (human only), got %d", len(api.sendCalls))
+	}
+	msg, ok := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected MessageConfig, got %T", api.sendCalls[0])
+	}
+	if msg.DisableNotification {
+		t.Error("notifyCredentialError should NOT disable notification (sound must be on)")
+	}
+}
+
+// ── notifyCredentialsExhausted ────────────────────────────────────────────────
+
+func TestNotifyCredentialsExhausted_SendsSilentDMToHumanAdmins(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{
+			makeChatMember(101, false),
+			makeChatMember(200, true), // bot — must be skipped
+		},
+	}
+	job := &AutoBookingJob{api: api, logger: noopLogger()}
+	venue := &models.Venue{ID: 1, Name: "Test Venue"}
+	lz := i18n.New(i18n.En)
+
+	job.notifyCredentialsExhausted(context.Background(), -1001, venue, 1, 3, lz)
+
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 Send call (human only), got %d", len(api.sendCalls))
+	}
+	msg, ok := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected MessageConfig, got %T", api.sendCalls[0])
+	}
+	if !msg.DisableNotification {
+		t.Error("notifyCredentialsExhausted should disable notification (silent)")
+	}
+}
+
+// ── processAutoBookingForVenue credential paths ───────────────────────────────
+
+// newCredServiceForTest builds a VenueCredentialService backed by a stubCredRepo
+// pre-populated with the given raw credentials (passwords are pre-encrypted).
+func newCredServiceForTest(creds []*models.VenueCredential) *VenueCredentialService {
+	enc, _ := NewEncryptor(testHexKey)
+	return NewVenueCredentialService(&stubCredRepo{creds: creds}, &stubVenueRepo{}, enc)
+}
+
+func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{makeChatMember(101, false)},
+	}
+	client := &mockBookingClient{
+		courts: []BookingCourt{
+			{ID: "1", UUID: "uuid-1", Name: "Court 1"},
+		},
+		slots: []BookingSlot{}, // Court 1 is free
+	}
+	// credService with no credentials stored
+	credSvc := newCredServiceForTest(nil)
+
+	job := &AutoBookingJob{
+		api:           api,
+		bookingClient: client,
+		credService:   credSvc,
+		credCooldown:  24 * time.Hour,
+		courtsCount:   1,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if got {
+		t.Error("expected false when no credentials are available")
+	}
+	// Must send a notification (notifyNoCredentials, audible)
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 admin DM for no-credentials, got %d", len(api.sendCalls))
+	}
+	msg, ok := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected MessageConfig, got %T", api.sendCalls[0])
+	}
+	if msg.DisableNotification {
+		t.Error("no-credentials notification must have sound on")
+	}
+}
+
+func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsFalse(t *testing.T) {
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{makeChatMember(101, false)},
+	}
+	client := &mockBookingClient{
+		courts: []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+	}
+
+	// Credential with last_error_at 1 hour ago — within 24h cooldown.
+	recent := time.Now().Add(-1 * time.Hour)
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("secret")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3, LastErrorAt: &recent},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	job := &AutoBookingJob{
+		api:           api,
+		bookingClient: client,
+		credService:   credSvc,
+		credCooldown:  24 * time.Hour,
+		courtsCount:   1,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if got {
+		t.Error("expected false when all credentials are in cooldown")
+	}
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 admin DM (no-credentials), got %d", len(api.sendCalls))
+	}
+	msg := api.sendCalls[0].(tgbotapi.MessageConfig)
+	if msg.DisableNotification {
+		t.Error("no-credentials notification must have sound on")
+	}
+}

@@ -152,9 +152,10 @@ type manageCourtsToggleState struct {
 type venueCredStep int
 
 const (
-	venueCredStepLogin    venueCredStep = iota // waiting for login (email)
-	venueCredStepPriority                      // waiting for priority integer
-	venueCredStepPassword                      // waiting for password (deleted immediately)
+	venueCredStepLogin     venueCredStep = iota // waiting for login (email)
+	venueCredStepPriority                       // waiting for priority integer
+	venueCredStepMaxCourts                      // waiting for max-courts per booking
+	venueCredStepPassword                       // waiting for password (deleted immediately)
 )
 
 // venueCredWizard holds state for the add-credential multi-step dialog.
@@ -164,6 +165,7 @@ type venueCredWizard struct {
 	groupID   int64
 	login     string
 	priority  int
+	maxCourts int // 0 = use default (3)
 	step      venueCredStep
 	suggested int   // suggested next priority (fetched after login step)
 	inUse     []int // priorities already in use

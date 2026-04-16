@@ -21,16 +21,20 @@ type stubCredRepo struct {
 	priErr      error
 }
 
-func (r *stubCredRepo) Create(_ context.Context, venueID int64, login, _ string, priority int) (*models.VenueCredential, error) {
+func (r *stubCredRepo) Create(_ context.Context, venueID int64, login, _ string, priority, maxCourts int) (*models.VenueCredential, error) {
 	if r.createErr != nil {
 		return nil, r.createErr
 	}
-	c := &models.VenueCredential{ID: 1, VenueID: venueID, Login: login, Priority: priority, CreatedAt: time.Now()}
+	c := &models.VenueCredential{ID: 1, VenueID: venueID, Login: login, Priority: priority, MaxCourts: maxCourts, CreatedAt: time.Now()}
 	r.creds = append(r.creds, c)
 	return c, nil
 }
 
 func (r *stubCredRepo) ListByVenueID(_ context.Context, _ int64) ([]*models.VenueCredential, error) {
+	return r.creds, nil
+}
+
+func (r *stubCredRepo) ListWithPasswordByVenueID(_ context.Context, _ int64) ([]*models.VenueCredential, error) {
 	return r.creds, nil
 }
 
@@ -44,6 +48,10 @@ func (r *stubCredRepo) ExistsByLogin(_ context.Context, _ int64, _ string) (bool
 
 func (r *stubCredRepo) PrioritiesInUse(_ context.Context, _ int64) ([]int, error) {
 	return r.priorities, r.priErr
+}
+
+func (r *stubCredRepo) SetLastErrorAt(_ context.Context, _ int64) error {
+	return nil
 }
 
 type stubVenueRepo struct {
@@ -85,7 +93,7 @@ func newTestCredService(credRepo *stubCredRepo, venueRepo *stubVenueRepo) *Venue
 func TestVenueCredentialService_Add_HappyPath(t *testing.T) {
 	svc := newTestCredService(&stubCredRepo{}, &stubVenueRepo{venue: testVenue})
 
-	cred, err := svc.Add(context.Background(), 10, 20, "user@example.com", "pass", 1)
+	cred, err := svc.Add(context.Background(), 10, 20, "user@example.com", "pass", 1, 3)
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -100,7 +108,7 @@ func TestVenueCredentialService_Add_HappyPath(t *testing.T) {
 func TestVenueCredentialService_Add_VenueNotFound(t *testing.T) {
 	svc := newTestCredService(&stubCredRepo{}, &stubVenueRepo{err: errors.New("not found")})
 
-	_, err := svc.Add(context.Background(), 10, 99, "u@e.com", "pass", 1)
+	_, err := svc.Add(context.Background(), 10, 99, "u@e.com", "pass", 1, 3)
 	if err == nil {
 		t.Error("wrong group: want error, got nil")
 	}
@@ -112,7 +120,7 @@ func TestVenueCredentialService_Add_DuplicateLogin(t *testing.T) {
 		&stubVenueRepo{venue: testVenue},
 	)
 
-	_, err := svc.Add(context.Background(), 10, 20, "dup@example.com", "pass", 2)
+	_, err := svc.Add(context.Background(), 10, 20, "dup@example.com", "pass", 2, 3)
 	if !errors.Is(err, ErrDuplicateCredentialLogin) {
 		t.Errorf("duplicate login: want ErrDuplicateCredentialLogin, got %v", err)
 	}
@@ -124,7 +132,7 @@ func TestVenueCredentialService_Add_ExistsCheckError(t *testing.T) {
 		&stubVenueRepo{venue: testVenue},
 	)
 
-	_, err := svc.Add(context.Background(), 10, 20, "u@e.com", "pass", 1)
+	_, err := svc.Add(context.Background(), 10, 20, "u@e.com", "pass", 1, 3)
 	if err == nil {
 		t.Error("db error on exists check: want error, got nil")
 	}
@@ -139,7 +147,7 @@ func TestVenueCredentialService_Add_StorageError(t *testing.T) {
 		&stubVenueRepo{venue: testVenue},
 	)
 
-	_, err := svc.Add(context.Background(), 10, 20, "u@e.com", "pass", 1)
+	_, err := svc.Add(context.Background(), 10, 20, "u@e.com", "pass", 1, 3)
 	if err == nil {
 		t.Error("storage error: want error, got nil")
 	}
@@ -235,7 +243,7 @@ func TestVenueCredentialService_PrioritiesInUse_VenueNotOwned(t *testing.T) {
 func TestAdd_ReturnedCredentialHasNoPassword(t *testing.T) {
 	svc := newTestCredService(&stubCredRepo{}, &stubVenueRepo{venue: testVenue})
 
-	cred, err := svc.Add(context.Background(), 10, 20, "u@e.com", "topsecret", 0)
+	cred, err := svc.Add(context.Background(), 10, 20, "u@e.com", "topsecret", 0, 3)
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}

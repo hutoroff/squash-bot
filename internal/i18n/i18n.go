@@ -283,6 +283,21 @@ const (
 	BtnVenueCredDelete            = "btn.venue_cred_delete"
 	BtnVenueCredConfirmDelete     = "btn.venue_cred_confirm_delete"
 
+	// Credential wizard — max courts step
+	// Args: %d = suggested default
+	MsgVenueCredAskMaxCourts = "msg.venue_cred_ask_max_courts"
+
+	// Auto-booking scheduler — credential error notifications.
+	// SchedAutoBookingCredError: sent WITH notification when a credential fails.
+	// Args: %s = login, %s = venue name, %s = error text
+	SchedAutoBookingCredError = "sched.auto_booking_cred_error"
+	// SchedAutoBookingCredExhausted: sent silently when all credentials failed.
+	// Args: %s = venue name, %d = booked, %d = target
+	SchedAutoBookingCredExhausted = "sched.auto_booking_cred_exhausted"
+	// SchedAutoBookingNoCredentials: sent WITH notification when no usable credentials.
+	// Args: %s = venue name
+	SchedAutoBookingNoCredentials = "sched.auto_booking_no_credentials"
+
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
@@ -585,6 +600,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingSuccess:        "🤖 Auto-booked %d courts for %s on %s at %s.",
 		SchedBookingReminderAutoBooked: "🤖 Courts were automatically booked for %s on %s at %s. All set!",
 		SchedAutoBookingFailDM:         "⚠️ Auto-booking for %s on %s at %s: booked %d of %d courts. Please book the remaining courts manually.",
+
+		// Credential wizard
+		MsgVenueCredAskMaxCourts: "How many courts can this credential book at once? (default: %d)\nSend - to use default:",
+
+		// Credential-related auto-booking notifications
+		SchedAutoBookingCredError:     "⚠️ Auto-booking for *%s*: credential *%s* failed with error:\n%s\n\nWill not use this credential for the next %s.",
+		SchedAutoBookingCredExhausted: "⚠️ Auto-booking for *%s*: all credentials exhausted. Booked %d of %d courts. Please book the remaining courts manually.",
+		SchedAutoBookingNoCredentials: "⚠️ Auto-booking for *%s* skipped: no usable credentials available. Add credentials or wait for the cooldown to expire.",
 	},
 
 	De: {
@@ -845,6 +868,11 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingSuccess:        "🤖 %d Plätze automatisch gebucht für %s am %s um %s.",
 		SchedBookingReminderAutoBooked: "🤖 Plätze wurden automatisch gebucht für %s am %s um %s. Alles klar!",
 		SchedAutoBookingFailDM:         "⚠️ Automatische Buchung für %s am %s um %s: %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
+
+		MsgVenueCredAskMaxCourts:      "Wie viele Plätze kann dieses Konto gleichzeitig buchen? (Standard: %d)\nSende - für den Standardwert:",
+		SchedAutoBookingCredError:     "⚠️ Automatische Buchung für *%s*: Konto *%s* ist fehlgeschlagen:\n%s\n\nDieses Konto wird für die nächsten %s nicht verwendet.",
+		SchedAutoBookingCredExhausted: "⚠️ Automatische Buchung für *%s*: Alle Konten ausgeschöpft. %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
+		SchedAutoBookingNoCredentials: "⚠️ Automatische Buchung für *%s* übersprungen: Keine verwendbaren Konten verfügbar. Füge Konten hinzu oder warte auf das Ende der Abklingzeit.",
 	},
 
 	Ru: {
@@ -1105,6 +1133,11 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingSuccess:        "🤖 Автоматически забронировано %d кортов для %s на %s в %s.",
 		SchedBookingReminderAutoBooked: "🤖 Корты автоматически забронированы для %s на %s в %s. Всё готово!",
 		SchedAutoBookingFailDM:         "⚠️ Автобронирование для %s на %s в %s: забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
+
+		MsgVenueCredAskMaxCourts:      "Сколько кортов может забронировать этот аккаунт за раз? (по умолчанию: %d)\nОтправьте - для использования значения по умолчанию:",
+		SchedAutoBookingCredError:     "⚠️ Автобронирование для *%s*: аккаунт *%s* вернул ошибку:\n%s\n\nАккаунт не будет использоваться в течение %s.",
+		SchedAutoBookingCredExhausted: "⚠️ Автобронирование для *%s*: все аккаунты исчерпаны. Забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
+		SchedAutoBookingNoCredentials: "⚠️ Автобронирование для *%s* пропущено: нет доступных аккаунтов. Добавьте аккаунты или подождите окончания периода блокировки.",
 	},
 }
 

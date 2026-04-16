@@ -55,8 +55,9 @@ type BookingServiceClient interface {
 	// CancelMatch cancels the booking identified by the match UUID.
 	CancelMatch(ctx context.Context, matchUUID string) error
 	// BookMatch creates a new court booking. courtUUID is the Eversports court UUID,
-	// start and end are RFC 3339 timestamps. Returns booking result on success.
-	BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error)
+	// start and end are RFC 3339 timestamps. login and password are the Eversports
+	// account credentials to use for this booking. Returns booking result on success.
+	BookMatch(ctx context.Context, courtUUID, start, end, login, password string) (*BookMatchResult, error)
 }
 
 // httpBookingClient is the production implementation of BookingServiceClient.
@@ -157,14 +158,19 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID string) e
 	return nil
 }
 
-func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end string) (*BookMatchResult, error) {
+func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end, login, password string) (*BookMatchResult, error) {
 	url := fmt.Sprintf("%s/api/v1/eversports/matches", c.baseURL)
 
-	body, err := json.Marshal(map[string]string{
+	payload := map[string]string{
 		"courtUuid": courtUUID,
 		"start":     start,
 		"end":       end,
-	})
+	}
+	if login != "" {
+		payload["email"] = login
+		payload["password"] = password
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
