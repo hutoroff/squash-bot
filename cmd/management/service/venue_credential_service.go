@@ -13,6 +13,10 @@ import (
 // already exists for the venue.
 var ErrDuplicateCredentialLogin = errors.New("a credential with this login already exists for this venue")
 
+// ErrCredentialInUse is returned when trying to delete a credential that still
+// has active (non-canceled) court bookings linked to it.
+var ErrCredentialInUse = errors.New("credential has active court bookings and cannot be removed")
+
 // DecryptedCredential is a credential with its plaintext password available for
 // use by the auto-booking job. It is never persisted or returned via any API.
 type DecryptedCredential struct {
@@ -26,13 +30,14 @@ type DecryptedCredential struct {
 
 // VenueCredentialService manages encrypted booking credentials per venue.
 type VenueCredentialService struct {
-	repo      VenueCredentialRepository
-	venueRepo VenueRepository
-	enc       *Encryptor
+	repo             VenueCredentialRepository
+	venueRepo        VenueRepository
+	courtBookingRepo CourtBookingRepository
+	enc              *Encryptor
 }
 
-func NewVenueCredentialService(repo VenueCredentialRepository, venueRepo VenueRepository, enc *Encryptor) *VenueCredentialService {
-	return &VenueCredentialService{repo: repo, venueRepo: venueRepo, enc: enc}
+func NewVenueCredentialService(repo VenueCredentialRepository, venueRepo VenueRepository, courtBookingRepo CourtBookingRepository, enc *Encryptor) *VenueCredentialService {
+	return &VenueCredentialService{repo: repo, venueRepo: venueRepo, courtBookingRepo: courtBookingRepo, enc: enc}
 }
 
 // Add encrypts the password and stores a new credential for the venue.
@@ -69,15 +74,46 @@ func (s *VenueCredentialService) List(ctx context.Context, venueID, groupID int6
 	return s.repo.ListByVenueID(ctx, venueID)
 }
 
-// Remove deletes a credential. Verifies group ownership.
+// Remove deletes a credential. Verifies group ownership and that no active court
+// bookings are linked to the credential.
 func (s *VenueCredentialService) Remove(ctx context.Context, credentialID, venueID, groupID int64) error {
 	if _, err := s.venueRepo.GetByIDAndGroupID(ctx, venueID, groupID); err != nil {
 		return fmt.Errorf("venue not found or not owned by group: %w", err)
+	}
+	if s.courtBookingRepo != nil {
+		hasActive, err := s.courtBookingRepo.HasActiveByCredentialID(ctx, credentialID)
+		if err != nil {
+			return fmt.Errorf("check active bookings: %w", err)
+		}
+		if hasActive {
+			return ErrCredentialInUse
+		}
 	}
 	if err := s.repo.Delete(ctx, credentialID, venueID); err != nil {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 	return nil
+}
+
+// GetDecryptedByID returns the decrypted credential for a given ID.
+// Used by CancellationReminderJob to obtain credentials for per-court cancellation.
+func (s *VenueCredentialService) GetDecryptedByID(ctx context.Context, credID int64) (*DecryptedCredential, error) {
+	c, err := s.repo.GetWithPasswordByID(ctx, credID)
+	if err != nil {
+		return nil, fmt.Errorf("get credential %d: %w", credID, err)
+	}
+	password, err := s.enc.Decrypt(c.EncryptedPassword)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt credential %d: %w", credID, err)
+	}
+	return &DecryptedCredential{
+		ID:        c.ID,
+		VenueID:   c.VenueID,
+		Login:     c.Login,
+		Password:  password,
+		Priority:  c.Priority,
+		MaxCourts: c.MaxCourts,
+	}, nil
 }
 
 // PrioritiesInUse returns the priority values currently in use for the venue.

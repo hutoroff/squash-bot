@@ -27,6 +27,7 @@ type AutoBookingJob struct {
 	bookingClient         BookingServiceClient
 	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
+	courtBookingRepo      CourtBookingRepository
 	loc                   *time.Location
 	logger                *slog.Logger
 	courtsCount           int // total courts to book per venue
@@ -40,6 +41,7 @@ func NewAutoBookingJob(
 	bookingClient BookingServiceClient,
 	credService *VenueCredentialService,
 	autoBookingResultRepo AutoBookingResultRepository,
+	courtBookingRepo CourtBookingRepository,
 	loc *time.Location,
 	logger *slog.Logger,
 	courtsCount int,
@@ -52,6 +54,7 @@ func NewAutoBookingJob(
 		bookingClient:         bookingClient,
 		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
+		courtBookingRepo:      courtBookingRepo,
 		loc:                   loc,
 		logger:                logger,
 		courtsCount:           courtsCount,
@@ -297,7 +300,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 				"start", startRFC,
 				"end", endRFC,
 			)
-			if _, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC, cred.Login, cred.Password); err != nil {
+			bookResult, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC, cred.Login, cred.Password)
+			if err != nil {
 				j.logger.Error("auto-booking: book court failed",
 					"venue_id", venue.ID, "court_uuid", courtUUID, "login", cred.Login,
 					"start", startRFC, "end", endRFC, "err", err)
@@ -314,8 +318,30 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 				"date", gameDateStr, "time", venue.PreferredGameTime)
 			bookedCount++
 			remaining--
-			if label, ok := uuidToCourtNum[courtUUID]; ok {
+			label := ""
+			if l, ok := uuidToCourtNum[courtUUID]; ok {
+				label = l
 				bookedCourtLabels = append(bookedCourtLabels, label)
+			}
+			// Persist per-court booking record for credential-aware cancellation.
+			// Skip if MatchID is empty (step 3 of checkout failed — rare but possible).
+			if j.courtBookingRepo != nil && bookResult.MatchID != "" {
+				cb := &models.CourtBooking{
+					VenueID:      venue.ID,
+					GameDate:     gameDate,
+					CourtUUID:    courtUUID,
+					CourtLabel:   label,
+					MatchID:      bookResult.MatchID,
+					BookingUUID:  bookResult.BookingUUID,
+					CredentialID: &cred.ID,
+				}
+				if saveErr := j.courtBookingRepo.Save(ctx, cb); saveErr != nil {
+					j.logger.Error("auto-booking: save court booking",
+						"venue_id", venue.ID, "match_id", bookResult.MatchID, "err", saveErr)
+				}
+			} else if bookResult.MatchID == "" {
+				j.logger.Warn("auto-booking: match_id empty after booking, court booking record not saved",
+					"venue_id", venue.ID, "court_uuid", courtUUID, "booking_uuid", bookResult.BookingUUID)
 			}
 		}
 	}

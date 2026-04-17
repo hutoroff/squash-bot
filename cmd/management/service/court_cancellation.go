@@ -13,23 +13,26 @@ import (
 
 // courtCancellationResult holds the outcome of attempting court cancellations.
 type courtCancellationResult struct {
-	// canceledCourts are the court IDs that were successfully canceled (sorted, ascending).
+	// canceledCourts are the court labels/IDs that were successfully canceled.
 	canceledCourts []int
 	// remainingCourts is the updated comma-separated court string for the game.
 	remainingCourts string
 	// remainingCount is the new courts_count value.
 	remainingCount int
+	// cancelErrors are per-court errors returned by the booking service (Eversports).
+	// Non-empty when one or more CancelMatch calls failed.
+	cancelErrors []error
 }
 
 // courtsUpdater is a function that persists an updated courts list for a game.
 // It mirrors the signature of storage.GameRepo.UpdateCourts.
 type courtsUpdater func(ctx context.Context, gameID int64, courts string, count int) error
 
-// cancelUnusedCourts fetches booked slots from the booking service, selects courts
-// to cancel according to the grouping algorithm, cancels them, and updates the game record.
+// cancelUnusedCourts fetches booked slots, selects courts to cancel, cancels them,
+// and updates the game record.
 //
 // courtsToCancel is the number of courts that should be freed up.
-// loc is the group's timezone used to convert the game time to local HHMM for the slot query.
+// loc is the group's timezone used to convert the game time to local HHMM for the fallback slot query.
 func (j *CancellationReminderJob) cancelUnusedCourts(
 	ctx context.Context,
 	game *models.Game,
@@ -55,8 +58,151 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		return buildNoOpResult(game), nil
 	}
 
-	// Format time parameters in local (venue) time: Eversports /api/slot returns
-	// slot Start values in the venue's local timezone, not UTC.
+	// New credential-aware flow: use stored court_bookings entries when available.
+	if j.courtBookingRepo != nil && game.Venue != nil && game.Venue.ID != 0 {
+		entries, err := j.courtBookingRepo.GetByVenueAndDate(ctx, game.Venue.ID, game.GameDate)
+		if err != nil {
+			j.logger.Warn("court cancellation: failed to load booking entries, falling back to ListMatches",
+				"game_id", game.ID, "err", err)
+		} else if len(entries) > 0 {
+			return j.cancelUsingBookingEntries(ctx, game, entries, courtsToCancel, updateFn)
+		}
+	}
+
+	// Fallback: old ListMatches(my=true) flow for courts booked before this feature.
+	return j.cancelUsingListMatches(ctx, game, courtsToCancel, loc, updateFn)
+}
+
+// cancelUsingBookingEntries cancels courts using the stored court_bookings records.
+// Each entry carries the credential used for booking, enabling per-credential cancellation.
+func (j *CancellationReminderJob) cancelUsingBookingEntries(
+	ctx context.Context,
+	game *models.Game,
+	entries []*models.CourtBooking,
+	courtsToCancel int,
+	updateFn courtsUpdater,
+) (*courtCancellationResult, error) {
+	// Build courtLabel(int) → CourtBooking map; collect sorted label list.
+	entryByLabel := make(map[int]*models.CourtBooking, len(entries))
+	sortedLabels := make([]int, 0, len(entries))
+	for _, e := range entries {
+		label, err := strconv.Atoi(e.CourtLabel)
+		if err != nil {
+			j.logger.Warn("court cancellation: non-numeric court label, skipping",
+				"game_id", game.ID, "label", e.CourtLabel)
+			continue
+		}
+		entryByLabel[label] = e
+		sortedLabels = append(sortedLabels, label)
+	}
+	sort.Ints(sortedLabels)
+
+	// Phase 1: priority-based selection — cancel lowest-priority courts first.
+	var selected []int
+	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
+		orderedPreferred := parseCourtIDs(game.Venue.AutoBookingCourts)
+		for i := len(orderedPreferred) - 1; i >= 0 && len(selected) < courtsToCancel; i-- {
+			if _, ok := entryByLabel[orderedPreferred[i]]; ok {
+				selected = append(selected, orderedPreferred[i])
+			}
+		}
+	}
+
+	// Phase 2: consecutive-grouping fallback for remaining slots.
+	if len(selected) < courtsToCancel {
+		selectedSet := make(map[int]bool, len(selected))
+		for _, l := range selected {
+			selectedSet[l] = true
+		}
+		var remaining []int
+		for _, l := range sortedLabels {
+			if !selectedSet[l] {
+				remaining = append(remaining, l)
+			}
+		}
+		selected = append(selected, selectCourtsToCancel(remaining, courtsToCancel-len(selected))...)
+	}
+
+	// Cancel selected courts one by one.
+	var canceledLabels []int
+	var cancelErrors []error
+	for _, label := range selected {
+		entry := entryByLabel[label]
+		login, password := "", ""
+		if entry.CredentialID != nil && j.credService != nil {
+			cred, err := j.credService.GetDecryptedByID(ctx, *entry.CredentialID)
+			if err != nil {
+				j.logger.Error("court cancellation: get credential for cancel",
+					"game_id", game.ID, "cred_id", *entry.CredentialID, "err", err)
+				// Proceed with empty credentials (env-var fallback).
+			} else if cred != nil {
+				login, password = cred.Login, cred.Password
+			}
+		}
+		if err := j.bookingClient.CancelMatch(ctx, entry.MatchID, login, password); err != nil {
+			j.logger.Error("court cancellation: cancel match failed",
+				"game_id", game.ID, "court_label", label, "match_id", entry.MatchID, "err", err)
+			cancelErrors = append(cancelErrors, err)
+			continue
+		}
+		j.logger.Info("court cancellation: canceled",
+			"game_id", game.ID, "court_label", label, "match_id", entry.MatchID)
+		if err := j.courtBookingRepo.MarkCanceled(ctx, entry.MatchID); err != nil {
+			j.logger.Error("court cancellation: mark canceled in DB",
+				"game_id", game.ID, "match_id", entry.MatchID, "err", err)
+		}
+		canceledLabels = append(canceledLabels, label)
+	}
+
+	if len(canceledLabels) == 0 {
+		result := buildNoOpResult(game)
+		result.cancelErrors = cancelErrors
+		return result, nil
+	}
+
+	// Rebuild game.Courts by removing the canceled court labels.
+	// Use a count-based map to handle duplicate label edge cases.
+	canceledCount := make(map[string]int, len(canceledLabels))
+	for _, l := range canceledLabels {
+		canceledCount[strconv.Itoa(l)]++
+	}
+	gameCourts := splitCourts(game.Courts)
+	var newCourts []string
+	for _, c := range gameCourts {
+		c = strings.TrimSpace(c)
+		if canceledCount[c] > 0 {
+			canceledCount[c]--
+			continue
+		}
+		newCourts = append(newCourts, c)
+	}
+	newCourtsStr := strings.Join(newCourts, ",")
+	newCount := len(newCourts)
+
+	if err := updateFn(ctx, game.ID, newCourtsStr, newCount); err != nil {
+		j.logger.Error("court cancellation: update game courts", "game_id", game.ID, "err", err)
+		return nil, fmt.Errorf("persist updated courts: %w", err)
+	}
+
+	return &courtCancellationResult{
+		canceledCourts:  canceledLabels,
+		remainingCourts: newCourtsStr,
+		remainingCount:  newCount,
+		cancelErrors:    cancelErrors,
+	}, nil
+}
+
+// cancelUsingListMatches is the legacy fallback path for courts that were booked
+// before the court_bookings table was introduced. It queries the booking service
+// with the default (env-var) account and cancels using empty credentials.
+func (j *CancellationReminderJob) cancelUsingListMatches(
+	ctx context.Context,
+	game *models.Game,
+	courtsToCancel int,
+	loc *time.Location,
+	updateFn courtsUpdater,
+) (*courtCancellationResult, error) {
+	// Format time parameters in local (venue) time.
 	date, startHHMM, endHHMM := slotQueryWindow(game.GameDate.In(loc))
 
 	slots, err := j.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
@@ -64,7 +210,6 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		return nil, fmt.Errorf("list matches: %w", err)
 	}
 
-	// Collect slots that are our bookings (IsUserBookingOwner) and have a match UUID.
 	type bookedCourt struct {
 		courtID   int
 		matchUUID string
@@ -81,19 +226,14 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		return buildNoOpResult(game), nil
 	}
 
-	// Sort by court ID for deterministic grouping.
 	sort.Slice(booked, func(i, k int) bool { return booked[i].courtID < booked[k].courtID })
 
-	// Build ordered list of court IDs for the selection algorithm.
 	courtIDs := make([]int, len(booked))
 	for i, b := range booked {
 		courtIDs[i] = b.courtID
 	}
 
-	// Build Eversports ID → court name-number mapping (needed for priority-based selection).
-	// auto_booking_courts stores sequential numbers that match court names ("Court 7" → 7),
-	// but booked slots carry Eversports facility-specific IDs. Fetching the court list lets
-	// us bridge the two numbering schemes. If this call fails, Phase 1 is skipped gracefully.
+	// Build Eversports ID → court name-number mapping for priority-based selection.
 	var nameNumByID map[int]int
 	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
 		courts, listErr := j.bookingClient.ListCourts(ctx, date)
@@ -114,15 +254,9 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		}
 	}
 
-	// Select which courts to cancel in two phases:
-	//   Phase 1 — priority order: cancel lowest-priority courts first using name-number
-	//              matching when venue has auto_booking_courts and a court map is available.
-	//   Phase 2 — consecutive-grouping fallback: handles courts not covered by Phase 1,
-	//              or when no name mapping was available.
 	var selected []int
 	if game.Venue != nil && game.Venue.AutoBookingCourts != "" && len(nameNumByID) > 0 {
-		// Map booked court Eversports IDs → name-numbers, then select in reverse priority order.
-		bookedByNameNum := make(map[int]int, len(booked)) // name-num → Eversports ID
+		bookedByNameNum := make(map[int]int, len(booked))
 		for _, b := range booked {
 			if n := nameNumByID[b.courtID]; n > 0 {
 				bookedByNameNum[n] = b.courtID
@@ -149,20 +283,19 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		selected = append(selected, selectCourtsToCancel(remaining, courtsToCancel-len(selected))...)
 	}
 
-	// Build a lookup: courtID → matchUUID.
 	uuidByCourtID := make(map[int]string, len(booked))
 	for _, b := range booked {
 		uuidByCourtID[b.courtID] = b.matchUUID
 	}
 
-	// Cancel selected courts one by one, collecting successes.
 	var canceled []int
+	var cancelErrors []error
 	for _, cID := range selected {
 		uuid := uuidByCourtID[cID]
-		if err := j.bookingClient.CancelMatch(ctx, uuid); err != nil {
+		if err := j.bookingClient.CancelMatch(ctx, uuid, "", ""); err != nil {
 			j.logger.Error("court cancellation: cancel match failed",
 				"game_id", game.ID, "court_id", cID, "match_uuid", uuid, "err", err)
-			// Continue trying remaining courts.
+			cancelErrors = append(cancelErrors, err)
 			continue
 		}
 		j.logger.Info("court cancellation: canceled",
@@ -171,10 +304,11 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 	}
 
 	if len(canceled) == 0 {
-		return buildNoOpResult(game), nil
+		result := buildNoOpResult(game)
+		result.cancelErrors = cancelErrors
+		return result, nil
 	}
 
-	// Rebuild game courts string by removing canceled court entries.
 	gameCourts := splitCourts(game.Courts)
 	newCourts, err := removeCanceledFromGameCourts(gameCourts, canceled, courtIDs)
 	if err != nil {
@@ -198,6 +332,7 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 		canceledCourts:  canceled,
 		remainingCourts: newCourtsStr,
 		remainingCount:  newCount,
+		cancelErrors:    cancelErrors,
 	}, nil
 }
 

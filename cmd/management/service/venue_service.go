@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,12 +10,17 @@ import (
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
+// ErrVenueHasActiveBookings is returned when trying to delete a venue that still
+// has active (non-canceled) court bookings.
+var ErrVenueHasActiveBookings = errors.New("venue has active court bookings and cannot be deleted")
+
 type VenueService struct {
-	repo VenueRepository
+	repo             VenueRepository
+	courtBookingRepo CourtBookingRepository
 }
 
-func NewVenueService(repo VenueRepository) *VenueService {
-	return &VenueService{repo: repo}
+func NewVenueService(repo VenueRepository, courtBookingRepo CourtBookingRepository) *VenueService {
+	return &VenueService{repo: repo, courtBookingRepo: courtBookingRepo}
 }
 
 // validatePreferredGameTime returns an error if preferredGameTime is set but
@@ -119,6 +125,13 @@ func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name,
 }
 
 func (s *VenueService) DeleteVenue(ctx context.Context, id, groupID int64) error {
+	hasActive, err := s.courtBookingRepo.HasActiveByVenueID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("check active bookings: %w", err)
+	}
+	if hasActive {
+		return ErrVenueHasActiveBookings
+	}
 	if err := s.repo.Delete(ctx, id, groupID); err != nil {
 		return fmt.Errorf("delete venue: %w", err)
 	}

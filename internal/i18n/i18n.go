@@ -56,6 +56,10 @@ const (
 	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = preferred time (HH:MM), %d = booked count, %d = target count
 	SchedAutoBookingFailDM = "sched.auto_booking_fail_dm"
 
+	// DM to admins when automatic court cancellation failed (technical error).
+	// Args: %s = game date+time, %s = error message
+	SchedCancellationFailDM = "sched.cancellation_fail_dm"
+
 	// Cancellation reminder — outcome scenarios (always sent).
 	// Scenario 1: no cancellation, player count is even and fits courts.
 	// Args: %s = game date+time, %d = player count, %d = capacity, %d = courts count
@@ -356,6 +360,8 @@ var translations = map[Lang]map[string]string{
 		SchedWeeklyReminder:  "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
 		SchedBookingReminder: "📅 Booking reminder for *%s*: game in %d days — courts booking is open now! Don't forget to reserve your courts.",
 
+		SchedCancellationFailDM: "⚠️ Automatic court cancellation failed for game on %s: %s. Please cancel courts manually.",
+
 		SchedReminderAllGood:      "✅ Upcoming game on %s — all good! %d/%d players, %d courts confirmed.",
 		SchedReminderCanceled:     "✅ Courts %s canceled. Game on %s is all set! %d/%d players, %d courts.",
 		SchedReminderOddNoCancel:  "⚠️ 1 free spot for the game on %s. %d/%d players, %d courts.",
@@ -625,6 +631,8 @@ var translations = map[Lang]map[string]string{
 		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
 		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Spiel in %d Tagen — Buchung ist jetzt offen! Vergiss nicht, deine Plätze zu reservieren.",
 
+		SchedCancellationFailDM: "⚠️ Automatische Stornierung fehlgeschlagen für Spiel am %s: %s. Bitte Plätze manuell stornieren.",
+
 		SchedReminderAllGood:      "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze bestätigt.",
 		SchedReminderCanceled:     "✅ Plätze %s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze.",
 		SchedReminderOddNoCancel:  "⚠️ 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze.",
@@ -889,6 +897,8 @@ var translations = map[Lang]map[string]string{
 		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
 		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
 		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: игра через %d дней — бронирование открыто сейчас! Не забудь зарезервировать корты.",
+
+		SchedCancellationFailDM: "⚠️ Автоматическая отмена кортов не удалась для игры %s: %s. Пожалуйста, отмените корты вручную.",
 
 		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) подтверждено.",
 		SchedReminderCanceled:     "✅ Корт(а) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",

@@ -77,9 +77,10 @@ func main() {
 	venueRepo := storage.NewVenueRepo(pool)
 	venueCredRepo := storage.NewVenueCredentialRepo(pool)
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
+	courtBookingRepo := storage.NewCourtBookingRepo(pool)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
-	venueService := service.NewVenueService(venueRepo)
+	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
 
 	var venueCredService *service.VenueCredentialService
 	if cfg.CredentialsEncryptionKey != "" {
@@ -88,7 +89,7 @@ func main() {
 			slog.Error("init credentials encryptor", "err", err)
 			os.Exit(1)
 		}
-		venueCredService = service.NewVenueCredentialService(venueCredRepo, venueRepo, enc)
+		venueCredService = service.NewVenueCredentialService(venueCredRepo, venueRepo, courtBookingRepo, enc)
 		slog.Info("venue credentials encryption enabled")
 	} else {
 		slog.Info("venue credentials encryption disabled (CREDENTIALS_ENCRYPTION_KEY not set)")
@@ -116,10 +117,10 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 
-	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, bookingClient, loc, logger, pollWindow)
+	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, bookingClient, courtBookingRepo, venueCredService, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, loc, logger, cfg.AutoBookingCourtsCount, cfg.CredentialErrorCooldown)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.AutoBookingCourtsCount, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))

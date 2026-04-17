@@ -243,6 +243,69 @@ func TestCancelMatch_Error(t *testing.T) {
 	}
 }
 
+func TestCancelMatch_WithCredentials_UsesCredClient(t *testing.T) {
+	// The default client must NOT be called; only the per-credential client.
+	defaultMock := &mockClient{cancellationErr: errors.New("default client must not be used")}
+	credMock := &mockClient{cancellation: &eversports.CancellationResult{
+		ID:    "match-abc",
+		State: "CANCELLED",
+	}}
+
+	h := newTestHandler(defaultMock)
+	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	srv := serve(h)
+	defer srv.Close()
+
+	body := strings.NewReader(`{"email":"user@example.com","password":"secret"}`)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/match-abc", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if credMock.lastCancelMatchID != "match-abc" {
+		t.Errorf("credential client not called: lastCancelMatchID = %q", credMock.lastCancelMatchID)
+	}
+	if defaultMock.lastCancelMatchID != "" {
+		t.Error("default client must not have been called")
+	}
+}
+
+func TestGetMatch_WithCredentialHeaders_UsesCredClient(t *testing.T) {
+	// The default client must NOT be called; only the per-credential client.
+	defaultMock := &mockClient{matchErr: errors.New("default client must not be used")}
+	credMock := &mockClient{match: &eversports.Booking{ID: "match-xyz"}}
+
+	h := newTestHandler(defaultMock)
+	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	srv := serve(h)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches/match-xyz", nil)
+	req.Header.Set("X-Eversports-Email", "user@example.com")
+	req.Header.Set("X-Eversports-Password", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if credMock.lastMatchID != "match-xyz" {
+		t.Errorf("credential client not called: lastMatchID = %q", credMock.lastMatchID)
+	}
+	if defaultMock.lastMatchID != "" {
+		t.Error("default client must not have been called")
+	}
+}
+
 // ─── POST /api/v1/eversports/matches ─────────────────────────────────────────
 
 func TestCreateMatch_Success(t *testing.T) {

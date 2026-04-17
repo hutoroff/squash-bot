@@ -40,13 +40,15 @@ cmd/management/
 │   ├── booking_client.go       — BookingServiceClient interface + HTTP client
 │   └── group_resolver.go       — resolveGroupTimezone, groupLang helpers
 └── storage/
-    ├── postgres.go         — pool setup, migration runner
-    ├── game_repo.go        — GameRepo implements GameRepository
-    ├── player_repo.go      — PlayerRepo implements PlayerRepository
-    ├── participation_repo.go — ParticipationRepo implements ParticipationRepository
-    ├── guest_repo.go       — GuestRepo implements GuestRepository
-    ├── group_repo.go       — GroupRepo implements GroupRepository
-    └── venue_repo.go       — VenueRepo implements VenueRepository
+    ├── postgres.go              — pool setup, migration runner
+    ├── game_repo.go             — GameRepo implements GameRepository
+    ├── player_repo.go           — PlayerRepo implements PlayerRepository
+    ├── participation_repo.go    — ParticipationRepo implements ParticipationRepository
+    ├── guest_repo.go            — GuestRepo implements GuestRepository
+    ├── group_repo.go            — GroupRepo implements GroupRepository
+    ├── venue_repo.go            — VenueRepo implements VenueRepository
+    ├── venue_credential_repo.go — VenueCredentialRepo implements VenueCredentialRepository
+    └── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
 ```
 
 ---
@@ -68,19 +70,28 @@ GroupRepository  — Upsert, SetLanguage, SetTimezone, Remove, Exists, GetByID, 
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
                    SetLastBookingReminderAt, SetLastAutoBookingAt
 VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxCourts),
-                   ListByVenueID, ListWithPasswordByVenueID, Delete(id, venueID),
-                   ExistsByLogin(venueID, login), PrioritiesInUse(venueID), SetLastErrorAt(id)
+                   ListByVenueID, ListWithPasswordByVenueID, GetWithPasswordByID(id),
+                   Delete(id, venueID), ExistsByLogin(venueID, login),
+                   PrioritiesInUse(venueID), SetLastErrorAt(id)
+CourtBookingRepository — Save(ctx, *models.CourtBooking),
+                   GetByVenueAndDate(ctx, venueID, gameDate) — returns only active (canceled_at IS NULL),
+                   MarkCanceled(ctx, matchID) — soft-delete: sets canceled_at = NOW(),
+                   HasActiveByCredentialID(ctx, credentialID) bool,
+                   HasActiveByVenueID(ctx, venueID) bool
 ```
 
 `VenueCredentialService` (`service/venue_credential_service.go`) wraps the repository with:
 - `Add(ctx, venueID, groupID, login, password, priority, maxCourts)` — validates venue ownership, deduplicates by login, encrypts password via `Encryptor`, stores via repo
 - `List(ctx, venueID, groupID)` — validates ownership, returns credentials without passwords
-- `Remove(ctx, credID, venueID, groupID)` — validates ownership, deletes
+- `Remove(ctx, credID, venueID, groupID)` — validates ownership; returns `ErrCredentialInUse` if `courtBookingRepo.HasActiveByCredentialID` is true; deletes
+- `GetDecryptedByID(ctx, credID)` — fetches single credential by ID, decrypts password; used by `CancellationReminderJob` at cancel time
 - `PrioritiesInUse(ctx, venueID, groupID)` — returns sorted priority list for wizard UI
 - `ListForBooking(ctx, venueID, cooldown)` — returns `[]DecryptedCredential` ordered by priority, excluding credentials where `last_error_at > NOW() - cooldown`; decrypts passwords
 - `MarkError(ctx, credID)` — sets `last_error_at = NOW()` via `SetLastErrorAt`
 
 `DecryptedCredential` (internal, never serialised): `ID, VenueID int64`, `Login, Password string`, `Priority, MaxCourts int`.
+
+`VenueService.DeleteVenue` returns `ErrVenueHasActiveBookings` (→ HTTP 409) if `courtBookingRepo.HasActiveByVenueID` is true.
 
 **Rule:** If a new operation is needed, add a method to the correct interface first, then implement it in the storage package, then use it in the service. Do not bypass interfaces.
 
@@ -125,11 +136,11 @@ POST   /api/v1/venues                              — createVenue
 GET    /api/v1/venues                              — listVenues (query: groupId)
 GET    /api/v1/venues/{id}                         — getVenue
 PATCH  /api/v1/venues/{id}                         — updateVenue
-DELETE /api/v1/venues/{id}                         — deleteVenue
+DELETE /api/v1/venues/{id}                         — deleteVenue; 409 Conflict if venue has active court_bookings
 
 POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority, max_courts); 503 when CREDENTIALS_ENCRYPTION_KEY unset
 GET    /api/v1/venues/{id}/credentials             — listCredentials (query: group_id); passwords never returned
-DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id)
+DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id); 409 Conflict if credential has active court_bookings
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
 
 POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
@@ -197,6 +208,13 @@ venues:             id, group_id FK→bot_groups, name, courts, time_slots, addr
 venue_credentials:  id, venue_id FK→venues ON DELETE CASCADE, login, enc_password (AES-256-GCM),
                     priority DEFAULT 0, max_courts DEFAULT 3, last_error_at (nullable TIMESTAMPTZ),
                     created_at, UNIQUE(venue_id, login)
+court_bookings:     id BIGSERIAL PK, venue_id FK→venues ON DELETE CASCADE, game_date DATE,
+                    court_uuid TEXT, court_label TEXT (name-extracted number, e.g. "7"),
+                    match_id TEXT UNIQUE, booking_uuid TEXT,
+                    credential_id BIGINT FK→venue_credentials ON DELETE SET NULL (NULL = env-var creds),
+                    canceled_at TIMESTAMPTZ (NULL = active; set by MarkCanceled soft-delete),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                    INDEX: (venue_id, game_date)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
@@ -209,6 +227,6 @@ Adding a new column always requires a new migration file in `migrations/`. Test 
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`
 - `ParticipationService.Notifier` call pattern: always async (`go notifier.EditGameMessage(...)`) so a slow Telegram API never blocks the HTTP response
-- `BookingServiceClient` interface in `booking_client.go`: methods are `ListMatches`, `CancelMatch`, `BookMatch(ctx, courtUUID, start, end, login, password string)` — `login`/`password` select a per-credential Eversports session on the booking service; empty strings fall back to the service-level default account
+- `BookingServiceClient` interface in `booking_client.go`: methods are `ListMatches`, `CancelMatch(ctx, matchUUID, login, password string) error`, `BookMatch(ctx, courtUUID, start, end, login, password string)` — `login`/`password` select a per-credential Eversports session on the booking service; empty strings fall back to the service-level default account
 - `VenueCredentialService` is injected into `AutoBookingJob`; `credCooldown` (`CREDENTIAL_ERROR_COOLDOWN`, default 24h) gates which credentials are eligible; `MarkError` sets `last_error_at` on failure
 - Version is read from `cmd/management/VERSION` file, injected at build time via `-ldflags "-X main.Version=<ver>"`

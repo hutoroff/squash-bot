@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -13,15 +14,17 @@ import (
 // CancellationReminderJob fires capacity notifications 6 hours before the cancellation
 // grace period ends for each upcoming unnotified game.
 type CancellationReminderJob struct {
-	api           TelegramAPI
-	gameRepo      GameRepository
-	partRepo      ParticipationRepository
-	guestRepo     GuestRepository
-	groupRepo     GroupRepository
-	bookingClient BookingServiceClient // optional; nil disables court cancellation
-	loc           *time.Location
-	logger        *slog.Logger
-	pollWindow    time.Duration // timing gate: ±pollWindow around reminderAt
+	api              TelegramAPI
+	gameRepo         GameRepository
+	partRepo         ParticipationRepository
+	guestRepo        GuestRepository
+	groupRepo        GroupRepository
+	bookingClient    BookingServiceClient    // optional; nil disables court cancellation
+	courtBookingRepo CourtBookingRepository  // optional; nil falls back to ListMatches flow
+	credService      *VenueCredentialService // optional; nil uses env-var credentials only
+	loc              *time.Location
+	logger           *slog.Logger
+	pollWindow       time.Duration // timing gate: ±pollWindow around reminderAt
 }
 
 func NewCancellationReminderJob(
@@ -31,20 +34,24 @@ func NewCancellationReminderJob(
 	guestRepo GuestRepository,
 	groupRepo GroupRepository,
 	bookingClient BookingServiceClient,
+	courtBookingRepo CourtBookingRepository,
+	credService *VenueCredentialService,
 	loc *time.Location,
 	logger *slog.Logger,
 	pollWindow time.Duration,
 ) *CancellationReminderJob {
 	return &CancellationReminderJob{
-		api:           api,
-		gameRepo:      gameRepo,
-		partRepo:      partRepo,
-		guestRepo:     guestRepo,
-		groupRepo:     groupRepo,
-		bookingClient: bookingClient,
-		loc:           loc,
-		logger:        logger,
-		pollWindow:    pollWindow,
+		api:              api,
+		gameRepo:         gameRepo,
+		partRepo:         partRepo,
+		guestRepo:        guestRepo,
+		groupRepo:        groupRepo,
+		bookingClient:    bookingClient,
+		courtBookingRepo: courtBookingRepo,
+		credService:      credService,
+		loc:              loc,
+		logger:           logger,
+		pollWindow:       pollWindow,
 	}
 }
 
@@ -117,6 +124,9 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 			j.logger.Error("cancellation reminder: court cancellation failed",
 				"game_id", game.ID, "err", cancelErr)
 			result = buildNoOpResult(game)
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), cancelErr, lz)
+		} else if len(result.cancelErrors) > 0 {
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
 		}
 	}
 
@@ -161,6 +171,32 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 
 	if err := j.gameRepo.MarkNotifiedDayBefore(ctx, game.ID); err != nil {
 		j.logger.Error("cancellation reminder: mark notified", "game_id", game.ID, "err", err)
+	}
+}
+
+// notifyCancellationError DMs all group admins when automatic court cancellation fails.
+// Messages are sent silently to avoid double-notifying (the group already gets the even_no_cancel message).
+func (j *CancellationReminderJob) notifyCancellationError(ctx context.Context, chatID int64, gameDateTime string, cancelErr error, lz *i18n.Localizer) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("cancellation reminder: get chat administrators for error DM", "chat_id", chatID, "err", err)
+		return
+	}
+	text := lz.Tf(i18n.SchedCancellationFailDM, gameDateTime, cancelErr.Error())
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.DisableNotification = true
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("cancellation reminder: send cancellation error DM",
+				"user_id", admin.User.ID, "chat_id", chatID, "err", err)
+		}
 	}
 }
 
