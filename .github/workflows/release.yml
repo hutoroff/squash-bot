@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to release'
+        required: true
+        type: choice
+        options:
+          - booking
+          - management
+          - telegram
+          - web
+          - all
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # RELEASE_PAT must be a PAT (classic or fine-grained) with `contents: write`
+          # and branch-protection bypass enabled, so the "Commit and tag" step can push
+          # directly to the protected main branch.
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0
+
+      - name: Verify CI passed for this commit
+        run: |
+          # Walk back past any release chore commits (created by previous release workflows)
+          # so we verify CI on the actual code commit, not a version-bump commit.
+          SHA=$(git rev-parse HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          while echo "${COMMIT_MSG}" | grep -qE "^\[chore\]: release|^chore: release"; do
+            SHA=$(git rev-parse "${SHA}^")
+            COMMIT_MSG=$(git log -1 --pretty=format:"%s" "${SHA}")
+          done
+          echo "Checking CI status for commit ${SHA} (${COMMIT_MSG})"
+
+          CHECKS="build-and-test"
+          if [ "${{ inputs.service }}" = "web" ] || [ "${{ inputs.service }}" = "all" ]; then
+            CHECKS="$CHECKS frontend-test"
+          fi
+
+          for JOB in $CHECKS; do
+            CONCLUSION=$(gh api \
+              "/repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+              --jq "[.check_runs[] | select(.name == \"${JOB}\")] | .[0].conclusion // \"not_found\"")
+            echo "CI job '${JOB}' conclusion: ${CONCLUSION}"
+            if [ "$CONCLUSION" != "success" ]; then
+              echo "ERROR: CI job '${JOB}' has not successfully completed for commit ${SHA} (found: ${CONCLUSION})"
+              exit 1
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Release
+        run: |
+          SERVICE="${{ inputs.service }}"
+          BUMP="${{ inputs.bump }}"
+          DOCKERHUB="${{ vars.DOCKERHUB_USERNAME }}"
+          OWNER="${{ github.repository_owner }}"
+
+          if [ "$SERVICE" = "all" ]; then
+            SERVICES="booking management telegram web"
+          else
+            SERVICES="$SERVICE"
+          fi
+
+          for SVC in $SERVICES; do
+            case "$SVC" in
+              booking)    IMG="squash-booking-eversports"; TITLE="Booking Service" ;;
+              management) IMG="squash-management";          TITLE="Management Service" ;;
+              telegram)   IMG="squash-telegram-bot";        TITLE="Telegram Bot" ;;
+              web)        IMG="squash-web";                 TITLE="Web Service" ;;
+            esac
+
+            # Bump version
+            VERSION=$(cat "cmd/${SVC}/VERSION")
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH+1)) ;;
+            esac
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "$NEW_VERSION" > "cmd/${SVC}/VERSION"
+            echo "Bumped ${VERSION} → ${NEW_VERSION}"
+
+            # Generate changelog
+            PREV_TAG=$(git tag --list "${SVC}/v*" --sort=-version:refname | head -1)
+            if [ -z "$PREV_TAG" ]; then
+              git log --pretty=format:"- %s (%h)" | head -30 > "/tmp/changelog-${SVC}.md"
+            else
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" > "/tmp/changelog-${SVC}.md"
+            fi
+            if [ ! -s "/tmp/changelog-${SVC}.md" ]; then
+              echo "No changes recorded." > "/tmp/changelog-${SVC}.md"
+            fi
+            echo "Changelog for ${SVC}:"
+            cat "/tmp/changelog-${SVC}.md"
+
+            # Build and push Docker image
+            docker buildx build \
+              --file "Dockerfile.${SVC}" \
+              --build-arg "VERSION=${NEW_VERSION}" \
+              --tag "${DOCKERHUB}/${IMG}:${NEW_VERSION}" \
+              --tag "${DOCKERHUB}/${IMG}:latest" \
+              --tag "ghcr.io/${OWNER}/${IMG}:${NEW_VERSION}" \
+              --tag "ghcr.io/${OWNER}/${IMG}:latest" \
+              --push \
+              .
+
+            # Commit and tag
+            git add "cmd/${SVC}/VERSION"
+            git commit -m "[chore]: release ${IMG} v${NEW_VERSION}"
+            git tag "${SVC}/v${NEW_VERSION}"
+            git push
+            git push origin "${SVC}/v${NEW_VERSION}"
+
+            # Create GitHub Release
+            gh release create "${SVC}/v${NEW_VERSION}" \
+              --title "${TITLE} v${NEW_VERSION}" \
+              --notes-file "/tmp/changelog-${SVC}.md"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
