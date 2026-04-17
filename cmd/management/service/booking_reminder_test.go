@@ -70,7 +70,7 @@ func (m *mockGameRepo) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.
 	return nil, nil
 }
 func (m *mockGameRepo) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
-func (m *mockGameRepo) MarkCompleted(_ context.Context, _ int64) error          { return nil }
+func (m *mockGameRepo) MarkCompleted(_ context.Context, _ int64) error         { return nil }
 
 // ── mockVenueRepo ─────────────────────────────────────────────────────────────
 
@@ -102,17 +102,60 @@ func (m *mockVenueRepo) SetLastAutoBookingAt(_ context.Context, _ int64) error {
 type mockAutoBookingResultRepo struct {
 	saveErr    error
 	saveCalls  int
-	result     *models.AutoBookingResult
+	results    []*models.AutoBookingResult
 	getByIDErr error
+	setGameErr error
 }
 
-func (m *mockAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _ string, _ int) error {
+func (m *mockAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
 	m.saveCalls++
 	return m.saveErr
 }
 
-func (m *mockAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) (*models.AutoBookingResult, error) {
-	return m.result, m.getByIDErr
+func (m *mockAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
+	return m.results, m.getByIDErr
+}
+
+func (m *mockAutoBookingResultRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, _ string) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (m *mockAutoBookingResultRepo) GetByGameID(_ context.Context, _ int64) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (m *mockAutoBookingResultRepo) SetGameID(_ context.Context, _, _ int64) error {
+	return m.setGameErr
+}
+
+// TestHandleManualReminder_DBError_FallsOpen verifies that when
+// GetUncompletedGamesByGroupAndDay returns an error, the job proceeds with an
+// admin DM rather than silently suppressing the reminder.
+func TestHandleManualReminder_DBError_FallsOpen(t *testing.T) {
+	const chatID int64 = -1001
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{makeChatMember(101, false)},
+	}
+	api.sendResult = tgbotapi.Message{MessageID: 7}
+
+	gameRepo := &mockGameRepo{existingErr: errors.New("db timeout")}
+	job := &BookingReminderJob{
+		api:      api,
+		gameRepo: gameRepo,
+		logger:   noopLogger(),
+	}
+
+	venue := &models.Venue{ID: 1, Name: "Venue", BookingOpensDays: 14}
+	lz := i18n.New(i18n.En)
+
+	ok := job.handleManualReminder(context.Background(), chatID, venue,
+		time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC), lz)
+	if !ok {
+		t.Error("expected true: DB error falls open → admin DM sent")
+	}
+	if len(api.sendCalls) == 0 {
+		t.Error("expected at least one admin DM on DB error, got none")
+	}
 }
 
 // ── createGameAndAnnounce tests ───────────────────────────────────────────────
@@ -130,16 +173,18 @@ func TestCreateGameAndAnnounce_Success(t *testing.T) {
 
 	gameRepo := &mockGameRepo{}
 	job := &BookingReminderJob{
-		api:      api,
-		gameRepo: gameRepo,
-		logger:   noopLogger(),
+		api:                   api,
+		gameRepo:              gameRepo,
+		autoBookingResultRepo: &mockAutoBookingResultRepo{},
+		logger:                noopLogger(),
 	}
 
-	venue := &models.Venue{ID: 1, Name: "Test Venue", PreferredGameTime: "18:00"}
+	venue := &models.Venue{ID: 1, Name: "Test Venue", PreferredGameTimes: "18:00"}
 	gameDate := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	result := &models.AutoBookingResult{
 		VenueID:     1,
 		GameDate:    gameDate,
+		GameTime:    "18:00",
 		Courts:      "1,2",
 		CourtsCount: 2,
 	}
@@ -166,9 +211,10 @@ func TestCreateGameAndAnnounce_GameCreateFails_ReturnsFalse(t *testing.T) {
 	api := &mockTelegramAPI{}
 	gameRepo := &mockGameRepo{createErr: errors.New("db error")}
 	job := &BookingReminderJob{
-		api:      api,
-		gameRepo: gameRepo,
-		logger:   noopLogger(),
+		api:                   api,
+		gameRepo:              gameRepo,
+		autoBookingResultRepo: &mockAutoBookingResultRepo{},
+		logger:                noopLogger(),
 	}
 
 	venue := &models.Venue{ID: 1, Name: "Venue"}
@@ -188,9 +234,10 @@ func TestCreateGameAndAnnounce_SendFails_ReturnsFalse(t *testing.T) {
 	api := &mockTelegramAPI{sendErr: errors.New("telegram error")}
 	gameRepo := &mockGameRepo{}
 	job := &BookingReminderJob{
-		api:      api,
-		gameRepo: gameRepo,
-		logger:   noopLogger(),
+		api:                   api,
+		gameRepo:              gameRepo,
+		autoBookingResultRepo: &mockAutoBookingResultRepo{},
+		logger:                noopLogger(),
 	}
 
 	venue := &models.Venue{ID: 1, Name: "Venue"}
@@ -214,15 +261,16 @@ func TestCreateGameAndAnnounce_PreferredTimeApplied(t *testing.T) {
 	captureRepo := &captureCreateRepo{mockGameRepo: gameRepo, captured: &capturedGame}
 
 	job := &BookingReminderJob{
-		api:      api,
-		gameRepo: captureRepo,
-		logger:   noopLogger(),
+		api:                   api,
+		gameRepo:              captureRepo,
+		autoBookingResultRepo: &mockAutoBookingResultRepo{},
+		logger:                noopLogger(),
 	}
 
 	berlin, _ := time.LoadLocation("Europe/Berlin")
-	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTime: "18:30"}
+	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTimes: "18:30"}
 	gameDate := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	result := &models.AutoBookingResult{Courts: "1", CourtsCount: 1, GameDate: gameDate}
+	result := &models.AutoBookingResult{Courts: "1", CourtsCount: 1, GameDate: gameDate, GameTime: "18:30"}
 	lz := i18n.New(i18n.En)
 
 	job.createGameAndAnnounce(context.Background(), -1001, venue, result, time.Now().In(berlin), berlin, lz)
@@ -248,4 +296,120 @@ type captureCreateRepo struct {
 func (c *captureCreateRepo) Create(ctx context.Context, game *models.Game) (*models.Game, error) {
 	*c.captured = game
 	return c.mockGameRepo.Create(ctx, game)
+}
+
+// ── handleAutoBookingReminder multi-result tests ──────────────────────────────
+
+// TestHandleAutoBookingReminder_TwoResults_CreatesTwoGames verifies that when
+// auto_booking produced two results for 18:00 and 20:00 (both with GameID=nil),
+// handleAutoBookingReminder creates two games and posts two group announcements.
+func TestHandleAutoBookingReminder_TwoResults_CreatesTwoGames(t *testing.T) {
+	const chatID int64 = -1001
+	api := &mockTelegramAPI{}
+	api.sendResult = tgbotapi.Message{MessageID: 10}
+
+	gameRepo := &mockGameRepo{}
+	gameDate := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	resultRepo := &mockAutoBookingResultRepo{
+		results: []*models.AutoBookingResult{
+			{ID: 1, GameTime: "18:00", Courts: "1", CourtsCount: 1, GameDate: gameDate},
+			{ID: 2, GameTime: "20:00", Courts: "2", CourtsCount: 1, GameDate: gameDate},
+		},
+	}
+	job := &BookingReminderJob{
+		api:                   api,
+		gameRepo:              gameRepo,
+		autoBookingResultRepo: resultRepo,
+		logger:                noopLogger(),
+	}
+
+	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTimes: "18:00,20:00"}
+	lz := i18n.New(i18n.En)
+
+	ok := job.handleAutoBookingReminder(context.Background(), chatID, venue, gameDate, time.Now().UTC(), time.UTC, lz)
+	if !ok {
+		t.Error("expected true when games are created")
+	}
+
+	announcements := 0
+	for _, call := range api.sendCalls {
+		msg, isMsgConfig := call.(tgbotapi.MessageConfig)
+		if isMsgConfig && msg.ChatID == chatID {
+			announcements++
+		}
+	}
+	if announcements != 2 {
+		t.Errorf("expected 2 game announcements to group chat, got %d (total sends: %d)",
+			announcements, len(api.sendCalls))
+	}
+}
+
+// TestHandleAutoBookingReminder_GetByVenueAndDateErrors_FallsBackToAdminDM verifies that
+// when GetByVenueAndDate returns an error, the job falls through to sending admin DMs
+// rather than silently doing nothing.
+func TestHandleAutoBookingReminder_GetByVenueAndDateErrors_FallsBackToAdminDM(t *testing.T) {
+	const chatID int64 = -1001
+	api := &mockTelegramAPI{
+		admins: []tgbotapi.ChatMember{makeChatMember(101, false)},
+	}
+	api.sendResult = tgbotapi.Message{MessageID: 5}
+
+	resultRepo := &mockAutoBookingResultRepo{
+		getByIDErr: errors.New("db timeout"),
+	}
+	job := &BookingReminderJob{
+		api:                   api,
+		gameRepo:              &mockGameRepo{},
+		autoBookingResultRepo: resultRepo,
+		logger:                noopLogger(),
+	}
+
+	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTimes: "18:00"}
+	lz := i18n.New(i18n.En)
+
+	ok := job.handleAutoBookingReminder(context.Background(), chatID, venue,
+		time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC), time.Now().UTC(), time.UTC, lz)
+	if !ok {
+		t.Error("expected true: admin DM was sent as fallback")
+	}
+	if len(api.sendCalls) == 0 {
+		t.Error("expected at least one Send call (admin DM fallback), got none")
+	}
+}
+
+// TestHandleAutoBookingReminder_BothResultsHaveGameID_IsIdempotent verifies that
+// when every auto_booking_result already has a GameID, no new games are created
+// and no Telegram messages are sent. The method returns true so that
+// last_booking_reminder_at is written and the venue isn't re-entered on every poll.
+func TestHandleAutoBookingReminder_BothResultsHaveGameID_IsIdempotent(t *testing.T) {
+	const chatID int64 = -1001
+	api := &mockTelegramAPI{}
+	gameRepo := &mockGameRepo{}
+
+	gameID1, gameID2 := int64(10), int64(11)
+	gameDate := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	resultRepo := &mockAutoBookingResultRepo{
+		results: []*models.AutoBookingResult{
+			{ID: 1, GameTime: "18:00", Courts: "1", CourtsCount: 1, GameDate: gameDate, GameID: &gameID1},
+			{ID: 2, GameTime: "20:00", Courts: "2", CourtsCount: 1, GameDate: gameDate, GameID: &gameID2},
+		},
+	}
+	job := &BookingReminderJob{
+		api:                   api,
+		gameRepo:              gameRepo,
+		autoBookingResultRepo: resultRepo,
+		logger:                noopLogger(),
+	}
+
+	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTimes: "18:00,20:00"}
+	lz := i18n.New(i18n.En)
+
+	ok := job.handleAutoBookingReminder(context.Background(), chatID, venue, gameDate, time.Now().UTC(), time.UTC, lz)
+	// Returns true so last_booking_reminder_at is written and the venue is not re-entered.
+	if !ok {
+		t.Error("expected true when all results already have a game (handled in prior run)")
+	}
+	if len(api.sendCalls) != 0 {
+		t.Errorf("expected no Telegram sends on second run, got %d", len(api.sendCalls))
+	}
 }

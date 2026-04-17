@@ -300,16 +300,16 @@ type venueBody struct {
 	GracePeriodHours   int    `json:"grace_period_hours"`
 	GameDays           string `json:"game_days"`
 	BookingOpensDays   int    `json:"booking_opens_days"`
-	PreferredGameTime  string `json:"preferred_game_time"`
+	PreferredGameTimes string `json:"preferred_game_times"`
 	AutoBookingCourts  string `json:"auto_booking_courts"`
 	AutoBookingEnabled bool   `json:"auto_booking_enabled"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTime: preferredGameTime, AutoBookingCourts: autoBookingCourts,
+		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
 	}
 	var venue models.Venue
@@ -336,11 +336,11 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTime: preferredGameTime, AutoBookingCourts: autoBookingCourts,
+		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
 	}
 	var venue models.Venue

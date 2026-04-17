@@ -39,7 +39,7 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
-		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
+		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE g.id = $1`
@@ -193,7 +193,7 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
-		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
+		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
 		JOIN players p ON p.id = gp.player_id
@@ -224,7 +224,7 @@ func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Ga
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
-		       v.preferred_game_time, v.last_auto_booking_at, v.auto_booking_courts
+		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		WHERE g.completed = false
@@ -423,7 +423,7 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 			GameDays:              gameDays,
 			BookingOpensDays:      bookingDays,
 			LastBookingReminderAt: venueLastBookingReminder,
-			PreferredGameTime:     preferredGameTime,
+			PreferredGameTimes:    preferredGameTime,
 			LastAutoBookingAt:     venueLastAutoBookingAt,
 			AutoBookingCourts:     autoBookingCourts,
 		}

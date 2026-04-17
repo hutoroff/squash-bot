@@ -39,7 +39,9 @@ cmd/telegram/
 │   │                          handleGroupSelection
 │   └── venue_handlers.go    — handleVenueList/Add/EditMenu/StartEdit/Delete/DeleteConfirm,
 │                              handleVenueDayToggle/Confirm, handleVenueWizPreferredTimePick,
-│                              handleVenuePtimeSet, processVenueWizard, processVenueEdit
+│                              handleVenuePtimeToggle, handleVenuePtimeConfirm, handleVenuePtimeSet,
+│                              renderPreferredTimeEditKeyboard, joinSelectedTimesOrdered,
+│                              processVenueWizard, processVenueEdit
 └── client/
     ├── interface.go         — ManagementClient interface (37 methods across 5 groups)
     └── client.go            — *Client HTTP implementation (satisfies ManagementClient structurally)
@@ -124,7 +126,7 @@ venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
 venue_delete, venue_delete_ok, venue_day_toggle, venue_day_confirm
-venue_wiz_ptime, venue_ptime_set
+venue_wiz_ptime, venue_ptime_toggle, venue_ptime_confirm, venue_ptime_set
 ```
 
 ---
@@ -144,8 +146,8 @@ type newGameWizard struct {
     venueID        *int64
     venueCourts    []string
     selectedCourts map[string]bool
-    timeSlots      []string
-    preferredGameTime string
+    timeSlots       []string
+    preferredGameTimes string
 }
 ```
 
@@ -172,7 +174,7 @@ type venueEditState struct {
 ```
 
 Game-days uses a separate toggle state: `pendingVenueGameDaysEdit` (chatID → `*venueGameDaysEditState`)
-Preferred-time uses: `pendingVenuePreferredTimeEdit` (chatID → `*venuePreferredTimeEditState`)
+Preferred-times uses: `pendingVenuePreferredTimeEdit` (chatID → `*venuePreferredTimeEditState{venueID, groupID int64, selectedTimes map[string]bool}`) — toggle+confirm pattern identical to game days; `venue_ptime_toggle:<slot>` toggles a slot, `venue_ptime_confirm:_` joins selected times ordered by time_slots and submits.
 
 ### Venue Credential Wizard (`venue_handlers.go`)
 State: `pendingVenueCredAdd sync.Map` (chatID → `*venueCredWizard`)
@@ -207,8 +209,8 @@ Works in private chat only.
 
 1. Admin sends `/venues` → venue list for their group (or group picker if multiple groups).
 2. Each venue row: "Edit" and "Delete" buttons; "Add Venue" at bottom.
-3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if none entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
-4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Time (time_slots buttons + "✕ No preference"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game times (toggle keyboard: tap slots to toggle ✓ + "✓ Done" confirm / "✕ No preference" skip; skipped if no time slots entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
+4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Times (toggle keyboard pre-seeded from current `preferred_game_times` + "✓ Done" / "✕ Clear"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears.
 5. **Delete venue**: two-step confirmation. Blocked with user-friendly message if venue has active `court_bookings` (HTTP 409 → `MsgVenueHasActiveBookings`). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
 6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step; blocked with user-friendly message if credential has active court bookings (HTTP 409 → `MsgVenueCredHasActiveBookings`).
 
@@ -216,7 +218,7 @@ Works in private chat only.
 - `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder at `game_date − (grace_period_hours + 6)h`.
 - `game_days`: comma-separated Go `time.Weekday` ints (Sun=0 … Sat=6). Drives booking reminder schedule.
 - `booking_opens_days`: days ahead when booking opens (default 14). Shown in booking reminder DM.
-- `preferred_game_time`: single HH:MM slot (must be one of `time_slots`, or empty). Shown with ⭐ in new-game time picker.
+- `preferred_game_times`: comma-separated HH:MM slots (each must be one of `time_slots`, or empty for no preference). Multiple slots drive N auto-bookings and N games per day. All matching slots shown with ⭐ in new-game time picker. Edited via toggle+confirm keyboard (same pattern as game days).
 - `auto_booking_enabled`: enables AutoBookingJob for this venue (default false). Toggled via `venue_toggle_autobooking:<venueID>:<groupID>` or during creation wizard.
 - `auto_booking_courts`: ordered comma-separated court numbers (subset of `courts`). AutoBookingJob books in declared priority order; cancellation reminder cancels in **reverse** priority order (lowest first). Court matching uses name-extracted number (`extractCourtNumber("Court 7")→7`), not Eversports numeric IDs.
 

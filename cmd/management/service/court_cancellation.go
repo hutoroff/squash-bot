@@ -60,7 +60,7 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 
 	// New credential-aware flow: use stored court_bookings entries when available.
 	if j.courtBookingRepo != nil && game.Venue != nil && game.Venue.ID != 0 {
-		entries, err := j.courtBookingRepo.GetByVenueAndDate(ctx, game.Venue.ID, game.GameDate)
+		entries, err := j.loadCourtBookingEntries(ctx, game)
 		if err != nil {
 			j.logger.Warn("court cancellation: failed to load booking entries, falling back to ListMatches",
 				"game_id", game.ID, "err", err)
@@ -71,6 +71,22 @@ func (j *CancellationReminderJob) cancelUnusedCourtsLogicOnly(
 
 	// Fallback: old ListMatches(my=true) flow for courts booked before this feature.
 	return j.cancelUsingListMatches(ctx, game, courtsToCancel, loc, updateFn)
+}
+
+// loadCourtBookingEntries returns the active court_bookings for the game, filtered by time slot
+// when possible. If an auto_booking_result links this game_id to a specific time, only bookings
+// for that time slot are returned. Falls back to all venue+date bookings for legacy rows.
+func (j *CancellationReminderJob) loadCourtBookingEntries(ctx context.Context, game *models.Game) ([]*models.CourtBooking, error) {
+	if j.autoBookingResultRepo != nil {
+		abr, err := j.autoBookingResultRepo.GetByGameID(ctx, game.ID)
+		if err != nil {
+			j.logger.Warn("court cancellation: get auto_booking_result by game_id",
+				"game_id", game.ID, "err", err)
+		} else if abr != nil && abr.GameTime != "" {
+			return j.courtBookingRepo.GetByVenueAndDateAndTime(ctx, game.Venue.ID, game.GameDate, abr.GameTime)
+		}
+	}
+	return j.courtBookingRepo.GetByVenueAndDate(ctx, game.Venue.ID, game.GameDate)
 }
 
 // cancelUsingBookingEntries cancels courts using the stored court_bookings records.

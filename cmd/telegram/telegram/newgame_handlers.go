@@ -246,15 +246,15 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 			v := venues[0]
 			venueID := v.ID
 			wizard := &newGameWizard{
-				gameDate:          date,
-				dateStr:           dateStr,
-				loc:               loc,
-				step:              wizardStepCourtPick,
-				venueID:           &venueID,
-				venueCourts:       splitCSV(v.Courts),
-				selectedCourts:    make(map[string]bool),
-				timeSlots:         splitCSV(v.TimeSlots),
-				preferredGameTime: v.PreferredGameTime,
+				gameDate:           date,
+				dateStr:            dateStr,
+				loc:                loc,
+				step:               wizardStepCourtPick,
+				venueID:            &venueID,
+				venueCourts:        splitCSV(v.Courts),
+				selectedCourts:     make(map[string]bool),
+				timeSlots:          splitCSV(v.TimeSlots),
+				preferredGameTimes: v.PreferredGameTimes,
 			}
 			b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 			b.answerCallback(cb.ID, "")
@@ -389,7 +389,7 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 		wizard.venueCourts = splitCSV(v.Courts)
 		wizard.selectedCourts = make(map[string]bool)
 		wizard.timeSlots = splitCSV(v.TimeSlots)
-		wizard.preferredGameTime = v.PreferredGameTime
+		wizard.preferredGameTimes = v.PreferredGameTimes
 		wizard.step = wizardStepCourtPick
 		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 		b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
@@ -601,7 +601,7 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 	wizard.venueCourts = splitCSV(venue.Courts)
 	wizard.selectedCourts = make(map[string]bool)
 	wizard.timeSlots = splitCSV(venue.TimeSlots)
-	wizard.preferredGameTime = venue.PreferredGameTime
+	wizard.preferredGameTimes = venue.PreferredGameTimes
 	wizard.step = wizardStepCourtPick
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 	b.answerCallback(cb.ID, "")
@@ -745,9 +745,13 @@ func (b *Bot) renderTimeSlotKeyboard(chatID int64, messageID int, wizard *newGam
 	text := lz.Tf(i18n.MsgNewGameSelectTime, lz.FormatGameDate(localDate), selectedCourtsString(wizard))
 
 	var rows [][]tgbotapi.InlineKeyboardButton
+	preferredSet := make(map[string]bool)
+	for _, t := range splitCSV(wizard.preferredGameTimes) {
+		preferredSet[t] = true
+	}
 	for _, slot := range wizard.timeSlots {
 		label := slot
-		if slot == wizard.preferredGameTime {
+		if preferredSet[slot] {
 			label = "⭐ " + slot
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(

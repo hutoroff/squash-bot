@@ -307,7 +307,7 @@ func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T
 		ID:                 1,
 		AutoBookingEnabled: false,
 		Courts:             "1,2",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -327,10 +327,10 @@ func TestProcessAutoBookingForVenue_InvalidPreferredTime_DoesNotCallListMatches(
 		logger:        noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                1,
-		Courts:            "1,2",
-		PreferredGameTime: "not-valid-time", // parsePreferredTime will fail
-		BookingOpensDays:  14,
+		ID:                 1,
+		Courts:             "1,2",
+		PreferredGameTimes: "not-valid-time", // parsePreferredTime will fail
+		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
 	got := s.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
@@ -520,18 +520,19 @@ func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *tes
 	credSvc := newCredServiceForTest(nil)
 
 	job := &AutoBookingJob{
-		api:           api,
-		bookingClient: client,
-		credService:   credSvc,
-		credCooldown:  24 * time.Hour,
-		courtsCount:   1,
-		logger:        noopLogger(),
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -572,18 +573,19 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 	credSvc := newCredServiceForTest(creds)
 
 	job := &AutoBookingJob{
-		api:           api,
-		bookingClient: client,
-		credService:   credSvc,
-		credCooldown:  24 * time.Hour,
-		courtsCount:   1,
-		logger:        noopLogger(),
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -606,12 +608,24 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 
 type stubAutoBookingResultRepo struct{}
 
-func (r *stubAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _ string, _ int) error {
+func (r *stubAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
 	return nil
 }
 
-func (r *stubAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) (*models.AutoBookingResult, error) {
+func (r *stubAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
 	return nil, nil
+}
+
+func (r *stubAutoBookingResultRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, _ string) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *stubAutoBookingResultRepo) GetByGameID(_ context.Context, _ int64) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *stubAutoBookingResultRepo) SetGameID(_ context.Context, _, _ int64) error {
+	return nil
 }
 
 // ── courtBookingRepo.Save tests ───────────────────────────────────────────────
@@ -652,7 +666,7 @@ func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -732,7 +746,7 @@ func TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls(t *testing.
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -758,18 +772,19 @@ func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
 
 	client := &mockBookingClient{}
 	job := &AutoBookingJob{
-		api:           &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}},
-		bookingClient: client,
-		credService:   credSvc,
-		credCooldown:  24 * time.Hour,
-		courtsCount:   1,
-		logger:        noopLogger(),
+		api:                   &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}},
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -781,6 +796,181 @@ func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
 	}
 	if client.listCalls != 0 {
 		t.Errorf("ListMatches must not be called before credentials are available, got %d calls", client.listCalls)
+	}
+}
+
+// ── multi-slot booking tests ──────────────────────────────────────────────────
+
+// recordingAutoBookingResultRepo records Save calls so tests can verify that
+// each time slot produces a separate auto_booking_results row.
+type recordingAutoBookingResultRepo struct {
+	savedGameTimes []string                             // game_time argument of each Save call
+	slotResults    map[string]*models.AutoBookingResult // keyed by game_time; nil entry = "not found"
+	getByTimeErr   error                                // if set, GetByVenueAndDateAndTime returns this error for all calls
+}
+
+func (r *recordingAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, gameTime, _ string, _ int) error {
+	r.savedGameTimes = append(r.savedGameTimes, gameTime)
+	return nil
+}
+
+func (r *recordingAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *recordingAutoBookingResultRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, gameTime string) (*models.AutoBookingResult, error) {
+	if r.getByTimeErr != nil {
+		return nil, r.getByTimeErr
+	}
+	if r.slotResults != nil {
+		return r.slotResults[gameTime], nil
+	}
+	return nil, nil
+}
+
+func (r *recordingAutoBookingResultRepo) GetByGameID(_ context.Context, _ int64) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *recordingAutoBookingResultRepo) SetGameID(_ context.Context, _, _ int64) error {
+	return nil
+}
+
+// TestProcessAutoBookingForVenue_TwoTimeSlots_BooksAndSavesBoth verifies that when a
+// venue has two preferred times ("18:00,20:00"), both slots are booked independently
+// and each produces its own auto_booking_results and court_bookings row.
+func TestProcessAutoBookingForVenue_TwoTimeSlots_BooksAndSavesBoth(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	// Use distinct MatchIDs per call: in production Eversports always returns unique
+	// match UUIDs, and court_bookings has ON CONFLICT (match_id) DO NOTHING which
+	// would silently drop the second save if both calls returned the same ID.
+	client := &mockBookingClient{
+		courts: []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:  nil, // court 1 free at both slots
+		bookResultsByCall: []*BookMatchResult{
+			{MatchID: "match-1800", BookingUUID: "bk-1800"},
+			{MatchID: "match-2000", BookingUUID: "bk-2000"},
+		},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	resultRepo := &recordingAutoBookingResultRepo{}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+	api.sendResult = tgbotapi.Message{MessageID: 1}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: resultRepo,
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTimes: "18:00,20:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected processAutoBookingForVenue to return true when courts booked")
+	}
+	if len(resultRepo.savedGameTimes) != 2 {
+		t.Fatalf("expected 2 auto_booking_result saves, got %d: %v",
+			len(resultRepo.savedGameTimes), resultRepo.savedGameTimes)
+	}
+	if resultRepo.savedGameTimes[0] != "18:00" || resultRepo.savedGameTimes[1] != "20:00" {
+		t.Errorf("saved game times: got %v, want [18:00 20:00]", resultRepo.savedGameTimes)
+	}
+	if len(cbRepo.saved) != 2 {
+		t.Fatalf("expected 2 court_bookings saves (one per slot), got %d", len(cbRepo.saved))
+	}
+	// Each court_bookings row must carry its slot's game_time and a distinct MatchID.
+	matchIDs := make(map[string]bool)
+	gameTimes := make(map[string]bool)
+	for _, cb := range cbRepo.saved {
+		gameTimes[cb.GameTime] = true
+		matchIDs[cb.MatchID] = true
+	}
+	if !gameTimes["18:00"] || !gameTimes["20:00"] {
+		t.Errorf("court_bookings game_times: got %v, want both 18:00 and 20:00", gameTimes)
+	}
+	if len(matchIDs) != 2 {
+		t.Errorf("expected distinct MatchIDs per slot, got %v", matchIDs)
+	}
+}
+
+// TestProcessAutoBookingForVenue_SlotAlreadyBooked_SkipsIt verifies per-slot dedup:
+// when GetByVenueAndDateAndTime returns a non-nil result for a slot, that slot is
+// skipped and only the fresh slot is booked.
+func TestProcessAutoBookingForVenue_SlotAlreadyBooked_SkipsIt(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	client := &mockBookingClient{
+		courts:     []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:      nil,
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "bk-1"},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	// 20:00 already booked; 18:00 is fresh.
+	resultRepo := &recordingAutoBookingResultRepo{
+		slotResults: map[string]*models.AutoBookingResult{
+			"20:00": {ID: 99, GameTime: "20:00"},
+		},
+	}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+	api.sendResult = tgbotapi.Message{MessageID: 1}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: resultRepo,
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTimes: "18:00,20:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected true (18:00 was booked)")
+	}
+	// Only 18:00 should produce a save; 20:00 was already recorded.
+	if len(resultRepo.savedGameTimes) != 1 {
+		t.Fatalf("expected 1 save (18:00 only), got %d: %v",
+			len(resultRepo.savedGameTimes), resultRepo.savedGameTimes)
+	}
+	if resultRepo.savedGameTimes[0] != "18:00" {
+		t.Errorf("expected only 18:00 saved, got %v", resultRepo.savedGameTimes)
 	}
 }
 
@@ -819,7 +1009,7 @@ func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *te
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
-		PreferredGameTime:  "18:00",
+		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
 	lz := i18n.New(i18n.En)
@@ -828,5 +1018,60 @@ func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *te
 
 	if len(cbRepo.saved) != 0 {
 		t.Errorf("expected no court booking saved when MatchID is empty, got %d", len(cbRepo.saved))
+	}
+}
+
+// TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot verifies that when
+// GetByVenueAndDateAndTime returns a transient DB error, the slot is skipped
+// (conservative: do not attempt booking, avoid risk of double-booking).
+func TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	client := &mockBookingClient{
+		courts:     []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:      nil,
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "bk-1"},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	resultRepo := &recordingAutoBookingResultRepo{
+		getByTimeErr: errors.New("db timeout"),
+	}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: resultRepo,
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTimes: "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if got {
+		t.Error("expected false: slot must be skipped on dedup check error, not booked")
+	}
+	if len(cbRepo.saved) != 0 {
+		t.Errorf("expected no court_bookings saved when dedup check errored, got %d", len(cbRepo.saved))
+	}
+	if len(resultRepo.savedGameTimes) != 0 {
+		t.Errorf("expected no auto_booking_result saved when slot skipped, got %v", resultRepo.savedGameTimes)
 	}
 }

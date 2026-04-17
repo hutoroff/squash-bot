@@ -8,39 +8,39 @@ import (
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
-// ── validatePreferredGameTime ─────────────────────────────────────────────────
+// ── validatePreferredGameTimes ─────────────────────────────────────────────────
 
 func TestValidatePreferredGameTime_Empty_AlwaysValid(t *testing.T) {
 	// An empty preferred time means "no preference" — always valid regardless of time slots.
-	if err := validatePreferredGameTime("", "18:00,19:00,20:00"); err != nil {
+	if err := validatePreferredGameTimes("", "18:00,19:00,20:00"); err != nil {
 		t.Errorf("empty preferred time with slots: got error %v, want nil", err)
 	}
-	if err := validatePreferredGameTime("", ""); err != nil {
+	if err := validatePreferredGameTimes("", ""); err != nil {
 		t.Errorf("empty preferred time without slots: got error %v, want nil", err)
 	}
 }
 
 func TestValidatePreferredGameTime_SlotPresentInList(t *testing.T) {
-	if err := validatePreferredGameTime("19:00", "18:00,19:00,20:00"); err != nil {
+	if err := validatePreferredGameTimes("19:00", "18:00,19:00,20:00"); err != nil {
 		t.Errorf("preferred time in list: got error %v, want nil", err)
 	}
 }
 
 func TestValidatePreferredGameTime_SlotNotInList(t *testing.T) {
-	err := validatePreferredGameTime("21:00", "18:00,19:00,20:00")
+	err := validatePreferredGameTimes("21:00", "18:00,19:00,20:00")
 	if err == nil {
 		t.Error("preferred time not in list: got nil, want error")
 	}
 }
 
 func TestValidatePreferredGameTime_SingleSlotList_Match(t *testing.T) {
-	if err := validatePreferredGameTime("18:00", "18:00"); err != nil {
+	if err := validatePreferredGameTimes("18:00", "18:00"); err != nil {
 		t.Errorf("single-slot list match: got error %v, want nil", err)
 	}
 }
 
 func TestValidatePreferredGameTime_SingleSlotList_NoMatch(t *testing.T) {
-	err := validatePreferredGameTime("19:00", "18:00")
+	err := validatePreferredGameTimes("19:00", "18:00")
 	if err == nil {
 		t.Error("single-slot list no match: got nil, want error")
 	}

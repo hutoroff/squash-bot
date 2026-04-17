@@ -181,10 +181,10 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		}
 		wiz.timeSlots = timeSlots
 		if timeSlots != "" {
-			// Have time slots — ask for preferred time.
+			// Have time slots — ask for preferred times (toggle + confirm pattern).
 			wiz.step = venueStepPreferredTime
 			b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
-			keyboard := renderPreferredTimeKeyboard(splitCSV(timeSlots), lz)
+			keyboard := renderPreferredTimeKeyboard(splitCSV(timeSlots), wiz.selectedPreferredTimes, lz)
 			b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
 		} else {
 			wiz.step = venueStepAddress
@@ -254,7 +254,8 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 
 		gameDaysStr := gameDaysToString(wiz.gameDays)
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, wiz.preferredGameTime, wiz.autoBookingCourts, wiz.autoBookingEnabled)
+		preferredGameTimes := joinSelectedTimesOrdered(splitCSV(wiz.timeSlots), wiz.selectedPreferredTimes)
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, preferredGameTimes, wiz.autoBookingCourts, wiz.autoBookingEnabled)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -297,7 +298,7 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 	if address == "" {
 		address = "—"
 	}
-	preferredTime := venue.PreferredGameTime
+	preferredTime := venue.PreferredGameTimes
 	if preferredTime == "" {
 		preferredTime = "—"
 	}
@@ -410,19 +411,24 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 
-	// Preferred time editing uses an inline keyboard of time slots.
+	// Preferred times editing uses a toggle inline keyboard of time slots.
 	if field == venueEditFieldPreferredTime {
 		slots := splitCSV(venue.TimeSlots)
 		if len(slots) == 0 {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNoPreferredTime))
 			return
 		}
+		selectedTimes := make(map[string]bool)
+		for _, t := range splitCSV(venue.PreferredGameTimes) {
+			selectedTimes[t] = true
+		}
 		b.pendingVenuePreferredTimeEdit.Store(cb.Message.Chat.ID, &venuePreferredTimeEditState{
-			venueID:   venueID,
-			groupID:   groupID,
-			timeSlots: slots,
+			venueID:       venueID,
+			groupID:       groupID,
+			timeSlots:     slots,
+			selectedTimes: selectedTimes,
 		})
-		keyboard := renderPreferredTimeEditKeyboard(venueID, slots, lz)
+		keyboard := renderPreferredTimeEditKeyboard(venueID, slots, selectedTimes, lz)
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
 		return
 	}
@@ -537,23 +543,21 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 
 	b.pendingVenueEdit.Delete(msg.Chat.ID)
 
-	// When time slots change, revalidate preferred game time; clear if no longer in the new list.
-	if state.field == venueEditFieldTimeSlots && venue.PreferredGameTime != "" {
-		found := false
-		for _, s := range splitCSV(venue.TimeSlots) {
-			if s == venue.PreferredGameTime {
-				found = true
-				break
+	// When time slots change, filter preferred game times to keep only those still in the new list.
+	if state.field == venueEditFieldTimeSlots && venue.PreferredGameTimes != "" {
+		newSlotSet := makeStringSet(venue.TimeSlots)
+		var validTimes []string
+		for _, t := range splitCSV(venue.PreferredGameTimes) {
+			if newSlotSet[t] {
+				validTimes = append(validTimes, t)
 			}
 		}
-		if !found {
-			venue.PreferredGameTime = ""
-		}
+		venue.PreferredGameTimes = strings.Join(validTimes, ",")
 	}
 
 	// When courts change, drop any auto-booking courts no longer present in the new list.
 	if state.field == venueEditFieldCourts && venue.AutoBookingCourts != "" {
-		newCourtSet := makeCourtSet(venue.Courts)
+		newCourtSet := makeStringSet(venue.Courts)
 		var valid []string
 		for _, c := range splitCSV(venue.AutoBookingCourts) {
 			if newCourtSet[c] {
@@ -563,7 +567,7 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 		venue.AutoBookingCourts = strings.Join(valid, ",")
 	}
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts, venue.AutoBookingEnabled)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled)
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -704,7 +708,7 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 		}
 
 		venue.GameDays = gameDaysToString(state.selectedDays)
-		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts, venue.AutoBookingEnabled)
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled)
 		if err != nil {
 			slog.Error("handleVenueDayConfirm: update venue", "err", err)
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -719,36 +723,57 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 
 // ── Preferred game time callbacks ─────────────────────────────────────────────
 
-// renderPreferredTimeKeyboard builds an inline keyboard for selecting a preferred game time.
-// Each slot gets its own button row, plus a "No preference" button at the bottom.
-func renderPreferredTimeKeyboard(slots []string, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+// renderPreferredTimeKeyboard builds a toggle inline keyboard for selecting preferred game times during venue creation.
+// Selected slots show a ✓ prefix; "✓ Done" confirms; "✕ No preference" skips.
+func renderPreferredTimeKeyboard(slots []string, selected map[string]bool, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, slot := range slots {
+		label := slot
+		if selected[slot] {
+			label = "✓ " + slot
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(slot, fmt.Sprintf("venue_wiz_ptime:%s", slot)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_wiz_ptime:%s", slot)),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), "venue_wiz_ptime:_skip"),
-	))
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.MsgVenueConfirmDays), "venue_wiz_ptime:_confirm"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), "venue_wiz_ptime:_skip"),
+		),
+	)
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// renderPreferredTimeEditKeyboard builds an inline keyboard for editing an existing venue's preferred time.
-func renderPreferredTimeEditKeyboard(venueID int64, slots []string, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+// renderPreferredTimeEditKeyboard builds a toggle inline keyboard for editing an existing venue's preferred times.
+// Selected slots show a ✓ prefix; "✓ Done" saves; "✕ No preference" clears all.
+func renderPreferredTimeEditKeyboard(venueID int64, slots []string, selected map[string]bool, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, slot := range slots {
+		label := slot
+		if selected[slot] {
+			label = "✓ " + slot
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(slot, fmt.Sprintf("venue_ptime_set:%d:%s", venueID, slot)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("venue_ptime_toggle:%d:%s", venueID, slot)),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), fmt.Sprintf("venue_ptime_set:%d:_clear", venueID)),
-	))
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.MsgVenueConfirmDays), fmt.Sprintf("venue_ptime_confirm:%d", venueID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueClearPreferredTime), fmt.Sprintf("venue_ptime_confirm:%d:_clear", venueID)),
+		),
+	)
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // handleVenueWizPreferredTimePick handles venue_wiz_ptime:<slot> callbacks during venue creation wizard.
+// Special values: "_confirm" advances to next step, "_skip" clears selection and advances.
+// Any other value toggles the slot in the selection.
 func (b *Bot) handleVenueWizPreferredTimePick(ctx context.Context, cb *tgbotapi.CallbackQuery, slot string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
 
@@ -763,17 +788,32 @@ func (b *Bot) handleVenueWizPreferredTimePick(ctx context.Context, cb *tgbotapi.
 		return
 	}
 
-	if slot != "_skip" {
-		wiz.preferredGameTime = slot
-	}
-	wiz.step = venueStepAddress
-	b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
 	b.answerCallback(cb.ID, "")
 
-	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskAddress))
-	edit.ReplyMarkup = &emptyKeyboard
-	b.api.Send(edit) //nolint:errcheck
+	switch slot {
+	case "_skip", "_confirm":
+		if slot == "_skip" {
+			wiz.selectedPreferredTimes = nil
+		}
+		wiz.step = venueStepAddress
+		b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskAddress))
+		edit.ReplyMarkup = &emptyKeyboard
+		b.api.Send(edit) //nolint:errcheck
+	default:
+		if wiz.selectedPreferredTimes == nil {
+			wiz.selectedPreferredTimes = make(map[string]bool)
+		}
+		if wiz.selectedPreferredTimes[slot] {
+			delete(wiz.selectedPreferredTimes, slot)
+		} else {
+			wiz.selectedPreferredTimes[slot] = true
+		}
+		b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
+		keyboard := renderPreferredTimeKeyboard(splitCSV(wiz.timeSlots), wiz.selectedPreferredTimes, lz)
+		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
+	}
 }
 
 // handleVenuePtimeSet handles venue_ptime_set:<venueID>:<slot> callbacks for existing venue editing.
@@ -803,18 +843,103 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 	if slot != "_clear" {
 		preferredTime = slot
 	}
-	venue.PreferredGameTime = preferredTime
+	venue.PreferredGameTimes = preferredTime
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts, venue.AutoBookingEnabled)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled)
 	if err != nil {
 		slog.Error("handleVenuePtimeSet: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	slog.Info("Venue preferred time updated", "venue_id", updated.ID, "preferred_game_time", updated.PreferredGameTime)
+	slog.Info("Venue preferred times updated", "venue_id", updated.ID, "preferred_game_times", updated.PreferredGameTimes)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
 	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
+}
+
+// handleVenuePtimeToggle handles venue_ptime_toggle:<venueID>:<slot> callbacks.
+// Toggles the given time slot in the pending edit state and re-renders the keyboard.
+func (b *Bot) handleVenuePtimeToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, slot string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingVenuePreferredTimeEdit.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*venuePreferredTimeEditState)
+
+	if state.venueID != venueID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	if state.selectedTimes == nil {
+		state.selectedTimes = make(map[string]bool)
+	}
+	if state.selectedTimes[slot] {
+		delete(state.selectedTimes, slot)
+	} else {
+		state.selectedTimes[slot] = true
+	}
+	b.pendingVenuePreferredTimeEdit.Store(cb.Message.Chat.ID, state)
+	keyboard := renderPreferredTimeEditKeyboard(venueID, state.timeSlots, state.selectedTimes, lz)
+	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskPreferredTime), &keyboard)
+}
+
+// handleVenuePtimeConfirm handles venue_ptime_confirm:<venueID> and venue_ptime_confirm:<venueID>:_clear callbacks.
+// Saves the selected preferred times and re-renders the edit menu.
+func (b *Bot) handleVenuePtimeConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, clearAll bool) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingVenuePreferredTimeEdit.LoadAndDelete(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*venuePreferredTimeEditState)
+
+	if state.venueID != venueID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	venue, err := b.client.GetVenueByID(ctx, state.venueID)
+	if err != nil {
+		slog.Error("handleVenuePtimeConfirm: get venue", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	preferredGameTimes := ""
+	if !clearAll {
+		preferredGameTimes = joinSelectedTimesOrdered(state.timeSlots, state.selectedTimes)
+	}
+	venue.PreferredGameTimes = preferredGameTimes
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled)
+	if err != nil {
+		slog.Error("handleVenuePtimeConfirm: update venue", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Venue preferred times updated", "venue_id", updated.ID, "preferred_game_times", updated.PreferredGameTimes)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
+}
+
+// joinSelectedTimesOrdered returns a comma-separated string of selected times
+// ordered according to the slots slice (preserving time_slots definition order).
+func joinSelectedTimesOrdered(slots []string, selected map[string]bool) string {
+	var parts []string
+	for _, t := range slots {
+		if selected[t] {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 // renderGameDaysKeyboard builds a toggle keyboard for weekday selection.
@@ -884,10 +1009,10 @@ func gameDaysFromString(s string) []int {
 	return days
 }
 
-// makeCourtSet builds a lookup set from a comma-separated courts string.
-func makeCourtSet(courts string) map[string]bool {
+// makeStringSet builds a lookup set from a comma-separated string.
+func makeStringSet(s string) map[string]bool {
 	set := make(map[string]bool)
-	for _, c := range splitCSV(courts) {
+	for _, c := range splitCSV(s) {
 		set[c] = true
 	}
 	return set
@@ -1012,7 +1137,7 @@ func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.Cal
 	if !venue.AutoBookingEnabled {
 		venue.AutoBookingCourts = ""
 	}
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTime, venue.AutoBookingCourts, venue.AutoBookingEnabled)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled)
 	if err != nil {
 		slog.Error("handleVenueToggleAutoBooking: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))

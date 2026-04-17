@@ -94,37 +94,14 @@ func (j *BookingReminderJob) runBookingReminders(force bool) {
 				continue
 			}
 
-			// Skip if a game is already created for the target date.
-			targetStart, targetEnd := bookingTargetWindow(localNow, venue.BookingOpensDays)
-			existingGames, err := j.gameRepo.GetUncompletedGamesByGroupAndDay(ctx, g.ChatID, targetStart, targetEnd)
-			if err != nil {
-				j.logger.Error("booking reminder: check existing games", "venue_id", venue.ID, "err", err)
-				// Fail-open: proceed rather than silently suppressing.
-			} else if len(existingGames) > 0 {
-				j.logger.Info("booking reminder: game already created for target date, skipping",
-					"venue_id", venue.ID, "target_date", targetStart.Format("2006-01-02"))
-				continue
-			}
-
-			// Check if auto-booking stored courts for the target game date.
+			targetStart, _ := bookingTargetWindow(localNow, venue.BookingOpensDays)
 			gameDate := time.Date(targetStart.Year(), targetStart.Month(), targetStart.Day(), 0, 0, 0, 0, groupTZ)
-			autoResult, err := j.autoBookingResultRepo.GetByVenueAndDate(ctx, venue.ID, gameDate)
-			if err != nil {
-				j.logger.Error("booking reminder: check auto-booking result", "venue_id", venue.ID, "err", err)
-				// Fail-open: fall through to admin DM.
-			}
 
 			var sent bool
-			if autoResult != nil {
-				sent = j.createGameAndAnnounce(ctx, g.ChatID, venue, autoResult, localNow, groupTZ, lz)
-				if !sent {
-					// Game creation failed — fall back to admin DM so the booking isn't lost.
-					j.logger.Warn("booking reminder: game creation failed, falling back to admin DM",
-						"venue_id", venue.ID)
-					sent = j.sendBookingReminderToAdmins(g.ChatID, venue, lz)
-				}
+			if venue.AutoBookingEnabled {
+				sent = j.handleAutoBookingReminder(ctx, g.ChatID, venue, gameDate, localNow, groupTZ, lz)
 			} else {
-				sent = j.sendBookingReminderToAdmins(g.ChatID, venue, lz)
+				sent = j.handleManualReminder(ctx, g.ChatID, venue, targetStart, lz)
 			}
 
 			if sent {
@@ -136,6 +113,75 @@ func (j *BookingReminderJob) runBookingReminders(force bool) {
 		}
 	}
 	j.logger.Info("booking reminder done", "venues_notified", notified)
+}
+
+// handleAutoBookingReminder processes the booking reminder for a venue with auto_booking_enabled.
+// For each auto_booking_result without a game: creates a game and announces it.
+// If no results exist: DMs admins with a booking reminder.
+// Returns true if any action was taken (game created or DM sent).
+func (j *BookingReminderJob) handleAutoBookingReminder(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDate time.Time,
+	localNow time.Time,
+	groupTZ *time.Location,
+	lz *i18n.Localizer,
+) bool {
+	results, err := j.autoBookingResultRepo.GetByVenueAndDate(ctx, venue.ID, gameDate)
+	if err != nil {
+		j.logger.Error("booking reminder: check auto-booking result", "venue_id", venue.ID, "err", err)
+		// Fail-open: fall through to admin DM.
+	}
+
+	if len(results) == 0 {
+		// Auto-booking didn't run or failed for all slots — DM admins.
+		return j.sendBookingReminderToAdmins(chatID, venue, lz)
+	}
+
+	anyActioned := false
+	for _, result := range results {
+		if result.GameID != nil {
+			j.logger.Info("booking reminder: game already created for slot, skipping",
+				"venue_id", venue.ID, "game_time", result.GameTime, "game_id", *result.GameID)
+			// Count pre-existing games as handled so the timestamp is written.
+			anyActioned = true
+			continue
+		}
+		if j.createGameAndAnnounce(ctx, chatID, venue, result, localNow, groupTZ, lz) {
+			anyActioned = true
+		} else {
+			// Game creation failed — DM admins so the booking isn't lost.
+			j.logger.Warn("booking reminder: game creation failed, falling back to admin DM",
+				"venue_id", venue.ID, "game_time", result.GameTime)
+			if j.sendBookingReminderToAdmins(chatID, venue, lz) {
+				anyActioned = true
+			}
+		}
+	}
+	return anyActioned
+}
+
+// handleManualReminder processes the booking reminder for a venue without auto_booking_enabled.
+// Skips if a game already exists on the target date; otherwise DMs admins.
+func (j *BookingReminderJob) handleManualReminder(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	targetStart time.Time,
+	lz *i18n.Localizer,
+) bool {
+	targetEnd := targetStart.AddDate(0, 0, 1)
+	existingGames, err := j.gameRepo.GetUncompletedGamesByGroupAndDay(ctx, chatID, targetStart, targetEnd)
+	if err != nil {
+		j.logger.Error("booking reminder: check existing games", "venue_id", venue.ID, "err", err)
+		// Fail-open: proceed rather than silently suppressing.
+	} else if len(existingGames) > 0 {
+		j.logger.Info("booking reminder: game already created for target date, skipping",
+			"venue_id", venue.ID, "target_date", targetStart.Format("2006-01-02"))
+		return false
+	}
+	return j.sendBookingReminderToAdmins(chatID, venue, lz)
 }
 
 // createGameAndAnnounce creates a game from the stored auto-booking result and posts the
@@ -152,9 +198,9 @@ func (j *BookingReminderJob) createGameAndAnnounce(
 ) bool {
 	gameDate := result.GameDate
 
-	// Attach preferred game time when available so the game has a proper start time.
-	if venue.PreferredGameTime != "" {
-		parts := strings.SplitN(venue.PreferredGameTime, ":", 2)
+	// Use the result's game_time as the authoritative start time.
+	if result.GameTime != "" {
+		parts := strings.SplitN(result.GameTime, ":", 2)
 		if len(parts) == 2 {
 			h, errH := strconv.Atoi(parts[0])
 			m, errM := strconv.Atoi(parts[1])
@@ -178,6 +224,13 @@ func (j *BookingReminderJob) createGameAndAnnounce(
 	if err != nil {
 		j.logger.Error("booking reminder: create game", "venue_id", venue.ID, "err", err)
 		return false
+	}
+
+	// Link the auto_booking_result to the game for cancellation routing.
+	if err := j.autoBookingResultRepo.SetGameID(ctx, result.ID, created.ID); err != nil {
+		j.logger.Error("booking reminder: set game_id on result",
+			"result_id", result.ID, "game_id", created.ID, "err", err)
+		// Non-fatal: game is created; cancellation falls back to GetByVenueAndDate.
 	}
 
 	// Re-fetch with hydrated venue so the formatter has venue name and address.
@@ -214,7 +267,7 @@ func (j *BookingReminderJob) createGameAndAnnounce(
 
 	j.logger.Info("booking reminder: game created and announced",
 		"game_id", game.ID, "chat_id", chatID, "venue_id", venue.ID,
-		"game_date", gameDate.Format(time.DateOnly), "courts", result.Courts)
+		"game_date", gameDate.Format(time.DateOnly), "game_time", result.GameTime, "courts", result.Courts)
 	return true
 }
 
