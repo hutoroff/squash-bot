@@ -673,6 +673,117 @@ func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
 	}
 }
 
+// credentialRecordingClient records the login passed to ListCourts and ListMatches
+// so tests can assert that the first credential was forwarded to both list endpoints.
+type credentialRecordingClient struct {
+	courts           []BookingCourt
+	slots            []BookingSlot
+	bookResult       *BookMatchResult
+	listCourtsLogin  string
+	listMatchesLogin string
+}
+
+func (m *credentialRecordingClient) ListCourts(_ context.Context, _, login, _ string) ([]BookingCourt, error) {
+	m.listCourtsLogin = login
+	return m.courts, nil
+}
+
+func (m *credentialRecordingClient) ListMatches(_ context.Context, _, _, _ string, _ bool, login, _ string) ([]BookingSlot, error) {
+	m.listMatchesLogin = login
+	return m.slots, nil
+}
+
+func (m *credentialRecordingClient) CancelMatch(_ context.Context, _, _, _ string) error { return nil }
+
+func (m *credentialRecordingClient) BookMatch(_ context.Context, _, _, _, login, _ string) (*BookMatchResult, error) {
+	return m.bookResult, nil
+}
+
+// TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls verifies that
+// both ListCourts and ListMatches receive the login of the highest-priority (first)
+// credential, not an empty string.
+func TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw1, _ := enc.Encrypt("pass1")
+	encPw2, _ := enc.Encrypt("pass2")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "first@example.com", EncryptedPassword: encPw1, Priority: 0, MaxCourts: 1},
+		{ID: 2, VenueID: 1, Login: "second@example.com", EncryptedPassword: encPw2, Priority: 1, MaxCourts: 1},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	client := &credentialRecordingClient{
+		courts:     []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:      []BookingSlot{}, // court 1 free
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "booking-1"},
+	}
+
+	job := &AutoBookingJob{
+		api:                   &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}},
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected true on successful booking")
+	}
+	if client.listCourtsLogin != "first@example.com" {
+		t.Errorf("ListCourts login: want %q, got %q", "first@example.com", client.listCourtsLogin)
+	}
+	if client.listMatchesLogin != "first@example.com" {
+		t.Errorf("ListMatches login: want %q, got %q", "first@example.com", client.listMatchesLogin)
+	}
+}
+
+// TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls verifies that the
+// credential check happens before any Eversports list calls, so ListMatches is
+// never invoked when there are no usable credentials.
+func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
+	credSvc := newCredServiceForTest(nil) // no credentials stored
+
+	client := &mockBookingClient{}
+	job := &AutoBookingJob{
+		api:           &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}},
+		bookingClient: client,
+		credService:   credSvc,
+		credCooldown:  24 * time.Hour,
+		courtsCount:   1,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if got {
+		t.Error("expected false when no credentials")
+	}
+	if client.listCalls != 0 {
+		t.Errorf("ListMatches must not be called before credentials are available, got %d calls", client.listCalls)
+	}
+}
+
 func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *testing.T) {
 	// BookMatch returns BookingUUID but empty MatchID (step 3 failed) → no court_bookings row.
 	enc, _ := NewEncryptor(testHexKey)

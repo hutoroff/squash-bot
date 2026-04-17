@@ -148,9 +148,23 @@ GET    /api/v1/eversports/courts[?date=YYYY-MM-DD]
 GET    /api/v1/eversports/facility?slug=<slug>
 ```
 
+### Per-credential client dispatch (`handler.go`)
+
+`Handler` holds a `credClients sync.Map` (keyed by email → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account.
+
+Handlers that support per-credential dispatch check `X-Eversports-Email` / `X-Eversports-Password` request headers (or JSON body) and route to the matching cached client when credentials are present; otherwise fall back to `h.eversports` (service-level default client, env-var credentials):
+
+| Handler | Credential source |
+|---------|------------------|
+| `getMatch` (GET /matches/{id}) | `X-Eversports-Email`/`-Password` headers |
+| `cancelMatch` (DELETE /matches/{id}) | JSON body `email`/`password` |
+| `createMatch` (POST /matches) | JSON body `email`/`password` |
+| `getCourts` (GET /courts) | `X-Eversports-Email`/`-Password` headers |
+| `listMatches` (GET /matches) | `X-Eversports-Email`/`-Password` headers (applied to both GetCourts + GetSlots) |
+
 ### listMatches handler details
 
-Resolves courts dynamically on each call:
+Resolves courts dynamically on each call, using the per-credential client when headers are present:
 1. `GetCourts(...)` → court list for the date
 2. `GetSlots(facilityID, courtIDs, date)` → all slots
 3. `filterSlots(slots, date, startTime, endTime, myFilter)` — pure function, lexicographic HHMM comparison

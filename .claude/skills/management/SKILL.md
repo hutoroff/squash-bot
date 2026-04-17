@@ -205,11 +205,12 @@ Outcome: if `auto_booking_results` record exists for venue+date → creates a `G
 **AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone for venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_time` configured. Deduplicates via `last_auto_booking_at`.
 
 Algorithm:
-1. `ListCourts(date)` → all facility courts for game date.
-2. `ListMatches(date, HHMM, HHMM, false)` at exact `preferred_game_time` — courts in this response are **occupied** (reserved/training/club-blocked, including `booking: null`). Courts absent are free.
-3. `filterFreeCourts`: matches by name-extracted number (`extractCourtNumber("Court 7")→7`) against venue `courts`; falls back to all free courts if no name-numbers match. If `auto_booking_courts` is set, returns preferred courts in priority order.
-4. Credential rotation: `VenueCredentialService.ListForBooking(venueID, cooldown)` excludes credentials where `last_error_at > NOW()−cooldown` (`CREDENTIAL_ERROR_COOLDOWN`, default 24h). Books up to `min(cred.MaxCourts, remaining)` per credential. On per-credential error: `MarkError(credID)`, notify admins **with sound**, put court back, advance to next credential. If all credentials exhausted with courts remaining: notify admins silently.
-5. On success: saves `court_bookings` entries per booked court (skips if `match_id` empty with a warning), saves `auto_booking_results`, DMs all admins silently, sets `last_auto_booking_at`.
+1. `VenueCredentialService.ListForBooking(venueID, cooldown)` — loads all usable credentials **before** any Eversports network calls. No credentials → `notifyNoCredentials`, bail out. First credential's `Login`/`Password` are used for the list steps below.
+2. `ListCourts(date, firstLogin, firstPassword)` → all facility courts for game date.
+3. `ListMatches(date, HHMM, HHMM, false, firstLogin, firstPassword)` at exact `preferred_game_time` — courts in this response are **occupied** (reserved/training/club-blocked, including `booking: null`). Courts absent are free.
+4. `filterFreeCourts`: matches by name-extracted number (`extractCourtNumber("Court 7")→7`) against venue `courts`; falls back to all free courts if no name-numbers match. If `auto_booking_courts` is set, returns preferred courts in priority order.
+5. Credential rotation loop (uses the credentials already loaded in step 1): books up to `min(cred.MaxCourts, remaining)` per credential. On per-credential error: `MarkError(credID)`, notify admins **with sound**, put court back, advance to next credential. `CREDENTIAL_ERROR_COOLDOWN` (default 24h) gates eligibility. If all credentials exhausted with courts remaining: notify admins silently.
+6. On success: saves `court_bookings` entries per booked court (skips if `match_id` empty with a warning), saves `auto_booking_results`, DMs all admins silently, sets `last_auto_booking_at`.
 
 Admin notification types: `notifyNoCredentials` (sound, no usable creds), `notifyCredentialError` (sound, per-credential failure with login + error + cooldown), `notifyCredentialsExhausted` (silent, all creds tried but courts remain).
 
@@ -273,6 +274,6 @@ Adding a new column always requires a new migration file in `migrations/`. Test 
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`
 - `ParticipationService.Notifier` call pattern: always async (`go notifier.EditGameMessage(...)`) so a slow Telegram API never blocks the HTTP response
-- `BookingServiceClient` interface in `booking_client.go`: methods are `ListMatches`, `CancelMatch(ctx, matchUUID, login, password string) error`, `BookMatch(ctx, courtUUID, start, end, login, password string)` — `login`/`password` select a per-credential Eversports session on the booking service; empty strings fall back to the service-level default account
+- `BookingServiceClient` interface in `booking_client.go`: `ListCourts(ctx, date, login, password string)`, `ListMatches(ctx, date, startTime, endTime string, my bool, login, password string)`, `CancelMatch(ctx, matchUUID, login, password string) error`, `BookMatch(ctx, courtUUID, start, end, login, password string)` — `login`/`password` select a per-credential Eversports session on the booking service (forwarded as `X-Eversports-Email`/`-Password` headers); empty strings fall back to the service-level default (env-var) account
 - `VenueCredentialService` is injected into `AutoBookingJob`; `credCooldown` (`CREDENTIAL_ERROR_COOLDOWN`, default 24h) gates which credentials are eligible; `MarkError` sets `last_error_at` on failure
 - Version is read from `cmd/management/VERSION` file, injected at build time via `-ldflags "-X main.Version=<ver>"`

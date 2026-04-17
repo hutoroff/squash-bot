@@ -168,8 +168,23 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 		"date", checkDateLocal, "start_hhmm", checkStartHHMM,
 	)
 
+	// Load credentials before any Eversports calls so we can pass them to list
+	// endpoints and bail out early if there is nothing usable to book with.
+	creds, err := j.credService.ListForBooking(ctx, venue.ID, j.credCooldown)
+	if err != nil {
+		j.logger.Error("auto-booking: list credentials", "venue_id", venue.ID, "err", err)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
+		return false
+	}
+	if len(creds) == 0 {
+		j.logger.Warn("auto-booking: no usable credentials", "venue_id", venue.ID)
+		j.notifyNoCredentials(ctx, chatID, venue, lz)
+		return false
+	}
+	firstLogin, firstPassword := creds[0].Login, creds[0].Password
+
 	// Step 1: Fetch all courts at the facility for the game date.
-	allCourts, err := j.bookingClient.ListCourts(ctx, checkDateLocal)
+	allCourts, err := j.bookingClient.ListCourts(ctx, checkDateLocal, firstLogin, firstPassword)
 	if err != nil {
 		j.logger.Error("auto-booking: list courts",
 			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
@@ -182,7 +197,7 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	// Step 2: Fetch all matches at the exact target start time.
 	// A court appearing in this response is occupied (reserved, training, club-blocked).
 	// Courts ABSENT from this response are truly free for ad-hoc booking.
-	occupiedSlots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkStartHHMM, false)
+	occupiedSlots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkStartHHMM, false, firstLogin, firstPassword)
 	if err != nil {
 		j.logger.Error("auto-booking: list matches",
 			"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM, "err", err)
@@ -261,21 +276,6 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	}
 
 	// ── Credential-rotation booking loop ─────────────────────────────────────
-
-	// Fetch usable credentials (skips those within the error cooldown window).
-	creds, err := j.credService.ListForBooking(ctx, venue.ID, j.credCooldown)
-	if err != nil {
-		j.logger.Error("auto-booking: list credentials", "venue_id", venue.ID, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, venue.PreferredGameTime, 0, j.courtsCount, lz)
-		return false
-	}
-
-	// EARLY BAIL-OUT: no usable credentials → notify and stop immediately.
-	if len(creds) == 0 {
-		j.logger.Warn("auto-booking: no usable credentials", "venue_id", venue.ID)
-		j.notifyNoCredentials(ctx, chatID, venue, lz)
-		return false
-	}
 
 	remaining := j.courtsCount
 	bookedCount := 0

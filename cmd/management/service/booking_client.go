@@ -46,12 +46,16 @@ type BookMatchResult struct {
 // It is an interface to allow test doubles.
 type BookingServiceClient interface {
 	// ListCourts returns all courts at the facility for the given date.
-	ListCourts(ctx context.Context, date string) ([]BookingCourt, error)
+	// login and password select a per-credential Eversports session; empty strings
+	// fall back to the booking service's default (env-var) account.
+	ListCourts(ctx context.Context, date, login, password string) ([]BookingCourt, error)
 	// ListMatches returns slots for the given date filtered to the time window.
 	// Pass empty startTime/endTime for no time filter.
 	// When my=true, only slots owned by the service user are returned.
 	// When my=false, all slots (including unbooked) are returned.
-	ListMatches(ctx context.Context, date, startTime, endTime string, my bool) ([]BookingSlot, error)
+	// login and password select a per-credential Eversports session; empty strings
+	// fall back to the booking service's default (env-var) account.
+	ListMatches(ctx context.Context, date, startTime, endTime string, my bool, login, password string) ([]BookingSlot, error)
 	// CancelMatch cancels the booking identified by the match UUID.
 	// login and password select a per-credential Eversports session; empty strings
 	// fall back to the booking service's default (env-var) account.
@@ -81,7 +85,7 @@ func NewHTTPBookingClient(baseURL, apiSecret string) BookingServiceClient {
 	}
 }
 
-func (c *httpBookingClient) ListCourts(ctx context.Context, date string) ([]BookingCourt, error) {
+func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, password string) ([]BookingCourt, error) {
 	url := fmt.Sprintf("%s/api/v1/eversports/courts?date=%s", c.baseURL, date)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -89,6 +93,10 @@ func (c *httpBookingClient) ListCourts(ctx context.Context, date string) ([]Book
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+	if login != "" {
+		req.Header.Set("X-Eversports-Email", login)
+		req.Header.Set("X-Eversports-Password", password)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -108,7 +116,7 @@ func (c *httpBookingClient) ListCourts(ctx context.Context, date string) ([]Book
 	return courts, nil
 }
 
-func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, endTime string, my bool) ([]BookingSlot, error) {
+func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, endTime string, my bool, login, password string) ([]BookingSlot, error) {
 	myStr := "false"
 	if my {
 		myStr = "true"
@@ -121,6 +129,10 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+	if login != "" {
+		req.Header.Set("X-Eversports-Email", login)
+		req.Header.Set("X-Eversports-Password", password)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

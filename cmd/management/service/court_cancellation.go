@@ -205,7 +205,7 @@ func (j *CancellationReminderJob) cancelUsingListMatches(
 	// Format time parameters in local (venue) time.
 	date, startHHMM, endHHMM := slotQueryWindow(game.GameDate.In(loc))
 
-	slots, err := j.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true)
+	slots, err := j.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("list matches: %w", err)
 	}
@@ -236,7 +236,7 @@ func (j *CancellationReminderJob) cancelUsingListMatches(
 	// Build Eversports ID → court name-number mapping for priority-based selection.
 	var nameNumByID map[int]int
 	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
-		courts, listErr := j.bookingClient.ListCourts(ctx, date)
+		courts, listErr := j.bookingClient.ListCourts(ctx, date, "", "")
 		if listErr != nil {
 			j.logger.Warn("court cancellation: list courts failed, skipping priority selection",
 				"game_id", game.ID, "err", listErr)

@@ -279,7 +279,14 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+	var es eversportsClient = h.eversports
+	if email := r.Header.Get("X-Eversports-Email"); email != "" {
+		if password := r.Header.Get("X-Eversports-Password"); password != "" {
+			es = h.getOrCreateCredClient(email, password)
+		}
+	}
+
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
 		h.logger.Error("eversports get courts for games failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -292,7 +299,7 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		courtUUIDByID[c.ID] = c.UUID
 	}
 
-	slots, err := h.eversports.GetSlots(r.Context(), h.facilityID, courtIDs, date)
+	slots, err := es.GetSlots(r.Context(), h.facilityID, courtIDs, date)
 	if err != nil {
 		h.logger.Error("eversports get court bookings failed", "date", date, "err", err)
 		writeError(w, http.StatusBadGateway, "get court bookings failed: "+err.Error())
@@ -376,7 +383,15 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid date format — expected YYYY-MM-DD")
 		return
 	}
-	courts, err := h.eversports.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+
+	var es eversportsClient = h.eversports
+	if email := r.Header.Get("X-Eversports-Email"); email != "" {
+		if password := r.Header.Get("X-Eversports-Password"); password != "" {
+			es = h.getOrCreateCredClient(email, password)
+		}
+	}
+
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
 		h.logger.Error("eversports get courts failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())

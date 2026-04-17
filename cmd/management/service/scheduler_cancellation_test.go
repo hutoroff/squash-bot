@@ -31,7 +31,7 @@ type mockBookingClient struct {
 	bookErr          error
 }
 
-func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string, _ bool) ([]BookingSlot, error) {
+func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string, _ bool, _, _ string) ([]BookingSlot, error) {
 	m.listCalls++
 	return m.slots, m.listErr
 }
@@ -42,7 +42,7 @@ func (m *mockBookingClient) CancelMatch(_ context.Context, uuid, login, _ string
 	return m.cancelErr
 }
 
-func (m *mockBookingClient) ListCourts(_ context.Context, _ string) ([]BookingCourt, error) {
+func (m *mockBookingClient) ListCourts(_ context.Context, _, _, _ string) ([]BookingCourt, error) {
 	return m.courts, nil
 }
 
@@ -282,13 +282,13 @@ type mockBookingClientCustomCancel struct {
 	cancelFn func(uuid string) error
 }
 
-func (m *mockBookingClientCustomCancel) ListMatches(_ context.Context, _, _, _ string, _ bool) ([]BookingSlot, error) {
+func (m *mockBookingClientCustomCancel) ListMatches(_ context.Context, _, _, _ string, _ bool, _, _ string) ([]BookingSlot, error) {
 	return m.slots, nil
 }
 func (m *mockBookingClientCustomCancel) CancelMatch(_ context.Context, uuid, _, _ string) error {
 	return m.cancelFn(uuid)
 }
-func (m *mockBookingClientCustomCancel) ListCourts(_ context.Context, _ string) ([]BookingCourt, error) {
+func (m *mockBookingClientCustomCancel) ListCourts(_ context.Context, _, _, _ string) ([]BookingCourt, error) {
 	return nil, nil
 }
 
@@ -494,14 +494,14 @@ type recordingBookingClient struct {
 	slots           []BookingSlot
 }
 
-func (r *recordingBookingClient) ListMatches(_ context.Context, date, startHHMM, endHHMM string, _ bool) ([]BookingSlot, error) {
+func (r *recordingBookingClient) ListMatches(_ context.Context, date, startHHMM, endHHMM string, _ bool, _, _ string) ([]BookingSlot, error) {
 	r.listedDate = date
 	r.listedStartHHMM = startHHMM
 	r.listedEndHHMM = endHHMM
 	return r.slots, nil
 }
 func (r *recordingBookingClient) CancelMatch(_ context.Context, _, _, _ string) error { return nil }
-func (r *recordingBookingClient) ListCourts(_ context.Context, _ string) ([]BookingCourt, error) {
+func (r *recordingBookingClient) ListCourts(_ context.Context, _, _, _ string) ([]BookingCourt, error) {
 	return nil, nil
 }
 func (r *recordingBookingClient) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
