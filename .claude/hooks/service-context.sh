@@ -92,6 +92,19 @@ preamble = (
     "Review before planning changes.]\n\n"
 )
 
+# Always append the documentation map when any service is detected,
+# so Claude knows which docs to update after making service changes.
+doc_skill_path = os.path.join(SKILL_DIR, "documentation", "SKILL.md")
+try:
+    with open(doc_skill_path) as f:
+        doc_content = f.read()
+    if doc_content.startswith("---"):
+        end = doc_content.index("---", 3)
+        doc_content = doc_content[end + 3:].lstrip()
+    context += "\n\n---\n\n" + doc_content
+except (OSError, ValueError):
+    pass
+
 output = {
     "hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",

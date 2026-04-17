@@ -176,6 +176,49 @@ POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
 
 **Critical:** All time-window checks use `group.Timezone` (IANA string from `bot_groups`), resolved via `group_resolver.go`. Invalid timezone strings fall back to the service default (`TIMEZONE` env var).
 
+### Scheduled job details
+
+**CancellationReminderJob**: For each upcoming unnotified game, computes `reminderAt = game_date − (gracePeriod+6)h`. Checks capacity, attempts court cancellation via the booking service (if `SPORTS_BOOKING_SERVICE_URL` set), then **always** sends a group notification. `gracePeriodHours` defaults to 24 from the linked venue.
+
+Court cancellation dispatch (`court_cancellation.go`):
+- **New path (credential-aware)**: if active `court_bookings` entries exist for venue+date, calls `cancelUsingBookingEntries`. Each entry carries `credential_id`; `GetDecryptedByID` fetches login/password (nil → env-var fallback). Phase-1/Phase-2 selection runs on `court_label` values. Successful cancellations call `MarkCanceled`.
+- **Legacy fallback**: no entries → calls `ListMatches(my=true)` for the game time window, cancels with empty credentials (env-var account).
+
+Selection phases (both paths):
+- **Phase 1 — priority order**: iterates `auto_booking_courts` in **reverse** (lowest-priority first), picks booked courts up to `courtsToCancel`. Legacy path calls `ListCourts` to build Eversports ID → name-number map; skipped if `ListCourts` fails.
+- **Phase 2 — consecutive-grouping fallback**: splits remaining booked courts into consecutive runs, cancels from the end of the smallest group (tie-break: lowest first court number).
+
+Per-court `CancelMatch` errors are collected in `courtCancellationResult.cancelErrors`. If cancellation fails (infrastructure error **or** any `CancelMatch` error), all group admins receive a silent DM with the error details in addition to the group notification.
+
+Group notification scenarios:
+- `all_good` — count ≥ newCapacity
+- `canceled_balanced` — canceled and count == newCapacity
+- `odd_no_cancel` — odd count, nothing canceled, 1 free spot
+- `odd_canceled` — odd count, some canceled, 1 free spot
+- `all_canceled` — all courts canceled, game will not happen
+- `even_no_cancel` — even count < capacity, nothing canceled (booking service absent or no owned bookings)
+
+**BookingReminderJob**: Fires in the `[10:00, 10:05)` window per group timezone for venues with matching `game_days`. Deduplicates via `last_booking_reminder_at` (date-scoped). Skips entirely if a game already exists on the target date (dedup guard NOT updated — retries on next poll).
+
+Outcome: if `auto_booking_results` record exists for venue+date → creates a `Game`, posts group announcement, pins silently. Otherwise → DMs all non-bot group admins a booking reminder (venue name + `booking_opens_days`).
+
+**AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone for venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_time` configured. Deduplicates via `last_auto_booking_at`.
+
+Algorithm:
+1. `ListCourts(date)` → all facility courts for game date.
+2. `ListMatches(date, HHMM, HHMM, false)` at exact `preferred_game_time` — courts in this response are **occupied** (reserved/training/club-blocked, including `booking: null`). Courts absent are free.
+3. `filterFreeCourts`: matches by name-extracted number (`extractCourtNumber("Court 7")→7`) against venue `courts`; falls back to all free courts if no name-numbers match. If `auto_booking_courts` is set, returns preferred courts in priority order.
+4. Credential rotation: `VenueCredentialService.ListForBooking(venueID, cooldown)` excludes credentials where `last_error_at > NOW()−cooldown` (`CREDENTIAL_ERROR_COOLDOWN`, default 24h). Books up to `min(cred.MaxCourts, remaining)` per credential. On per-credential error: `MarkError(credID)`, notify admins **with sound**, put court back, advance to next credential. If all credentials exhausted with courts remaining: notify admins silently.
+5. On success: saves `court_bookings` entries per booked court (skips if `match_id` empty with a warning), saves `auto_booking_results`, DMs all admins silently, sets `last_auto_booking_at`.
+
+Admin notification types: `notifyNoCredentials` (sound, no usable creds), `notifyCredentialError` (sound, per-credential failure with login + error + cooldown), `notifyCredentialsExhausted` (silent, all creds tried but courts remain).
+
+**DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group. Unpins message, removes keyboard, marks game complete.
+
+### Localisation in scheduler jobs
+
+Scheduler jobs resolve language via `groupLang(ctx, groupRepo, chatID)` (calls `GetByID` directly — no HTTP, works without a live Telegram service). Exception: `BookingReminderJob` admin DMs use the admin's Telegram `LanguageCode` via `userLocalizer` since those are personal messages.
+
 ### GameNotifier (`service/game_notifier.go`)
 
 Implements `Notifier`. Called asynchronously by `ParticipationService`. Fetches game + participants + guests, formats message and keyboard via `internal/gameformat`, then calls `TelegramAPI.Request(EditMessageTextConfig{})`. Timezone resolved via `resolveGroupTimezone`.
@@ -215,6 +258,9 @@ court_bookings:     id BIGSERIAL PK, venue_id FK→venues ON DELETE CASCADE, gam
                     canceled_at TIMESTAMPTZ (NULL = active; set by MarkCanceled soft-delete),
                     created_at TIMESTAMPTZ DEFAULT NOW()
                     INDEX: (venue_id, game_date)
+auto_booking_results: id, venue_id FK→venues ON DELETE CASCADE, game_date DATE,
+                    courts (comma-sep court numbers), courts_count INT,
+                    created_at, UNIQUE(venue_id, game_date)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.

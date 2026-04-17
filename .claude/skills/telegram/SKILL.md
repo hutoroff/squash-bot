@@ -188,6 +188,82 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 
 ---
 
+## Business logic flows
+
+### Language & Timezone Selection (`/language`)
+
+1. Admin sends `/language` in private chat.
+2. If admin in exactly one group → show language picker for that group immediately.
+3. If admin in multiple groups → show group picker first (`set_lang_group:<groupID>` callbacks), then language picker.
+4. Language picker: 3 language buttons + "🕐 Set Timezone" button.
+5. Language button → `set_lang:<lang>:<groupID>` → `PATCH /api/v1/groups/{chatID}/language`.
+6. "Set Timezone" → `set_tz_pick:<groupID>` → curated timezone picker (18 IANA timezones, 2 per row).
+7. Timezone button → `set_tz:<groupID>:<tz>` → `PATCH /api/v1/groups/{chatID}/timezone`.
+8. Management returns 400 for invalid IANA strings, 404 if group not found.
+
+### Venue Management (`/venues`)
+
+Works in private chat only.
+
+1. Admin sends `/venues` → venue list for their group (or group picker if multiple groups).
+2. Each venue row: "Edit" and "Delete" buttons; "Add Venue" at bottom.
+3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if none entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
+4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Time (time_slots buttons + "✕ No preference"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears.
+5. **Delete venue**: two-step confirmation. Blocked with error message if venue has active `court_bookings` (HTTP 409). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
+6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step.
+
+**Venue field semantics:**
+- `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder at `game_date − (grace_period_hours + 6)h`.
+- `game_days`: comma-separated Go `time.Weekday` ints (Sun=0 … Sat=6). Drives booking reminder schedule.
+- `booking_opens_days`: days ahead when booking opens (default 14). Shown in booking reminder DM.
+- `preferred_game_time`: single HH:MM slot (must be one of `time_slots`, or empty). Shown with ⭐ in new-game time picker.
+- `auto_booking_enabled`: enables AutoBookingJob for this venue (default false). Toggled via `venue_toggle_autobooking:<venueID>:<groupID>` or during creation wizard.
+- `auto_booking_courts`: ordered comma-separated court numbers (subset of `courts`). AutoBookingJob books in declared priority order; cancellation reminder cancels in **reverse** priority order (lowest first). Court matching uses name-extracted number (`extractCourtNumber("Court 7")→7`), not Eversports numeric IDs.
+
+### New Game Wizard (`/newGame`)
+
+Works in private chat only. Group @mentions redirected to private chat. At least one venue must exist per group.
+
+**Single-group admin:**
+1. `/newGame` → date-picker keyboard (today + next 13 days).
+2. Tap date (`ng_date:<YYYY-MM-DD>`) → if 1 venue: auto-select + court toggle; if 2+: venue picker.
+3. Select venue (`ng_venue:<venueID>`) → court toggle keyboard (✓ when selected) + Confirm.
+4. Toggle courts (`ng_court_toggle:<court>`), confirm (`ng_court_confirm:_`) → time slot buttons + "Custom time".
+5. Select slot (`ng_timeslot:<HH:MM>`) or "Custom time" (`ng_time_custom:_`, reverts to free-text) → game created.
+
+**Multi-group admin:**
+1. `/newGame` → date-picker keyboard.
+2. Tap date → group picker (`ng_group:<groupID>` buttons).
+3. Select group → venues fetched; if 0: error; if 1: auto-select + court toggle; if 2+: venue picker.
+4–5. Same as single-group steps 3–5.
+
+### Courts Update (`/games` → Manage → Edit Courts)
+
+- If game has a venue with courts configured → inline court-toggle keyboard (same ✓ UX). Pre-selects current courts. Confirm → `manage_court_confirm:<gameID>`.
+- If game has no venue → falls back to free-text input.
+
+### Button Click Flow (join / skip / guest)
+
+1. Parse callback data (`action:game_id`, e.g. `join:123`).
+2. Call management service (upsert participation or add/remove guest).
+3. Fetch updated participants and guests.
+4. Format message with participant list + "Last updated: [timestamp]" footer (group language via `groupLocalizer`).
+5. Edit Telegram message in place — preserving both inline buttons and pin status.
+
+### Admin & Group Management
+
+- **Group admin rights**: verified per-action via `GetChatAdministrators` — no hardcoded IDs. Controls game creation, player/guest management, all `/games` actions.
+- **Service admins** (`SERVICE_ADMIN_IDS`): Telegram user IDs with `/trigger` access only. Completely independent of group membership or Telegram admin status.
+- `my_chat_member` events: bot added without admin rights → DM the adder; added with rights / promoted / demoted / removed → `UpsertGroup` or `RemoveGroup`.
+
+### Guest Management
+
+- Players add guests (+1) linked to their own player record.
+- Players remove their own most-recently-added guest.
+- Admins remove any guest via the `/games` management menu (`manage_kick_guest` callback).
+
+---
+
 ## ManagementClient interface (`client/interface.go`)
 
 41 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
