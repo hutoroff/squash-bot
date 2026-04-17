@@ -54,7 +54,7 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.Error("addCredential", "err", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, cred)
@@ -124,8 +124,12 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "credential has active court bookings and cannot be deleted")
 			return
 		}
+		if errors.Is(err, service.ErrCredentialNotFound) {
+			writeError(w, http.StatusNotFound, "credential not found")
+			return
+		}
 		h.logger.Error("removeCredential", "err", err)
-		writeError(w, http.StatusNotFound, "credential not found")
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

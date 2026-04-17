@@ -75,3 +75,10 @@ func (r *CourtBookingRepo) HasActiveByVenueID(ctx context.Context, venueID int64
 	err := r.pool.QueryRow(ctx, q, venueID).Scan(&exists)
 	return exists, err
 }
+
+// MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
+func (r *CourtBookingRepo) MarkCanceledByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) error {
+	const q = `UPDATE court_bookings SET canceled_at = NOW() WHERE venue_id = $1 AND game_date = $2 AND canceled_at IS NULL`
+	_, err := r.pool.Exec(ctx, q, venueID, gameDate)
+	return err
+}

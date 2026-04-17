@@ -2,13 +2,16 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
@@ -618,6 +621,11 @@ func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery,
 	}
 
 	if err := b.client.DeleteVenue(ctx, venueID, groupID); err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueHasActiveBookings))
+			return
+		}
 		slog.Error("handleVenueDelete: delete", "err", err, "venue_id", venueID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -1324,6 +1332,11 @@ func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQu
 	}
 
 	if err := b.client.DeleteVenueCredential(ctx, venueID, credID, groupID); err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCredHasActiveBookings))
+			return
+		}
 		slog.Error("handleVenueCredDelete: delete", "err", err, "cred_id", credID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return

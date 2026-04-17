@@ -62,11 +62,12 @@ func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, f
 // getOrCreateCredClient returns a cached eversportsClient for the given credentials,
 // creating and storing one if none exists yet.
 func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient {
-	if v, ok := h.credClients.Load(email); ok {
+	key := email + ":" + password
+	if v, ok := h.credClients.Load(key); ok {
 		return v.(eversportsClient)
 	}
 	c := eversports.New(email, password, h.logger)
-	h.credClients.Store(email, c)
+	h.credClients.Store(key, c)
 	return c
 }
 
@@ -207,11 +208,10 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var es eversportsClient = h.eversports
-	if r.ContentLength > 0 || r.Header.Get("Content-Type") != "" {
-		var req cancelMatchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.Email != "" && req.Password != "" {
-			es = h.getOrCreateCredClient(req.Email, req.Password)
-		}
+	var req cancelMatchRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Email != "" && req.Password != "" {
+		es = h.getOrCreateCredClient(req.Email, req.Password)
 	}
 
 	result, err := es.CancelMatch(r.Context(), id)

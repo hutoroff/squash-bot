@@ -462,14 +462,27 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
+// HTTPError is a typed error returned by the management service client when the
+// server responds with a non-2xx status. Callers can use errors.As to inspect
+// the StatusCode and act on specific codes (e.g. 409 Conflict).
+type HTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("HTTP %d", e.StatusCode)
+}
+
 // parseErrorBody reads the {"error": "..."} body from an error response.
 func parseErrorBody(resp *http.Response) error {
 	var errBody struct {
 		Error string `json:"error"`
 	}
 	data, _ := io.ReadAll(resp.Body)
-	if err := json.Unmarshal(data, &errBody); err == nil && errBody.Error != "" {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, errBody.Error)
-	}
-	return fmt.Errorf("HTTP %d", resp.StatusCode)
+	_ = json.Unmarshal(data, &errBody)
+	return &HTTPError{StatusCode: resp.StatusCode, Message: errBody.Error}
 }

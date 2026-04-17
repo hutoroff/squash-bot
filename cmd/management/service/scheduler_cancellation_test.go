@@ -577,6 +577,10 @@ func (r *stubCourtBookingRepo) HasActiveByVenueID(_ context.Context, _ int64) (b
 	return r.hasActiveByVenue, nil
 }
 
+func (r *stubCourtBookingRepo) MarkCanceledByVenueAndDate(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
+
 // courtBookingEntry is a convenience constructor for test CourtBooking entries.
 func courtBookingEntry(label, matchID string, credID *int64) *models.CourtBooking {
 	return &models.CourtBooking{CourtLabel: label, MatchID: matchID, CredentialID: credID}

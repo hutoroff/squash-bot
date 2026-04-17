@@ -180,7 +180,16 @@ func (h *credHandlerShim) removeCredential(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.svc.Remove(r.Context(), credID, venueID, groupID); err != nil {
-		writeError(w, http.StatusNotFound, "credential not found")
+		if errors.Is(err, service.ErrCredentialInUse) {
+			writeError(w, http.StatusConflict, "credential has active court bookings and cannot be deleted")
+			return
+		}
+		if errors.Is(err, service.ErrCredentialNotFound) {
+			writeError(w, http.StatusNotFound, "credential not found")
+			return
+		}
+		h.logger.Error("removeCredential", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -381,7 +390,7 @@ func TestRemoveCredential_InvalidCredID_Returns400(t *testing.T) {
 }
 
 func TestRemoveCredential_NotFound_Returns404(t *testing.T) {
-	h := newShim(&stubCredService{removeErr: errors.New("not found")})
+	h := newShim(&stubCredService{removeErr: service.ErrCredentialNotFound})
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/venues/1/credentials/99?group_id=5", nil)
 	req.SetPathValue("id", "1")
 	req.SetPathValue("cid", "99")
@@ -389,6 +398,30 @@ func TestRemoveCredential_NotFound_Returns404(t *testing.T) {
 	h.removeCredential(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("not found: want 404, got %d", w.Code)
+	}
+}
+
+func TestRemoveCredential_ActiveBooking_Returns409(t *testing.T) {
+	h := newShim(&stubCredService{removeErr: service.ErrCredentialInUse})
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/venues/1/credentials/2?group_id=5", nil)
+	req.SetPathValue("id", "1")
+	req.SetPathValue("cid", "2")
+	w := httptest.NewRecorder()
+	h.removeCredential(w, req)
+	if w.Code != http.StatusConflict {
+		t.Errorf("active booking: want 409, got %d", w.Code)
+	}
+}
+
+func TestRemoveCredential_UnexpectedError_Returns500(t *testing.T) {
+	h := newShim(&stubCredService{removeErr: errors.New("db connection lost")})
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/venues/1/credentials/2?group_id=5", nil)
+	req.SetPathValue("id", "1")
+	req.SetPathValue("cid", "2")
+	w := httptest.NewRecorder()
+	h.removeCredential(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("unexpected error: want 500, got %d", w.Code)
 	}
 }
 

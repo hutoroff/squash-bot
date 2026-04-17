@@ -16,13 +16,14 @@ import (
 // DayAfterCleanupJob unpins and closes yesterday's games.
 // Runs at 03:00–03:05 in each group's local timezone.
 type DayAfterCleanupJob struct {
-	api       TelegramAPI
-	gameRepo  GameRepository
-	partRepo  ParticipationRepository
-	guestRepo GuestRepository
-	groupRepo GroupRepository
-	loc       *time.Location
-	logger    *slog.Logger
+	api              TelegramAPI
+	gameRepo         GameRepository
+	partRepo         ParticipationRepository
+	guestRepo        GuestRepository
+	groupRepo        GroupRepository
+	courtBookingRepo CourtBookingRepository
+	loc              *time.Location
+	logger           *slog.Logger
 }
 
 func NewDayAfterCleanupJob(
@@ -33,15 +34,17 @@ func NewDayAfterCleanupJob(
 	groupRepo GroupRepository,
 	loc *time.Location,
 	logger *slog.Logger,
+	courtBookingRepo CourtBookingRepository,
 ) *DayAfterCleanupJob {
 	return &DayAfterCleanupJob{
-		api:       api,
-		gameRepo:  gameRepo,
-		partRepo:  partRepo,
-		guestRepo: guestRepo,
-		groupRepo: groupRepo,
-		loc:       loc,
-		logger:    logger,
+		api:              api,
+		gameRepo:         gameRepo,
+		partRepo:         partRepo,
+		guestRepo:        guestRepo,
+		groupRepo:        groupRepo,
+		courtBookingRepo: courtBookingRepo,
+		loc:              loc,
+		logger:           logger,
 	}
 }
 
@@ -131,6 +134,12 @@ func (j *DayAfterCleanupJob) processDayAfter(ctx context.Context, game *models.G
 	if err := j.gameRepo.MarkCompleted(ctx, game.ID); err != nil {
 		j.logger.Error("day-after cleanup: mark completed", "game_id", game.ID, "err", err)
 		return
+	}
+
+	if j.courtBookingRepo != nil && game.VenueID != nil {
+		if err := j.courtBookingRepo.MarkCanceledByVenueAndDate(ctx, *game.VenueID, game.GameDate); err != nil {
+			j.logger.Warn("day-after cleanup: mark court bookings canceled", "game_id", game.ID, "err", err)
+		}
 	}
 
 	j.logger.Info("day-after cleanup",

@@ -60,7 +60,7 @@ func (r *stubCredRepo) GetWithPasswordByID(_ context.Context, id int64) (*models
 			return c, nil
 		}
 	}
-	return nil, nil
+	return nil, errors.New("not found")
 }
 
 type stubVenueRepo struct {
@@ -202,8 +202,9 @@ func TestVenueCredentialService_Remove_HappyPath(t *testing.T) {
 func TestVenueCredentialService_Remove_VenueNotOwned(t *testing.T) {
 	svc := newTestCredService(&stubCredRepo{}, &stubVenueRepo{err: errors.New("not found")})
 
-	if err := svc.Remove(context.Background(), 1, 10, 99); err == nil {
-		t.Error("wrong group: want error, got nil")
+	err := svc.Remove(context.Background(), 1, 10, 99)
+	if !errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("wrong group: want ErrCredentialNotFound, got %v", err)
 	}
 }
 
@@ -213,8 +214,9 @@ func TestVenueCredentialService_Remove_DeleteError(t *testing.T) {
 		&stubVenueRepo{venue: testVenue},
 	)
 
-	if err := svc.Remove(context.Background(), 1, 10, 20); err == nil {
-		t.Error("delete error: want error, got nil")
+	err := svc.Remove(context.Background(), 1, 10, 20)
+	if !errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("delete error: want ErrCredentialNotFound, got %v", err)
 	}
 }
 
@@ -272,5 +274,67 @@ func TestAdd_ReturnedCredentialHasNoPassword(t *testing.T) {
 	// We at minimum assert the login is correctly threaded through.
 	if cred.Login != "u@e.com" {
 		t.Errorf("Login: got %q", cred.Login)
+	}
+}
+
+// ── GetDecryptedByID ──────────────────────────────────────────────────────────
+
+func TestGetDecryptedByID_CorruptCiphertext(t *testing.T) {
+	cred := &models.VenueCredential{ID: 5, VenueID: 10, Login: "u@e.com", EncryptedPassword: "not-valid-ciphertext"}
+	svc := newTestCredService(&stubCredRepo{creds: []*models.VenueCredential{cred}}, &stubVenueRepo{venue: testVenue})
+
+	_, err := svc.GetDecryptedByID(context.Background(), 5)
+	if err == nil {
+		t.Error("corrupt ciphertext: want error, got nil")
+	}
+}
+
+// ── ListForBooking ────────────────────────────────────────────────────────────
+
+func TestListForBooking_CooldownFiltering(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("secret")
+
+	now := time.Now()
+	withinCooldown := now.Add(-1 * time.Minute)
+	outsideCooldown := now.Add(-2 * time.Hour)
+
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 10, Login: "blocked@e.com", EncryptedPassword: encPw, Priority: 1, MaxCourts: 3, LastErrorAt: &withinCooldown},
+		{ID: 2, VenueID: 10, Login: "ok@e.com", EncryptedPassword: encPw, Priority: 2, MaxCourts: 3, LastErrorAt: &outsideCooldown},
+	}
+	svc := newTestCredService(&stubCredRepo{creds: creds}, &stubVenueRepo{venue: testVenue})
+
+	result, err := svc.ListForBooking(context.Background(), 10, 30*time.Minute)
+	if err != nil {
+		t.Fatalf("ListForBooking: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("want 1 credential (outside cooldown), got %d", len(result))
+	}
+	if result[0].Login != "ok@e.com" {
+		t.Errorf("expected ok@e.com, got %q", result[0].Login)
+	}
+}
+
+func TestListForBooking_SkipsDecryptError(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("secret")
+
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 10, Login: "bad@e.com", EncryptedPassword: "corrupt-garbage", Priority: 1, MaxCourts: 3},
+		{ID: 2, VenueID: 10, Login: "good@e.com", EncryptedPassword: encPw, Priority: 2, MaxCourts: 3},
+	}
+	svc := newTestCredService(&stubCredRepo{creds: creds}, &stubVenueRepo{venue: testVenue})
+
+	result, err := svc.ListForBooking(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("ListForBooking must not fail on single decrypt error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("want 1 usable credential, got %d", len(result))
+	}
+	if result[0].Login != "good@e.com" {
+		t.Errorf("expected good@e.com, got %q", result[0].Login)
 	}
 }
