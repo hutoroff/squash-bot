@@ -18,7 +18,7 @@ type Venue struct {
 	GameDays              string     `json:"game_days"`                          // comma-separated Go time.Weekday ints, e.g. "0,3" = Sunday+Wednesday
 	BookingOpensDays      int        `json:"booking_opens_days"`                 // days in advance courts booking becomes available (default 14)
 	LastBookingReminderAt *time.Time `json:"last_booking_reminder_at,omitempty"` // dedup: last time booking reminder was sent
-	PreferredGameTime     string     `json:"preferred_game_time"`                // preferred HH:MM time slot for new games, must be one of time_slots (empty = no preference)
+	PreferredGameTimes    string     `json:"preferred_game_times"`               // comma-separated HH:MM time slots for auto-booking, each must be one of time_slots (empty = no preference)
 	LastAutoBookingAt     *time.Time `json:"last_auto_booking_at,omitempty"`     // dedup: last time auto-booking was performed
 	AutoBookingEnabled    bool       `json:"auto_booking_enabled"`               // whether automatic court booking is enabled for this venue
 	AutoBookingCourts     string     `json:"auto_booking_courts"`                // ordered comma-separated court IDs for auto-booking; subset of courts (empty = all courts eligible)

@@ -14,17 +14,18 @@ import (
 // CancellationReminderJob fires capacity notifications 6 hours before the cancellation
 // grace period ends for each upcoming unnotified game.
 type CancellationReminderJob struct {
-	api              TelegramAPI
-	gameRepo         GameRepository
-	partRepo         ParticipationRepository
-	guestRepo        GuestRepository
-	groupRepo        GroupRepository
-	bookingClient    BookingServiceClient    // optional; nil disables court cancellation
-	courtBookingRepo CourtBookingRepository  // optional; nil falls back to ListMatches flow
-	credService      *VenueCredentialService // optional; nil uses env-var credentials only
-	loc              *time.Location
-	logger           *slog.Logger
-	pollWindow       time.Duration // timing gate: ±pollWindow around reminderAt
+	api                   TelegramAPI
+	gameRepo              GameRepository
+	partRepo              ParticipationRepository
+	guestRepo             GuestRepository
+	groupRepo             GroupRepository
+	bookingClient         BookingServiceClient        // optional; nil disables court cancellation
+	courtBookingRepo      CourtBookingRepository      // optional; nil falls back to ListMatches flow
+	autoBookingResultRepo AutoBookingResultRepository // optional; nil skips time-slot routing
+	credService           *VenueCredentialService     // optional; nil uses env-var credentials only
+	loc                   *time.Location
+	logger                *slog.Logger
+	pollWindow            time.Duration // timing gate: ±pollWindow around reminderAt
 }
 
 func NewCancellationReminderJob(
@@ -35,23 +36,25 @@ func NewCancellationReminderJob(
 	groupRepo GroupRepository,
 	bookingClient BookingServiceClient,
 	courtBookingRepo CourtBookingRepository,
+	autoBookingResultRepo AutoBookingResultRepository,
 	credService *VenueCredentialService,
 	loc *time.Location,
 	logger *slog.Logger,
 	pollWindow time.Duration,
 ) *CancellationReminderJob {
 	return &CancellationReminderJob{
-		api:              api,
-		gameRepo:         gameRepo,
-		partRepo:         partRepo,
-		guestRepo:        guestRepo,
-		groupRepo:        groupRepo,
-		bookingClient:    bookingClient,
-		courtBookingRepo: courtBookingRepo,
-		credService:      credService,
-		loc:              loc,
-		logger:           logger,
-		pollWindow:       pollWindow,
+		api:                   api,
+		gameRepo:              gameRepo,
+		partRepo:              partRepo,
+		guestRepo:             guestRepo,
+		groupRepo:             groupRepo,
+		bookingClient:         bookingClient,
+		courtBookingRepo:      courtBookingRepo,
+		autoBookingResultRepo: autoBookingResultRepo,
+		credService:           credService,
+		loc:                   loc,
+		logger:                logger,
+		pollWindow:            pollWindow,
 	}
 }
 

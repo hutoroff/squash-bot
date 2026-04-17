@@ -9,6 +9,7 @@ type CourtBooking struct {
 	ID           int64
 	VenueID      int64
 	GameDate     time.Time
+	GameTime     string // HH:MM time slot this court is booked for, e.g. "18:00"; empty for legacy rows
 	CourtUUID    string
 	CourtLabel   string // name-extracted number, e.g. "7" for "Court 7"
 	MatchID      string // Eversports match UUID (used for cancel/get)

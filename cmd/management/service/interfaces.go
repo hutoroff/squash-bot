@@ -73,12 +73,20 @@ type GroupRepository interface {
 
 // AutoBookingResultRepository is the data access interface for auto-booking results.
 type AutoBookingResultRepository interface {
-	// Save persists the courts booked by AutoBookingJob for a venue on a specific game date.
-	// Silently ignores duplicate entries (same venue_id + game_date).
-	Save(ctx context.Context, venueID int64, gameDate time.Time, courts string, courtsCount int) error
-	// GetByVenueAndDate returns the stored result for the given venue and game date,
-	// or (nil, nil) when no booking was recorded for that combination.
-	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) (*models.AutoBookingResult, error)
+	// Save persists the courts booked by AutoBookingJob for a venue on a specific game date and time slot.
+	// Silently ignores duplicate entries (same venue_id + game_date + game_time).
+	Save(ctx context.Context, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) error
+	// GetByVenueAndDate returns all stored results for the given venue and game date,
+	// ordered by game_time ASC. Returns an empty (non-nil) slice when none exist.
+	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) ([]*models.AutoBookingResult, error)
+	// GetByVenueAndDateAndTime returns the result for an exact (venue, date, time) combination,
+	// or (nil, nil) when no row exists. Used by AutoBookingJob for per-slot dedup.
+	GetByVenueAndDateAndTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) (*models.AutoBookingResult, error)
+	// GetByGameID returns the result linked to the given game, or (nil, nil) if none.
+	// Used by CancellationReminderJob to find the time slot for a specific game.
+	GetByGameID(ctx context.Context, gameID int64) (*models.AutoBookingResult, error)
+	// SetGameID links an auto-booking result to the Telegram game created by BookingReminderJob.
+	SetGameID(ctx context.Context, resultID, gameID int64) error
 }
 
 // CourtBookingRepository is the data access interface for per-court booking records.
@@ -88,6 +96,9 @@ type CourtBookingRepository interface {
 	Save(ctx context.Context, booking *models.CourtBooking) error
 	// GetByVenueAndDate returns active (non-canceled) bookings for the venue and date.
 	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) ([]*models.CourtBooking, error)
+	// GetByVenueAndDateAndTime returns active bookings filtered by game time slot.
+	// Falls back to game_time='' rows (legacy) when gameTime is non-empty and no time-specific rows exist.
+	GetByVenueAndDateAndTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) ([]*models.CourtBooking, error)
 	// MarkCanceled soft-deletes the booking by setting canceled_at to NOW().
 	MarkCanceled(ctx context.Context, matchID string) error
 	// HasActiveByCredentialID returns true if any non-canceled booking uses the credential.

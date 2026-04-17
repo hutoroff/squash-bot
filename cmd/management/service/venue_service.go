@@ -23,18 +23,26 @@ func NewVenueService(repo VenueRepository, courtBookingRepo CourtBookingReposito
 	return &VenueService{repo: repo, courtBookingRepo: courtBookingRepo}
 }
 
-// validatePreferredGameTime returns an error if preferredGameTime is set but
-// does not appear in the comma-separated timeSlots list.
-func validatePreferredGameTime(preferredGameTime, timeSlots string) error {
-	if preferredGameTime == "" {
+// validatePreferredGameTimes returns an error if any of the comma-separated times
+// in preferredGameTimes is not present in the timeSlots list.
+func validatePreferredGameTimes(preferredGameTimes, timeSlots string) error {
+	if preferredGameTimes == "" {
 		return nil
 	}
+	slotSet := make(map[string]bool)
 	for _, slot := range strings.Split(timeSlots, ",") {
-		if strings.TrimSpace(slot) == preferredGameTime {
-			return nil
+		slotSet[strings.TrimSpace(slot)] = true
+	}
+	for _, t := range strings.Split(preferredGameTimes, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if !slotSet[t] {
+			return fmt.Errorf("preferred_game_times entry %q is not present in time_slots %q", t, timeSlots)
 		}
 	}
-	return fmt.Errorf("preferred_game_time %q is not present in time_slots %q", preferredGameTime, timeSlots)
+	return nil
 }
 
 // validateAutoBookingCourts returns an error if autoBookingCourts contains
@@ -61,8 +69,8 @@ func validateAutoBookingCourts(autoBookingCourts string) error {
 	return nil
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
-	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
 		return nil, err
 	}
 	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
@@ -77,7 +85,7 @@ func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, cou
 		GracePeriodHours:   gracePeriodHours,
 		GameDays:           gameDays,
 		BookingOpensDays:   bookingOpensDays,
-		PreferredGameTime:  preferredGameTime,
+		PreferredGameTimes: preferredGameTimes,
 		AutoBookingCourts:  autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
 	}
@@ -96,8 +104,8 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTime, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
-	if err := validatePreferredGameTime(preferredGameTime, timeSlots); err != nil {
+func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
 		return nil, err
 	}
 	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
@@ -113,7 +121,7 @@ func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name,
 		GracePeriodHours:   gracePeriodHours,
 		GameDays:           gameDays,
 		BookingOpensDays:   bookingOpensDays,
-		PreferredGameTime:  preferredGameTime,
+		PreferredGameTimes: preferredGameTimes,
 		AutoBookingCourts:  autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
 	}

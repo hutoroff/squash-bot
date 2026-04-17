@@ -20,15 +20,17 @@ func noopLogger() *slog.Logger {
 // ── mock BookingServiceClient ─────────────────────────────────────────────────
 
 type mockBookingClient struct {
-	slots            []BookingSlot
-	courts           []BookingCourt // returned by ListCourts (nil = no court name mapping)
-	listErr          error
-	cancelErr        error
-	cancelCalls      []string // UUIDs passed to CancelMatch
-	cancelLoginCalls []string // logins passed to CancelMatch (parallel slice)
-	listCalls        int      // number of times ListMatches was called
-	bookResult       *BookMatchResult
-	bookErr          error
+	slots             []BookingSlot
+	courts            []BookingCourt // returned by ListCourts (nil = no court name mapping)
+	listErr           error
+	cancelErr         error
+	cancelCalls       []string // UUIDs passed to CancelMatch
+	cancelLoginCalls  []string // logins passed to CancelMatch (parallel slice)
+	listCalls         int      // number of times ListMatches was called
+	bookResult        *BookMatchResult
+	bookResultsByCall []*BookMatchResult // if non-empty, returned in round-robin; takes priority over bookResult
+	bookCallCount     int
+	bookErr           error
 }
 
 func (m *mockBookingClient) ListMatches(_ context.Context, _, _, _ string, _ bool, _, _ string) ([]BookingSlot, error) {
@@ -47,6 +49,11 @@ func (m *mockBookingClient) ListCourts(_ context.Context, _, _, _ string) ([]Boo
 }
 
 func (m *mockBookingClient) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
+	if len(m.bookResultsByCall) > 0 {
+		idx := m.bookCallCount % len(m.bookResultsByCall)
+		m.bookCallCount++
+		return m.bookResultsByCall[idx], m.bookErr
+	}
 	return m.bookResult, m.bookErr
 }
 
@@ -577,6 +584,10 @@ func (r *stubCourtBookingRepo) HasActiveByVenueID(_ context.Context, _ int64) (b
 	return r.hasActiveByVenue, nil
 }
 
+func (r *stubCourtBookingRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, _ string) ([]*models.CourtBooking, error) {
+	return r.entries, r.getErr
+}
+
 func (r *stubCourtBookingRepo) MarkCanceledByVenueAndDate(_ context.Context, _ int64, _ time.Time) error {
 	return nil
 }
@@ -862,5 +873,287 @@ func TestCancelUsingBookingEntries_WithCredentials_PassesLoginPassword(t *testin
 	}
 	if len(client.cancelLoginCalls) == 0 || client.cancelLoginCalls[0] != "user@example.com" {
 		t.Errorf("expected login %q forwarded to CancelMatch, got %v", "user@example.com", client.cancelLoginCalls)
+	}
+}
+
+// ── per-slot cancellation routing stubs ───────────────────────────────────────
+
+// routingCourtBookingRepo distinguishes between GetByVenueAndDate and
+// GetByVenueAndDateAndTime so tests can verify which path was taken.
+type routingCourtBookingRepo struct {
+	byDateEntries    []*models.CourtBooking
+	byTimeEntries    map[string][]*models.CourtBooking // keyed by game_time
+	byDateCalled     bool
+	byTimeCalled     bool
+	byTimeCalledWith string
+	marked           []string
+}
+
+func (r *routingCourtBookingRepo) Save(_ context.Context, _ *models.CourtBooking) error { return nil }
+
+func (r *routingCourtBookingRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.CourtBooking, error) {
+	r.byDateCalled = true
+	return r.byDateEntries, nil
+}
+
+func (r *routingCourtBookingRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, gameTime string) ([]*models.CourtBooking, error) {
+	r.byTimeCalled = true
+	r.byTimeCalledWith = gameTime
+	if r.byTimeEntries != nil {
+		return r.byTimeEntries[gameTime], nil
+	}
+	return nil, nil
+}
+
+func (r *routingCourtBookingRepo) MarkCanceled(_ context.Context, matchID string) error {
+	r.marked = append(r.marked, matchID)
+	return nil
+}
+
+func (r *routingCourtBookingRepo) MarkCanceledByVenueAndDate(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
+
+func (r *routingCourtBookingRepo) HasActiveByCredentialID(_ context.Context, _ int64) (bool, error) {
+	return false, nil
+}
+
+func (r *routingCourtBookingRepo) HasActiveByVenueID(_ context.Context, _ int64) (bool, error) {
+	return false, nil
+}
+
+// perGameAutoBookingResultRepo returns a specific AutoBookingResult per game ID,
+// allowing tests to verify that cancellation routing uses the correct time slot.
+type perGameAutoBookingResultRepo struct {
+	resultByGameID map[int64]*models.AutoBookingResult
+	errGetByGameID error // if set, GetByGameID returns this error
+}
+
+func (r *perGameAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
+	return nil
+}
+
+func (r *perGameAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *perGameAutoBookingResultRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, _ string) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+func (r *perGameAutoBookingResultRepo) GetByGameID(_ context.Context, gameID int64) (*models.AutoBookingResult, error) {
+	if r.errGetByGameID != nil {
+		return nil, r.errGetByGameID
+	}
+	if r.resultByGameID != nil {
+		return r.resultByGameID[gameID], nil
+	}
+	return nil, nil
+}
+
+func (r *perGameAutoBookingResultRepo) SetGameID(_ context.Context, _, _ int64) error { return nil }
+
+// ── per-slot cancellation routing tests ───────────────────────────────────────
+
+// TestCancelUnusedCourts_RoutesToSlotEntries_WhenGameLinkedToResult verifies that
+// when a game has a linked auto_booking_result with a specific game_time, cancellation
+// calls GetByVenueAndDateAndTime (not GetByVenueAndDate) so only that slot's
+// court_bookings are touched — not courts from a different same-day session.
+func TestCancelUnusedCourts_RoutesToSlotEntries_WhenGameLinkedToResult(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 42
+	game.Venue = &models.Venue{ID: 10}
+
+	entries18 := []*models.CourtBooking{courtBookingEntry("1", "match-18", nil)}
+	cbRepo := &routingCourtBookingRepo{
+		byTimeEntries: map[string][]*models.CourtBooking{
+			"18:00": entries18,
+		},
+	}
+	abrRepo := &perGameAutoBookingResultRepo{
+		resultByGameID: map[int64]*models.AutoBookingResult{
+			42: {ID: 1, GameTime: "18:00"},
+		},
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cbRepo.byTimeCalled {
+		t.Error("expected GetByVenueAndDateAndTime to be called for slot routing")
+	}
+	if cbRepo.byTimeCalledWith != "18:00" {
+		t.Errorf("GetByVenueAndDateAndTime called with game_time %q, want %q", cbRepo.byTimeCalledWith, "18:00")
+	}
+	if cbRepo.byDateCalled {
+		t.Error("GetByVenueAndDate must NOT be called when slot routing succeeded")
+	}
+	// ListMatches must not be called when booking entries are found.
+	if len(result.canceledCourts) != 1 || result.canceledCourts[0] != 1 {
+		t.Errorf("expected court 1 canceled, got %v", result.canceledCourts)
+	}
+}
+
+// TestCancelUnusedCourts_FallsBackToAllDate_WhenNoLinkedResult verifies that when
+// autoBookingResultRepo returns nil for a game (legacy or manually-created game),
+// loadCourtBookingEntries falls back to GetByVenueAndDate.
+func TestCancelUnusedCourts_FallsBackToAllDate_WhenNoLinkedResult(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 99
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-fallback", nil)},
+	}
+	abrRepo := &perGameAutoBookingResultRepo{} // GetByGameID returns nil
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cbRepo.byTimeCalled {
+		t.Error("GetByVenueAndDateAndTime must NOT be called when no linked result")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate to be called as fallback")
+	}
+	if len(result.canceledCourts) != 1 || result.canceledCourts[0] != 1 {
+		t.Errorf("expected court 1 canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// TestLoadCourtBookingEntries_NilAutoBookingResultRepo_FallsBackToByDate verifies that
+// when autoBookingResultRepo is nil (optional field not wired), loadCourtBookingEntries
+// skips the game-ID lookup entirely and falls back to GetByVenueAndDate.
+func TestLoadCourtBookingEntries_NilAutoBookingResultRepo_FallsBackToByDate(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 55
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-nil-repo", nil)},
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: nil, // intentionally not set
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cbRepo.byTimeCalled {
+		t.Error("GetByVenueAndDateAndTime must NOT be called when autoBookingResultRepo is nil")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate to be called when autoBookingResultRepo is nil")
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Errorf("expected 1 court canceled, got %v", result.canceledCourts)
+	}
+}
+
+// TestLoadCourtBookingEntries_GetByGameIDError_FallsBackToByDate verifies that when
+// GetByGameID returns an error (transient DB failure), loadCourtBookingEntries logs a
+// warning and falls back to GetByVenueAndDate rather than propagating the error.
+func TestLoadCourtBookingEntries_GetByGameIDError_FallsBackToByDate(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 77
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-err-fallback", nil)},
+	}
+	abrRepo := &perGameAutoBookingResultRepo{
+		errGetByGameID: errors.New("db timeout"),
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cbRepo.byTimeCalled {
+		t.Error("GetByVenueAndDateAndTime must NOT be called after GetByGameID error")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate fallback after GetByGameID error")
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate verifies that when
+// GetByGameID returns a result with GameTime == "" (legacy row written before
+// the game_time column was added), loadCourtBookingEntries falls back to
+// GetByVenueAndDate rather than calling GetByVenueAndDateAndTime with an empty string.
+func TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 88
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-legacy-gametime", nil)},
+	}
+	abrRepo := &perGameAutoBookingResultRepo{
+		resultByGameID: map[int64]*models.AutoBookingResult{
+			88: {ID: 5, GameTime: ""}, // legacy row: game_time not set
+		},
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cbRepo.byTimeCalled {
+		t.Error("GetByVenueAndDateAndTime must NOT be called for legacy result with empty GameTime")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate fallback for legacy result with empty GameTime")
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
 	}
 }

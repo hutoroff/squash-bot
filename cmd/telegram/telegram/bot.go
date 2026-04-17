@@ -46,16 +46,16 @@ const (
 // newGameWizard holds the in-progress state for the /newGame wizard.
 // Keyed by private chat ID in pendingNewGameWizard.
 type newGameWizard struct {
-	groupID           int64          // set for multi-group admins after group is selected
-	gameDate          time.Time      // date only (midnight) at venue/time step; full datetime at courts step
-	dateStr           string         // raw "YYYY-MM-DD" from the date picker; used to re-parse in group timezone
-	loc               *time.Location // group timezone; set once the group is known, falls back to bot loc
-	step              wizardStep
-	venueID           *int64          // set when a venue is selected
-	venueCourts       []string        // available courts from the selected venue
-	selectedCourts    map[string]bool // toggle state for court picker
-	timeSlots         []string        // available time slots from the selected venue
-	preferredGameTime string          // venue's preferred game time; highlighted in the time slot keyboard
+	groupID            int64          // set for multi-group admins after group is selected
+	gameDate           time.Time      // date only (midnight) at venue/time step; full datetime at courts step
+	dateStr            string         // raw "YYYY-MM-DD" from the date picker; used to re-parse in group timezone
+	loc                *time.Location // group timezone; set once the group is known, falls back to bot loc
+	step               wizardStep
+	venueID            *int64          // set when a venue is selected
+	venueCourts        []string        // available courts from the selected venue
+	selectedCourts     map[string]bool // toggle state for court picker
+	timeSlots          []string        // available time slots from the selected venue
+	preferredGameTimes string          // venue's preferred game times (comma-sep); highlighted in the time slot keyboard
 }
 
 // venueWizardStep tracks which field the venue creation wizard is collecting.
@@ -76,18 +76,18 @@ const (
 
 // venueWizard holds state for the add-venue multi-step dialog.
 type venueWizard struct {
-	groupID            int64
-	step               venueWizardStep
-	name               string
-	courts             string
-	timeSlots          string
-	preferredGameTime  string // chosen from timeSlots; empty = no preference
-	address            string
-	gameDays           []int  // weekday ints (0=Sun..6=Sat)
-	gracePeriod        int    // hours, 0 means use default (24)
-	autoBookingEnabled bool   // whether automatic court booking is enabled
-	autoBookingCourts  string // ordered subset of courts for auto-booking; empty = any
-	bookingOpensDays   int    // days in advance booking opens; 0 means use default (14)
+	groupID                int64
+	step                   venueWizardStep
+	name                   string
+	courts                 string
+	timeSlots              string
+	selectedPreferredTimes map[string]bool // chosen from timeSlots; nil = no preference
+	address                string
+	gameDays               []int  // weekday ints (0=Sun..6=Sat)
+	gracePeriod            int    // hours, 0 means use default (24)
+	autoBookingEnabled     bool   // whether automatic court booking is enabled
+	autoBookingCourts      string // ordered subset of courts for auto-booking; empty = any
+	bookingOpensDays       int    // days in advance booking opens; 0 means use default (14)
 }
 
 // venueEditField identifies which venue field is being edited.
@@ -120,12 +120,13 @@ type venueGameDaysEditState struct {
 	msgID        int
 }
 
-// venuePreferredTimeEditState holds state when editing the preferred game time for an existing venue.
-// The admin picks from the venue's time_slots via inline buttons.
+// venuePreferredTimeEditState holds state when editing the preferred game times for an existing venue.
+// The admin toggles slots via inline buttons, then confirms.
 type venuePreferredTimeEditState struct {
-	venueID   int64
-	groupID   int64
-	timeSlots []string // available slots to choose from
+	venueID       int64
+	groupID       int64
+	timeSlots     []string        // available slots to choose from
+	selectedTimes map[string]bool // currently selected slots
 }
 
 // groupVenuePickState holds game creation data for a multi-group admin who has

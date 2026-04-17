@@ -18,18 +18,18 @@ func NewCourtBookingRepo(pool *pgxpool.Pool) *CourtBookingRepo {
 
 func (r *CourtBookingRepo) Save(ctx context.Context, b *models.CourtBooking) error {
 	const q = `
-		INSERT INTO court_bookings (venue_id, game_date, court_uuid, court_label, match_id, booking_uuid, credential_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO court_bookings (venue_id, game_date, game_time, court_uuid, court_label, match_id, booking_uuid, credential_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (match_id) DO NOTHING`
 	_, err := r.pool.Exec(ctx, q,
-		b.VenueID, b.GameDate, b.CourtUUID, b.CourtLabel, b.MatchID, b.BookingUUID, b.CredentialID)
+		b.VenueID, b.GameDate, b.GameTime, b.CourtUUID, b.CourtLabel, b.MatchID, b.BookingUUID, b.CredentialID)
 	return err
 }
 
 // GetByVenueAndDate returns active (non-canceled) bookings for the venue and date.
 func (r *CourtBookingRepo) GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) ([]*models.CourtBooking, error) {
 	const q = `
-		SELECT id, venue_id, game_date, court_uuid, court_label, match_id, booking_uuid,
+		SELECT id, venue_id, game_date, game_time, court_uuid, court_label, match_id, booking_uuid,
 		       credential_id, canceled_at, created_at
 		FROM court_bookings
 		WHERE venue_id = $1 AND game_date = $2 AND canceled_at IS NULL
@@ -43,7 +43,45 @@ func (r *CourtBookingRepo) GetByVenueAndDate(ctx context.Context, venueID int64,
 	for rows.Next() {
 		var b models.CourtBooking
 		if err := rows.Scan(
-			&b.ID, &b.VenueID, &b.GameDate, &b.CourtUUID, &b.CourtLabel,
+			&b.ID, &b.VenueID, &b.GameDate, &b.GameTime, &b.CourtUUID, &b.CourtLabel,
+			&b.MatchID, &b.BookingUUID, &b.CredentialID, &b.CanceledAt, &b.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, &b)
+	}
+	return result, rows.Err()
+}
+
+// GetByVenueAndDateAndTime returns active (non-canceled) bookings for the venue, date, and
+// specific game time slot. Falls back to rows with game_time=” (legacy) when gameTime is non-empty
+// and no time-specific rows exist.
+func (r *CourtBookingRepo) GetByVenueAndDateAndTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) ([]*models.CourtBooking, error) {
+	result, err := r.queryBookingsByTime(ctx, venueID, gameDate, gameTime)
+	if err != nil || len(result) > 0 || gameTime == "" {
+		return result, err
+	}
+	// Legacy fallback: no rows for the requested time — try empty game_time (pre-migration rows).
+	return r.queryBookingsByTime(ctx, venueID, gameDate, "")
+}
+
+func (r *CourtBookingRepo) queryBookingsByTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) ([]*models.CourtBooking, error) {
+	const q = `
+		SELECT id, venue_id, game_date, game_time, court_uuid, court_label, match_id, booking_uuid,
+		       credential_id, canceled_at, created_at
+		FROM court_bookings
+		WHERE venue_id = $1 AND game_date = $2 AND game_time = $3 AND canceled_at IS NULL
+		ORDER BY id ASC`
+	rows, err := r.pool.Query(ctx, q, venueID, gameDate, gameTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*models.CourtBooking
+	for rows.Next() {
+		var b models.CourtBooking
+		if err := rows.Scan(
+			&b.ID, &b.VenueID, &b.GameDate, &b.GameTime, &b.CourtUUID, &b.CourtLabel,
 			&b.MatchID, &b.BookingUUID, &b.CredentialID, &b.CanceledAt, &b.CreatedAt,
 		); err != nil {
 			return nil, err

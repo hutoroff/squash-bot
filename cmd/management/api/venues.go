@@ -19,7 +19,7 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		GracePeriodHours   int    `json:"grace_period_hours"`
 		GameDays           string `json:"game_days"`
 		BookingOpensDays   int    `json:"booking_opens_days"`
-		PreferredGameTime  string `json:"preferred_game_time"`
+		PreferredGameTimes string `json:"preferred_game_times"`
 		AutoBookingCourts  string `json:"auto_booking_courts"`
 		AutoBookingEnabled bool   `json:"auto_booking_enabled"`
 	}
@@ -48,7 +48,7 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 
 	venue, err := h.venueService.CreateVenue(r.Context(),
 		req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
-		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTime, req.AutoBookingCourts, req.AutoBookingEnabled,
+		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTimes, req.AutoBookingCourts, req.AutoBookingEnabled,
 	)
 	if err != nil {
 		h.logger.Error("createVenue", "err", err)
@@ -115,7 +115,7 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		GracePeriodHours   int    `json:"grace_period_hours"`
 		GameDays           string `json:"game_days"`
 		BookingOpensDays   int    `json:"booking_opens_days"`
-		PreferredGameTime  string `json:"preferred_game_time"`
+		PreferredGameTimes string `json:"preferred_game_times"`
 		AutoBookingCourts  string `json:"auto_booking_courts"`
 		AutoBookingEnabled bool   `json:"auto_booking_enabled"`
 	}
@@ -144,7 +144,7 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 
 	venue, err := h.venueService.UpdateVenue(r.Context(),
 		id, req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
-		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTime, req.AutoBookingCourts, req.AutoBookingEnabled,
+		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTimes, req.AutoBookingCourts, req.AutoBookingEnabled,
 	)
 	if err != nil {
 		h.logger.Error("updateVenue", "err", err, "id", id)

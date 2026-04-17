@@ -329,7 +329,7 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 
 		"venue_wiz_ptime": b.handleVenueWizPreferredTimePick,
 		"venue_ptime_set": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-			// rawID: venueID:slot  (slot may contain ":")
+			// rawID: venueID:slot  (slot may contain ":") — legacy single-pick handler
 			colonIdx := strings.Index(rawID, ":")
 			if colonIdx < 0 {
 				slog.Debug("invalid venue_ptime_set format", "data", cb.Data)
@@ -343,6 +343,39 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 				return
 			}
 			b.handleVenuePtimeSet(ctx, cb, venueID, rawID[colonIdx+1:])
+		},
+		"venue_ptime_toggle": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			// rawID: venueID:slot  (slot may contain ":")
+			colonIdx := strings.Index(rawID, ":")
+			if colonIdx < 0 {
+				slog.Debug("invalid venue_ptime_toggle format", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			venueID, err := strconv.ParseInt(rawID[:colonIdx], 10, 64)
+			if err != nil {
+				slog.Debug("invalid venue_id in venue_ptime_toggle", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenuePtimeToggle(ctx, cb, venueID, rawID[colonIdx+1:])
+		},
+		"venue_ptime_confirm": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			// rawID: venueID  or  venueID:_clear
+			colonIdx := strings.Index(rawID, ":")
+			clearAll := false
+			venueIDStr := rawID
+			if colonIdx >= 0 {
+				venueIDStr = rawID[:colonIdx]
+				clearAll = rawID[colonIdx+1:] == "_clear"
+			}
+			venueID, err := strconv.ParseInt(venueIDStr, 10, 64)
+			if err != nil {
+				slog.Debug("invalid venue_id in venue_ptime_confirm", "data", cb.Data)
+				b.answerCallback(cb.ID, "")
+				return
+			}
+			b.handleVenuePtimeConfirm(ctx, cb, venueID, clearAll)
 		},
 	}
 }
