@@ -206,6 +206,8 @@ Select the bump type (`patch` / `minor` / `major`). The workflow will:
 3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
 4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
+To deploy the released image to production, trigger **Promote to Stable** (see [Updating a service](#updating-a-service)).
+
 ### One-time GitHub setup
 
 | Type     | Name                | Value                                              |
@@ -274,9 +276,15 @@ The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Tra
 
 ### Updating a service
 
-Deployment is automated via [Watchtower](https://containrrr.dev/watchtower/). After a release workflow pushes a new `:latest` image to Docker Hub, Watchtower detects the change within 5 minutes and automatically pulls and restarts the affected service with zero downtime. No manual steps are needed on the server.
+Deployments follow a two-step process — release, then promote:
 
-Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` (avoids anonymous pull rate limits). `postgres` and `db-backup` are excluded from auto-updates.
+1. **Release** — trigger the relevant workflow from **GitHub Actions → Run workflow**. This builds and pushes `:<version>` and `:latest` to Docker Hub. Nothing on the server changes yet.
+
+2. **Promote** — trigger the **Promote to Stable** workflow, select the service (or `all`), and optionally enter the version tag (defaults to `latest`). This re-tags the chosen image as `:stable` on Docker Hub using a manifest copy — no layer re-upload.
+
+3. **Auto-deploy** — [Watchtower](https://containrrr.dev/watchtower/) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
+
+`postgres` and `db-backup` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
 
 ### Database backups
 

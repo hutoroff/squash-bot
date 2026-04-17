@@ -30,7 +30,7 @@ services:
       - internal
 
   management:
-    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-stable}
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
@@ -63,7 +63,7 @@ services:
       - internal
 
   telegram:
-    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-stable}
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -86,7 +86,7 @@ services:
       - internal
 
   booking:
-    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-stable}
     environment:
       SERVER_PORT: "8081"
       EVERSPORTS_EMAIL: ${EVERSPORTS_EMAIL:-}
@@ -114,7 +114,7 @@ services:
       - internal
 
   web:
-    image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-stable}
     environment:
       SERVER_PORT: "8082"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
