@@ -1003,3 +1003,32 @@ func TestGetFacility_NotFound(t *testing.T) {
 		t.Errorf("want 404, got %d", resp.StatusCode)
 	}
 }
+
+func TestGetFacility_WithCredentialHeaders_UsesCredClient(t *testing.T) {
+	defaultMock := &mockClient{facilityErr: errors.New("default client must not be used")}
+	credMock := &mockClient{facility: &eversports.Facility{ID: "1234", Slug: "squash-house-berlin-03", Name: "Squash House Berlin"}}
+
+	h := newTestHandler(defaultMock)
+	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	srv := serve(h)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/facility?slug=squash-house-berlin-03", nil)
+	req.Header.Set("X-Eversports-Email", "user@example.com")
+	req.Header.Set("X-Eversports-Password", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if credMock.lastFacilitySlug != "squash-house-berlin-03" {
+		t.Errorf("credential client not called: lastFacilitySlug = %q", credMock.lastFacilitySlug)
+	}
+	if defaultMock.lastFacilitySlug != "" {
+		t.Error("default client must not have been called")
+	}
+}

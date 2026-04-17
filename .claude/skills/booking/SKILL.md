@@ -150,9 +150,9 @@ GET    /api/v1/eversports/facility?slug=<slug>
 
 ### Per-credential client dispatch (`handler.go`)
 
-`Handler` holds a `credClients sync.Map` (keyed by email → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account.
+`Handler` holds a `credClients sync.Map` (keyed by email → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account. `clientFromRequest(r)` reads `X-Eversports-Email`/`X-Eversports-Password` headers and returns the matching cached client, or `h.eversports` if headers are absent.
 
-Handlers that support per-credential dispatch check `X-Eversports-Email` / `X-Eversports-Password` request headers (or JSON body) and route to the matching cached client when credentials are present; otherwise fall back to `h.eversports` (service-level default client, env-var credentials):
+All handlers support per-credential dispatch; they route to the matching cached client when credentials are present, otherwise fall back to `h.eversports` (service-level default, env-var credentials):
 
 | Handler | Credential source |
 |---------|------------------|
@@ -161,6 +161,7 @@ Handlers that support per-credential dispatch check `X-Eversports-Email` / `X-Ev
 | `createMatch` (POST /matches) | JSON body `email`/`password` |
 | `getCourts` (GET /courts) | `X-Eversports-Email`/`-Password` headers |
 | `listMatches` (GET /matches) | `X-Eversports-Email`/`-Password` headers (applied to both GetCourts + GetSlots) |
+| `getFacility` (GET /facility) | `X-Eversports-Email`/`-Password` headers |
 
 ### listMatches handler details
 
