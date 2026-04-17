@@ -5,6 +5,8 @@
 services:
   postgres:
     image: postgres:15-alpine
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     environment:
       POSTGRES_DB: squash_bot
       POSTGRES_USER: squash_bot
@@ -28,7 +30,7 @@ services:
       - internal
 
   management:
-    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-stable}
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
@@ -61,7 +63,7 @@ services:
       - internal
 
   telegram:
-    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-stable}
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -84,7 +86,7 @@ services:
       - internal
 
   booking:
-    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-stable}
     environment:
       SERVER_PORT: "8081"
       EVERSPORTS_EMAIL: ${EVERSPORTS_EMAIL:-}
@@ -112,7 +114,7 @@ services:
       - internal
 
   web:
-    image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-stable}
     environment:
       SERVER_PORT: "8082"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -174,10 +176,30 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     mem_limit: 64m
     cpus: 0.1
     networks:
       - internal
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      REPO_USER: ${DOCKERHUB_USERNAME}
+      REPO_PASS: ${DOCKERHUB_TOKEN}
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    mem_limit: 32m
+    cpus: 0.1
 
 volumes:
   postgres_data:

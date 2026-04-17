@@ -206,6 +206,8 @@ Select the bump type (`patch` / `minor` / `major`). The workflow will:
 3. Build and push Docker images tagged `<version>` and `latest` to Docker Hub and GHCR.
 4. Commit the bumped `VERSION` back to the branch and create a git tag (`management/vX.Y.Z`, `telegram/vX.Y.Z`, `booking/vX.Y.Z`, or `web/vX.Y.Z`).
 
+To deploy the released image to production, trigger **Promote to Stable** (see [Updating a service](#updating-a-service)).
+
 ### One-time GitHub setup
 
 | Type     | Name                | Value                                              |
@@ -250,6 +252,8 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
 openssl rand -hex 32   # → JWT_SECRET (web service session signing)
+# Also set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only token from
+# https://hub.docker.com/settings/security) — required by Watchtower to pull images.
 
 # 4. Lock down the .env file
 chmod 600 .env
@@ -272,14 +276,15 @@ The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Tra
 
 ### Updating a service
 
-After triggering a release workflow in GitHub Actions:
+Deployments follow a two-step process — release, then promote:
 
-```bash
-# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2, WEB_VERSION=1.0.1), then:
-scripts/deploy.sh              # pull all + restart changed
-scripts/deploy.sh management   # or update a single service
-scripts/deploy.sh web          # or update the web service
-```
+1. **Release** — trigger the relevant workflow from **GitHub Actions → Run workflow**. This builds and pushes `:<version>` and `:latest` to Docker Hub. Nothing on the server changes yet.
+
+2. **Promote** — trigger the **Promote to Stable** workflow, select the service (or `all`), and optionally enter the version tag (defaults to `latest`). This re-tags the chosen image as `:stable` on Docker Hub using a manifest copy — no layer re-upload.
+
+3. **Auto-deploy** — [Watchtower](https://containrrr.dev/watchtower/) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
+
+`postgres` and `db-backup` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
 
 ### Database backups
 

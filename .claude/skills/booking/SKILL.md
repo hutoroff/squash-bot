@@ -150,7 +150,7 @@ GET    /api/v1/eversports/facility?slug=<slug>
 
 ### Per-credential client dispatch (`handler.go`)
 
-`Handler` holds a `credClients sync.Map` (keyed by email → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account. `clientFromRequest(r)` reads `X-Eversports-Email`/`X-Eversports-Password` headers and returns the matching cached client, or `h.eversports` if headers are absent.
+`Handler` holds a `credClients sync.Map` (keyed by `email:password` → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account; the key includes the password so that rotating a credential produces a new client. `clientFromRequest(r)` reads `X-Eversports-Email`/`X-Eversports-Password` headers and returns the matching cached client, or `h.eversports` if headers are absent.
 
 All handlers support per-credential dispatch; they route to the matching cached client when credentials are present, otherwise fall back to `h.eversports` (service-level default, env-var credentials):
 

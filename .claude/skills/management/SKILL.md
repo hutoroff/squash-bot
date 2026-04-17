@@ -76,6 +76,7 @@ VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxC
 CourtBookingRepository — Save(ctx, *models.CourtBooking),
                    GetByVenueAndDate(ctx, venueID, gameDate) — returns only active (canceled_at IS NULL),
                    MarkCanceled(ctx, matchID) — soft-delete: sets canceled_at = NOW(),
+                   MarkCanceledByVenueAndDate(ctx, venueID, gameDate) — bulk soft-delete all active rows for venue+date,
                    HasActiveByCredentialID(ctx, credentialID) bool,
                    HasActiveByVenueID(ctx, venueID) bool
 ```
@@ -83,7 +84,7 @@ CourtBookingRepository — Save(ctx, *models.CourtBooking),
 `VenueCredentialService` (`service/venue_credential_service.go`) wraps the repository with:
 - `Add(ctx, venueID, groupID, login, password, priority, maxCourts)` — validates venue ownership, deduplicates by login, encrypts password via `Encryptor`, stores via repo
 - `List(ctx, venueID, groupID)` — validates ownership, returns credentials without passwords
-- `Remove(ctx, credID, venueID, groupID)` — validates ownership; returns `ErrCredentialInUse` if `courtBookingRepo.HasActiveByCredentialID` is true; deletes
+- `Remove(ctx, credID, venueID, groupID)` — validates ownership; returns `ErrCredentialInUse` if `courtBookingRepo.HasActiveByCredentialID` is true; returns `ErrCredentialNotFound` if venue ownership check or `repo.Delete` fails; deletes
 - `GetDecryptedByID(ctx, credID)` — fetches single credential by ID, decrypts password; used by `CancellationReminderJob` at cancel time
 - `PrioritiesInUse(ctx, venueID, groupID)` — returns sorted priority list for wizard UI
 - `ListForBooking(ctx, venueID, cooldown)` — returns `[]DecryptedCredential` ordered by priority, excluding credentials where `last_error_at > NOW() - cooldown`; decrypts passwords
@@ -214,7 +215,7 @@ Algorithm:
 
 Admin notification types: `notifyNoCredentials` (sound, no usable creds), `notifyCredentialError` (sound, per-credential failure with login + error + cooldown), `notifyCredentialsExhausted` (silent, all creds tried but courts remain).
 
-**DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group. Unpins message, removes keyboard, marks game complete.
+**DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group. Unpins message, removes keyboard, marks game complete. If the game has a `venue_id`, calls `courtBookingRepo.MarkCanceledByVenueAndDate` to bulk-close any orphaned active `court_bookings` rows (soft-delete via `canceled_at = NOW()`).
 
 ### Localisation in scheduler jobs
 
