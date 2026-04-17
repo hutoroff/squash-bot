@@ -70,6 +70,17 @@ func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient
 	return c
 }
 
+// clientFromRequest returns a per-credential client when X-Eversports-Email and
+// X-Eversports-Password headers are present, otherwise the service default.
+func (h *Handler) clientFromRequest(r *http.Request) eversportsClient {
+	if email := r.Header.Get("X-Eversports-Email"); email != "" {
+		if password := r.Header.Get("X-Eversports-Password"); password != "" {
+			return h.getOrCreateCredClient(email, password)
+		}
+	}
+	return h.eversports
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
@@ -98,12 +109,7 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var es eversportsClient = h.eversports
-	if email := r.Header.Get("X-Eversports-Email"); email != "" {
-		if password := r.Header.Get("X-Eversports-Password"); password != "" {
-			es = h.getOrCreateCredClient(email, password)
-		}
-	}
+	es := h.clientFromRequest(r)
 
 	match, err := es.GetMatchByID(r.Context(), id)
 	if err != nil {
@@ -279,12 +285,7 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var es eversportsClient = h.eversports
-	if email := r.Header.Get("X-Eversports-Email"); email != "" {
-		if password := r.Header.Get("X-Eversports-Password"); password != "" {
-			es = h.getOrCreateCredClient(email, password)
-		}
-	}
+	es := h.clientFromRequest(r)
 
 	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
@@ -384,12 +385,7 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var es eversportsClient = h.eversports
-	if email := r.Header.Get("X-Eversports-Email"); email != "" {
-		if password := r.Header.Get("X-Eversports-Password"); password != "" {
-			es = h.getOrCreateCredClient(email, password)
-		}
-	}
+	es := h.clientFromRequest(r)
 
 	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
@@ -408,7 +404,8 @@ func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "slug query parameter is required")
 		return
 	}
-	facility, err := h.eversports.GetFacility(r.Context(), slug)
+	es := h.clientFromRequest(r)
+	facility, err := es.GetFacility(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, eversports.ErrNotFound) {
 			writeError(w, http.StatusNotFound, fmt.Sprintf("facility %q not found", slug))
