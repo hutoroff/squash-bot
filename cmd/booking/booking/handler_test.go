@@ -879,6 +879,71 @@ func TestGetCourts_InvalidDate(t *testing.T) {
 	}
 }
 
+func TestGetCourts_WithCredentialHeaders_UsesCredClient(t *testing.T) {
+	defaultMock := &mockClient{courtsErr: errors.New("default client must not be used")}
+	credMock := &mockClient{courts: []eversports.Court{{ID: "77385", UUID: "abc", Name: "Court 1"}}}
+
+	h := newCourtsHandler(defaultMock)
+	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	srv := serve(h)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/courts", nil)
+	req.Header.Set("X-Eversports-Email", "user@example.com")
+	req.Header.Set("X-Eversports-Password", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if credMock.lastCourtsDate == "" {
+		t.Error("credential client GetCourts not called")
+	}
+	if defaultMock.lastCourtsDate != "" {
+		t.Error("default client must not have been called")
+	}
+}
+
+func TestListMatches_WithCredentialHeaders_UsesCredClient(t *testing.T) {
+	// Default client errors on GetCourts — if the handler uses it, the request fails.
+	defaultMock := &mockClient{courtsErr: errors.New("default client must not be used")}
+	credMock := &mockClient{
+		courts: []eversports.Court{{ID: "77385", UUID: "abc", Name: "Court 1"}},
+		slots:  []eversports.Slot{{Date: "2026-05-01", Start: "1830", Court: 77385}},
+	}
+
+	h := newCourtBookingsHandler(defaultMock, "76443")
+	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	srv := serve(h)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-05-01", nil)
+	req.Header.Set("X-Eversports-Email", "user@example.com")
+	req.Header.Set("X-Eversports-Password", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if credMock.lastCourtsDate == "" {
+		t.Error("credential client GetCourts not called")
+	}
+	if credMock.lastSlotsDate == "" {
+		t.Error("credential client GetSlots not called")
+	}
+	if defaultMock.lastCourtsDate != "" {
+		t.Error("default client must not have been called")
+	}
+}
+
 // ─── GET /api/v1/eversports/facility ─────────────────────────────────────────
 
 func TestGetFacility_MissingSlug(t *testing.T) {
