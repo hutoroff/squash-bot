@@ -5,6 +5,8 @@
 services:
   postgres:
     image: postgres:15-alpine
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     environment:
       POSTGRES_DB: squash_bot
       POSTGRES_USER: squash_bot
@@ -174,10 +176,30 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     mem_limit: 64m
     cpus: 0.1
     networks:
       - internal
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      REPO_USER: ${DOCKERHUB_USERNAME}
+      REPO_PASS: ${DOCKERHUB_TOKEN}
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    mem_limit: 32m
+    cpus: 0.1
 
 volumes:
   postgres_data:

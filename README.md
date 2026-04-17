@@ -250,6 +250,8 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
 openssl rand -hex 32   # → JWT_SECRET (web service session signing)
+# Also set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only token from
+# https://hub.docker.com/settings/security) — required by Watchtower to pull images.
 
 # 4. Lock down the .env file
 chmod 600 .env
@@ -272,14 +274,9 @@ The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Tra
 
 ### Updating a service
 
-After triggering a release workflow in GitHub Actions:
+Deployment is automated via [Watchtower](https://containrrr.dev/watchtower/). After a release workflow pushes a new `:latest` image to Docker Hub, Watchtower detects the change within 5 minutes and automatically pulls and restarts the affected service with zero downtime. No manual steps are needed on the server.
 
-```bash
-# Update the version in .env (e.g. MANAGEMENT_VERSION=1.0.2, WEB_VERSION=1.0.1), then:
-scripts/deploy.sh              # pull all + restart changed
-scripts/deploy.sh management   # or update a single service
-scripts/deploy.sh web          # or update the web service
-```
+Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` (avoids anonymous pull rate limits). `postgres` and `db-backup` are excluded from auto-updates.
 
 ### Database backups
 

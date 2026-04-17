@@ -209,8 +209,8 @@ Works in private chat only.
 2. Each venue row: "Edit" and "Delete" buttons; "Add Venue" at bottom.
 3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game time (inline buttons from time_slots, skipped if none entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
 4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Time (time_slots buttons + "✕ No preference"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears.
-5. **Delete venue**: two-step confirmation. Blocked with error message if venue has active `court_bookings` (HTTP 409). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
-6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step.
+5. **Delete venue**: two-step confirmation. Blocked with user-friendly message if venue has active `court_bookings` (HTTP 409 → `MsgVenueHasActiveBookings`). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
+6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step; blocked with user-friendly message if credential has active court bookings (HTTP 409 → `MsgVenueCredHasActiveBookings`).
 
 **Venue field semantics:**
 - `grace_period_hours`: hours before game when cancellation reminder fires (default 24). Reminder at `game_date − (grace_period_hours + 6)h`.
@@ -280,6 +280,8 @@ VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, pri
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
 Scheduler:      TriggerScheduledEvent
 ```
+
+**Error propagation:** `client.go` defines `HTTPError{StatusCode int, Message string}` — a typed error returned by `parseErrorBody`. Handlers use `errors.As(err, &httpErr)` to branch on specific HTTP status codes (e.g. 409 Conflict) before falling through to generic error messages. Always return `*HTTPError` from `parseErrorBody` for new error cases; do not wrap with `fmt.Errorf`.
 
 **Adding a new management API call:** Add the method to `ManagementClient` in `client/interface.go`, implement it in `client/client.go`, then use it in the appropriate handler file.
 
