@@ -8,47 +8,12 @@ A Telegram bot for managing squash game coordination among friends. The bot hand
 
 ## Architecture
 
-### Technology Stack
-- **Go 1.21+** with `github.com/go-telegram-bot-api/telegram-bot-api/v5`
-- **PostgreSQL 15+** with `github.com/jackc/pgx/v5`
-- **Scheduling**: `github.com/robfig/cron/v3`
-- **Logging**: `slog` (INFO for business events, DEBUG for technical details)
-- **Config**: Environment-based with `github.com/caarlos0/env/v10`
-
-### Core Architecture Pattern
 ```
 telegram  →  HTTP API  →  management  →  PostgreSQL
 booking   →  eversports.de  (reverse-engineered cookie-auth API)
 ```
 
-Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`):
-
-**`management`** (`cmd/management/`)
-- **api/**: HTTP handlers (REST JSON API on port 8080)
-- **service/**: Business logic layer; defines `TelegramAPI`, `Notifier`, and repository interfaces (`GameRepository`, `PlayerRepository`, `ParticipationRepository`, `GuestRepository`, `GroupRepository`, `VenueRepository`) in `interfaces.go`; four focused scheduled-job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; shared timezone/language helpers in `group_resolver.go`; `ParticipationService` fires async Telegram message edits via an injected `Notifier`
-- **storage/**: SQL repository implementations satisfying the interfaces defined in `service/`
-- Runs the cron scheduler; sends Telegram messages via `TelegramAPI` interface (wired to `*tgbotapi.BotAPI` in `main.go`)
-
-**`telegram`** (`cmd/telegram/`)
-- **telegram/**: Bot loop, callback handlers, slash commands, message formatting
-- **client/**: Typed HTTP client that calls the management service API
-- No DB access; all data operations go through HTTP
-
-**`booking`** (`cmd/booking/`)
-- **eversports/**: Reverse-engineered Eversports HTTP client; `client.go` (auth + `withAuth` retry helper), `matches.go` (GetMatchByID, CancelMatch), `slots.go` (GetCourts, GetSlots), `checkout.go` (CreateBooking), `facility.go` (GetFacility), `models.go` (public types + shared GQL types)
-- **booking/**: REST API wrapping the Eversports client (port 8081); `NewHandler` accepts the `eversportsClient` interface
-- No DB access; stateless except for the in-memory cookie jar that holds the session
-
-**`web`** (`cmd/web/`)
-- **webserver/**: HTTP server (port 8082), SPA static-file handler, Telegram Login Widget auth, JWT session management, web API endpoints for games and participation
-- **web/frontend/**: React + TypeScript SPA (Vite); compiled output embedded in the Go binary via `web/embed.go`
-- No DB access; authenticates users via Telegram Login Widget, calls the management service for data
-- Participation actions (join/skip/+1/-1) proxy through to the management service and trigger a live Telegram message edit via `GameNotifier` (`cmd/management/service`)
-
-**Shared**
-- **models/**: Game, Player, GameParticipation, GuestParticipation, Group (all with JSON tags); `PlayerGame` — read-only aggregated view (game + participation status + participant count + group timezone) returned by `GET /api/v1/players/{id}/games`
-- **i18n/**: `Lang` type (`en`/`de`/`ru`), `Normalize(code)` maps Telegram `LanguageCode` to a supported lang, `Localizer` provides `T(key)`, `Tf(key, args...)`, `FormatGameDate(t)`, `FormatUpdatedAt(t)`, `FormatDayMonth(t)`, `ShortWeekday(w)`
-- **gameformat/**: Shared game message formatter and keyboard builder used by both the telegram bot and the management service. `FormatGameMessage(game, participations, guests, loc, now, lz)` produces the announcement text; `GameKeyboard(gameID, lz)` builds the inline keyboard; `PlayerDisplayName(p)` formats a player's display name.
+Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`): `management` (API + scheduler, port 8080), `telegram` (bot, no DB), `booking` (Eversports wrapper, port 8081), `web` (SPA + JWT auth, port 8082). See AGENTS.md for directory structure.
 
 ### Database Schema
 - `games`: id, chat_id, message_id, game_date, courts_count, courts, venue_id (nullable FK→venues), notified_day_before, completed, created_at
@@ -59,48 +24,6 @@ Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`):
 - `venues`: id, group_id (FK→bot_groups), name, courts (comma-separated), time_slots (comma-separated HH:MM), address (nullable), grace_period_hours (INT DEFAULT 24), game_days (TEXT DEFAULT ''), booking_opens_days (INT DEFAULT 14), last_booking_reminder_at (TIMESTAMPTZ nullable), preferred_game_time (TEXT DEFAULT ''), last_auto_booking_at (TIMESTAMPTZ nullable), auto_booking_courts (TEXT DEFAULT ''), auto_booking_enabled (BOOLEAN DEFAULT FALSE), created_at, UNIQUE(group_id, name)
 - `auto_booking_results`: id, venue_id (FK→venues ON DELETE CASCADE), game_date (DATE), courts (comma-separated court numbers), courts_count (INT), created_at, UNIQUE(venue_id, game_date)
 - `venue_credentials`: id, venue_id (FK→venues ON DELETE CASCADE), login (TEXT NOT NULL), enc_password (TEXT NOT NULL, AES-256-GCM encrypted, never returned by API), priority (INT NOT NULL DEFAULT 0), max_courts (INT NOT NULL DEFAULT 3), last_error_at (TIMESTAMPTZ nullable), created_at, UNIQUE(venue_id, login)
-
-## Development Commands
-
-```bash
-# Start full stack
-docker-compose up --build
-
-# Start only DB (for local dev)
-docker-compose up -d postgres
-
-# Run management service locally
-DATABASE_URL=postgres://squash_bot:squash_bot@localhost:7432/squash_bot \
-  TELEGRAM_BOT_TOKEN=<token> \
-  INTERNAL_API_SECRET=<secret> \
-  go run cmd/management/main.go
-
-# Run telegram bot locally
-MANAGEMENT_SERVICE_URL=http://localhost:8080 \
-  TELEGRAM_BOT_TOKEN=<token> \
-  INTERNAL_API_SECRET=<secret> \
-  go run cmd/telegram/main.go
-
-# Run booking service locally
-EVERSPORTS_EMAIL=<email> \
-  EVERSPORTS_PASSWORD=<password> \
-  INTERNAL_API_SECRET=<secret> \
-  go run cmd/booking/main.go
-
-# Testing
-go test ./...
-go test -tags integration -timeout 120s ./...
-
-# Build all binaries
-go build ./cmd/management/
-go build ./cmd/telegram/
-go build ./cmd/booking/
-
-# Build with explicit version (mirrors what Docker does)
-go build -ldflags="-X main.Version=1.2.3" ./cmd/management/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/telegram/
-go build -ldflags="-X main.Version=1.2.3" ./cmd/booking/
-```
 
 ## Versioning & Release
 
@@ -388,16 +311,7 @@ A standalone HTTP service (port 8081) that wraps the reverse-engineered Everspor
 **Single match** — `POST https://www.eversports.de/api/checkout` (GraphQL `Match` query by UUID)
 - Returns structured data: id, start/end (RFC3339), state, sport, venue, court, price
 
-**Client API** (`cmd/booking/eversports`):
-- `New(email, password string, logger) *Client`
-- `Login(ctx) error` — stores `et` cookie (called automatically by the public methods)
-- `EnsureLoggedIn(ctx) error` — logs in if no session is held; safe for concurrent use
-- `GetMatchByID(ctx, matchID string) (*Booking, error)` — single match via GraphQL; retries once on HTTP 401 via `withAuth`
-- `GetSlots(ctx, facilityID, courtIDs, startDate) ([]Slot, error)` — retries once on HTTP 401 via `withAuth`
-- `GetCourts(ctx, facilityID, facilitySlug, sportID, sportSlug, sportName, sportUUID, date string) ([]Court, error)` — form-encodes POST to `/api/booking/calendar/update` for the given YYYY-MM-DD date, parses `<tr class="court">` rows; deduplicates by numeric court ID; retries once on HTTP 401 via `withAuth`
-- `CreateBooking(ctx, facilityUUID, courtUUID, sportUUID string, start, end time.Time) (*BookingResult, error)` — 5-step checkout flow: reserve court → pay-offline → create-from-booking → getMPFeeForCourtBooking → trackCheckoutCompleted; returns `BookingResult{BookingUUID, BookingID, MatchID}` (`MatchID` is best-effort, empty on failure); serialised access via internal mutex; retries once on HTTP 401 from step 1 only (mid-flow 401 returns error without retry to avoid duplicate bookings). **`start`/`end` must carry the facility's local timezone offset** — Eversports rejects UTC (`Z`) timestamps; callers must pass times in the group's local timezone (e.g. `time.ParseInLocation(..., groupTZ)`) and must NOT call `.UTC()` before passing.
-- `CancelMatch(ctx, matchID string) (*CancellationResult, error)` — cancels a booking via GraphQL `CancelMatch` mutation; retries once on HTTP 401 via `withAuth`
-- `withAuth[T any](ctx, c, do)` — package-level generic helper used by all methods except `CreateBooking`; ensures login, executes `do()`, retries once on `errUnauthorized`
+**Booking timezone constraint** (`CreateBooking`): `start`/`end` must carry the facility's local timezone offset — Eversports rejects UTC (`Z`) timestamps. Pass times in the group's local timezone; do NOT call `.UTC()` before passing.
 
 ### HTTP endpoints
 
@@ -415,20 +329,3 @@ Authentication with Eversports is handled automatically: the service logs in on 
 | `GET`  | `/api/v1/eversports/courts[?date=YYYY-MM-DD]` | List courts at the facility; returns `[{id, uuid, name}]`. Parses `POST /api/booking/calendar/update` HTML. Optional `date` parameter (default: today). Requires `EVERSPORTS_FACILITY_ID`, `EVERSPORTS_FACILITY_SLUG` |
 | `GET`  | `/api/v1/eversports/facility?slug=<slug>` | Venue profile for a facility slug (e.g. `squash-house-berlin-03`); returns `{id, slug, name, rating, reviewCount, address, hideAddress, tags, contact, sports, city, company}`. `slug` query parameter is mandatory (400 if missing). |
 
-## Testing Approach
-- Unit tests for services and message formatting
-- Integration tests for storage layer (requires test DB via `docker-compose.test.yml`)
-- `go test -tags integration` flag gates integration tests
-
-## Documentation Responsibility
-
-When you make code changes, update the affected documentation **in the same task**:
-
-| What changed | Update |
-|---|---|
-| New feature, command, or user-visible behavior | `README.md` |
-| Env variables, setup, operator-facing config | `README.md` |
-| Architecture, packages, working conventions | `AGENTS.md` |
-| Business logic, DB schema, callback format, key workflows | `CLAUDE.md` (this file) |
-
-Only edit sections that are affected. Do not rewrite correct sections.
