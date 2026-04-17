@@ -87,6 +87,22 @@ func (r *VenueCredentialRepo) ListWithPasswordByVenueID(ctx context.Context, ven
 	return creds, rows.Err()
 }
 
+func (r *VenueCredentialRepo) GetWithPasswordByID(ctx context.Context, id int64) (*models.VenueCredential, error) {
+	const q = `
+		SELECT id, venue_id, login, enc_password, priority, max_courts, created_at, last_error_at
+		FROM venue_credentials
+		WHERE id = $1`
+	slog.Debug("VenueCredentialRepo.GetWithPasswordByID", "id", id)
+	var c models.VenueCredential
+	err := r.pool.QueryRow(ctx, q, id).Scan(
+		&c.ID, &c.VenueID, &c.Login, &c.EncryptedPassword, &c.Priority, &c.MaxCourts, &c.CreatedAt, &c.LastErrorAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get venue credential by id: %w", err)
+	}
+	return &c, nil
+}
+
 func (r *VenueCredentialRepo) Delete(ctx context.Context, id, venueID int64) error {
 	const q = `DELETE FROM venue_credentials WHERE id = $1 AND venue_id = $2`
 	slog.Debug("VenueCredentialRepo.Delete", "id", id, "venue_id", venueID)

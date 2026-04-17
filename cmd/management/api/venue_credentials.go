@@ -120,6 +120,10 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.venueCredService.Remove(r.Context(), credID, venueID, groupID); err != nil {
+		if errors.Is(err, service.ErrCredentialInUse) {
+			writeError(w, http.StatusConflict, "credential has active court bookings and cannot be deleted")
+			return
+		}
 		h.logger.Error("removeCredential", "err", err)
 		writeError(w, http.StatusNotFound, "credential not found")
 		return

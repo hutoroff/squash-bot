@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -171,6 +173,10 @@ func (h *Handler) deleteVenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.venueService.DeleteVenue(r.Context(), id, groupID); err != nil {
+		if errors.Is(err, service.ErrVenueHasActiveBookings) {
+			writeError(w, http.StatusConflict, "venue has active court bookings and cannot be deleted")
+			return
+		}
 		h.logger.Error("deleteVenue", "err", err, "id", id)
 		writeError(w, http.StatusNotFound, "venue not found")
 		return

@@ -54,6 +54,15 @@ func (r *stubCredRepo) SetLastErrorAt(_ context.Context, _ int64) error {
 	return nil
 }
 
+func (r *stubCredRepo) GetWithPasswordByID(_ context.Context, id int64) (*models.VenueCredential, error) {
+	for _, c := range r.creds {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return nil, nil
+}
+
 type stubVenueRepo struct {
 	venue *models.Venue
 	err   error
@@ -85,7 +94,7 @@ var testVenue = &models.Venue{ID: 10, GroupID: 20, Name: "Test Venue"}
 
 func newTestCredService(credRepo *stubCredRepo, venueRepo *stubVenueRepo) *VenueCredentialService {
 	enc, _ := NewEncryptor(testHexKey)
-	return NewVenueCredentialService(credRepo, venueRepo, enc)
+	return NewVenueCredentialService(credRepo, venueRepo, nil, enc)
 }
 
 // ── Add ───────────────────────────────────────────────────────────────────────
@@ -206,6 +215,17 @@ func TestVenueCredentialService_Remove_DeleteError(t *testing.T) {
 
 	if err := svc.Remove(context.Background(), 1, 10, 20); err == nil {
 		t.Error("delete error: want error, got nil")
+	}
+}
+
+func TestVenueCredentialService_Remove_ActiveBooking_ErrCredentialInUse(t *testing.T) {
+	cbRepo := &stubCourtBookingRepo{hasActiveByCredential: true}
+	enc, _ := NewEncryptor(testHexKey)
+	svc := NewVenueCredentialService(&stubCredRepo{}, &stubVenueRepo{venue: testVenue}, cbRepo, enc)
+
+	err := svc.Remove(context.Background(), 1, 10, 20)
+	if !errors.Is(err, ErrCredentialInUse) {
+		t.Errorf("want ErrCredentialInUse, got %v", err)
 	}
 }
 

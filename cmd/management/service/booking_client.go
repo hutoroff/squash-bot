@@ -53,7 +53,9 @@ type BookingServiceClient interface {
 	// When my=false, all slots (including unbooked) are returned.
 	ListMatches(ctx context.Context, date, startTime, endTime string, my bool) ([]BookingSlot, error)
 	// CancelMatch cancels the booking identified by the match UUID.
-	CancelMatch(ctx context.Context, matchUUID string) error
+	// login and password select a per-credential Eversports session; empty strings
+	// fall back to the booking service's default (env-var) account.
+	CancelMatch(ctx context.Context, matchUUID, login, password string) error
 	// BookMatch creates a new court booking. courtUUID is the Eversports court UUID,
 	// start and end are RFC 3339 timestamps. login and password are the Eversports
 	// account credentials to use for this booking. Returns booking result on success.
@@ -137,14 +139,27 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 	return slots, nil
 }
 
-func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID string) error {
+func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, password string) error {
 	url := fmt.Sprintf("%s/api/v1/eversports/matches/%s", c.baseURL, matchUUID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	var body io.Reader
+	if login != "" {
+		payload := map[string]string{"email": login, "password": password}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal cancel request: %w", err)
+		}
+		body = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, body)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+	if login != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

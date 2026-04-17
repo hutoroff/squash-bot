@@ -1,6 +1,12 @@
 package service
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/hutoroff/squash-bot/internal/models"
+)
 
 // ── validatePreferredGameTime ─────────────────────────────────────────────────
 
@@ -82,5 +88,17 @@ func TestValidateAutoBookingCourts_LargeIDNotSubsetConstraint(t *testing.T) {
 	// rejected Eversports IDs because they weren't in the venue labels list.
 	if err := validateAutoBookingCourts("77385,77386"); err != nil {
 		t.Errorf("Eversports IDs should not be rejected: got error %v, want nil", err)
+	}
+}
+
+// ── DeleteVenue ───────────────────────────────────────────────────────────────
+
+func TestVenueService_DeleteVenue_ActiveBookings_Blocked(t *testing.T) {
+	cbRepo := &stubCourtBookingRepo{hasActiveByVenue: true}
+	svc := NewVenueService(&stubVenueRepo{venue: &models.Venue{ID: 10, GroupID: 20}}, cbRepo)
+
+	err := svc.DeleteVenue(context.Background(), 10, 20)
+	if !errors.Is(err, ErrVenueHasActiveBookings) {
+		t.Errorf("want ErrVenueHasActiveBookings, got %v", err)
 	}
 }

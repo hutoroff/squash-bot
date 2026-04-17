@@ -59,12 +59,11 @@ func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, f
 	}
 }
 
-// getOrCreateCredClient returns a cached *eversports.Client for the given credentials,
-// creating and storing one if none exists yet. The returned client may not be logged in yet;
-// its EnsureLoggedIn / withAuth pattern handles that transparently.
-func (h *Handler) getOrCreateCredClient(email, password string) *eversports.Client {
+// getOrCreateCredClient returns a cached eversportsClient for the given credentials,
+// creating and storing one if none exists yet.
+func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient {
 	if v, ok := h.credClients.Load(email); ok {
-		return v.(*eversports.Client)
+		return v.(eversportsClient)
 	}
 	c := eversports.New(email, password, h.logger)
 	h.credClients.Store(email, c)
@@ -98,7 +97,15 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "match id is required")
 		return
 	}
-	match, err := h.eversports.GetMatchByID(r.Context(), id)
+
+	var es eversportsClient = h.eversports
+	if email := r.Header.Get("X-Eversports-Email"); email != "" {
+		if password := r.Header.Get("X-Eversports-Password"); password != "" {
+			es = h.getOrCreateCredClient(email, password)
+		}
+	}
+
+	match, err := es.GetMatchByID(r.Context(), id)
 	if err != nil {
 		h.logger.Error("eversports get match failed", "id", id, "err", err)
 		writeError(w, http.StatusBadGateway, "get match failed: "+err.Error())
@@ -179,13 +186,29 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
+// cancelMatchRequest is the optional JSON body for DELETE /api/v1/eversports/matches/{id}.
+// When Email and Password are set, the cancellation uses a per-credential client.
+type cancelMatchRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "match id is required")
 		return
 	}
-	result, err := h.eversports.CancelMatch(r.Context(), id)
+
+	var es eversportsClient = h.eversports
+	if r.ContentLength > 0 || r.Header.Get("Content-Type") != "" {
+		var req cancelMatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.Email != "" && req.Password != "" {
+			es = h.getOrCreateCredClient(req.Email, req.Password)
+		}
+	}
+
+	result, err := es.CancelMatch(r.Context(), id)
 	if err != nil {
 		h.logger.Error("eversports cancel match failed", "id", id, "err", err)
 		writeError(w, http.StatusBadGateway, "cancel match failed: "+err.Error())

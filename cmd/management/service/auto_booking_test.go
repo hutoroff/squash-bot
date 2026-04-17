@@ -503,7 +503,7 @@ func TestNotifyCredentialsExhausted_SendsSilentDMToHumanAdmins(t *testing.T) {
 // pre-populated with the given raw credentials (passwords are pre-encrypted).
 func newCredServiceForTest(creds []*models.VenueCredential) *VenueCredentialService {
 	enc, _ := NewEncryptor(testHexKey)
-	return NewVenueCredentialService(&stubCredRepo{creds: creds}, &stubVenueRepo{}, enc)
+	return NewVenueCredentialService(&stubCredRepo{creds: creds}, &stubVenueRepo{}, nil, enc)
 }
 
 func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *testing.T) {
@@ -599,5 +599,123 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 	msg := api.sendCalls[0].(tgbotapi.MessageConfig)
 	if msg.DisableNotification {
 		t.Error("no-credentials notification must have sound on")
+	}
+}
+
+// ── stubAutoBookingResultRepo ─────────────────────────────────────────────────
+
+type stubAutoBookingResultRepo struct{}
+
+func (r *stubAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _ string, _ int) error {
+	return nil
+}
+
+func (r *stubAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) (*models.AutoBookingResult, error) {
+	return nil, nil
+}
+
+// ── courtBookingRepo.Save tests ───────────────────────────────────────────────
+
+func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
+	// A successful BookMatch with a non-empty MatchID must produce a court_bookings row.
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	credID := int64(1)
+	creds := []*models.VenueCredential{
+		{ID: credID, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := NewVenueCredentialService(&stubCredRepo{creds: creds}, &stubVenueRepo{}, nil, enc)
+
+	client := &mockBookingClient{
+		courts: []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:  []BookingSlot{}, // court 1 free
+		bookResult: &BookMatchResult{
+			MatchID:     "match-uuid-1",
+			BookingUUID: "booking-uuid-1",
+		},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected processAutoBookingForVenue to return true on success")
+	}
+	if len(cbRepo.saved) != 1 {
+		t.Fatalf("expected 1 court booking saved, got %d", len(cbRepo.saved))
+	}
+	if cbRepo.saved[0].MatchID != "match-uuid-1" {
+		t.Errorf("saved MatchID: got %q, want %q", cbRepo.saved[0].MatchID, "match-uuid-1")
+	}
+	if cbRepo.saved[0].CredentialID == nil || *cbRepo.saved[0].CredentialID != credID {
+		t.Errorf("saved CredentialID: got %v, want %d", cbRepo.saved[0].CredentialID, credID)
+	}
+}
+
+func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *testing.T) {
+	// BookMatch returns BookingUUID but empty MatchID (step 3 failed) → no court_bookings row.
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := NewVenueCredentialService(&stubCredRepo{creds: creds}, &stubVenueRepo{}, nil, enc)
+
+	client := &mockBookingClient{
+		courts: []BookingCourt{{ID: "1", UUID: "uuid-1", Name: "Court 1"}},
+		slots:  []BookingSlot{},
+		bookResult: &BookMatchResult{
+			MatchID:     "", // empty — step 3 of checkout failed
+			BookingUUID: "booking-uuid-1",
+		},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		courtsCount:           1,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1",
+		PreferredGameTime:  "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if len(cbRepo.saved) != 0 {
+		t.Errorf("expected no court booking saved when MatchID is empty, got %d", len(cbRepo.saved))
 	}
 }
