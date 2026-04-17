@@ -282,6 +282,8 @@ const (
 	MsgVenueCredDuplicateLogin    = "msg.venue_cred_duplicate_login"
 	MsgVenueCredNotFound          = "msg.venue_cred_not_found"
 	MsgVenueCredDisabled          = "msg.venue_cred_disabled"
+	MsgVenueHasActiveBookings     = "msg.venue_has_active_bookings"
+	MsgVenueCredHasActiveBookings = "msg.venue_cred_has_active_bookings"
 	BtnVenueCredentials           = "btn.venue_credentials"
 	BtnVenueCredAdd               = "btn.venue_cred_add"
 	BtnVenueCredDelete            = "btn.venue_cred_delete"
@@ -557,6 +559,8 @@ var translations = map[Lang]map[string]string{
 		MsgVenueCredDuplicateLogin:    "A credential with this login already exists for this venue. Please use a different login:",
 		MsgVenueCredNotFound:          "Credential not found.",
 		MsgVenueCredDisabled:          "Credential management is disabled. Set CREDENTIALS_ENCRYPTION_KEY on the management service to enable it.",
+		MsgVenueHasActiveBookings:     "Venue cannot be deleted — it has active court bookings. Cancel them first.",
+		MsgVenueCredHasActiveBookings: "Credential cannot be deleted — it has active court bookings. Cancel them first.",
 		BtnVenueCredentials:           "🔑 Credentials",
 		BtnVenueCredAdd:               "+ Add Credential",
 		BtnVenueCredDelete:            "🗑 Delete",
@@ -828,6 +832,8 @@ var translations = map[Lang]map[string]string{
 		MsgVenueCredDuplicateLogin:    "Zugangsdaten mit diesem Login existieren bereits für diesen Ort. Bitte anderen Login verwenden:",
 		MsgVenueCredNotFound:          "Zugangsdaten nicht gefunden.",
 		MsgVenueCredDisabled:          "Zugangsdatenverwaltung ist deaktiviert. CREDENTIALS_ENCRYPTION_KEY setzen um sie zu aktivieren.",
+		MsgVenueHasActiveBookings:     "Ort kann nicht gelöscht werden – es gibt aktive Platzbuchungen. Bitte zuerst stornieren.",
+		MsgVenueCredHasActiveBookings: "Zugangsdaten können nicht gelöscht werden – sie haben aktive Platzbuchungen. Bitte zuerst stornieren.",
 		BtnVenueCredentials:           "🔑 Zugangsdaten",
 		BtnVenueCredAdd:               "+ Zugangsdaten hinzufügen",
 		BtnVenueCredDelete:            "🗑 Löschen",
@@ -1095,6 +1101,8 @@ var translations = map[Lang]map[string]string{
 		MsgVenueCredDuplicateLogin:    "Учётные данные с этим логином уже существуют для этой площадки. Используй другой логин:",
 		MsgVenueCredNotFound:          "Учётные данные не найдены.",
 		MsgVenueCredDisabled:          "Управление учётными данными отключено. Установи CREDENTIALS_ENCRYPTION_KEY для активации.",
+		MsgVenueHasActiveBookings:     "Нельзя удалить площадку — есть активные бронирования кортов. Сначала отмени их.",
+		MsgVenueCredHasActiveBookings: "Нельзя удалить учётные данные — есть активные бронирования кортов. Сначала отмени их.",
 		BtnVenueCredentials:           "🔑 Учётные данные",
 		BtnVenueCredAdd:               "+ Добавить учётные данные",
 		BtnVenueCredDelete:            "🗑 Удалить",

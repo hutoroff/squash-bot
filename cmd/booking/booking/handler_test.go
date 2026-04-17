@@ -252,7 +252,7 @@ func TestCancelMatch_WithCredentials_UsesCredClient(t *testing.T) {
 	}}
 
 	h := newTestHandler(defaultMock)
-	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	h.credClients.Store("user@example.com:secret", eversportsClient(credMock))
 	srv := serve(h)
 	defer srv.Close()
 
@@ -282,7 +282,7 @@ func TestGetMatch_WithCredentialHeaders_UsesCredClient(t *testing.T) {
 	credMock := &mockClient{match: &eversports.Booking{ID: "match-xyz"}}
 
 	h := newTestHandler(defaultMock)
-	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	h.credClients.Store("user@example.com:secret", eversportsClient(credMock))
 	srv := serve(h)
 	defer srv.Close()
 
@@ -884,7 +884,7 @@ func TestGetCourts_WithCredentialHeaders_UsesCredClient(t *testing.T) {
 	credMock := &mockClient{courts: []eversports.Court{{ID: "77385", UUID: "abc", Name: "Court 1"}}}
 
 	h := newCourtsHandler(defaultMock)
-	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	h.credClients.Store("user@example.com:secret", eversportsClient(credMock))
 	srv := serve(h)
 	defer srv.Close()
 
@@ -917,7 +917,7 @@ func TestListMatches_WithCredentialHeaders_UsesCredClient(t *testing.T) {
 	}
 
 	h := newCourtBookingsHandler(defaultMock, "76443")
-	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	h.credClients.Store("user@example.com:secret", eversportsClient(credMock))
 	srv := serve(h)
 	defer srv.Close()
 
@@ -1009,7 +1009,7 @@ func TestGetFacility_WithCredentialHeaders_UsesCredClient(t *testing.T) {
 	credMock := &mockClient{facility: &eversports.Facility{ID: "1234", Slug: "squash-house-berlin-03", Name: "Squash House Berlin"}}
 
 	h := newTestHandler(defaultMock)
-	h.credClients.Store("user@example.com", eversportsClient(credMock))
+	h.credClients.Store("user@example.com:secret", eversportsClient(credMock))
 	srv := serve(h)
 	defer srv.Close()
 
@@ -1030,5 +1030,39 @@ func TestGetFacility_WithCredentialHeaders_UsesCredClient(t *testing.T) {
 	}
 	if defaultMock.lastFacilitySlug != "" {
 		t.Error("default client must not have been called")
+	}
+}
+
+// ─── credential cache behaviour ───────────────────────────────────────────────
+
+func TestGetOrCreateCredClient_SameEmailDifferentPassword_NewClientCreated(t *testing.T) {
+	h := newTestHandler(&mockClient{})
+
+	c1 := h.getOrCreateCredClient("user@example.com", "password1")
+	c2 := h.getOrCreateCredClient("user@example.com", "password2")
+
+	if c1 == c2 {
+		t.Error("expected different clients for different passwords, got the same instance")
+	}
+}
+
+func TestCancelMatch_EmptyBodyWithContentType_UsesDefaultClient(t *testing.T) {
+	defaultMock := &mockClient{cancellation: &eversports.CancellationResult{ID: "m1", State: "CANCELLED"}}
+	srv := serve(newTestHandler(defaultMock))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/m1", http.NoBody)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	if defaultMock.lastCancelMatchID != "m1" {
+		t.Errorf("default client not called: lastCancelMatchID = %q", defaultMock.lastCancelMatchID)
 	}
 }

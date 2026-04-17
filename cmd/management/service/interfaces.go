@@ -94,6 +94,9 @@ type CourtBookingRepository interface {
 	HasActiveByCredentialID(ctx context.Context, credentialID int64) (bool, error)
 	// HasActiveByVenueID returns true if any non-canceled booking exists for the venue.
 	HasActiveByVenueID(ctx context.Context, venueID int64) (bool, error)
+	// MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
+	// Called by DayAfterCleanupJob to close out kept bookings after a game completes.
+	MarkCanceledByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) error
 }
 
 // VenueCredentialRepository is the data access interface for venue booking credentials.

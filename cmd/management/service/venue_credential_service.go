@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -16,6 +17,10 @@ var ErrDuplicateCredentialLogin = errors.New("a credential with this login alrea
 // ErrCredentialInUse is returned when trying to delete a credential that still
 // has active (non-canceled) court bookings linked to it.
 var ErrCredentialInUse = errors.New("credential has active court bookings and cannot be removed")
+
+// ErrCredentialNotFound is returned when the credential does not exist or is not
+// accessible to the requesting group (venue ownership check failed).
+var ErrCredentialNotFound = errors.New("credential not found")
 
 // DecryptedCredential is a credential with its plaintext password available for
 // use by the auto-booking job. It is never persisted or returned via any API.
@@ -78,7 +83,7 @@ func (s *VenueCredentialService) List(ctx context.Context, venueID, groupID int6
 // bookings are linked to the credential.
 func (s *VenueCredentialService) Remove(ctx context.Context, credentialID, venueID, groupID int64) error {
 	if _, err := s.venueRepo.GetByIDAndGroupID(ctx, venueID, groupID); err != nil {
-		return fmt.Errorf("venue not found or not owned by group: %w", err)
+		return ErrCredentialNotFound
 	}
 	if s.courtBookingRepo != nil {
 		hasActive, err := s.courtBookingRepo.HasActiveByCredentialID(ctx, credentialID)
@@ -90,7 +95,7 @@ func (s *VenueCredentialService) Remove(ctx context.Context, credentialID, venue
 		}
 	}
 	if err := s.repo.Delete(ctx, credentialID, venueID); err != nil {
-		return fmt.Errorf("delete credential: %w", err)
+		return ErrCredentialNotFound
 	}
 	return nil
 }
@@ -101,6 +106,9 @@ func (s *VenueCredentialService) GetDecryptedByID(ctx context.Context, credID in
 	c, err := s.repo.GetWithPasswordByID(ctx, credID)
 	if err != nil {
 		return nil, fmt.Errorf("get credential %d: %w", credID, err)
+	}
+	if c == nil {
+		return nil, fmt.Errorf("credential %d not found", credID)
 	}
 	password, err := s.enc.Decrypt(c.EncryptedPassword)
 	if err != nil {
@@ -142,7 +150,8 @@ func (s *VenueCredentialService) ListForBooking(ctx context.Context, venueID int
 		}
 		password, err := s.enc.Decrypt(c.EncryptedPassword)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt credential %d: %w", c.ID, err)
+			slog.Warn("ListForBooking: decrypt failed, skipping credential", "id", c.ID, "err", err)
+			continue
 		}
 		result = append(result, DecryptedCredential{
 			ID:        c.ID,

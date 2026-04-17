@@ -119,7 +119,7 @@ func main() {
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, bookingClient, courtBookingRepo, venueCredService, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
-	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
+	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.AutoBookingCourtsCount, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
