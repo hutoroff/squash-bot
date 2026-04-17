@@ -184,6 +184,7 @@ TIMEZONE=UTC
 
 ## Constraints and conventions
 
+- **Booking timezone**: `CreateBooking` `start`/`end` must carry the facility's **local timezone offset** — Eversports rejects UTC (`Z`) timestamps. Callers must pass times in the group's local timezone; do NOT call `.UTC()` before passing (e.g. use `parsePreferredTime(..., groupTZ)` directly).
 - `bookingMu` serialises `CreateBooking` — never add concurrent booking logic without understanding the step-3 implicit server state issue
 - `withAuth` is for ALL retry logic except `CreateBooking` — do not duplicate the retry pattern manually in new methods
 - Adding a new Eversports operation: create/choose the right operation file (`matches.go`, `slots.go`, etc.), put public domain types in `models.go`, put wire types in the operation file, use `withAuth` unless mid-flow 401 is unsafe
