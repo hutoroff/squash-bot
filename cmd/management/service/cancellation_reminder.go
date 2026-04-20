@@ -169,6 +169,9 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 	)
 
 	msg := tgbotapi.NewMessage(game.ChatID, text)
+	if game.MessageID != nil {
+		msg.ReplyToMessageID = int(*game.MessageID)
+	}
 	if _, err := j.api.Send(msg); err != nil {
 		j.logger.Error("cancellation reminder: send notification", "game_id", game.ID, "err", err)
 		return
