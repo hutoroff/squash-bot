@@ -147,7 +147,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 
-	participations, guests, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
+	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -160,13 +160,8 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 
 	slog.Info("Admin kicked player", "admin", cb.From.ID, "target_telegram_id", telegramID, "game_id", gameID)
 
-	// Update the group announcement using the group's language.
-	if game.MessageID != nil {
-		groupLz := b.groupLocalizer(ctx, game.ChatID)
-		b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
-	}
-
 	b.answerCallback(cb.ID, lz.T(i18n.MsgPlayerKicked))
+	b.scheduleGameMessageEdit(game.ID)
 	b.renderManageScreen(ctx, cb, game, lz)
 }
 
@@ -216,7 +211,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	participations, guests, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
+	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -229,13 +224,8 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 
 	slog.Info("Admin kicked guest", "admin", cb.From.ID, "guest_id", guestID, "game_id", gameID)
 
-	// Update the group announcement using the group's language.
-	if game.MessageID != nil {
-		groupLz := b.groupLocalizer(ctx, game.ChatID)
-		b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, guests, groupLz)
-	}
-
 	b.answerCallback(cb.ID, lz.T(i18n.MsgGuestKicked))
+	b.scheduleGameMessageEdit(game.ID)
 	b.renderManageScreen(ctx, cb, game, lz)
 }
 
@@ -448,29 +438,7 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 
 	slog.Info("Courts updated via toggle", "game_id", gameID, "courts", courts)
 
-	// Re-fetch to reflect the new courts value in the group announcement.
-	game, err := b.client.GetGameByID(ctx, gameID)
-	if err != nil {
-		slog.Error("handleManageCourtsConfirm: get game after update", "err", err)
-		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgCourtsUpdatedRefreshFailed), nil)
-		return
-	}
-
-	if game.MessageID != nil {
-		participations, err := b.client.GetParticipations(ctx, gameID)
-		if err != nil {
-			slog.Error("handleManageCourtsConfirm: get participations", "err", err)
-		} else {
-			gameGuests, err := b.client.GetGuests(ctx, gameID)
-			if err != nil {
-				slog.Error("handleManageCourtsConfirm: get guests", "err", err)
-			} else {
-				groupLz := b.groupLocalizer(ctx, game.ChatID)
-				b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
-			}
-		}
-	}
-
+	b.scheduleGameMessageEdit(gameID)
 	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtsUpdated, courts), nil)
 }
 
@@ -524,28 +492,6 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 
 	slog.Info("Courts updated", "game_id", gameID, "courts", courts)
 
-	// Re-fetch the game to pick up the new courts value for the group message.
-	game, err = b.client.GetGameByID(ctx, gameID)
-	if err != nil {
-		slog.Error("processCourtsEdit: get game after update", "err", err)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgCourtsUpdatedRefreshFailed))
-		return
-	}
-
-	if game.MessageID != nil {
-		participations, err := b.client.GetParticipations(ctx, gameID)
-		if err != nil {
-			slog.Error("processCourtsEdit: get participations", "err", err)
-		} else {
-			gameGuests, err := b.client.GetGuests(ctx, gameID)
-			if err != nil {
-				slog.Error("processCourtsEdit: get guests", "err", err)
-			} else {
-				groupLz := b.groupLocalizer(ctx, game.ChatID)
-				b.editGameMessage(ctx, game.ChatID, int(*game.MessageID), game, participations, gameGuests, groupLz)
-			}
-		}
-	}
-
+	b.scheduleGameMessageEdit(gameID)
 	b.reply(msg.Chat.ID, msg.MessageID, lz.Tf(i18n.MsgCourtsUpdated, courts))
 }
