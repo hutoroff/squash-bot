@@ -19,6 +19,7 @@ type CancellationReminderJob struct {
 	partRepo              ParticipationRepository
 	guestRepo             GuestRepository
 	groupRepo             GroupRepository
+	notifier              Notifier                    // optional; nil skips game message update after court cancellation
 	bookingClient         BookingServiceClient        // optional; nil disables court cancellation
 	courtBookingRepo      CourtBookingRepository      // optional; nil falls back to ListMatches flow
 	autoBookingResultRepo AutoBookingResultRepository // optional; nil skips time-slot routing
@@ -34,6 +35,7 @@ func NewCancellationReminderJob(
 	partRepo ParticipationRepository,
 	guestRepo GuestRepository,
 	groupRepo GroupRepository,
+	notifier Notifier,
 	bookingClient BookingServiceClient,
 	courtBookingRepo CourtBookingRepository,
 	autoBookingResultRepo AutoBookingResultRepository,
@@ -48,6 +50,7 @@ func NewCancellationReminderJob(
 		partRepo:              partRepo,
 		guestRepo:             guestRepo,
 		groupRepo:             groupRepo,
+		notifier:              notifier,
 		bookingClient:         bookingClient,
 		courtBookingRepo:      courtBookingRepo,
 		autoBookingResultRepo: autoBookingResultRepo,
@@ -133,6 +136,10 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 		} else if len(result.cancelErrors) > 0 {
 			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.In(groupTZ).Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
 		}
+	}
+
+	if len(result.canceledCourts) > 0 && j.notifier != nil {
+		j.notifier.EditGameMessage(ctx, game.ID)
 	}
 
 	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")

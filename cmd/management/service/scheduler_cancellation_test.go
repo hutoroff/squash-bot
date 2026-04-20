@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -1258,5 +1259,197 @@ func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate
 	// Cancellation must still succeed via the credential-aware path using the all-date entries.
 	if len(result.canceledCourts) != 1 {
 		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// ── stubs for processCancellationReminder tests ───────────────────────────────
+
+type stubPartRepoPC struct{ count int }
+
+func (r *stubPartRepoPC) Upsert(_ context.Context, _, _ int64, _ models.ParticipationStatus) error {
+	return nil
+}
+func (r *stubPartRepoPC) GetByGame(_ context.Context, _ int64) ([]*models.GameParticipation, error) {
+	return nil, nil
+}
+func (r *stubPartRepoPC) DeleteByGameAndPlayer(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubPartRepoPC) GetRegisteredCount(_ context.Context, _ int64) (int, error) {
+	return r.count, nil
+}
+
+type stubGuestRepoPC struct{ count int }
+
+func (r *stubGuestRepoPC) AddGuest(_ context.Context, _, _ int64) (bool, error) { return false, nil }
+func (r *stubGuestRepoPC) RemoveLatestGuest(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubGuestRepoPC) GetByGame(_ context.Context, _ int64) ([]*models.GuestParticipation, error) {
+	return nil, nil
+}
+func (r *stubGuestRepoPC) DeleteByID(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubGuestRepoPC) GetCountByGame(_ context.Context, _ int64) (int, error) {
+	return r.count, nil
+}
+
+type stubGroupRepoPC struct{ group *models.Group }
+
+func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error { return nil }
+func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error    { return nil }
+func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error    { return nil }
+func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                    { return nil }
+func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)            { return true, nil }
+func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, error) {
+	return r.group, nil
+}
+func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { return nil, nil }
+
+type stubGameRepoPC struct{}
+
+func (r *stubGameRepoPC) Create(_ context.Context, _ *models.Game) (*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetByID(_ context.Context, _ int64) (*models.Game, error) { return nil, nil }
+func (r *stubGameRepoPC) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUpcomingGamesByChatIDs(_ context.Context, _ []int64) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) UpdateMessageID(_ context.Context, _, _ int64) error { return nil }
+func (r *stubGameRepoPC) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
+	return nil
+}
+func (r *stubGameRepoPC) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
+func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error          { return nil }
+
+type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
+
+func (a *captureSendAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	if msg, ok := c.(tgbotapi.MessageConfig); ok {
+		a.msgs = append(a.msgs, msg)
+	}
+	return tgbotapi.Message{}, nil
+}
+func (a *captureSendAPI) Request(_ tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	return &tgbotapi.APIResponse{Ok: true}, nil
+}
+func (a *captureSendAPI) GetChatAdministrators(_ tgbotapi.ChatAdministratorsConfig) ([]tgbotapi.ChatMember, error) {
+	return nil, nil
+}
+
+type spyNotifier struct{ calledGameIDs []int64 }
+
+func (n *spyNotifier) EditGameMessage(_ context.Context, gameID int64) {
+	n.calledGameIDs = append(n.calledGameIDs, gameID)
+}
+
+// makeJobForPC builds a CancellationReminderJob wired with the stubs
+// needed by processCancellationReminder.
+func makeJobForPC(
+	api TelegramAPI,
+	gameRepo GameRepository,
+	partCount, guestCount int,
+	group *models.Group,
+	notifier Notifier,
+	courtBookingRepo CourtBookingRepository,
+	bookingClient BookingServiceClient,
+) *CancellationReminderJob {
+	return &CancellationReminderJob{
+		api:              api,
+		gameRepo:         gameRepo,
+		partRepo:         &stubPartRepoPC{count: partCount},
+		guestRepo:        &stubGuestRepoPC{count: guestCount},
+		groupRepo:        &stubGroupRepoPC{group: group},
+		notifier:         notifier,
+		bookingClient:    bookingClient,
+		courtBookingRepo: courtBookingRepo,
+		loc:              time.UTC,
+		logger:           noopLogger(),
+		pollWindow:       5 * time.Minute,
+	}
+}
+
+// ── processCancellationReminder behaviour tests ───────────────────────────────
+
+// TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled verifies that
+// when courts are successfully canceled, notifier.EditGameMessage is called so the
+// pinned game announcement is updated to reflect the reduced court count.
+func TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// 0 players, 2 courts → capacity=4, courtsToCancel=2 → both courts canceled.
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		courtBookingEntry("1", "match-1", nil),
+		courtBookingEntry("2", "match-2", nil),
+	}}
+	notifier := &spyNotifier{}
+
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 10
+	game.Venue = &models.Venue{ID: 5}
+
+	job := makeJobForPC(&captureSendAPI{}, &stubGameRepoPC{}, 0, 0, group, notifier, cbRepo, &mockBookingClient{})
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(notifier.calledGameIDs) != 1 || notifier.calledGameIDs[0] != 10 {
+		t.Errorf("expected EditGameMessage called for game 10, got %v", notifier.calledGameIDs)
+	}
+}
+
+// TestProcessCancellationReminder_NotifierNotCalledWhenNoCancellation verifies that
+// when no courts are canceled (game is at full capacity), EditGameMessage is NOT called
+// — there is nothing to update in the game announcement.
+func TestProcessCancellationReminder_NotifierNotCalledWhenNoCancellation(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// 4 players, 2 courts → capacity=4, courtsToCancel=0 → no cancellation.
+	notifier := &spyNotifier{}
+
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 11
+
+	job := makeJobForPC(&captureSendAPI{}, &stubGameRepoPC{}, 4, 0, group, notifier, nil, nil)
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(notifier.calledGameIDs) != 0 {
+		t.Errorf("expected EditGameMessage NOT called, got calls for %v", notifier.calledGameIDs)
+	}
+}
+
+// TestProcessCancellationReminder_ReminderIsReplyToGameMessage verifies that
+// the reminder notification is sent as a reply to the original game announcement
+// when game.MessageID is set.
+func TestProcessCancellationReminder_ReminderIsReplyToGameMessage(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// Full capacity → no cancellation, clean scenario for inspecting the sent message.
+	api := &captureSendAPI{}
+
+	msgID := int64(42)
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 12
+	game.MessageID = &msgID
+
+	job := makeJobForPC(api, &stubGameRepoPC{}, 4, 0, group, nil, nil, nil)
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(api.msgs) == 0 {
+		t.Fatal("expected at least one message sent, got none")
+	}
+	if api.msgs[0].ReplyToMessageID != 42 {
+		t.Errorf("ReplyToMessageID: got %d, want 42", api.msgs[0].ReplyToMessageID)
 	}
 }
