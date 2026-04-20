@@ -83,7 +83,14 @@ func (j *CancellationReminderJob) loadCourtBookingEntries(ctx context.Context, g
 			j.logger.Warn("court cancellation: get auto_booking_result by game_id",
 				"game_id", game.ID, "err", err)
 		} else if abr != nil && abr.GameTime != "" {
-			return j.courtBookingRepo.GetByVenueAndDateAndTime(ctx, game.Venue.ID, game.GameDate, abr.GameTime)
+			entries, err := j.courtBookingRepo.GetByVenueAndDateAndTime(ctx, game.Venue.ID, game.GameDate, abr.GameTime)
+			if err != nil {
+				j.logger.Warn("court cancellation: get by venue+date+time failed, falling back to all-date query",
+					"game_id", game.ID, "err", err)
+				// Fall through to GetByVenueAndDate below.
+			} else {
+				return entries, nil
+			}
 		}
 	}
 	return j.courtBookingRepo.GetByVenueAndDate(ctx, game.Venue.ID, game.GameDate)
@@ -249,23 +256,21 @@ func (j *CancellationReminderJob) cancelUsingListMatches(
 		courtIDs[i] = b.courtID
 	}
 
-	// Build Eversports ID → court name-number mapping for priority-based selection.
+	// Build Eversports ID → court name-number mapping for display and priority-based selection.
 	var nameNumByID map[int]int
-	if game.Venue != nil && game.Venue.AutoBookingCourts != "" {
-		courts, listErr := j.bookingClient.ListCourts(ctx, date, "", "")
-		if listErr != nil {
-			j.logger.Warn("court cancellation: list courts failed, skipping priority selection",
-				"game_id", game.ID, "err", listErr)
-		} else {
-			nameNumByID = make(map[int]int, len(courts))
-			for _, c := range courts {
-				id, err := strconv.Atoi(c.ID)
-				if err != nil {
-					continue
-				}
-				if n := extractCourtNumber(c.Name); n > 0 && id > 0 {
-					nameNumByID[id] = n
-				}
+	allCourts, listErr := j.bookingClient.ListCourts(ctx, date, "", "")
+	if listErr != nil {
+		j.logger.Warn("court cancellation: list courts failed, court names unavailable for display",
+			"game_id", game.ID, "err", listErr)
+	} else {
+		nameNumByID = make(map[int]int, len(allCourts))
+		for _, c := range allCourts {
+			id, err := strconv.Atoi(c.ID)
+			if err != nil {
+				continue
+			}
+			if n := extractCourtNumber(c.Name); n > 0 && id > 0 {
+				nameNumByID[id] = n
 			}
 		}
 	}
@@ -344,8 +349,19 @@ func (j *CancellationReminderJob) cancelUsingListMatches(
 		return nil, fmt.Errorf("persist updated courts: %w", err)
 	}
 
+	// Translate Eversports court IDs to venue name-numbers for display.
+	// Falls back to the raw Eversports ID when no mapping is available.
+	displayCanceled := make([]int, 0, len(canceled))
+	for _, cID := range canceled {
+		if n, ok := nameNumByID[cID]; ok {
+			displayCanceled = append(displayCanceled, n)
+		} else {
+			displayCanceled = append(displayCanceled, cID)
+		}
+	}
+
 	return &courtCancellationResult{
-		canceledCourts:  canceled,
+		canceledCourts:  displayCanceled,
 		remainingCourts: newCourtsStr,
 		remainingCount:  newCount,
 		cancelErrors:    cancelErrors,

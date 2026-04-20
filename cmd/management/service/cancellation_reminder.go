@@ -19,6 +19,7 @@ type CancellationReminderJob struct {
 	partRepo              ParticipationRepository
 	guestRepo             GuestRepository
 	groupRepo             GroupRepository
+	notifier              Notifier                    // optional; nil skips game message update after court cancellation
 	bookingClient         BookingServiceClient        // optional; nil disables court cancellation
 	courtBookingRepo      CourtBookingRepository      // optional; nil falls back to ListMatches flow
 	autoBookingResultRepo AutoBookingResultRepository // optional; nil skips time-slot routing
@@ -34,6 +35,7 @@ func NewCancellationReminderJob(
 	partRepo ParticipationRepository,
 	guestRepo GuestRepository,
 	groupRepo GroupRepository,
+	notifier Notifier,
 	bookingClient BookingServiceClient,
 	courtBookingRepo CourtBookingRepository,
 	autoBookingResultRepo AutoBookingResultRepository,
@@ -48,6 +50,7 @@ func NewCancellationReminderJob(
 		partRepo:              partRepo,
 		guestRepo:             guestRepo,
 		groupRepo:             groupRepo,
+		notifier:              notifier,
 		bookingClient:         bookingClient,
 		courtBookingRepo:      courtBookingRepo,
 		autoBookingResultRepo: autoBookingResultRepo,
@@ -115,25 +118,31 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 
 	// Attempt automatic court cancellation when a booking client is configured.
 	var result *courtCancellationResult
+	displayLoc := j.loc
 	groupTZ, tzOK := groupTZByID(ctx, j.groupRepo, game.ChatID, j.loc, j.logger)
 	if !tzOK {
 		j.logger.Warn("cancellation reminder: skipping court cancellation (timezone unavailable)",
 			"game_id", game.ID)
 		result = buildNoOpResult(game)
 	} else {
+		displayLoc = groupTZ
 		var cancelErr error
 		result, cancelErr = j.cancelUnusedCourts(ctx, game, courtsToCancel, groupTZ)
 		if cancelErr != nil {
 			j.logger.Error("cancellation reminder: court cancellation failed",
 				"game_id", game.ID, "err", cancelErr)
 			result = buildNoOpResult(game)
-			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), cancelErr, lz)
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.In(groupTZ).Format("02.01 15:04"), cancelErr, lz)
 		} else if len(result.cancelErrors) > 0 {
-			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.In(groupTZ).Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
 		}
 	}
 
-	gameDateTime := game.GameDate.Format("02.01 15:04")
+	if len(result.canceledCourts) > 0 && j.notifier != nil {
+		j.notifier.EditGameMessage(ctx, game.ID)
+	}
+
+	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")
 	newCourtsCount := result.remainingCount
 	newCapacity := newCourtsCount * 2
 	canceledStr := formatCanceledCourts(result.canceledCourts)
@@ -167,6 +176,9 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 	)
 
 	msg := tgbotapi.NewMessage(game.ChatID, text)
+	if game.MessageID != nil {
+		msg.ReplyToMessageID = int(*game.MessageID)
+	}
 	if _, err := j.api.Send(msg); err != nil {
 		j.logger.Error("cancellation reminder: send notification", "game_id", game.ID, "err", err)
 		return

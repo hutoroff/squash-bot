@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -414,6 +415,62 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 	}
 	if len(client.cancelCalls) != 1 || client.cancelCalls[0] != "uuid-9" {
 		t.Errorf("cancel calls: got %v, want [uuid-9]", client.cancelCalls)
+	}
+}
+
+// ── cancelUsingListMatches court-name translation ─────────────────────────────
+
+func TestCancelUnusedCourts_TranslatesEversportsIDToNameNumber(t *testing.T) {
+	// Eversports court ID (500) is intentionally different from the venue name-number (3)
+	// to verify the translation path. AutoBookingCourts is NOT set — only Phase 2 runs.
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
+		},
+		courts: []BookingCourt{
+			{ID: "500", UUID: "u500", Name: "Court 3"},
+		},
+	}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	game := makeGame("3", 1, time.Now().Add(time.Hour))
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
+	}
+	// Must be the venue name-number (3), not the raw Eversports ID (500).
+	if result.canceledCourts[0] != 3 {
+		t.Errorf("expected court name-number 3, got %d (raw Eversports ID would be 500)", result.canceledCourts[0])
+	}
+}
+
+func TestCancelUnusedCourts_FallsBackToEversportsID_WhenNoNameMapping(t *testing.T) {
+	// ListCourts returns a court with no parseable number in the name.
+	// The raw Eversports ID must be used as a fallback for display.
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
+		},
+		courts: []BookingCourt{
+			{ID: "500", UUID: "u500", Name: "Squash"}, // no number → no mapping
+		},
+	}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	game := makeGame("1", 1, time.Now().Add(time.Hour))
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
+	}
+	// No name mapping → falls back to raw Eversports ID 500.
+	if result.canceledCourts[0] != 500 {
+		t.Errorf("expected fallback to raw Eversports ID 500, got %d", result.canceledCourts[0])
 	}
 }
 
@@ -883,6 +940,7 @@ func TestCancelUsingBookingEntries_WithCredentials_PassesLoginPassword(t *testin
 type routingCourtBookingRepo struct {
 	byDateEntries    []*models.CourtBooking
 	byTimeEntries    map[string][]*models.CourtBooking // keyed by game_time
+	byTimeErr        error                             // if set, GetByVenueAndDateAndTime returns this error
 	byDateCalled     bool
 	byTimeCalled     bool
 	byTimeCalledWith string
@@ -899,6 +957,9 @@ func (r *routingCourtBookingRepo) GetByVenueAndDate(_ context.Context, _ int64, 
 func (r *routingCourtBookingRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, gameTime string) ([]*models.CourtBooking, error) {
 	r.byTimeCalled = true
 	r.byTimeCalledWith = gameTime
+	if r.byTimeErr != nil {
+		return nil, r.byTimeErr
+	}
 	if r.byTimeEntries != nil {
 		return r.byTimeEntries[gameTime], nil
 	}
@@ -1155,5 +1216,240 @@ func TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate(t *testing.T) {
 	}
 	if len(result.canceledCourts) != 1 {
 		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate verifies that
+// when GetByVenueAndDateAndTime returns a transient error, loadCourtBookingEntries falls back
+// to GetByVenueAndDate (credential-aware path) rather than propagating the error to the caller
+// (which would fall all the way back to the legacy ListMatches path).
+func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 66
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-date-fallback", nil)},
+		byTimeErr:     errors.New("db: connection refused"),
+	}
+	abrRepo := &perGameAutoBookingResultRepo{
+		resultByGameID: map[int64]*models.AutoBookingResult{
+			66: {ID: 7, GameTime: "18:00"},
+		},
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cbRepo.byTimeCalled {
+		t.Error("expected GetByVenueAndDateAndTime to be attempted")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate to be called as fallback after GetByVenueAndDateAndTime error")
+	}
+	// Cancellation must still succeed via the credential-aware path using the all-date entries.
+	if len(result.canceledCourts) != 1 {
+		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// ── stubs for processCancellationReminder tests ───────────────────────────────
+
+type stubPartRepoPC struct{ count int }
+
+func (r *stubPartRepoPC) Upsert(_ context.Context, _, _ int64, _ models.ParticipationStatus) error {
+	return nil
+}
+func (r *stubPartRepoPC) GetByGame(_ context.Context, _ int64) ([]*models.GameParticipation, error) {
+	return nil, nil
+}
+func (r *stubPartRepoPC) DeleteByGameAndPlayer(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubPartRepoPC) GetRegisteredCount(_ context.Context, _ int64) (int, error) {
+	return r.count, nil
+}
+
+type stubGuestRepoPC struct{ count int }
+
+func (r *stubGuestRepoPC) AddGuest(_ context.Context, _, _ int64) (bool, error) { return false, nil }
+func (r *stubGuestRepoPC) RemoveLatestGuest(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubGuestRepoPC) GetByGame(_ context.Context, _ int64) ([]*models.GuestParticipation, error) {
+	return nil, nil
+}
+func (r *stubGuestRepoPC) DeleteByID(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
+func (r *stubGuestRepoPC) GetCountByGame(_ context.Context, _ int64) (int, error) {
+	return r.count, nil
+}
+
+type stubGroupRepoPC struct{ group *models.Group }
+
+func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error { return nil }
+func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error    { return nil }
+func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error    { return nil }
+func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                    { return nil }
+func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)            { return true, nil }
+func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, error) {
+	return r.group, nil
+}
+func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { return nil, nil }
+
+type stubGameRepoPC struct{}
+
+func (r *stubGameRepoPC) Create(_ context.Context, _ *models.Game) (*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetByID(_ context.Context, _ int64) (*models.Game, error) { return nil, nil }
+func (r *stubGameRepoPC) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUpcomingGamesByChatIDs(_ context.Context, _ []int64) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) UpdateMessageID(_ context.Context, _, _ int64) error { return nil }
+func (r *stubGameRepoPC) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
+	return nil
+}
+func (r *stubGameRepoPC) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
+func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error          { return nil }
+
+type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
+
+func (a *captureSendAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	if msg, ok := c.(tgbotapi.MessageConfig); ok {
+		a.msgs = append(a.msgs, msg)
+	}
+	return tgbotapi.Message{}, nil
+}
+func (a *captureSendAPI) Request(_ tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	return &tgbotapi.APIResponse{Ok: true}, nil
+}
+func (a *captureSendAPI) GetChatAdministrators(_ tgbotapi.ChatAdministratorsConfig) ([]tgbotapi.ChatMember, error) {
+	return nil, nil
+}
+
+type spyNotifier struct{ calledGameIDs []int64 }
+
+func (n *spyNotifier) EditGameMessage(_ context.Context, gameID int64) {
+	n.calledGameIDs = append(n.calledGameIDs, gameID)
+}
+
+// makeJobForPC builds a CancellationReminderJob wired with the stubs
+// needed by processCancellationReminder.
+func makeJobForPC(
+	api TelegramAPI,
+	gameRepo GameRepository,
+	partCount, guestCount int,
+	group *models.Group,
+	notifier Notifier,
+	courtBookingRepo CourtBookingRepository,
+	bookingClient BookingServiceClient,
+) *CancellationReminderJob {
+	return &CancellationReminderJob{
+		api:              api,
+		gameRepo:         gameRepo,
+		partRepo:         &stubPartRepoPC{count: partCount},
+		guestRepo:        &stubGuestRepoPC{count: guestCount},
+		groupRepo:        &stubGroupRepoPC{group: group},
+		notifier:         notifier,
+		bookingClient:    bookingClient,
+		courtBookingRepo: courtBookingRepo,
+		loc:              time.UTC,
+		logger:           noopLogger(),
+		pollWindow:       5 * time.Minute,
+	}
+}
+
+// ── processCancellationReminder behaviour tests ───────────────────────────────
+
+// TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled verifies that
+// when courts are successfully canceled, notifier.EditGameMessage is called so the
+// pinned game announcement is updated to reflect the reduced court count.
+func TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// 0 players, 2 courts → capacity=4, courtsToCancel=2 → both courts canceled.
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		courtBookingEntry("1", "match-1", nil),
+		courtBookingEntry("2", "match-2", nil),
+	}}
+	notifier := &spyNotifier{}
+
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 10
+	game.Venue = &models.Venue{ID: 5}
+
+	job := makeJobForPC(&captureSendAPI{}, &stubGameRepoPC{}, 0, 0, group, notifier, cbRepo, &mockBookingClient{})
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(notifier.calledGameIDs) != 1 || notifier.calledGameIDs[0] != 10 {
+		t.Errorf("expected EditGameMessage called for game 10, got %v", notifier.calledGameIDs)
+	}
+}
+
+// TestProcessCancellationReminder_NotifierNotCalledWhenNoCancellation verifies that
+// when no courts are canceled (game is at full capacity), EditGameMessage is NOT called
+// — there is nothing to update in the game announcement.
+func TestProcessCancellationReminder_NotifierNotCalledWhenNoCancellation(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// 4 players, 2 courts → capacity=4, courtsToCancel=0 → no cancellation.
+	notifier := &spyNotifier{}
+
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 11
+
+	job := makeJobForPC(&captureSendAPI{}, &stubGameRepoPC{}, 4, 0, group, notifier, nil, nil)
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(notifier.calledGameIDs) != 0 {
+		t.Errorf("expected EditGameMessage NOT called, got calls for %v", notifier.calledGameIDs)
+	}
+}
+
+// TestProcessCancellationReminder_ReminderIsReplyToGameMessage verifies that
+// the reminder notification is sent as a reply to the original game announcement
+// when game.MessageID is set.
+func TestProcessCancellationReminder_ReminderIsReplyToGameMessage(t *testing.T) {
+	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
+	// Full capacity → no cancellation, clean scenario for inspecting the sent message.
+	api := &captureSendAPI{}
+
+	msgID := int64(42)
+	game := makeGame("1,2", 2, time.Now().Add(24*time.Hour))
+	game.ID = 12
+	game.MessageID = &msgID
+
+	job := makeJobForPC(api, &stubGameRepoPC{}, 4, 0, group, nil, nil, nil)
+	job.processCancellationReminder(context.Background(), game)
+
+	if len(api.msgs) == 0 {
+		t.Fatal("expected at least one message sent, got none")
+	}
+	if api.msgs[0].ReplyToMessageID != 42 {
+		t.Errorf("ReplyToMessageID: got %d, want 42", api.msgs[0].ReplyToMessageID)
 	}
 }
