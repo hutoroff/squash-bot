@@ -417,6 +417,62 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 	}
 }
 
+// ── cancelUsingListMatches court-name translation ─────────────────────────────
+
+func TestCancelUnusedCourts_TranslatesEversportsIDToNameNumber(t *testing.T) {
+	// Eversports court ID (500) is intentionally different from the venue name-number (3)
+	// to verify the translation path. AutoBookingCourts is NOT set — only Phase 2 runs.
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
+		},
+		courts: []BookingCourt{
+			{ID: "500", UUID: "u500", Name: "Court 3"},
+		},
+	}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	game := makeGame("3", 1, time.Now().Add(time.Hour))
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
+	}
+	// Must be the venue name-number (3), not the raw Eversports ID (500).
+	if result.canceledCourts[0] != 3 {
+		t.Errorf("expected court name-number 3, got %d (raw Eversports ID would be 500)", result.canceledCourts[0])
+	}
+}
+
+func TestCancelUnusedCourts_FallsBackToEversportsID_WhenNoNameMapping(t *testing.T) {
+	// ListCourts returns a court with no parseable number in the name.
+	// The raw Eversports ID must be used as a fallback for display.
+	client := &mockBookingClient{
+		slots: []BookingSlot{
+			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
+		},
+		courts: []BookingCourt{
+			{ID: "500", UUID: "u500", Name: "Squash"}, // no number → no mapping
+		},
+	}
+	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	game := makeGame("1", 1, time.Now().Add(time.Hour))
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.canceledCourts) != 1 {
+		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
+	}
+	// No name mapping → falls back to raw Eversports ID 500.
+	if result.canceledCourts[0] != 500 {
+		t.Errorf("expected fallback to raw Eversports ID 500, got %d", result.canceledCourts[0])
+	}
+}
+
 // ── determineScenario tests ───────────────────────────────────────────────────
 
 func TestDetermineScenario(t *testing.T) {
@@ -883,6 +939,7 @@ func TestCancelUsingBookingEntries_WithCredentials_PassesLoginPassword(t *testin
 type routingCourtBookingRepo struct {
 	byDateEntries    []*models.CourtBooking
 	byTimeEntries    map[string][]*models.CourtBooking // keyed by game_time
+	byTimeErr        error                             // if set, GetByVenueAndDateAndTime returns this error
 	byDateCalled     bool
 	byTimeCalled     bool
 	byTimeCalledWith string
@@ -899,6 +956,9 @@ func (r *routingCourtBookingRepo) GetByVenueAndDate(_ context.Context, _ int64, 
 func (r *routingCourtBookingRepo) GetByVenueAndDateAndTime(_ context.Context, _ int64, _ time.Time, gameTime string) ([]*models.CourtBooking, error) {
 	r.byTimeCalled = true
 	r.byTimeCalledWith = gameTime
+	if r.byTimeErr != nil {
+		return nil, r.byTimeErr
+	}
 	if r.byTimeEntries != nil {
 		return r.byTimeEntries[gameTime], nil
 	}
@@ -1153,6 +1213,49 @@ func TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate(t *testing.T) {
 	if !cbRepo.byDateCalled {
 		t.Error("expected GetByVenueAndDate fallback for legacy result with empty GameTime")
 	}
+	if len(result.canceledCourts) != 1 {
+		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
+	}
+}
+
+// TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate verifies that
+// when GetByVenueAndDateAndTime returns a transient error, loadCourtBookingEntries falls back
+// to GetByVenueAndDate (credential-aware path) rather than propagating the error to the caller
+// (which would fall all the way back to the legacy ListMatches path).
+func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate(t *testing.T) {
+	gameDate := time.Date(2026, 6, 15, 18, 0, 0, 0, time.UTC)
+	game := makeGame("1", 1, gameDate)
+	game.ID = 66
+	game.Venue = &models.Venue{ID: 10}
+
+	cbRepo := &routingCourtBookingRepo{
+		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-date-fallback", nil)},
+		byTimeErr:     errors.New("db: connection refused"),
+	}
+	abrRepo := &perGameAutoBookingResultRepo{
+		resultByGameID: map[int64]*models.AutoBookingResult{
+			66: {ID: 7, GameTime: "18:00"},
+		},
+	}
+
+	s := &CancellationReminderJob{
+		bookingClient:         &mockBookingClient{},
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: abrRepo,
+		logger:                noopLogger(),
+	}
+
+	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cbRepo.byTimeCalled {
+		t.Error("expected GetByVenueAndDateAndTime to be attempted")
+	}
+	if !cbRepo.byDateCalled {
+		t.Error("expected GetByVenueAndDate to be called as fallback after GetByVenueAndDateAndTime error")
+	}
+	// Cancellation must still succeed via the credential-aware path using the all-date entries.
 	if len(result.canceledCourts) != 1 {
 		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
 	}

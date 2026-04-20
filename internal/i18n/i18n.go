@@ -907,9 +907,9 @@ var translations = map[Lang]map[string]string{
 		SchedCancellationFailDM: "⚠️ Автоматическая отмена кортов не удалась для игры %s: %s. Пожалуйста, отмените корты вручную.",
 
 		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) подтверждено.",
-		SchedReminderCanceled:     "✅ Корт(а) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",
+		SchedReminderCanceled:     "✅ Корт(ы) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",
 		SchedReminderOddNoCancel:  "⚠️ 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
-		SchedReminderOddCanceled:  "⚠️ Корт(а) %s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
+		SchedReminderOddCanceled:  "⚠️ Корт(ы) %s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
 		SchedReminderAllCanceled:  "❌ Все корты (%s) отменены для игры %s. Игра не состоится.",
 		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, %d корт(а). Отмените незаполненные корты.",
 
