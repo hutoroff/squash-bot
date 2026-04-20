@@ -149,6 +149,43 @@ type manageCourtsToggleState struct {
 	selectedCourts map[string]bool
 }
 
+// gameEditWorker serializes and coalesces Telegram message edits for a single game.
+// Multiple concurrent triggers (e.g. rapid join/skip button clicks) collapse into
+// at most two sequential Telegram API calls, preventing 429 rate-limit errors.
+type gameEditWorker struct {
+	mu      sync.Mutex
+	running bool
+	pending bool
+}
+
+// schedule enqueues a game message edit. If a worker goroutine is already running
+// for this game, pending is set so the worker loops once more after finishing;
+// otherwise a new goroutine is started immediately.
+func (w *gameEditWorker) schedule(run func()) {
+	w.mu.Lock()
+	if w.running {
+		w.pending = true
+		w.mu.Unlock()
+		return
+	}
+	w.running = true
+	w.mu.Unlock()
+
+	go func() {
+		for {
+			run()
+			w.mu.Lock()
+			if !w.pending {
+				w.running = false
+				w.mu.Unlock()
+				return
+			}
+			w.pending = false
+			w.mu.Unlock()
+		}
+	}()
+}
+
 // venueCredStep tracks which input the credential-add wizard is waiting for.
 type venueCredStep int
 
@@ -193,6 +230,7 @@ type Bot struct {
 	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
 	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
 	pendingVenueCredAdd           sync.Map      // map[chatID int64]*venueCredWizard
+	editWorkers                   sync.Map      // map[gameID int64]*gameEditWorker
 	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
 	callbackRouter                map[string]callbackHandler
 }

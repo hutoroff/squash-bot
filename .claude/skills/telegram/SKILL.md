@@ -248,9 +248,14 @@ Works in private chat only. Group @mentions redirected to private chat. At least
 
 1. Parse callback data (`action:game_id`, e.g. `join:123`).
 2. Call management service (upsert participation or add/remove guest).
-3. Fetch updated participants and guests.
-4. Format message with participant list + "Last updated: [timestamp]" footer (group language via `groupLocalizer`).
-5. Edit Telegram message in place — preserving both inline buttons and pin status.
+3. `answerCallback` immediately with success or error — user sees real result with no delay.
+4. Call `scheduleGameMessageEdit(gameID)` to enqueue an async re-render.
+
+**Coalesced message editing (`gameEditWorker` in `bot.go`, methods in `participation_handlers.go`):**
+- `editWorkers sync.Map` (keyed by `gameID`) holds one `*gameEditWorker` per game.
+- `schedule(run)`: if a worker goroutine is already running, sets `pending=true` and returns; otherwise starts a goroutine that loops: `run()` → check pending → repeat or exit.
+- This collapses N concurrent button clicks into at most 2 sequential `EditMessageText` calls.
+- `doEditGameMessage` fetches fresh state on each attempt and handles HTTP 429 with a `RetryAfter`-aware sleep + single retry; silently drops `400 "message is not modified"` errors.
 
 ### Admin & Group Management
 
