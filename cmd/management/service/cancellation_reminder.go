@@ -115,25 +115,27 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 
 	// Attempt automatic court cancellation when a booking client is configured.
 	var result *courtCancellationResult
+	displayLoc := j.loc
 	groupTZ, tzOK := groupTZByID(ctx, j.groupRepo, game.ChatID, j.loc, j.logger)
 	if !tzOK {
 		j.logger.Warn("cancellation reminder: skipping court cancellation (timezone unavailable)",
 			"game_id", game.ID)
 		result = buildNoOpResult(game)
 	} else {
+		displayLoc = groupTZ
 		var cancelErr error
 		result, cancelErr = j.cancelUnusedCourts(ctx, game, courtsToCancel, groupTZ)
 		if cancelErr != nil {
 			j.logger.Error("cancellation reminder: court cancellation failed",
 				"game_id", game.ID, "err", cancelErr)
 			result = buildNoOpResult(game)
-			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), cancelErr, lz)
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.In(groupTZ).Format("02.01 15:04"), cancelErr, lz)
 		} else if len(result.cancelErrors) > 0 {
-			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
+			j.notifyCancellationError(ctx, game.ChatID, game.GameDate.In(groupTZ).Format("02.01 15:04"), errors.Join(result.cancelErrors...), lz)
 		}
 	}
 
-	gameDateTime := game.GameDate.Format("02.01 15:04")
+	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")
 	newCourtsCount := result.remainingCount
 	newCapacity := newCourtsCount * 2
 	canceledStr := formatCanceledCourts(result.canceledCourts)
