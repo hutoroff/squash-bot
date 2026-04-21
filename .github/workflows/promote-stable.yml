@@ -37,6 +37,12 @@ jobs:
           HUB="${{ vars.DOCKERHUB_USERNAME }}"
           VERSION="${{ inputs.version }}"
 
+          # Guard: dev releases (versions ending in 'd') must not be promoted to stable
+          if [ "$VERSION" != "latest" ] && echo "$VERSION" | grep -qE 'd$'; then
+            echo "ERROR: Cannot promote dev release '${VERSION}' to stable. Only main-branch releases may be promoted."
+            exit 1
+          fi
+
           promote() {
             local image="$1"
             echo "Promoting ${image}:${VERSION} → ${image}:stable"

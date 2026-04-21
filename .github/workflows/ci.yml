@@ -3,7 +3,7 @@ run-name: CI — ${{ github.sha }}
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request: { }
 
 jobs:
