@@ -93,6 +93,20 @@ jobs:
           BUMP="${{ inputs.bump }}"
           DOCKERHUB="${{ vars.DOCKERHUB_USERNAME }}"
           OWNER="${{ github.repository_owner }}"
+          BRANCH="${{ github.ref_name }}"
+
+          # Validate branch
+          if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "dev" ]; then
+            echo "ERROR: Release can only be triggered from 'main' or 'dev'. Current branch: ${BRANCH}"
+            exit 1
+          fi
+
+          IS_DEV=false
+          VERSION_SUFFIX=""
+          if [ "$BRANCH" = "dev" ]; then
+            IS_DEV=true
+            VERSION_SUFFIX="d"
+          fi
 
           if [ "$SERVICE" = "all" ]; then
             SERVICES="booking management telegram web"
@@ -117,8 +131,10 @@ jobs:
               patch) PATCH=$((PATCH+1)) ;;
             esac
             NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            NEW_VERSION_FULL="${NEW_VERSION}${VERSION_SUFFIX}"
+            # Store the plain numeric version so the next bump works regardless of branch
             echo "$NEW_VERSION" > "cmd/${SVC}/VERSION"
-            echo "Bumped ${VERSION} → ${NEW_VERSION}"
+            echo "Bumped ${VERSION} → ${NEW_VERSION_FULL} (VERSION file: ${NEW_VERSION})"
 
             # Generate changelog
             PREV_TAG=$(git tag --list "${SVC}/v*" --sort=-version:refname | head -1)
@@ -134,27 +150,46 @@ jobs:
             cat "/tmp/changelog-${SVC}.md"
 
             # Build and push Docker image
-            docker buildx build \
-              --file "Dockerfile.${SVC}" \
-              --build-arg "VERSION=${NEW_VERSION}" \
-              --tag "${DOCKERHUB}/${IMG}:${NEW_VERSION}" \
-              --tag "${DOCKERHUB}/${IMG}:latest" \
-              --tag "ghcr.io/${OWNER}/${IMG}:${NEW_VERSION}" \
-              --tag "ghcr.io/${OWNER}/${IMG}:latest" \
-              --push \
-              .
+            # dev releases: versioned tag only (no :latest — stable tag reserved for main)
+            # main releases: versioned tag + :latest
+            if [ "$IS_DEV" = "true" ]; then
+              docker buildx build \
+                --file "Dockerfile.${SVC}" \
+                --build-arg "VERSION=${NEW_VERSION_FULL}" \
+                --tag "${DOCKERHUB}/${IMG}:${NEW_VERSION_FULL}" \
+                --tag "ghcr.io/${OWNER}/${IMG}:${NEW_VERSION_FULL}" \
+                --push \
+                .
+            else
+              docker buildx build \
+                --file "Dockerfile.${SVC}" \
+                --build-arg "VERSION=${NEW_VERSION_FULL}" \
+                --tag "${DOCKERHUB}/${IMG}:${NEW_VERSION_FULL}" \
+                --tag "${DOCKERHUB}/${IMG}:latest" \
+                --tag "ghcr.io/${OWNER}/${IMG}:${NEW_VERSION_FULL}" \
+                --tag "ghcr.io/${OWNER}/${IMG}:latest" \
+                --push \
+                .
+            fi
 
             # Commit and tag
             git add "cmd/${SVC}/VERSION"
-            git commit -m "[chore]: release ${IMG} v${NEW_VERSION}"
-            git tag "${SVC}/v${NEW_VERSION}"
+            git commit -m "[chore]: release ${IMG} v${NEW_VERSION_FULL}"
+            git tag "${SVC}/v${NEW_VERSION_FULL}"
             git push
-            git push origin "${SVC}/v${NEW_VERSION}"
+            git push origin "${SVC}/v${NEW_VERSION_FULL}"
 
-            # Create GitHub Release
-            gh release create "${SVC}/v${NEW_VERSION}" \
-              --title "${TITLE} v${NEW_VERSION}" \
-              --notes-file "/tmp/changelog-${SVC}.md"
+            # Create GitHub Release (pre-release when releasing from dev)
+            if [ "$IS_DEV" = "true" ]; then
+              gh release create "${SVC}/v${NEW_VERSION_FULL}" \
+                --title "${TITLE} v${NEW_VERSION_FULL}" \
+                --notes-file "/tmp/changelog-${SVC}.md" \
+                --prerelease
+            else
+              gh release create "${SVC}/v${NEW_VERSION_FULL}" \
+                --title "${TITLE} v${NEW_VERSION_FULL}" \
+                --notes-file "/tmp/changelog-${SVC}.md"
+            fi
           done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
