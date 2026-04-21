@@ -44,7 +44,7 @@ services:
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       LOG_DIR: /logs/management
     volumes:
-      - logs:/logs/management
+      - logs:/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/telegram
     volumes:
-      - logs:/logs/telegram
+      - logs:/logs
     depends_on:
       management:
         condition: service_healthy
@@ -107,7 +107,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/booking
     volumes:
-      - logs:/logs/booking
+      - logs:/logs
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
       interval: 10s
@@ -137,7 +137,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/web
     volumes:
-      - logs:/logs/web
+      - logs:/logs
     depends_on:
       management:
         condition: service_healthy
