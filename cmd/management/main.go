@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/config"
 	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/robfig/cron/v3"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".
@@ -37,7 +39,16 @@ func main() {
 	if cfg.LogLevel == "DEBUG" {
 		logLevel = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	out := io.Writer(os.Stdout)
+	if logDir := os.Getenv("LOG_DIR"); logDir != "" {
+		out = io.MultiWriter(os.Stdout, &lumberjack.Logger{
+			Filename:   logDir + "/app.log",
+			MaxSize:    10,
+			MaxBackups: 5,
+			Compress:   true,
+		})
+	}
+	logger := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
 	loc, err := loadTimezone(cfg.Timezone)

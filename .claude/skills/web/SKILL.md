@@ -162,6 +162,7 @@ INTERNAL_API_SECRET=         required (calls to management service)
 JWT_SECRET=                  required (HS256, 7-day expiry; generate: openssl rand -hex 32)
 SERVER_PORT=8082             default
 LOG_LEVEL=INFO
+LOG_DIR=               optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
 ```
 

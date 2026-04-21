@@ -366,6 +366,7 @@ Guest spots count toward capacity.
 | `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
+| `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `AUTO_BOOKING_COURTS_COUNT`  | No | `3`              | Number of courts to book automatically at midnight; requires `SPORTS_BOOKING_SERVICE_URL` |
@@ -380,6 +381,7 @@ Guest spots count toward capacity.
 | `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://management:8080`) |
 | `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service  |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
+| `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
 | `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
 
@@ -398,6 +400,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
+| `LOG_DIR`                | No       | _(empty)_ | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`   | Timezone for date formatting                                                                                            |
 
 ## Scheduled Tasks

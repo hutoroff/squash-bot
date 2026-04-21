@@ -288,6 +288,25 @@ Adding a new column always requires a new migration file in `migrations/`. Test 
 
 ---
 
+## Environment variables
+
+```
+TELEGRAM_BOT_TOKEN=           required (scheduler sends Telegram messages)
+DATABASE_URL=                 required (PostgreSQL connection string)
+INTERNAL_API_SECRET=          required (authenticates calls from telegram bot)
+SERVER_PORT=8080              default
+CRON_POLL=*/5 * * * *        how often to poll for scheduled tasks
+LOG_LEVEL=INFO
+LOG_DIR=                      optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
+TIMEZONE=UTC
+SPORTS_BOOKING_SERVICE_URL=   optional; enables auto court cancellation + auto booking
+AUTO_BOOKING_COURTS_COUNT=3   courts to book per midnight run; requires SPORTS_BOOKING_SERVICE_URL
+CREDENTIALS_ENCRYPTION_KEY=   optional; 64 hex chars (AES-256-GCM) for venue booking credentials at rest; 503 when unset
+CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before retry
+```
+
+---
+
 ## Constraints and conventions
 
 - New business rules go in `service/`, not `api/`

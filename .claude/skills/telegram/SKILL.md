@@ -302,6 +302,20 @@ Scheduler:      TriggerScheduledEvent
 
 ---
 
+## Environment variables
+
+```
+TELEGRAM_BOT_TOKEN=           required (bot token from @BotFather)
+MANAGEMENT_SERVICE_URL=       required (e.g. http://management:8080)
+INTERNAL_API_SECRET=          required (must match management service value)
+LOG_LEVEL=INFO
+LOG_DIR=                      optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
+TIMEZONE=UTC
+SERVICE_ADMIN_IDS=            optional; comma-sep Telegram user IDs allowed to use /trigger
+```
+
+---
+
 ## Conventions and constraints
 
 - Telegram message IDs are scoped per-chat — `pendingGameKey{chatID, messageID}` prevents collisions
