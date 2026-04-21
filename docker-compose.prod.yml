@@ -41,6 +41,10 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       SPORTS_BOOKING_SERVICE_URL: ${SPORTS_BOOKING_SERVICE_URL:-}
       AUTO_BOOKING_COURTS_COUNT: ${AUTO_BOOKING_COURTS_COUNT:-3}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      LOG_DIR: /logs/management
+    volumes:
+      - logs:/logs/management
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +75,9 @@ services:
       SERVICE_ADMIN_IDS: ${SERVICE_ADMIN_IDS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
+      LOG_DIR: /logs/telegram
+    volumes:
+      - logs:/logs/telegram
     depends_on:
       management:
         condition: service_healthy
@@ -94,9 +101,13 @@ services:
       EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
       EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
       EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:-}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
+      LOG_DIR: /logs/booking
+    volumes:
+      - logs:/logs/booking
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
       interval: 10s
@@ -124,6 +135,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
+      LOG_DIR: /logs/web
+    volumes:
+      - logs:/logs/web
     depends_on:
       management:
         condition: service_healthy
@@ -204,6 +218,7 @@ services:
 volumes:
   postgres_data:
   db_backups:
+  logs:
 
 networks:
   internal:

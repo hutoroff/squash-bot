@@ -14,6 +14,7 @@
 | `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
 | `LOG_LEVEL`                 | No       | `INFO`            | `INFO` or `DEBUG`                                              |
+| `LOG_DIR`                   | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`                  | No       | `UTC`             | Timezone for log timestamps                                    |
 
 ## API Endpoints

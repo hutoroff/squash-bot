@@ -192,6 +192,7 @@ EVERSPORTS_FACILITY_ID=      required for /matches, /courts
 EVERSPORTS_FACILITY_UUID=    required for POST /matches
 EVERSPORTS_FACILITY_SLUG=    required for /matches, /courts
 LOG_LEVEL=INFO
+LOG_DIR=               optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
 ```
 
