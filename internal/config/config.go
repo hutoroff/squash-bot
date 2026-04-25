@@ -64,8 +64,6 @@ func LoadManagement() (*ManagementConfig, error) {
 
 // BookingConfig holds configuration for the booking service.
 type BookingConfig struct {
-	EversportsEmail    string `env:"EVERSPORTS_EMAIL,required"`
-	EversportsPassword string `env:"EVERSPORTS_PASSWORD,required"`
 	// EversportsFacilityID is the numeric Eversports facility ID (visible in the
 	// venue page URL, e.g. eversports.de/s/venue-name-76443). Required for
 	// GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
