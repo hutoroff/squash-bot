@@ -320,6 +320,30 @@ func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T
 	}
 }
 
+func TestProcessAutoBookingForVenue_EmptyAutoBookingCourts_SkipsWithoutCallingBookingService(t *testing.T) {
+	client := &mockBookingClient{}
+	s := &AutoBookingJob{
+		bookingClient: client,
+		logger:        noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1,2",
+		AutoBookingCourts:  "", // not configured — must skip
+		PreferredGameTimes: "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+	got := s.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+	if got {
+		t.Error("expected false when AutoBookingCourts is empty")
+	}
+	if client.listCalls != 0 {
+		t.Errorf("booking service must not be called when AutoBookingCourts is empty, got %d calls", client.listCalls)
+	}
+}
+
 func TestProcessAutoBookingForVenue_InvalidPreferredTime_DoesNotCallListMatches(t *testing.T) {
 	client := &mockBookingClient{}
 	s := &AutoBookingJob{
@@ -525,13 +549,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *tes
 		credService:           credSvc,
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -578,13 +602,13 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 		credService:           credSvc,
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -659,13 +683,13 @@ func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -739,13 +763,13 @@ func TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls(t *testing.
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -777,13 +801,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
 		credService:           credSvc,
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -871,13 +895,13 @@ func TestProcessAutoBookingForVenue_TwoTimeSlots_BooksAndSavesBoth(t *testing.T)
 		autoBookingResultRepo: resultRepo,
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00,20:00",
 		BookingOpensDays:   14,
 	}
@@ -947,13 +971,13 @@ func TestProcessAutoBookingForVenue_SlotAlreadyBooked_SkipsIt(t *testing.T) {
 		autoBookingResultRepo: resultRepo,
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00,20:00",
 		BookingOpensDays:   14,
 	}
@@ -1002,13 +1026,13 @@ func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *te
 		autoBookingResultRepo: &stubAutoBookingResultRepo{},
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -1051,13 +1075,13 @@ func TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot(t *testing.T) {
 		autoBookingResultRepo: resultRepo,
 		venueRepo:             &stubVenueRepo{},
 		credCooldown:          24 * time.Hour,
-		courtsCount:           1,
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
 		ID:                 1,
 		AutoBookingEnabled: true,
 		Courts:             "1",
+		AutoBookingCourts:  "1",
 		PreferredGameTimes: "18:00",
 		BookingOpensDays:   14,
 	}
@@ -1073,5 +1097,115 @@ func TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot(t *testing.T) {
 	}
 	if len(resultRepo.savedGameTimes) != 0 {
 		t.Errorf("expected no auto_booking_result saved when slot skipped, got %v", resultRepo.savedGameTimes)
+	}
+}
+
+// TestProcessAutoBookingForVenue_PartialCourtAvailability_NoCredentialExhaustedNotification
+// verifies that when fewer courts are available than requested (some already occupied),
+// no "credentials exhausted" DM is sent — the limiting factor is court availability,
+// not credential quota. Admins receive only the standard success DM for the booked courts.
+func TestProcessAutoBookingForVenue_PartialCourtAvailability_NoCredentialExhaustedNotification(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		// MaxCourts=3: credential quota is not the bottleneck.
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 3},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	client := &mockBookingClient{
+		courts: []BookingCourt{
+			{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+			{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
+		},
+		// Court 2 (Eversports ID 77386) is occupied — only court 1 is free.
+		slots:      []BookingSlot{{Court: 77386}},
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "bk-1"},
+	}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+	api.sendResult = tgbotapi.Message{MessageID: 1}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		logger:                noopLogger(),
+	}
+	// Two preferred courts but only one is free — partial availability, not credential exhaustion.
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1,2",
+		AutoBookingCourts:  "1,2",
+		PreferredGameTimes: "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected true: one court was booked")
+	}
+	// Exactly one DM: success notification. No credentials-exhausted DM.
+	if len(api.sendCalls) != 1 {
+		t.Fatalf("expected 1 DM (success only), got %d: %v", len(api.sendCalls), api.sendCalls)
+	}
+}
+
+// TestProcessAutoBookingForVenue_CredentialQuotaExhausted_SendsCredentialsExhaustedNotification
+// verifies that when all credential quota is consumed before all preferred courts are booked
+// (and courts are still available), admins receive the credentials-exhausted DM.
+func TestProcessAutoBookingForVenue_CredentialQuotaExhausted_SendsCredentialsExhaustedNotification(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		// MaxCourts=1: credential can only book one court, but two are requested.
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 1},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	client := &mockBookingClient{
+		courts: []BookingCourt{
+			{ID: "77385", UUID: "uuid-1", Name: "Court 1"},
+			{ID: "77386", UUID: "uuid-2", Name: "Court 2"},
+		},
+		slots:      nil, // both courts free
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "bk-1"},
+	}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+	api.sendResult = tgbotapi.Message{MessageID: 1}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		logger:                noopLogger(),
+	}
+	// Two preferred courts, both free, but credential quota covers only one.
+	venue := &models.Venue{
+		ID:                 1,
+		AutoBookingEnabled: true,
+		Courts:             "1,2",
+		AutoBookingCourts:  "1,2",
+		PreferredGameTimes: "18:00",
+		BookingOpensDays:   14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected true: one court was booked before quota ran out")
+	}
+	// Two DMs expected: credentials-exhausted + success.
+	if len(api.sendCalls) != 2 {
+		t.Fatalf("expected 2 DMs (credentials-exhausted + success), got %d", len(api.sendCalls))
 	}
 }

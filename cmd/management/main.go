@@ -113,14 +113,8 @@ func main() {
 
 	var bookingClient service.BookingServiceClient
 	if cfg.SportsBookingServiceURL != "" {
-		if cfg.AutoBookingCourtsCount <= 0 {
-			slog.Error("AUTO_BOOKING_COURTS_COUNT must be a positive integer", "value", cfg.AutoBookingCourtsCount)
-			os.Exit(1)
-		}
 		bookingClient = service.NewHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
-		slog.Info("booking service enabled",
-			"booking_service", cfg.SportsBookingServiceURL,
-			"auto_booking_courts", cfg.AutoBookingCourtsCount)
+		slog.Info("booking service enabled", "booking_service", cfg.SportsBookingServiceURL)
 	} else {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
@@ -131,7 +125,7 @@ func main() {
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.AutoBookingCourtsCount, cfg.CredentialErrorCooldown)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))
