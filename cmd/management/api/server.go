@@ -22,6 +22,7 @@ type Handler struct {
 	playerRepo       *storage.PlayerRepo
 	scheduler        *service.Scheduler
 	auditSvc         *service.AuditService
+	adminResolver    adminGroupsResolver
 	serverOwnerIDs   map[int64]bool
 	logger           *slog.Logger
 	version          string
@@ -36,6 +37,7 @@ func NewHandler(
 	playerRepo *storage.PlayerRepo,
 	scheduler *service.Scheduler,
 	auditSvc *service.AuditService,
+	adminResolver adminGroupsResolver,
 	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
@@ -49,6 +51,7 @@ func NewHandler(
 		playerRepo:       playerRepo,
 		scheduler:        scheduler,
 		auditSvc:         auditSvc,
+		adminResolver:    adminResolver,
 		serverOwnerIDs:   serverOwnerIDs,
 		logger:           logger,
 		version:          version,
