@@ -69,7 +69,7 @@ func testAuthHandler(t *testing.T, mgmtHandler http.Handler) *AuthHandler {
 	mgmt := httptest.NewServer(mgmtHandler)
 	t.Cleanup(mgmt.Close)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret", logger)
+	return NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret", nil, logger)
 }
 
 // ── verifyTelegramAuth ────────────────────────────────────────────────────────
@@ -432,6 +432,82 @@ func TestHandleMe_ValidCookie(t *testing.T) {
 	// player_id is encoded as a float64 in JSON unmarshalling into any.
 	if pid, ok := resp["player_id"].(float64); !ok || int64(pid) != 5 {
 		t.Errorf("player_id: want 5, got %v", resp["player_id"])
+	}
+}
+
+func TestHandleMe_IsServerOwner_LiveConfig(t *testing.T) {
+	// User 42 is a server owner in live config — handleMe must reflect that
+	// regardless of the JWT claim value.
+	mgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(mgmt.Close)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret",
+		map[int64]bool{42: true}, logger)
+
+	token, err := issueJWT(h.jwtSecret, JWTClaims{
+		TelegramID: 42,
+		FirstName:  "Alice",
+		Exp:        time.Now().Add(time.Hour).Unix(),
+		// IsServerOwner deliberately omitted (false) — live config must win
+	})
+	if err != nil {
+		t.Fatalf("issueJWT: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	h.handleMe(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got, _ := resp["is_server_owner"].(bool); !got {
+		t.Errorf("is_server_owner: want true for user in serverOwnerIDs, got %v", resp["is_server_owner"])
+	}
+}
+
+func TestHandleMe_IsServerOwner_StaleJWT(t *testing.T) {
+	// User 42 has IsServerOwner=true in the JWT but is NOT in the live config.
+	// handleMe must return false (live config wins over stale claim).
+	mgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(mgmt.Close)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	h := NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret",
+		map[int64]bool{}, logger) // user 42 NOT in the map
+
+	token, err := issueJWT(h.jwtSecret, JWTClaims{
+		TelegramID:    42,
+		FirstName:     "Alice",
+		Exp:           time.Now().Add(time.Hour).Unix(),
+		IsServerOwner: true, // stale claim that should be ignored
+	})
+	if err != nil {
+		t.Fatalf("issueJWT: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	h.handleMe(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got, _ := resp["is_server_owner"].(bool); got {
+		t.Errorf("is_server_owner: want false when user removed from serverOwnerIDs, got true")
 	}
 }
 
