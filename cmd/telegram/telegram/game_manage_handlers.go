@@ -147,7 +147,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 
-	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
+	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -211,7 +211,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
+	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))

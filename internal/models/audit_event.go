@@ -22,6 +22,8 @@ const (
 	AuditEventPlayerSkipped       AuditEventType = "participation.skipped"
 	AuditEventGuestAdded          AuditEventType = "participation.guest_added"
 	AuditEventGuestRemoved        AuditEventType = "participation.guest_removed"
+	AuditEventPlayerKicked        AuditEventType = "participation.player_kicked"
+	AuditEventGuestKicked         AuditEventType = "participation.guest_kicked"
 	AuditEventCredentialAdded     AuditEventType = "credential.added"
 	AuditEventCredentialRemoved   AuditEventType = "credential.removed"
 	AuditEventVenueCreated        AuditEventType = "venue.created"
