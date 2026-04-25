@@ -89,6 +89,10 @@ func main() {
 	venueCredRepo := storage.NewVenueCredentialRepo(pool)
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
+	auditEventRepo := storage.NewAuditEventRepo(pool)
+
+	auditSvc := service.NewAuditService(auditEventRepo, logger)
+	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
 	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
@@ -133,11 +137,18 @@ func main() {
 		slog.Error("add poll cron", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
+	retentionDays := cfg.AuditRetentionDays
+	if _, err := c.AddFunc("0 2 * * *", func() {
+		auditSvc.RunRetention(context.Background(), retentionDays)
+	}); err != nil {
+		slog.Error("add audit retention cron", "err", err)
+		os.Exit(1)
+	}
 	c.Start()
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, logger, Version)
+	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, serverOwnerIDs, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
@@ -178,6 +189,20 @@ func parsePollWindow(spec string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid poll interval %q in cron spec %q", minField, spec)
 	}
 	return time.Duration(n) * time.Minute / 2, nil
+}
+
+func parseAdminIDs(raw string) map[int64]bool {
+	result := map[int64]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			result[id] = true
+		}
+	}
+	return result
 }
 
 func runMigrations(databaseURL string) error {
