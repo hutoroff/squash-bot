@@ -137,13 +137,13 @@ func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 	actorDisp := q.Get("actor_display")
 	groupTitle := q.Get("group_title")
 
+	if actorTgID != 0 {
+		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorTgID, actorDisp)
+	}
 	if err := h.groupRepo.Remove(r.Context(), chatID); err != nil {
 		h.logger.Error("removeGroup", "err", err, "chat_id", chatID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if actorTgID != 0 {
-		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorTgID, actorDisp)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

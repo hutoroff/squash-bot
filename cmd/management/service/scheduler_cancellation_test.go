@@ -134,41 +134,31 @@ func TestCancelUnusedCourts_ZeroCourtsToCancel(t *testing.T) {
 	}
 }
 
-// TestCancelUnusedCourts_ListError verifies that when the legacy ListMatches fallback is
-// reached (no booking entries, no venue), the result is a no-op with no error — the
-// legacy path is disabled and listing errors are no longer propagated.
-func TestCancelUnusedCourts_ListError(t *testing.T) {
-	client := &mockBookingClient{listErr: errors.New("network error")}
+// TestCancelUnusedCourts_LegacyPath_ReturnsError verifies that when the legacy ListMatches
+// fallback is reached (no booking entries, no venue), an explicit error is returned —
+// cancellation cannot proceed without per-credential court_bookings records.
+func TestCancelUnusedCourts_LegacyPath_ReturnsError(t *testing.T) {
+	client := &mockBookingClient{}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("expected no error (legacy path is a no-op), got: %v", err)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no cancellations (no-op), got %v", result.canceledCourts)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err == nil {
+		t.Fatal("expected error from legacy path, got nil")
 	}
 	if client.listCalls != 0 {
 		t.Errorf("expected ListMatches NOT called, got %d calls", client.listCalls)
 	}
 }
 
-func TestCancelUnusedCourts_NoOwnedSlots(t *testing.T) {
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: false, Match: matchPtr("uuid-1")},
-		},
-	}
+func TestCancelUnusedCourts_NoCourtBookings_ReturnsError(t *testing.T) {
+	client := &mockBookingClient{}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1", 1, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no cancellations, got %v", result.canceledCourts)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err == nil {
+		t.Fatal("expected error when no court_bookings records exist, got nil")
 	}
 }
 
@@ -604,46 +594,41 @@ func TestCancelUnusedCourts_NewFlow_EntriesFound_SkipsListMatches(t *testing.T) 
 	}
 }
 
-// TestCancelUnusedCourts_NewFlow_EmptyEntries_NoOp verifies that when the court_bookings
-// repo returns no entries, the function falls through to the legacy ListMatches path which
-// is now a no-op — no cancellations and no ListMatches API call.
-func TestCancelUnusedCourts_NewFlow_EmptyEntries_NoOp(t *testing.T) {
+// TestCancelUnusedCourts_NewFlow_EmptyEntries_Error verifies that when the court_bookings
+// repo returns no entries, the function falls through to the legacy path which now returns
+// an explicit error — per-credential records are required for cancellation.
+func TestCancelUnusedCourts_NewFlow_EmptyEntries_Error(t *testing.T) {
 	cbRepo := &stubCourtBookingRepo{entries: nil}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
 	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err == nil {
+		t.Fatal("expected error when court_bookings returns no entries, got nil")
 	}
 	if client.listCalls != 0 {
-		t.Errorf("expected ListMatches NOT called (legacy path is no-op), got %d", client.listCalls)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no cancellations, got %v", result.canceledCourts)
+		t.Errorf("expected ListMatches NOT called, got %d", client.listCalls)
 	}
 }
 
-// TestCancelUnusedCourts_NewFlow_RepoError_NoOp verifies that a repo error is logged
-// and the legacy ListMatches path is used — which is now a no-op.
-func TestCancelUnusedCourts_NewFlow_RepoError_NoOp(t *testing.T) {
+// TestCancelUnusedCourts_NewFlow_RepoError_Error verifies that a repo error falls through
+// to the legacy path which now returns an explicit error — cancellation cannot continue
+// without per-credential court_bookings records.
+func TestCancelUnusedCourts_NewFlow_RepoError_Error(t *testing.T) {
 	cbRepo := &stubCourtBookingRepo{getErr: errors.New("db timeout")}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
 	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err == nil {
+		t.Fatal("expected error when court_bookings repo fails, got nil")
 	}
 	if client.listCalls != 0 {
-		t.Errorf("expected ListMatches NOT called (legacy path is no-op), got %d calls", client.listCalls)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no cancellations, got %v", result.canceledCourts)
+		t.Errorf("expected ListMatches NOT called, got %d calls", client.listCalls)
 	}
 }
 

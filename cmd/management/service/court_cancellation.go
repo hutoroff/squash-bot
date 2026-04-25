@@ -237,9 +237,9 @@ func (j *CancellationReminderJob) cancelUsingListMatches(
 	_ *time.Location,
 	_ courtsUpdater,
 ) (*courtCancellationResult, error) {
-	j.logger.Warn("court cancellation: legacy ListMatches path skipped — no service-level credentials; all bookings must have per-credential records",
+	j.logger.Error("court cancellation: legacy ListMatches path reached — no service-level credentials available; booking has no court_bookings record and cannot be canceled",
 		"game_id", game.ID)
-	return buildNoOpResult(game), nil
+	return nil, fmt.Errorf("game %d has no court_bookings records and cannot be canceled: per-credential booking records are required", game.ID)
 }
 
 // selectCourtsToCancel applies the consecutive-grouping algorithm and returns up to n court IDs
