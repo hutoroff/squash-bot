@@ -371,6 +371,8 @@ Guest spots count toward capacity.
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
+| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants two privileges: (1) use of the `/trigger` command in the telegram bot, and (2) server-owner visibility tier in the audit log (can see all events for all groups and filter by `group_id`/`actor_tg_id`). Must be set consistently on both the management and telegram services. |
+| `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
 
 ### telegram
 
@@ -382,7 +384,7 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
-| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
+| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger`. Must match the value set on the management service. |
 
 ### booking
 
