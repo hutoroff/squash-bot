@@ -11,18 +11,18 @@ import (
 // the management service. *Client satisfies it structurally.
 type ManagementClient interface {
 	// Games
-	CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error)
+	CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string) (*models.Game, error)
 	GetGameByID(ctx context.Context, id int64) (*models.Game, error)
 	UpdateMessageID(ctx context.Context, gameID, messageID int64) error
-	UpdateCourts(ctx context.Context, gameID int64, courts string) error
+	UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorTgID int64) error
 	GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error)
 	GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error)
 
 	// Participations
-	Join(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error)
-	Skip(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error)
-	AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error)
-	RemoveGuest(ctx context.Context, gameID, telegramID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error)
+	Join(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error)
+	Skip(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error)
+	AddGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error)
+	RemoveGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error)
 	GetParticipations(ctx context.Context, gameID int64) ([]*models.GameParticipation, error)
 	GetGuests(ctx context.Context, gameID int64) ([]*models.GuestParticipation, error)
 	KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error)

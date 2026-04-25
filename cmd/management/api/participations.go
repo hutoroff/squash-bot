@@ -10,6 +10,24 @@ type playerRequest struct {
 	Username   string `json:"username"`
 	FirstName  string `json:"first_name"`
 	LastName   string `json:"last_name"`
+	// GroupID (chat_id) associates the event with a group in the audit log.
+	// Optional: if omitted (0), the audit event has no group association.
+	GroupID int64 `json:"group_id"`
+}
+
+// actorDisplay formats a display name for audit from request fields.
+func actorDisplay(username, firstName, lastName string) string {
+	if username != "" {
+		return "@" + username
+	}
+	name := firstName
+	if lastName != "" {
+		if name != "" {
+			name += " "
+		}
+		name += lastName
+	}
+	return name
 }
 
 // joinGame handles POST /api/v1/games/{id}/join
@@ -30,6 +48,7 @@ func (h *Handler) joinGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.auditSvc.RecordPlayerJoined(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	writeJSON(w, http.StatusOK, participations)
 }
 
@@ -50,6 +69,9 @@ func (h *Handler) skipGame(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("skipGame", "err", err, "game_id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if skipped {
+		h.auditSvc.RecordPlayerSkipped(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"skipped":        skipped,
@@ -75,6 +97,9 @@ func (h *Handler) addGuest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if added {
+		h.auditSvc.RecordGuestAdded(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"added":          added,
 		"participations": participations,
@@ -91,7 +116,11 @@ func (h *Handler) removeGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		TelegramID int64 `json:"telegram_id"`
+		TelegramID int64  `json:"telegram_id"`
+		GroupID    int64  `json:"group_id"`
+		Username   string `json:"username"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -102,6 +131,9 @@ func (h *Handler) removeGuest(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("removeGuest", "err", err, "game_id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed {
+		h.auditSvc.RecordGuestRemoved(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,

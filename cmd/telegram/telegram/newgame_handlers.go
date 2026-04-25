@@ -65,7 +65,7 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 		editSel := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
 		editSel.ReplyMarkup = &emptyKeyboard
 		b.api.Send(editSel) //nolint:errcheck
-		b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts, pg.venueID, lz)
+		b.createAndAnnounceGame(ctx, pg.replyChatID, pg.replyMsgID, groupID, pg.gameDate, pg.courts, pg.venueID, cb.From.ID, actorDisplayFrom(cb.From), lz)
 		return
 	}
 
@@ -124,11 +124,11 @@ func (b *Bot) handleNewGameGroupVenue(ctx context.Context, cb *tgbotapi.Callback
 	editSel.ReplyMarkup = &emptyKeyboard
 	b.api.Send(editSel) //nolint:errcheck
 
-	b.createAndAnnounceGame(ctx, state.replyChatID, state.replyMsgID, state.groupID, state.gameDate, state.courts, &venueID, lz)
+	b.createAndAnnounceGame(ctx, state.replyChatID, state.replyMsgID, state.groupID, state.gameDate, state.courts, &venueID, cb.From.ID, actorDisplayFrom(cb.From), lz)
 }
 
-func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, venueID *int64, userLz *i18n.Localizer) {
-	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts, venueID)
+func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string, userLz *i18n.Localizer) {
+	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts, venueID, actorTgID, actorDisplay)
 	if err != nil {
 		slog.Error("create game", "err", err)
 		b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgFailedCreateGame))
@@ -462,7 +462,7 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 				return // wizard intact — user can retry
 			}
 			b.pendingNewGameWizard.Delete(msg.Chat.ID)
-			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, lz)
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, msg.From.ID, actorDisplayFrom(msg.From), lz)
 			return
 		}
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
@@ -472,7 +472,7 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 			return
 		}
 		if len(adminGroupIDs) == 1 {
-			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, lz)
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, msg.From.ID, actorDisplayFrom(msg.From), lz)
 			return
 		}
 		// Multiple groups, no pre-selection.
@@ -526,7 +526,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 			return // wizard intact — user can retry courts input
 		}
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, wizard.gameDate, courts, wizard.venueID, lz)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, wizard.gameDate, courts, wizard.venueID, msg.From.ID, actorDisplayFrom(msg.From), lz)
 		return
 	}
 
@@ -539,7 +539,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, wizard.venueID, lz)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, wizard.venueID, msg.From.ID, actorDisplayFrom(msg.From), lz)
 		return
 	}
 
@@ -810,7 +810,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
 		edit.ReplyMarkup = &emptyKeyboard
 		b.api.Send(edit) //nolint:errcheck
-		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, lz)
+		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, cb.From.ID, actorDisplayFrom(cb.From), lz)
 		return
 	}
 
@@ -829,7 +829,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, lz)
+		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, cb.From.ID, actorDisplayFrom(cb.From), lz)
 		return
 	}
 
