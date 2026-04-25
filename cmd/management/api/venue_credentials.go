@@ -29,11 +29,13 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		GroupID   int64  `json:"group_id"`
-		Login     string `json:"login"`
-		Password  string `json:"password"`
-		Priority  int    `json:"priority"`
-		MaxCourts int    `json:"max_courts"`
+		GroupID         int64  `json:"group_id"`
+		Login           string `json:"login"`
+		Password        string `json:"password"`
+		Priority        int    `json:"priority"`
+		MaxCourts       int    `json:"max_courts"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -56,6 +58,9 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("addCredential", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordCredentialAdded(r.Context(), cred.ID, venueID, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Login)
 	}
 	writeJSON(w, http.StatusCreated, cred)
 }
@@ -93,7 +98,7 @@ func (h *Handler) listCredentials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, creds)
 }
 
-// removeCredential handles DELETE /api/v1/venues/{id}/credentials/{cid}?group_id=X
+// removeCredential handles DELETE /api/v1/venues/{id}/credentials/{cid}?group_id=X[&actor_tg_id=Y&actor_display=Z]
 func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 	if !h.credServiceAvailable(w) {
 		return
@@ -108,7 +113,8 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid credential id")
 		return
 	}
-	groupIDStr := r.URL.Query().Get("group_id")
+	q := r.URL.Query()
+	groupIDStr := q.Get("group_id")
 	if groupIDStr == "" {
 		writeError(w, http.StatusBadRequest, "group_id query parameter is required")
 		return
@@ -118,6 +124,8 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid group_id")
 		return
 	}
+	actorTgID, _ := parseID(q.Get("actor_tg_id"))
+	actorDisplay := q.Get("actor_display")
 
 	if err := h.venueCredService.Remove(r.Context(), credID, venueID, groupID); err != nil {
 		if errors.Is(err, service.ErrCredentialInUse) {
@@ -131,6 +139,9 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("removeCredential", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
+	}
+	if actorTgID != 0 {
+		h.auditSvc.RecordCredentialRemoved(r.Context(), credID, venueID, groupID, actorTgID, actorDisplay, "")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
