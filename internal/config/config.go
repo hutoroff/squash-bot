@@ -35,9 +35,6 @@ type ManagementConfig struct {
 	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
 	// and the auto-booking scheduler will book courts when booking opens at midnight.
 	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
-	// AutoBookingCourtsCount is the number of courts to book automatically at midnight
-	// when booking opens. Requires SPORTS_BOOKING_SERVICE_URL to be set.
-	AutoBookingCourtsCount int `env:"AUTO_BOOKING_COURTS_COUNT" envDefault:"3"`
 	// CredentialsEncryptionKey is a 32-byte (64 hex chars) AES-256 key used to
 	// encrypt venue booking credentials at rest. Optional at startup — credential
 	// operations will fail gracefully if this is not set.
