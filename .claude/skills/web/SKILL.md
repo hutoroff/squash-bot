@@ -86,17 +86,22 @@ GET  /                            — SPA fallback (serves index.html for all un
    - HttpOnly, SameSite=Lax
    - `Secure` flag when `r.TLS != nil` OR `X-Forwarded-Proto: https`
 
-### JWT claims (`jwtClaims` struct in auth.go)
+### JWT claims (`JWTClaims` struct in auth.go)
 
 ```go
-type jwtClaims struct {
-    TelegramID int64  `json:"telegram_id"`
-    FirstName  string `json:"first_name"`
-    Username   string `json:"username,omitempty"`
-    PlayerID   *int64 `json:"player_id,omitempty"`  // nil if not yet a player
-    jwt.RegisteredClaims
+type JWTClaims struct {
+    TelegramID    int64  `json:"telegram_id"`
+    FirstName     string `json:"first_name"`
+    LastName      string `json:"last_name,omitempty"`
+    Username      string `json:"username,omitempty"`
+    PhotoURL      string `json:"photo_url,omitempty"`
+    PlayerID      *int64 `json:"player_id,omitempty"`  // nil if not yet a player
+    IsServerOwner bool   `json:"so,omitempty"`          // set at login; stale after config change
+    Exp           int64  `json:"exp"`
 }
 ```
+
+`GET /api/auth/me` always reads `is_server_owner` from the live `serverOwnerIDs` config map, not from the JWT claim. This means revoking or granting server-owner status takes effect on the next page load without requiring a re-login.
 
 ### Player ID lazy lookup
 
@@ -179,6 +184,9 @@ TELEGRAM_BOT_NAME=           required (bot username without @, for widget config
 MANAGEMENT_SERVICE_URL=      required (e.g. http://management:8080)
 INTERNAL_API_SECRET=         required (calls to management service)
 JWT_SECRET=                  required (HS256, 7-day expiry; generate: openssl rand -hex 32)
+SERVICE_ADMIN_IDS=           optional; comma-separated Telegram user IDs treated as server owners;
+                             sets is_server_owner in JWT at login and is re-checked live on every
+                             GET /api/auth/me call — changes take effect without re-login
 SERVER_PORT=8082             default
 LOG_LEVEL=INFO
 LOG_DIR=               optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
