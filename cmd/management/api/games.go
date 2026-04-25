@@ -12,10 +12,12 @@ import (
 // createGame handles POST /api/v1/games
 func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ChatID   int64     `json:"chat_id"`
-		GameDate time.Time `json:"game_date"`
-		Courts   string    `json:"courts"`
-		VenueID  *int64    `json:"venue_id"`
+		ChatID          int64     `json:"chat_id"`
+		GameDate        time.Time `json:"game_date"`
+		Courts          string    `json:"courts"`
+		VenueID         *int64    `json:"venue_id"`
+		ActorTelegramID int64     `json:"actor_telegram_id"`
+		ActorDisplay    string    `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -31,6 +33,9 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("createGame", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGameCreated(r.Context(), game.ID, req.ChatID, req.ActorTelegramID, req.ActorDisplay, game.Courts, game.GameDate)
 	}
 	writeJSON(w, http.StatusCreated, game)
 }
@@ -117,7 +122,10 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Courts string `json:"courts"`
+		Courts          string `json:"courts"`
+		GroupID         int64  `json:"group_id"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -127,6 +135,9 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("updateCourts", "err", err, "id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Courts)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

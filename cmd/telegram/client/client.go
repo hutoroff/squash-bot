@@ -36,12 +36,14 @@ func New(baseURL, apiSecret string) *Client {
 
 // ── Games ─────────────────────────────────────────────────────────────────────
 
-func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
+func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
-		"chat_id":   chatID,
-		"game_date": gameDate,
-		"courts":    courts,
-		"venue_id":  venueID,
+		"chat_id":            chatID,
+		"game_date":          gameDate,
+		"courts":             courts,
+		"venue_id":           venueID,
+		"actor_telegram_id":  actorTgID,
+		"actor_display":      actorDisplay,
 	}
 	var game models.Game
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games", body, &game); err != nil {
@@ -63,8 +65,13 @@ func (c *Client) UpdateMessageID(ctx context.Context, gameID, messageID int64) e
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/message-id", body, nil)
 }
 
-func (c *Client) UpdateCourts(ctx context.Context, gameID int64, courts string) error {
-	body := map[string]string{"courts": courts}
+func (c *Client) UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorTgID int64) error {
+	body := map[string]any{
+		"courts":            courts,
+		"group_id":          groupID,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body, nil)
 }
 
@@ -120,10 +127,11 @@ type playerBody struct {
 	Username   string `json:"username"`
 	FirstName  string `json:"first_name"`
 	LastName   string `json:"last_name"`
+	GroupID    int64  `json:"group_id"`
 }
 
-func (c *Client) Join(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) Join(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var participations []*models.GameParticipation
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/join", body, &participations); err != nil {
 		return nil, err
@@ -136,8 +144,8 @@ type skipResponse struct {
 	Participations []*models.GameParticipation `json:"participations"`
 }
 
-func (c *Client) Skip(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) Skip(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var resp skipResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/skip", body, &resp); err != nil {
 		return nil, false, err
@@ -151,8 +159,8 @@ type guestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) AddGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var resp guestResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
@@ -166,8 +174,14 @@ type removeGuestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) RemoveGuest(ctx context.Context, gameID, telegramID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := map[string]int64{"telegram_id": telegramID}
+func (c *Client) RemoveGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := map[string]any{
+		"telegram_id": telegramID,
+		"group_id":    chatID,
+		"username":    username,
+		"first_name":  firstName,
+		"last_name":   lastName,
+	}
 	var resp removeGuestResponse
 	if err := c.do(ctx, http.MethodDelete, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
