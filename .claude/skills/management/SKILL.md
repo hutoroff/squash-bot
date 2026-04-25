@@ -335,7 +335,7 @@ auto_booking_results: id, venue_id FK→venues ON DELETE CASCADE, game_date DATE
 audit_events:       id BIGSERIAL PK, occurred_at TIMESTAMPTZ DEFAULT NOW(),
                     event_type TEXT, visibility TEXT ('player'|'group_admin'|'server_owner'),
                     actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable),
-                    actor_display TEXT, group_id BIGINT FK→bot_groups ON DELETE SET NULL (nullable),
+                    actor_display TEXT, group_id BIGINT (nullable, NO FK — stored value; deleting a group does not null-out historical events),
                     subject_type TEXT, subject_id TEXT, description TEXT, metadata JSONB (nullable)
                     INDEX: (group_id, occurred_at DESC), (actor_tg_id, occurred_at DESC),
                            (event_type, occurred_at DESC)
@@ -368,6 +368,11 @@ AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily re
 
 ## Constraints and conventions
 
+- **Audit any action that meaningfully changes state.** Every new endpoint or service method that creates, updates, or deletes a meaningful entity must call the appropriate `AuditService.Record*` method. Use the table in the AuditService section to pick visibility. Steps:
+  1. Add an `AuditEventType` constant in `internal/models/audit.go`.
+  2. Add a `Record<Action>` method on `AuditService` in `audit_service.go` following the best-effort pattern (call `s.record`, never return error). Set `Visibility` to the lowest tier that should see the event: `player` for self-service actions, `group_admin` for admin-gated actions, `server_owner` for global/infra events.
+  3. Call the method from the API handler (after the state-changing operation succeeds) or from the scheduler job. Propagate actor info via the **actor propagation pattern** (body fields for POST/PATCH/PUT; query params `actor_tg_id`, `actor_display`, `group_id` for DELETE). Skip the call when `actorTgID == 0`.
+  4. Update the event-type table in this SKILL.md.
 - New business rules go in `service/`, not `api/`
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`
