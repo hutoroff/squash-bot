@@ -16,16 +16,18 @@ type Handler struct {
 	version  string
 	auth     *AuthHandler
 	games    *GamesHandler
+	audit    *AuditHandler
 }
 
 // NewHandler creates a Handler that serves static files from fsys.
-func NewHandler(fsys fs.FS, version string, logger *slog.Logger, auth *AuthHandler, games *GamesHandler) *Handler {
+func NewHandler(fsys fs.FS, version string, logger *slog.Logger, auth *AuthHandler, games *GamesHandler, audit *AuditHandler) *Handler {
 	return &Handler{
 		staticFS: fsys,
 		logger:   logger,
 		version:  version,
 		auth:     auth,
 		games:    games,
+		audit:    audit,
 	}
 }
 
@@ -43,6 +45,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/games/{id}/skip", h.games.handleSkipGame)
 	mux.HandleFunc("POST /api/games/{id}/guest", h.games.handleAddGuest)
 	mux.HandleFunc("DELETE /api/games/{id}/guest", h.games.handleRemoveGuest)
+	mux.HandleFunc("GET /api/audit", h.audit.handleListAuditEvents)
 	mux.Handle("/", spaFileServer(h.staticFS))
 }
 

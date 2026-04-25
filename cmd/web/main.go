@@ -68,7 +68,8 @@ func main() {
 		logger,
 	)
 	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	h := webserver.NewHandler(distFS, Version, logger, auth, games)
+	audit := webserver.NewAuditHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit)
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
 	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)
