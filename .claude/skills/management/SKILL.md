@@ -33,6 +33,8 @@ cmd/management/
 │   ├── participation_service.go — ParticipationService: Join, Skip, AddGuest, RemoveGuest, KickPlayer, KickGuest
 │   ├── venue_service.go        — VenueService: Create, GetByGroup, Update, Delete
 │   ├── audit_service.go        — AuditService: 14+ Record* methods, Query, RunRetention
+│   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
+│   │                              a caller administers (satisfies api.adminGroupsResolver interface)
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
 │   ├── scheduler.go            — Scheduler: RunScheduledTasks, ForceRun, registers 4 jobs
 │   ├── cancellation_reminder.go — CancellationReminderJob
@@ -161,9 +163,12 @@ POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
 
 GET  /api/v1/audit                                 — listAuditEvents
      required header: X-Caller-Tg-Id (caller's Telegram ID, injected by web service)
-     query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339)
+     query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339, exclusive upper bound)
      server-owner-only params: group_id, actor_tg_id
-     non-owner: sees only visibility="player" events where actor_tg_id matches their own ID
+     visibility scoping (non-owners):
+       - own player events: visibility='player' AND actor_tg_id = caller's TG ID
+       - group admin events: visibility IN ('player','group_admin') AND group_id IN (groups where caller is admin)
+       both scopes are OR-combined; AdminGroupsResolver calls GetChatAdministrators per group (errors silently ignored)
 ```
 
 ---
@@ -197,7 +202,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `court.booked` | group_admin | Scheduler auto-books a court |
 | `court.canceled` | group_admin | Scheduler cancels a court |
 
-**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events; regular users see only their own `player`-visibility events via `GET /api/v1/audit`.
+**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
 
 **Retention:** `RunRetention(ctx, days)` deletes rows older than `days` days. Called daily by a cron entry in `main.go` (controlled by `AUDIT_RETENTION_DAYS`, default 365).
 
