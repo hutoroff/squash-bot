@@ -112,6 +112,10 @@ type WebConfig struct {
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	// JWTSecret is used to sign and verify session JWT tokens (≥32 random bytes recommended).
 	JWTSecret string `env:"JWT_SECRET,required"`
+	// ServiceAdminIDs is a comma-separated list of Telegram user IDs treated as server owners.
+	// Used to set the is_server_owner flag in JWT claims (UI hint only; management enforces
+	// authority independently).
+	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 }
 
 func LoadWeb() (*WebConfig, error) {
