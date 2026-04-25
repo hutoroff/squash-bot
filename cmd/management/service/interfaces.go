@@ -134,6 +134,13 @@ type VenueCredentialRepository interface {
 	SetLastErrorAt(ctx context.Context, id int64) error
 }
 
+// AuditEventRepository is the data access interface for audit events.
+type AuditEventRepository interface {
+	Insert(ctx context.Context, evt *models.AuditEvent) error
+	Query(ctx context.Context, f models.AuditQueryFilter) ([]*models.AuditEvent, error)
+	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+}
+
 // VenueRepository is the data access interface for venues.
 type VenueRepository interface {
 	Create(ctx context.Context, venue *models.Venue) (*models.Venue, error)
