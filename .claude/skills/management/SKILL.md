@@ -21,15 +21,18 @@ cmd/management/
 ├── main.go            — wiring: DB pool, repos, services, HTTP server, cron
 ├── api/
 │   ├── server.go      — Handler struct, RegisterRoutes, NewServer, requireBearer middleware
-│   ├── games.go       — game + participation HTTP handlers
-│   ├── groups.go      — group HTTP handlers
+│   ├── games.go       — game HTTP handlers
+│   ├── participations.go — participation HTTP handlers; kick endpoints accept audit query params
+│   ├── groups.go      — group HTTP handlers; upsertGroup/removeGroup accept actor audit params
 │   ├── venues.go      — venue HTTP handlers
+│   ├── audit.go       — GET /api/v1/audit (listAuditEvents); enforces visibility per caller
 │   └── scheduler.go   — POST /api/v1/scheduler/trigger/{event}
 └── service/
 │   ├── interfaces.go           — ALL repository + Telegram interfaces (source of truth)
 │   ├── game_service.go         — GameService: Create, GetByID, UpdateCourts, …
 │   ├── participation_service.go — ParticipationService: Join, Skip, AddGuest, RemoveGuest, KickPlayer, KickGuest
 │   ├── venue_service.go        — VenueService: Create, GetByGroup, Update, Delete
+│   ├── audit_service.go        — AuditService: 14+ Record* methods, Query, RunRetention
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
 │   ├── scheduler.go            — Scheduler: RunScheduledTasks, ForceRun, registers 4 jobs
 │   ├── cancellation_reminder.go — CancellationReminderJob
@@ -48,7 +51,8 @@ cmd/management/
     ├── group_repo.go            — GroupRepo implements GroupRepository
     ├── venue_repo.go            — VenueRepo implements VenueRepository
     ├── venue_credential_repo.go — VenueCredentialRepo implements VenueCredentialRepository
-    └── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
+    ├── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
+    └── audit_event_repo.go      — AuditEventRepo implements AuditEventRepository
 ```
 
 ---
@@ -73,6 +77,9 @@ VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxC
                    ListByVenueID, ListWithPasswordByVenueID, GetWithPasswordByID(id),
                    Delete(id, venueID), ExistsByLogin(venueID, login),
                    PrioritiesInUse(venueID), SetLastErrorAt(id)
+AuditEventRepository — Insert(ctx, *models.AuditEvent),
+                   Query(ctx, models.AuditQueryFilter) []*models.AuditEvent,
+                   DeleteOlderThan(ctx, cutoff time.Time) int64
 CourtBookingRepository — Save(ctx, *models.CourtBooking),
                    GetByVenueAndDate(ctx, venueID, gameDate) — returns only active (canceled_at IS NULL),
                    GetByVenueAndDateAndTime(ctx, venueID int64, date time.Time, gameTime string) — active rows filtered by game_time column,
@@ -151,11 +158,54 @@ DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: 
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
 
 POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
+
+GET  /api/v1/audit                                 — listAuditEvents
+     required header: X-Caller-Tg-Id (caller's Telegram ID, injected by web service)
+     query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339)
+     server-owner-only params: group_id, actor_tg_id
+     non-owner: sees only visibility="player" events where actor_tg_id matches their own ID
 ```
 
 ---
 
 ## Service layer patterns
+
+### AuditService (`service/audit_service.go`)
+
+Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silently log errors — they never return errors to callers.
+
+**Event types and visibility:**
+
+| Event type | Visibility | Triggered by |
+|---|---|---|
+| `game.created` | group_admin | Admin creates game |
+| `game.courts_reserved` | group_admin | Admin updates courts |
+| `participation.joined` | player | Player joins |
+| `participation.skipped` | player | Player skips |
+| `participation.guest_added` | player | Player adds guest |
+| `participation.guest_removed` | player | Player removes guest |
+| `participation.player_kicked` | group_admin | Admin kicks player |
+| `participation.guest_kicked` | group_admin | Admin kicks guest |
+| `credential.added` | group_admin | Admin adds booking credential |
+| `credential.removed` | group_admin | Admin removes booking credential |
+| `venue.created` | group_admin | Admin creates venue |
+| `venue.updated` | group_admin | Admin updates venue |
+| `venue.deleted` | group_admin | Admin deletes venue |
+| `group.bot_added` | server_owner | Bot added to a new group |
+| `group.bot_removed` | server_owner | Bot removed from group |
+| `group.settings_changed` | group_admin | Admin changes language/timezone |
+| `court.booked` | group_admin | Scheduler auto-books a court |
+| `court.canceled` | group_admin | Scheduler cancels a court |
+
+**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events; regular users see only their own `player`-visibility events via `GET /api/v1/audit`.
+
+**Retention:** `RunRetention(ctx, days)` deletes rows older than `days` days. Called daily by a cron entry in `main.go` (controlled by `AUDIT_RETENTION_DAYS`, default 365).
+
+**Actor propagation pattern:** HTTP handlers receive actor info from the caller:
+- POST/PATCH bodies carry `actor_telegram_id` and `actor_display` JSON fields
+- DELETE endpoints carry `actor_tg_id` and `actor_display` query params (no body)
+- `group_id` is passed as a query param for kick endpoints (handler doesn't know chat ID from path alone)
+- Audit is skipped when `actorTgID == 0` (system/anonymous callers)
 
 ### GameService / ParticipationService / VenueService
 
@@ -282,6 +332,13 @@ auto_booking_results: id, venue_id FK→venues ON DELETE CASCADE, game_date DATE
                     courts (comma-sep court numbers), courts_count INT,
                     game_id BIGINT FK→games ON DELETE SET NULL (NULL = game not yet created by BookingReminderJob),
                     created_at, UNIQUE(venue_id, game_date, game_time)
+audit_events:       id BIGSERIAL PK, occurred_at TIMESTAMPTZ DEFAULT NOW(),
+                    event_type TEXT, visibility TEXT ('player'|'group_admin'|'server_owner'),
+                    actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable),
+                    actor_display TEXT, group_id BIGINT FK→bot_groups ON DELETE SET NULL (nullable),
+                    subject_type TEXT, subject_id TEXT, description TEXT, metadata JSONB (nullable)
+                    INDEX: (group_id, occurred_at DESC), (actor_tg_id, occurred_at DESC),
+                           (event_type, occurred_at DESC)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
@@ -302,6 +359,9 @@ TIMEZONE=UTC
 SPORTS_BOOKING_SERVICE_URL=   optional; enables auto court cancellation + auto booking
 CREDENTIALS_ENCRYPTION_KEY=   optional; 64 hex chars (AES-256-GCM) for venue booking credentials at rest; 503 when unset
 CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before retry
+SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs treated as server owners;
+                              grants /trigger access and full audit event visibility (server_owner tier)
+AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily retention cron deletes older rows)
 ```
 
 ---

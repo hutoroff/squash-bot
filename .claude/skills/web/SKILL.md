@@ -18,7 +18,7 @@ The web service serves the React SPA and a small JSON API for authenticated user
 
 ```
 cmd/web/
-├── main.go              — wiring: embed FS, AuthHandler, GamesHandler, Handler, Server
+├── main.go              — wiring: embed FS, AuthHandler, GamesHandler, AuditHandler, Handler, Server
 └── webserver/
     ├── server.go        — NewServer, Run
     ├── handler.go       — Handler struct, NewHandler, RegisterRoutes, spaFileServer,
@@ -27,6 +27,7 @@ cmd/web/
     │                      verifyTelegramAuth, issueJWT, parseJWT, jwtClaims struct
     ├── games.go         — GamesHandler: handleListGames, handleGetParticipants,
     │                      handleJoinGame, handleSkipGame, handleAddGuest, handleRemoveGuest
+    ├── audit.go         — AuditHandler: handleListAuditEvents (JWT-authenticated proxy)
 
 web/
 ├── embed.go             — //go:embed frontend/dist; var FS embed.FS
@@ -59,6 +60,10 @@ POST /api/games/{id}/join         — join game (requires session)
 POST /api/games/{id}/skip         — skip game (requires session)
 POST /api/games/{id}/guest        — add guest (requires session)
 DELETE /api/games/{id}/guest      — remove guest (requires session)
+
+GET  /api/audit                   — list audit events (requires session); all query params
+                                    forwarded to management; caller's TG ID injected via
+                                    X-Caller-Tg-Id header; visibility enforced by management
 
 GET  /                            — SPA fallback (serves index.html for all unmatched routes)
 ```
@@ -135,6 +140,19 @@ Mutating handlers (join/skip/guest):
 
 ---
 
+## Audit handler (`webserver/audit.go`)
+
+`AuditHandler` is a thin JWT-authenticated proxy for `GET /api/v1/audit` on the management service.
+
+1. Reads the caller's `TelegramID` from the JWT session cookie via `auth.claimsFromRequest`. Returns 401 if the session is missing or invalid.
+2. Forwards the full query string (limit, before_id, event_type, from, to, group_id, actor_tg_id) to management unchanged.
+3. Injects `X-Caller-Tg-Id: <telegramID>` so management can enforce per-user visibility rules.
+4. Streams the management response body directly to the client (status code + body proxied verbatim).
+
+Visibility enforcement happens entirely in management — the web service never filters events itself.
+
+---
+
 ## Management service calls made by web service
 
 All with `Authorization: Bearer <INTERNAL_API_SECRET>`.
@@ -148,6 +166,7 @@ POST /api/v1/games/{id}/join              — join
 POST /api/v1/games/{id}/skip              — skip
 POST /api/v1/games/{id}/guests            — add guest
 DELETE /api/v1/games/{id}/guests          — remove guest
+GET  /api/v1/audit                        — audit event query (with X-Caller-Tg-Id injected)
 ```
 
 ---
