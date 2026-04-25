@@ -51,6 +51,11 @@ type AuditQueryFilter struct {
 	From         *time.Time
 	To           *time.Time
 	Visibilities []AuditVisibility
+	// OwnTgID, when set, includes events with visibility='player' AND actor_tg_id=*OwnTgID.
+	OwnTgID *int64
+	// AdminGroupIDs, when non-empty, includes events with visibility IN ('player','group_admin')
+	// AND group_id IN AdminGroupIDs.
+	AdminGroupIDs []int64
 	// Limit is clamped to [1, 200]; defaults to 50.
 	Limit    int
 	BeforeID *int64

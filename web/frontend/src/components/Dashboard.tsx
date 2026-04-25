@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { NavLink, Outlet } from 'react-router-dom'
 import type { User } from '../types'
-import GamesList from './GamesList'
 
 interface DashboardProps {
   user: User
@@ -19,12 +19,18 @@ export default function Dashboard({ user }: DashboardProps) {
     window.location.reload()
   }
 
-  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ')
-
   return (
     <div className="dashboard">
       <header className="dashboard-header">
         <span className="dashboard-title">Squash Bot</span>
+        <nav className="dashboard-nav">
+          <NavLink to="/" end className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
+            My games
+          </NavLink>
+          <NavLink to="/audit" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
+            Audit log
+          </NavLink>
+        </nav>
         <div className="dashboard-header__actions">
           {logoutError && (
             <span className="logout-error">Sign out failed — try again</span>
@@ -34,20 +40,7 @@ export default function Dashboard({ user }: DashboardProps) {
       </header>
 
       <main className="dashboard-main">
-        <div className="user-profile">
-          {user.photo_url && (
-            <img src={user.photo_url} alt={displayName} className="avatar" />
-          )}
-          <div className="user-profile__info">
-            <p className="user-profile__name">{displayName}</p>
-            {user.username && <p className="username">@{user.username}</p>}
-          </div>
-        </div>
-
-        <section className="games-section">
-          <h2 className="games-section__title">My Games</h2>
-          <GamesList user={user} />
-        </section>
+        <Outlet context={{ user }} />
       </main>
     </div>
   )
