@@ -36,21 +36,19 @@ const (
 
 // Handler wires all HTTP routes for the booking service.
 type Handler struct {
-	eversports   eversportsClient
 	logger       *slog.Logger
 	version      string
 	facilityID   string
 	facilityUUID string
 	facilitySlug string
 
-	// credClients caches per-credential Eversports clients keyed by email.
+	// credClients caches per-credential Eversports clients keyed by email:password.
 	// This avoids re-logging in on every booking request for the same account.
-	credClients sync.Map // map[email string]*eversports.Client
+	credClients sync.Map // map[string]*eversports.Client
 }
 
-func NewHandler(es eversportsClient, logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
+func NewHandler(logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler {
 	return &Handler{
-		eversports:   es,
 		logger:       logger,
 		version:      version,
 		facilityID:   facilityID,
@@ -72,14 +70,14 @@ func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient
 }
 
 // clientFromRequest returns a per-credential client when X-Eversports-Email and
-// X-Eversports-Password headers are present, otherwise the service default.
+// X-Eversports-Password headers are present, otherwise nil.
 func (h *Handler) clientFromRequest(r *http.Request) eversportsClient {
 	if email := r.Header.Get("X-Eversports-Email"); email != "" {
 		if password := r.Header.Get("X-Eversports-Password"); password != "" {
 			return h.getOrCreateCredClient(email, password)
 		}
 	}
-	return h.eversports
+	return nil
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -111,6 +109,10 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	es := h.clientFromRequest(r)
+	if es == nil {
+		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
+		return
+	}
 
 	match, err := es.GetMatchByID(r.Context(), id)
 	if err != nil {
@@ -173,11 +175,11 @@ func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		"has_credentials", req.Email != "",
 	)
 
-	// Select which Eversports client to use: per-credential or service default.
-	var es eversportsClient = h.eversports
-	if req.Email != "" && req.Password != "" {
-		es = h.getOrCreateCredClient(req.Email, req.Password)
+	if req.Email == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "email and password are required")
+		return
 	}
+	es := h.getOrCreateCredClient(req.Email, req.Password)
 
 	result, err := es.CreateBooking(r.Context(), h.facilityUUID, req.CourtUUID, squashSportUUID, start, end)
 	if err != nil {
@@ -207,12 +209,13 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var es eversportsClient = h.eversports
 	var req cancelMatchRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.Email != "" && req.Password != "" {
-		es = h.getOrCreateCredClient(req.Email, req.Password)
+	if req.Email == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "email and password are required")
+		return
 	}
+	es := h.getOrCreateCredClient(req.Email, req.Password)
 
 	result, err := es.CancelMatch(r.Context(), id)
 	if err != nil {
@@ -286,6 +289,10 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	es := h.clientFromRequest(r)
+	if es == nil {
+		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
+		return
+	}
 
 	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
@@ -386,6 +393,10 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	es := h.clientFromRequest(r)
+	if es == nil {
+		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
+		return
+	}
 
 	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
 	if err != nil {
@@ -405,6 +416,10 @@ func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	es := h.clientFromRequest(r)
+	if es == nil {
+		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
+		return
+	}
 	facility, err := es.GetFacility(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, eversports.ErrNotFound) {

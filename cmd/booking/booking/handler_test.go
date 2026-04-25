@@ -18,6 +18,13 @@ import (
 // testLogger silences all log output during tests.
 var testLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
 
+// testEmail and testPassword are the credentials pre-stored in the handler's
+// credential cache for tests that exercise the happy path.
+const (
+	testEmail    = "user@test.com"
+	testPassword = "test-password"
+)
+
 // mockClient implements eversportsClient for tests. Fields control
 // what each method returns. Authentication is handled by the real client;
 // the mock always behaves as if already logged in.
@@ -80,19 +87,23 @@ func (m *mockClient) GetFacility(_ context.Context, slug string) (*eversports.Fa
 	return m.facility, m.facilityErr
 }
 
-// newTestHandler creates a Handler backed by the given mock.
+// newTestHandler creates a Handler with mock pre-stored in the credential cache
+// under testEmail:testPassword.
 func newTestHandler(mock *mockClient) *Handler {
-	return &Handler{eversports: mock, logger: testLogger, version: "test-version"}
+	h := &Handler{logger: testLogger, version: "test-version"}
+	h.credClients.Store(testEmail+":"+testPassword, eversportsClient(mock))
+	return h
 }
 
-// newBookingHandler creates a Handler with facilityUUID configured.
+// newBookingHandler creates a Handler with facilityUUID configured and mock in cred cache.
 func newBookingHandler(mock *mockClient) *Handler {
-	return &Handler{
-		eversports:   mock,
+	h := &Handler{
 		logger:       testLogger,
 		version:      "test-version",
 		facilityUUID: "6266968c-b0fd-4115-ad3b-ae225cc880f1",
 	}
+	h.credClients.Store(testEmail+":"+testPassword, eversportsClient(mock))
+	return h
 }
 
 // serve registers routes on a fresh mux and returns a test server.
@@ -100,6 +111,12 @@ func serve(h *Handler) *httptest.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return httptest.NewServer(mux)
+}
+
+// setTestCreds adds the standard test credential headers to a request.
+func setTestCreds(req *http.Request) {
+	req.Header.Set("X-Eversports-Email", testEmail)
+	req.Header.Set("X-Eversports-Password", testPassword)
 }
 
 // ─── /health ──────────────────────────────────────────────────────────────────
@@ -152,7 +169,9 @@ func TestGetMatch_Success(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches/match-uuid")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches/match-uuid", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +197,9 @@ func TestGetMatch_Error(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches/bad-id")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches/bad-id", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +207,21 @@ func TestGetMatch_Error(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetMatch_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newTestHandler(&mockClient{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches/some-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
 	}
 }
 
@@ -201,7 +237,9 @@ func TestCancelMatch_Success(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/728e8066-4100-4dc4-81bb-9b9660b30fe6", nil)
+	body := strings.NewReader(`{"email":"` + testEmail + `","password":"` + testPassword + `"}`)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/728e8066-4100-4dc4-81bb-9b9660b30fe6", body)
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +269,8 @@ func TestCancelMatch_Error(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/bad-id", nil)
+	body := strings.NewReader(`{"email":"` + testEmail + `","password":"` + testPassword + `"}`)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/bad-id", body)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -243,8 +282,25 @@ func TestCancelMatch_Error(t *testing.T) {
 	}
 }
 
+func TestCancelMatch_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newTestHandler(&mockClient{}))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/some-id", http.NoBody)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
+	}
+}
+
 func TestCancelMatch_WithCredentials_UsesCredClient(t *testing.T) {
-	// The default client must NOT be called; only the per-credential client.
+	// The default-cache client must NOT be called; only the per-credential client.
 	defaultMock := &mockClient{cancellationErr: errors.New("default client must not be used")}
 	credMock := &mockClient{cancellation: &eversports.CancellationResult{
 		ID:    "match-abc",
@@ -277,7 +333,7 @@ func TestCancelMatch_WithCredentials_UsesCredClient(t *testing.T) {
 }
 
 func TestGetMatch_WithCredentialHeaders_UsesCredClient(t *testing.T) {
-	// The default client must NOT be called; only the per-credential client.
+	// The default-cache client must NOT be called; only the per-credential client.
 	defaultMock := &mockClient{matchErr: errors.New("default client must not be used")}
 	credMock := &mockClient{match: &eversports.Booking{ID: "match-xyz"}}
 
@@ -317,7 +373,7 @@ func TestCreateMatch_Success(t *testing.T) {
 	srv := serve(newBookingHandler(mock))
 	defer srv.Close()
 
-	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z","email":"` + testEmail + `","password":"` + testPassword + `"}`
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -405,12 +461,30 @@ func TestCreateMatch_InvalidTime(t *testing.T) {
 	}
 }
 
+func TestCreateMatch_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newBookingHandler(&mockClient{}))
+	defer srv.Close()
+
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
+	}
+}
+
 func TestCreateMatch_Error(t *testing.T) {
 	mock := &mockClient{bookingErr: errors.New("slot already taken")}
 	srv := serve(newBookingHandler(mock))
 	defer srv.Close()
 
-	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z"}`
+	body := `{"courtUuid":"32ef2369-cf50-427f-8bdf-d380189584e8","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z","email":"` + testEmail + `","password":"` + testPassword + `"}`
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/eversports/matches", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -427,21 +501,22 @@ func TestCreateMatch_Error(t *testing.T) {
 // ─── GET /api/v1/eversports/matches ──────────────────────────────────────────
 
 func newCourtBookingsHandler(mock *mockClient, facilityID string) *Handler {
-	return &Handler{
-		eversports:   mock,
+	h := &Handler{
 		logger:       testLogger,
 		version:      "test-version",
 		facilityID:   facilityID,
 		facilitySlug: "squash-house-berlin-03",
 	}
+	h.credClients.Store(testEmail+":"+testPassword, eversportsClient(mock))
+	return h
 }
 
 func TestGetCourtBookings_NotConfigured(t *testing.T) {
 	// Missing any required field → 500 (server misconfiguration, not a client error).
 	for _, h := range []*Handler{
-		{eversports: &mockClient{}, logger: testLogger},                      // all missing
-		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s"},   // facilityID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443"}, // facilitySlug missing
+		{logger: testLogger},                      // all missing
+		{logger: testLogger, facilitySlug: "s"},   // facilityID missing
+		{logger: testLogger, facilityID: "76443"}, // facilitySlug missing
 	} {
 		srv := serve(h)
 		resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
@@ -486,6 +561,21 @@ func TestGetCourtBookings_InvalidDate(t *testing.T) {
 	}
 }
 
+func TestListMatches_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newCourtBookingsHandler(&mockClient{}, "76443"))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
+	}
+}
+
 func TestGetCourtBookings_Success(t *testing.T) {
 	bookingID := 135271816
 	slots := []eversports.Slot{
@@ -495,7 +585,9 @@ func TestGetCourtBookings_Success(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +619,9 @@ func TestGetCourtBookings_Error(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +644,9 @@ func TestGetCourtBookings_FilterByDate(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +705,9 @@ func TestGetCourtBookings_FilterByStartTime(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07&startTime=1830")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07&startTime=1830", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +738,9 @@ func TestGetCourtBookings_FilterByEndTime(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07&endTime=1830")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07&endTime=1830", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +781,9 @@ func TestGetCourtBookings_FilterByMyTrue(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07&my=true")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07&my=true", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +817,9 @@ func TestGetCourtBookings_FilterByMyFalse(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07&my=false")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07&my=false", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +845,9 @@ func TestGetCourtBookings_FilterByTimeRange(t *testing.T) {
 	srv := serve(newCourtBookingsHandler(mock, "76443"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/matches?date=2026-04-07&startTime=1830&endTime=2000")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/matches?date=2026-04-07&startTime=1830&endTime=2000", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,21 +868,22 @@ func TestGetCourtBookings_FilterByTimeRange(t *testing.T) {
 // ─── GET /api/v1/eversports/courts ───────────────────────────────────────────
 
 func newCourtsHandler(mock *mockClient) *Handler {
-	return &Handler{
-		eversports:   mock,
+	h := &Handler{
 		logger:       testLogger,
 		version:      "test-version",
 		facilityID:   "76443",
 		facilitySlug: "squash-house-berlin-03",
 	}
+	h.credClients.Store(testEmail+":"+testPassword, eversportsClient(mock))
+	return h
 }
 
 func TestGetCourts_NotConfigured(t *testing.T) {
 	// Missing required fields — should return 500.
 	for _, h := range []*Handler{
-		{eversports: &mockClient{}, logger: testLogger},                      // all missing
-		{eversports: &mockClient{}, logger: testLogger, facilitySlug: "s"},   // facilityID missing
-		{eversports: &mockClient{}, logger: testLogger, facilityID: "76443"}, // facilitySlug missing
+		{logger: testLogger},                      // all missing
+		{logger: testLogger, facilitySlug: "s"},   // facilityID missing
+		{logger: testLogger, facilityID: "76443"}, // facilitySlug missing
 	} {
 		srv := serve(h)
 		resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
@@ -791,6 +898,21 @@ func TestGetCourts_NotConfigured(t *testing.T) {
 	}
 }
 
+func TestGetCourts_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newCourtsHandler(&mockClient{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
+	}
+}
+
 func TestGetCourts_Success(t *testing.T) {
 	courts := []eversports.Court{
 		{ID: "77385", UUID: "32ef2369-cf50-427f-8bdf-d380189584e8", Name: "Court 1"},
@@ -800,7 +922,9 @@ func TestGetCourts_Success(t *testing.T) {
 	srv := serve(newCourtsHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/courts", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +950,9 @@ func TestGetCourts_Error(t *testing.T) {
 	srv := serve(newCourtsHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/courts", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +969,9 @@ func TestGetCourts_WithDate(t *testing.T) {
 	srv := serve(newCourtsHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/courts?date=2026-05-01")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/courts?date=2026-05-01", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -961,13 +1089,30 @@ func TestGetFacility_MissingSlug(t *testing.T) {
 	}
 }
 
+func TestGetFacility_MissingCredentials_Returns400(t *testing.T) {
+	srv := serve(newTestHandler(&mockClient{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility?slug=some-slug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 when credentials absent, got %d", resp.StatusCode)
+	}
+}
+
 func TestGetFacility_SlugForwarded(t *testing.T) {
 	facility := &eversports.Facility{ID: "1234", Slug: "squash-house-berlin-03", Name: "Squash House Berlin"}
 	mock := &mockClient{facility: facility}
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility?slug=squash-house-berlin-03")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/facility?slug=squash-house-berlin-03", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -993,7 +1138,9 @@ func TestGetFacility_NotFound(t *testing.T) {
 	srv := serve(newTestHandler(mock))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/eversports/facility?slug=unknown-slug")
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/eversports/facility?slug=unknown-slug", nil)
+	setTestCreds(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1043,26 +1190,5 @@ func TestGetOrCreateCredClient_SameEmailDifferentPassword_NewClientCreated(t *te
 
 	if c1 == c2 {
 		t.Error("expected different clients for different passwords, got the same instance")
-	}
-}
-
-func TestCancelMatch_EmptyBodyWithContentType_UsesDefaultClient(t *testing.T) {
-	defaultMock := &mockClient{cancellation: &eversports.CancellationResult{ID: "m1", State: "CANCELLED"}}
-	srv := serve(newTestHandler(defaultMock))
-	defer srv.Close()
-
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/eversports/matches/m1", http.NoBody)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200, got %d", resp.StatusCode)
-	}
-	if defaultMock.lastCancelMatchID != "m1" {
-		t.Errorf("default client not called: lastCancelMatchID = %q", defaultMock.lastCancelMatchID)
 	}
 }

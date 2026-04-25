@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/booking/booking"
-	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
 	"github.com/hutoroff/squash-bot/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -52,9 +51,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	esClient := eversports.New(cfg.EversportsEmail, cfg.EversportsPassword, logger)
-
-	h := booking.NewHandler(esClient, logger, Version, cfg.EversportsFacilityID, cfg.EversportsFacilityUUID, cfg.EversportsFacilitySlug)
+	h := booking.NewHandler(logger, Version, cfg.EversportsFacilityID, cfg.EversportsFacilityUUID, cfg.EversportsFacilitySlug)
 	srv := booking.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("booking starting", "port", cfg.ServerPort, "version", Version)
