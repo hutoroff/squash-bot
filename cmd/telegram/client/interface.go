@@ -25,12 +25,12 @@ type ManagementClient interface {
 	RemoveGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error)
 	GetParticipations(ctx context.Context, gameID int64) ([]*models.GameParticipation, error)
 	GetGuests(ctx context.Context, gameID int64) ([]*models.GuestParticipation, error)
-	KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error)
-	KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error)
+	KickPlayer(ctx context.Context, gameID, telegramID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error)
+	KickGuestByID(ctx context.Context, gameID, guestID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error)
 
 	// Groups
-	UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool) error
-	RemoveGroup(ctx context.Context, chatID int64) error
+	UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool, actorTgID int64, actorDisplay string, isNewJoin bool) error
+	RemoveGroup(ctx context.Context, chatID, actorTgID int64, actorDisplay, groupTitle string) error
 	GetGroups(ctx context.Context) ([]models.Group, error)
 	GroupExists(ctx context.Context, chatID int64) (bool, error)
 	GetGroupByID(ctx context.Context, chatID int64) (*models.Group, error)

@@ -151,6 +151,38 @@ func (s *AuditService) RecordGuestRemoved(ctx context.Context, gameID, groupID, 
 	})
 }
 
+func (s *AuditService) RecordPlayerKicked(ctx context.Context, gameID, groupID, actorTgID, targetTgID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventPlayerKicked,
+		Visibility:   models.AuditVisibilityGroupAdmin,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGame,
+		SubjectID:    fmt.Sprintf("%d", gameID),
+		Description:  fmt.Sprintf("%s kicked player (tg:%d) from game", display, targetTgID),
+		Metadata:     map[string]any{"target_tg_id": targetTgID},
+	})
+}
+
+func (s *AuditService) RecordGuestKicked(ctx context.Context, gameID, groupID, actorTgID, guestID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGuestKicked,
+		Visibility:   models.AuditVisibilityGroupAdmin,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGame,
+		SubjectID:    fmt.Sprintf("%d", gameID),
+		Description:  fmt.Sprintf("%s kicked guest (id:%d) from game", display, guestID),
+		Metadata:     map[string]any{"guest_id": guestID},
+	})
+}
+
 // Venue events
 
 func (s *AuditService) RecordVenueCreated(ctx context.Context, venueID, groupID, actorTgID int64, actorDisplay, venueName string) {

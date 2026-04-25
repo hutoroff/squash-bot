@@ -212,8 +212,9 @@ type kickResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/players/%d", gameID, telegramID)
+func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/players/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		gameID, telegramID, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -221,8 +222,9 @@ func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*m
 	return resp.Participations, resp.Guests, resp.Removed, nil
 }
 
-func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/guests/%d", gameID, guestID)
+func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/guests/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		gameID, guestID, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -232,13 +234,21 @@ func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*m
 
 // ── Groups ────────────────────────────────────────────────────────────────────
 
-func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool) error {
-	body := map[string]any{"title": title, "bot_is_admin": botIsAdmin}
+func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool, actorTgID int64, actorDisplay string, isNewJoin bool) error {
+	body := map[string]any{
+		"title":             title,
+		"bot_is_admin":      botIsAdmin,
+		"is_new_join":       isNewJoin,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPut, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), body, nil)
 }
 
-func (c *Client) RemoveGroup(ctx context.Context, chatID int64) error {
-	return c.do(ctx, http.MethodDelete, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), nil, nil)
+func (c *Client) RemoveGroup(ctx context.Context, chatID, actorTgID int64, actorDisplay, groupTitle string) error {
+	path := fmt.Sprintf("/api/v1/groups/%d?actor_tg_id=%d&actor_display=%s&group_title=%s",
+		chatID, actorTgID, url.QueryEscape(actorDisplay), url.QueryEscape(groupTitle))
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 func (c *Client) GetGroups(ctx context.Context) ([]models.Group, error) {

@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -17,8 +18,11 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title      string `json:"title"`
-		BotIsAdmin bool   `json:"bot_is_admin"`
+		Title           string `json:"title"`
+		BotIsAdmin      bool   `json:"bot_is_admin"`
+		IsNewJoin       bool   `json:"is_new_join"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -28,6 +32,9 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("upsertGroup", "err", err, "chat_id", chatID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.IsNewJoin && req.ActorTelegramID != 0 {
+		h.auditSvc.RecordBotAddedToGroup(r.Context(), chatID, req.Title, req.ActorTelegramID, req.ActorDisplay)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -118,16 +125,25 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeGroup handles DELETE /api/v1/groups/{chatID}
+// Optional query params: actor_tg_id, actor_display, group_title (for audit).
 func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 	chatID, err := parseID(r.PathValue("chatID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid chat_id")
 		return
 	}
+	q := r.URL.Query()
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+	groupTitle := q.Get("group_title")
+
 	if err := h.groupRepo.Remove(r.Context(), chatID); err != nil {
 		h.logger.Error("removeGroup", "err", err, "chat_id", chatID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if actorTgID != 0 {
+		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorTgID, actorDisp)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
