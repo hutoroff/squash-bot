@@ -22,6 +22,8 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		PreferredGameTimes string `json:"preferred_game_times"`
 		AutoBookingCourts  string `json:"auto_booking_courts"`
 		AutoBookingEnabled bool   `json:"auto_booking_enabled"`
+		ActorTelegramID    int64  `json:"actor_telegram_id"`
+		ActorDisplay       string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -54,6 +56,9 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("createVenue", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordVenueCreated(r.Context(), venue.ID, req.GroupID, req.ActorTelegramID, req.ActorDisplay, venue.Name)
 	}
 	writeJSON(w, http.StatusCreated, venue)
 }
@@ -118,6 +123,8 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		PreferredGameTimes string `json:"preferred_game_times"`
 		AutoBookingCourts  string `json:"auto_booking_courts"`
 		AutoBookingEnabled bool   `json:"auto_booking_enabled"`
+		ActorTelegramID    int64  `json:"actor_telegram_id"`
+		ActorDisplay       string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -151,17 +158,21 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordVenueUpdated(r.Context(), venue.ID, req.GroupID, req.ActorTelegramID, req.ActorDisplay, venue.Name)
+	}
 	writeJSON(w, http.StatusOK, venue)
 }
 
-// deleteVenue handles DELETE /api/v1/venues/{id}?group_id=X
+// deleteVenue handles DELETE /api/v1/venues/{id}?group_id=X[&actor_tg_id=Y&actor_display=Z]
 func (h *Handler) deleteVenue(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid venue id")
 		return
 	}
-	groupIDStr := r.URL.Query().Get("group_id")
+	q := r.URL.Query()
+	groupIDStr := q.Get("group_id")
 	if groupIDStr == "" {
 		writeError(w, http.StatusBadRequest, "group_id query parameter is required")
 		return
@@ -169,6 +180,14 @@ func (h *Handler) deleteVenue(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseID(groupIDStr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid group_id")
+		return
+	}
+	actorTgID, _ := parseID(q.Get("actor_tg_id"))
+	actorDisplay := q.Get("actor_display")
+
+	venue, err := h.venueService.GetVenueByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "venue not found")
 		return
 	}
 
@@ -180,6 +199,9 @@ func (h *Handler) deleteVenue(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("deleteVenue", "err", err, "id", id)
 		writeError(w, http.StatusNotFound, "venue not found")
 		return
+	}
+	if actorTgID != 0 {
+		h.auditSvc.RecordVenueDeleted(r.Context(), id, groupID, actorTgID, actorDisplay, venue.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

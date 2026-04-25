@@ -40,7 +40,9 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Language string `json:"language"`
+		Language        string `json:"language"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -53,6 +55,12 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported language; use en, de, or ru")
 		return
 	}
+	var oldLang string
+	if req.ActorTelegramID != 0 {
+		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
+			oldLang = g.Language
+		}
+	}
 	if err := h.groupRepo.SetLanguage(r.Context(), chatID, req.Language); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "group not found")
@@ -61,6 +69,9 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "language", oldLang, req.Language)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -73,7 +84,9 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Timezone string `json:"timezone"`
+		Timezone        string `json:"timezone"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -83,6 +96,12 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid IANA timezone")
 		return
 	}
+	var oldTZ string
+	if req.ActorTelegramID != 0 {
+		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
+			oldTZ = g.Timezone
+		}
+	}
 	if err := h.groupRepo.SetTimezone(r.Context(), chatID, req.Timezone); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "group not found")
@@ -91,6 +110,9 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "timezone", oldTZ, req.Timezone)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
