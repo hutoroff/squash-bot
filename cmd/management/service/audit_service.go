@@ -33,6 +33,10 @@ func (s *AuditService) Query(ctx context.Context, f models.AuditQueryFilter) ([]
 
 // RunRetention deletes audit events older than retentionDays. Errors are logged, not returned.
 func (s *AuditService) RunRetention(ctx context.Context, retentionDays int) {
+	if retentionDays <= 0 {
+		s.logger.Error("audit: invalid retention_days, skipping retention run", "days", retentionDays)
+		return
+	}
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	deleted, err := s.repo.DeleteOlderThan(ctx, cutoff)
 	if err != nil {
