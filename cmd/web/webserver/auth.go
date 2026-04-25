@@ -143,7 +143,7 @@ func (a *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		LastName:      claims.LastName,
 		Username:      claims.Username,
 		PhotoURL:      claims.PhotoURL,
-		IsServerOwner: claims.IsServerOwner,
+		IsServerOwner: a.serverOwnerIDs[claims.TelegramID],
 	})
 }
 
