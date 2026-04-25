@@ -28,6 +28,7 @@ type AutoBookingJob struct {
 	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
 	courtBookingRepo      CourtBookingRepository
+	auditSvc              *AuditService
 	loc          *time.Location
 	logger       *slog.Logger
 	credCooldown time.Duration
@@ -41,6 +42,7 @@ func NewAutoBookingJob(
 	credService *VenueCredentialService,
 	autoBookingResultRepo AutoBookingResultRepository,
 	courtBookingRepo CourtBookingRepository,
+	auditSvc *AuditService,
 	loc *time.Location,
 	logger *slog.Logger,
 	credCooldown time.Duration,
@@ -53,6 +55,7 @@ func NewAutoBookingJob(
 		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
 		courtBookingRepo:      courtBookingRepo,
+		auditSvc:              auditSvc,
 		loc:                   loc,
 		logger:                logger,
 		credCooldown:          credCooldown,
@@ -352,6 +355,9 @@ func (j *AutoBookingJob) processTimeSlot(
 			if l, ok := uuidToCourtNum[courtUUID]; ok {
 				label = l
 				bookedCourtLabels = append(bookedCourtLabels, label)
+			}
+			if j.auditSvc != nil {
+				j.auditSvc.RecordCourtBooked(ctx, venue.ID, chatID, venue.Name, label, gameDate)
 			}
 			if j.courtBookingRepo != nil && bookResult.MatchID != "" {
 				cb := &models.CourtBooking{
