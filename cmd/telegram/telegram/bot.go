@@ -337,15 +337,16 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 
 	switch newStatus {
 	case "left", "kicked":
-		if err := b.client.RemoveGroup(ctx, chat.ID); err != nil {
+		if err := b.client.RemoveGroup(ctx, chat.ID, update.From.ID, actorDisplayFrom(&update.From), chat.Title); err != nil {
 			slog.Error("handleMyChatMember: remove group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot removed from group", "chat_id", chat.ID, "title", chat.Title)
 
 	case "member", "administrator":
 		isAdmin := newStatus == "administrator"
+		isNewJoin := oldStatus == "left" || oldStatus == "kicked"
 
-		if err := b.client.UpsertGroup(ctx, chat.ID, chat.Title, isAdmin); err != nil {
+		if err := b.client.UpsertGroup(ctx, chat.ID, chat.Title, isAdmin, update.From.ID, actorDisplayFrom(&update.From), isNewJoin); err != nil {
 			slog.Error("handleMyChatMember: upsert group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot membership changed", "chat_id", chat.ID, "title", chat.Title,
@@ -390,7 +391,7 @@ func (b *Bot) reconcileGroupIfUnknown(ctx context.Context, chat *tgbotapi.Chat) 
 	if title == "" {
 		title = fmt.Sprintf("Group %d", chat.ID)
 	}
-	if err := b.client.UpsertGroup(ctx, chat.ID, title, isAdmin); err != nil {
+	if err := b.client.UpsertGroup(ctx, chat.ID, title, isAdmin, 0, "", false); err != nil {
 		slog.Error("reconcileGroup: upsert", "chat_id", chat.ID, "err", err)
 		return
 	}

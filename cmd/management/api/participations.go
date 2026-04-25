@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 )
 
 // playerRequest is the request body used for player-bearing actions (join, skip, add guest).
@@ -175,6 +176,7 @@ func (h *Handler) getGuests(w http.ResponseWriter, r *http.Request) {
 }
 
 // kickPlayer handles DELETE /api/v1/games/{id}/players/{telegramID}
+// Optional query params: group_id, actor_tg_id, actor_display (for audit).
 func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 	gameID, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -186,11 +188,19 @@ func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid telegram_id")
 		return
 	}
+	q := r.URL.Query()
+	groupID, _ := strconv.ParseInt(q.Get("group_id"), 10, 64)
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+
 	participations, guests, removed, err := h.partService.KickPlayer(r.Context(), gameID, telegramID)
 	if err != nil {
 		h.logger.Error("kickPlayer", "err", err, "game_id", gameID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed && actorTgID != 0 {
+		h.auditSvc.RecordPlayerKicked(r.Context(), gameID, groupID, actorTgID, telegramID, actorDisp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,
@@ -200,6 +210,7 @@ func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 }
 
 // kickGuest handles DELETE /api/v1/games/{id}/guests/{guestID}
+// Optional query params: group_id, actor_tg_id, actor_display (for audit).
 func (h *Handler) kickGuest(w http.ResponseWriter, r *http.Request) {
 	gameID, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -211,11 +222,19 @@ func (h *Handler) kickGuest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid guest_id")
 		return
 	}
+	q := r.URL.Query()
+	groupID, _ := strconv.ParseInt(q.Get("group_id"), 10, 64)
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+
 	participations, guests, removed, err := h.partService.KickGuestByID(r.Context(), gameID, guestID)
 	if err != nil {
 		h.logger.Error("kickGuest", "err", err, "game_id", gameID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed && actorTgID != 0 {
+		h.auditSvc.RecordGuestKicked(r.Context(), gameID, groupID, actorTgID, guestID, actorDisp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,
