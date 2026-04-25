@@ -33,7 +33,7 @@ func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lan
 		return
 	}
 
-	if err := b.client.SetGroupLanguage(ctx, groupID, lang); err != nil {
+	if err := b.client.SetGroupLanguage(ctx, groupID, lang, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
 		slog.Error("handleSetLang: set language", "err", err, "group_id", groupID, "lang", lang)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -100,7 +100,7 @@ func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz st
 		return
 	}
 
-	if err := b.client.SetGroupTimezone(ctx, groupID, tz); err != nil {
+	if err := b.client.SetGroupTimezone(ctx, groupID, tz, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
 		slog.Error("handleSetTz: set timezone", "err", err, "group_id", groupID, "tz", tz)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return

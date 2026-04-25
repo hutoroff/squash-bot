@@ -34,20 +34,20 @@ type ManagementClient interface {
 	GetGroups(ctx context.Context) ([]models.Group, error)
 	GroupExists(ctx context.Context, chatID int64) (bool, error)
 	GetGroupByID(ctx context.Context, chatID int64) (*models.Group, error)
-	SetGroupLanguage(ctx context.Context, chatID int64, language string) error
-	SetGroupTimezone(ctx context.Context, chatID int64, timezone string) error
+	SetGroupLanguage(ctx context.Context, chatID int64, language string, actorTgID int64, actorDisplay string) error
+	SetGroupTimezone(ctx context.Context, chatID int64, timezone string, actorTgID int64, actorDisplay string) error
 
 	// Venues
-	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error)
+	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error)
 	GetVenuesByGroup(ctx context.Context, groupID int64) ([]*models.Venue, error)
 	GetVenueByID(ctx context.Context, id int64) (*models.Venue, error)
-	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error)
-	DeleteVenue(ctx context.Context, id, groupID int64) error
+	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error)
+	DeleteVenue(ctx context.Context, id, groupID, actorTgID int64, actorDisplay string) error
 
 	// Venue credentials
-	AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int) (*models.VenueCredential, error)
+	AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int, actorTgID int64, actorDisplay string) (*models.VenueCredential, error)
 	ListVenueCredentials(ctx context.Context, venueID, groupID int64) ([]*models.VenueCredential, error)
-	DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID int64) error
+	DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID, actorTgID int64, actorDisplay string) error
 	ListVenueCredentialPriorities(ctx context.Context, venueID, groupID int64) ([]int, error)
 
 	// Scheduler
