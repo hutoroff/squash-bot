@@ -182,6 +182,9 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 				"game_id", game.ID, "match_id", entry.MatchID, "err", err)
 		}
 		canceledLabels = append(canceledLabels, label)
+		if j.auditSvc != nil && game.Venue != nil {
+			j.auditSvc.RecordCourtCanceled(ctx, game.Venue.ID, game.ChatID, game.Venue.Name, strconv.Itoa(label), game.GameDate)
+		}
 	}
 
 	if len(canceledLabels) == 0 {

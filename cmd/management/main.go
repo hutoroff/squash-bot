@@ -126,10 +126,10 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 
-	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, loc, logger, pollWindow)
+	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.CredentialErrorCooldown)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))

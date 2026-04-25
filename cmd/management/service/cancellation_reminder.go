@@ -24,6 +24,7 @@ type CancellationReminderJob struct {
 	courtBookingRepo      CourtBookingRepository      // optional; nil falls back to ListMatches flow
 	autoBookingResultRepo AutoBookingResultRepository // optional; nil skips time-slot routing
 	credService           *VenueCredentialService     // optional; nil uses env-var credentials only
+	auditSvc              *AuditService               // optional; nil skips audit recording
 	loc                   *time.Location
 	logger                *slog.Logger
 	pollWindow            time.Duration // timing gate: ±pollWindow around reminderAt
@@ -40,6 +41,7 @@ func NewCancellationReminderJob(
 	courtBookingRepo CourtBookingRepository,
 	autoBookingResultRepo AutoBookingResultRepository,
 	credService *VenueCredentialService,
+	auditSvc *AuditService,
 	loc *time.Location,
 	logger *slog.Logger,
 	pollWindow time.Duration,
@@ -55,6 +57,7 @@ func NewCancellationReminderJob(
 		courtBookingRepo:      courtBookingRepo,
 		autoBookingResultRepo: autoBookingResultRepo,
 		credService:           credService,
+		auditSvc:              auditSvc,
 		loc:                   loc,
 		logger:                logger,
 		pollWindow:            pollWindow,
