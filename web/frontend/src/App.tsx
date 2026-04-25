@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
+import GamesPage from './components/GamesPage'
+import AuditPage from './components/AuditPage'
 import type { User } from './types'
 
 function App() {
@@ -26,7 +29,16 @@ function App() {
     return <Login botName={botName} />
   }
 
-  return <Dashboard user={user} />
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard user={user} />}>
+          <Route index element={<GamesPage user={user} />} />
+          <Route path="audit" element={<AuditPage user={user} />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  )
 }
 
 export default App
