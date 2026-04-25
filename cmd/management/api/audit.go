@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,10 +9,17 @@ import (
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
+// adminGroupsResolver is satisfied by service.AdminGroupsResolver and by test fakes.
+type adminGroupsResolver interface {
+	AdminGroupsFor(ctx context.Context, tgID int64) ([]int64, error)
+}
+
 // listAuditEvents handles GET /api/v1/audit
 //
 // Visibility rules enforced server-side:
 //   - Server owner (caller TG ID in serverOwnerIDs): sees all events; may filter by any field.
+//   - Group admin (caller administers ≥1 group): sees own player events PLUS all
+//     player+group_admin events for their administered groups.
 //   - Everyone else: sees only their own events with visibility="player".
 //
 // Query params: limit, before_id, event_type, from (RFC3339), to (RFC3339).
@@ -64,8 +72,13 @@ func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		filter.ActorTgID = &callerTgID
-		filter.Visibilities = []models.AuditVisibility{models.AuditVisibilityPlayer}
+		filter.OwnTgID = &callerTgID
+		if h.adminResolver != nil {
+			adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), callerTgID)
+			if err == nil && len(adminGroups) > 0 {
+				filter.AdminGroupIDs = adminGroups
+			}
+		}
 	}
 
 	events, err := h.auditSvc.Query(r.Context(), filter)

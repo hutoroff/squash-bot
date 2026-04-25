@@ -55,6 +55,27 @@ func (r *AuditEventRepo) Query(ctx context.Context, f models.AuditQueryFilter) (
 		n++
 	}
 
+	// Scope clause: OR-combination of visibility scopes (OwnTgID + AdminGroupIDs).
+	// When both are set the query returns the union of own player events and
+	// all player+group_admin events for groups the caller administers.
+	var scopeParts []string
+	if f.OwnTgID != nil {
+		scopeParts = append(scopeParts, fmt.Sprintf(
+			"(visibility = $%d AND actor_tg_id = $%d)", n, n+1))
+		args = append(args, string(models.AuditVisibilityPlayer), *f.OwnTgID)
+		n += 2
+	}
+	if len(f.AdminGroupIDs) > 0 {
+		scopeParts = append(scopeParts, fmt.Sprintf(
+			"(visibility IN ('player','group_admin') AND group_id = ANY($%d))", n))
+		args = append(args, f.AdminGroupIDs)
+		n++
+	}
+	if len(scopeParts) > 0 {
+		conds = append(conds, "("+strings.Join(scopeParts, " OR ")+")")
+	}
+
+	// Additional AND filters (applied on top of any scope clause).
 	if f.GroupID != nil {
 		add("group_id = $%d", *f.GroupID)
 	}

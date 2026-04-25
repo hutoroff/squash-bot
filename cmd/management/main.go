@@ -148,7 +148,8 @@ func main() {
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, serverOwnerIDs, logger, Version)
+	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
+	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
