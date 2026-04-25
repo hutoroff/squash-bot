@@ -42,6 +42,11 @@ type ManagementConfig struct {
 	// CredentialErrorCooldown is how long a credential must sit out after a booking
 	// error before the auto-booking job will try it again. Defaults to 24 hours.
 	CredentialErrorCooldown time.Duration `env:"CREDENTIAL_ERROR_COOLDOWN" envDefault:"24h"`
+	// ServiceAdminIDs is a comma-separated list of Telegram user IDs recognized as
+	// server owners. Used to enforce audit event visibility in GET /api/v1/audit.
+	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
+	// AuditRetentionDays controls how long audit events are kept. Defaults to 365 days (1 year).
+	AuditRetentionDays int `env:"AUDIT_RETENTION_DAYS" envDefault:"365"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {
