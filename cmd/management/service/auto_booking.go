@@ -28,10 +28,9 @@ type AutoBookingJob struct {
 	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
 	courtBookingRepo      CourtBookingRepository
-	loc                   *time.Location
-	logger                *slog.Logger
-	courtsCount           int // total courts to book per venue
-	credCooldown          time.Duration
+	loc          *time.Location
+	logger       *slog.Logger
+	credCooldown time.Duration
 }
 
 func NewAutoBookingJob(
@@ -44,7 +43,6 @@ func NewAutoBookingJob(
 	courtBookingRepo CourtBookingRepository,
 	loc *time.Location,
 	logger *slog.Logger,
-	courtsCount int,
 	credCooldown time.Duration,
 ) *AutoBookingJob {
 	return &AutoBookingJob{
@@ -57,7 +55,6 @@ func NewAutoBookingJob(
 		courtBookingRepo:      courtBookingRepo,
 		loc:                   loc,
 		logger:                logger,
-		courtsCount:           courtsCount,
 		credCooldown:          credCooldown,
 	}
 }
@@ -126,6 +123,11 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	if !venue.AutoBookingEnabled {
 		return false
 	}
+	courtsCount := len(parseCourtIDs(venue.AutoBookingCourts))
+	if courtsCount == 0 {
+		j.logger.Warn("auto-booking: skipping venue with no auto_booking_courts configured", "venue_id", venue.ID)
+		return false
+	}
 	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
 	gameDateStr := fmt.Sprintf("%d-%02d-%02d", gameDate.Year(), gameDate.Month(), gameDate.Day())
 
@@ -147,7 +149,7 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 			continue
 		}
 
-		if j.processTimeSlot(ctx, chatID, venue, gameDate, gameDateStr, gameTime, groupTZ, lz) {
+		if j.processTimeSlot(ctx, chatID, venue, gameDate, gameDateStr, gameTime, groupTZ, lz, courtsCount) {
 			anyBooked = true
 		}
 	}
@@ -168,7 +170,7 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 //  2. Call ListMatches for the exact target start time — courts appearing in the
 //     response are occupied (reserved, training, club-blocked). Courts ABSENT
 //     from the response are truly free for ad-hoc booking.
-//  3. Book free courts up to courtsCount using their UUID from step 1.
+//  3. Book free courts up to len(venue.AutoBookingCourts) using their UUID from step 1.
 func (j *AutoBookingJob) processTimeSlot(
 	ctx context.Context,
 	chatID int64,
@@ -178,6 +180,7 @@ func (j *AutoBookingJob) processTimeSlot(
 	gameTime string,
 	groupTZ *time.Location,
 	lz *i18n.Localizer,
+	courtsCount int,
 ) bool {
 	// Parse "HH:MM" into a concrete time.Time for booking.
 	gameStart, err := parsePreferredTime(gameDateStr, gameTime, groupTZ)
@@ -207,7 +210,7 @@ func (j *AutoBookingJob) processTimeSlot(
 	creds, err := j.credService.ListForBooking(ctx, venue.ID, j.credCooldown)
 	if err != nil {
 		j.logger.Error("auto-booking: list credentials", "venue_id", venue.ID, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, j.courtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
 		return false
 	}
 	if len(creds) == 0 {
@@ -222,7 +225,7 @@ func (j *AutoBookingJob) processTimeSlot(
 	if err != nil {
 		j.logger.Error("auto-booking: list courts",
 			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, j.courtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
 		return false
 	}
 	j.logger.Debug("auto-booking: courts fetched",
@@ -233,7 +236,7 @@ func (j *AutoBookingJob) processTimeSlot(
 	if err != nil {
 		j.logger.Error("auto-booking: list matches",
 			"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, j.courtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
 		return false
 	}
 	j.logger.Debug("auto-booking: matches at target time",
@@ -274,7 +277,7 @@ func (j *AutoBookingJob) processTimeSlot(
 		j.logger.Info("auto-booking: no available courts",
 			"venue_id", venue.ID, "date", gameDateStr, "time", gameTime,
 			"total_courts", len(allCourts), "occupied", len(occupiedSlots))
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, j.courtsCount, lz)
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
 		return false
 	}
 
@@ -286,7 +289,7 @@ func (j *AutoBookingJob) processTimeSlot(
 		"venue_id", venue.ID,
 		"start_rfc", startRFC,
 		"end_rfc", endRFC,
-		"courts_target", j.courtsCount,
+		"courts_target", courtsCount,
 	)
 
 	// Build UUID → court-number map for human-readable labels.
@@ -305,7 +308,7 @@ func (j *AutoBookingJob) processTimeSlot(
 
 	// ── Credential-rotation booking loop ─────────────────────────────────────
 
-	remaining := j.courtsCount
+	remaining := courtsCount
 	bookedCount := 0
 	var bookedCourtLabels []string
 
@@ -372,8 +375,8 @@ func (j *AutoBookingJob) processTimeSlot(
 		}
 	}
 
-	if remaining > 0 && bookedCount < j.courtsCount {
-		j.notifyCredentialsExhausted(ctx, chatID, venue, bookedCount, j.courtsCount, lz)
+	if remaining > 0 && len(available) > 0 {
+		j.notifyCredentialsExhausted(ctx, chatID, venue, bookedCount, courtsCount, lz)
 	}
 
 	if bookedCount == 0 {
