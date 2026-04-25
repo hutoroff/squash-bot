@@ -131,7 +131,7 @@ type eversportsClient interface {
 }
 ```
 
-`NewHandler(es eversportsClient, ...)` — accepts the interface, not `*eversports.Client`. `main.go` passes `*eversports.Client` which satisfies structurally.
+`NewHandler(logger *slog.Logger, version, facilityID, facilityUUID, facilitySlug string) *Handler` — no default client; all Eversports calls require per-request credentials.
 
 ### Routes
 
@@ -141,18 +141,18 @@ All routes except `/health` and `/version` require `Authorization: Bearer <INTER
 GET    /health
 GET    /version
 GET    /api/v1/eversports/matches?date=YYYY-MM-DD[&startTime=HHMM][&endTime=HHMM][&my=true|false]
-POST   /api/v1/eversports/matches           body: {courtUuid, start, end} (RFC3339)
+POST   /api/v1/eversports/matches           body: {courtUuid, start, end, email, password} (RFC3339)
 GET    /api/v1/eversports/matches/{id}
-DELETE /api/v1/eversports/matches/{id}
+DELETE /api/v1/eversports/matches/{id}      body: {email, password}
 GET    /api/v1/eversports/courts[?date=YYYY-MM-DD]
 GET    /api/v1/eversports/facility?slug=<slug>
 ```
 
 ### Per-credential client dispatch (`handler.go`)
 
-`Handler` holds a `credClients sync.Map` (keyed by `email:password` → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account; the key includes the password so that rotating a credential produces a new client. `clientFromRequest(r)` reads `X-Eversports-Email`/`X-Eversports-Password` headers and returns the matching cached client, or `h.eversports` if headers are absent.
+`Handler` holds a `credClients sync.Map` (keyed by `email:password` → `*eversports.Client`). `getOrCreateCredClient(email, password)` lazily creates and caches a dedicated client per account; the key includes the password so that rotating a credential produces a new client. `clientFromRequest(r)` reads `X-Eversports-Email`/`X-Eversports-Password` headers and returns the matching cached client, or `nil` if headers are absent.
 
-All handlers support per-credential dispatch; they route to the matching cached client when credentials are present, otherwise fall back to `h.eversports` (service-level default, env-var credentials):
+All six Eversports handlers require credentials per-request and return HTTP 400 if absent. There is no service-level default client or fallback:
 
 | Handler | Credential source |
 |---------|------------------|
@@ -184,8 +184,6 @@ squashSportID   = "496"
 ## Environment variables
 
 ```
-EVERSPORTS_EMAIL=            required
-EVERSPORTS_PASSWORD=         required
 INTERNAL_API_SECRET=         required (bearer token for callers)
 SERVER_PORT=8081             default
 EVERSPORTS_FACILITY_ID=      required for /matches, /courts
@@ -195,6 +193,8 @@ LOG_LEVEL=INFO
 LOG_DIR=               optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
 ```
+
+Note: `EVERSPORTS_EMAIL`/`EVERSPORTS_PASSWORD` are removed. Credentials are supplied per-request by callers.
 
 ---
 
