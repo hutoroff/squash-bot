@@ -133,8 +133,9 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"ng_gvenue": b.handleNewGameGroupVenue,
 
 		// ── Settings ──────────────────────────────────────────────────────────────
-		"trigger":        b.handleTrigger,
-		"set_lang_group": int64H(b.handleSetLangGroup),
+		"trigger":           b.handleTrigger,
+		"set_lang_group":    int64H(b.handleSetLangGroup),
+		"toggle_changelog":  int64H(b.handleToggleChangelog),
 		"set_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			// rawID: lang:groupID
 			p1, p2, ok := splitTwo(rawID, cb.Data)

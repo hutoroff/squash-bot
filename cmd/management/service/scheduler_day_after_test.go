@@ -175,6 +175,9 @@ func (r *stubGroupRepoForDayAfter) SetTimezone(_ context.Context, _ int64, _ str
 func (r *stubGroupRepoForDayAfter) SetLanguage(_ context.Context, _ int64, _ string) error {
 	return nil
 }
+func (r *stubGroupRepoForDayAfter) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
 func (r *stubGroupRepoForDayAfter) Remove(_ context.Context, _ int64) error { return nil }
 func (r *stubGroupRepoForDayAfter) Exists(_ context.Context, _ int64) (bool, error) {
 	return false, nil

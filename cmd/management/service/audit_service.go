@@ -321,6 +321,28 @@ func (s *AuditService) RecordGroupSettings(ctx context.Context, groupID, actorTg
 	})
 }
 
+// RecordGroupChangelogToggled records when a group admin enables or disables changelog announcements.
+// Visibility is server_owner — group admins cannot inspect this in the audit log.
+func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	newVal := "false"
+	if enabled {
+		newVal = "true"
+	}
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGroupChangelogToggled,
+		Visibility:   models.AuditVisibilityServerOwner,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGroup,
+		SubjectID:    fmt.Sprintf("%d", groupID),
+		Description:  fmt.Sprintf("Changelog announcements set to %s for group %d", newVal, groupID),
+		Metadata:     map[string]any{"enabled": enabled},
+	})
+}
+
 // Scheduler (system) events
 
 func (s *AuditService) RecordCourtBooked(ctx context.Context, venueID, groupID int64, venueName, courtLabel string, gameDate time.Time) {

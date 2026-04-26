@@ -29,9 +29,10 @@ const (
 	AuditEventVenueCreated        AuditEventType = "venue.created"
 	AuditEventVenueUpdated        AuditEventType = "venue.updated"
 	AuditEventVenueDeleted        AuditEventType = "venue.deleted"
-	AuditEventBotAddedToGroup     AuditEventType = "group.bot_added"
-	AuditEventBotRemovedFromGroup AuditEventType = "group.bot_removed"
-	AuditEventGroupSettings       AuditEventType = "group.settings_changed"
+	AuditEventBotAddedToGroup       AuditEventType = "group.bot_added"
+	AuditEventBotRemovedFromGroup   AuditEventType = "group.bot_removed"
+	AuditEventGroupSettings         AuditEventType = "group.settings_changed"
+	AuditEventGroupChangelogToggled AuditEventType = "group.changelog_toggled"
 	AuditEventCourtBooked         AuditEventType = "court.booked"
 	AuditEventCourtCanceled       AuditEventType = "court.canceled"
 

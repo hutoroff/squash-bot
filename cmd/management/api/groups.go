@@ -124,6 +124,37 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// setGroupChangelog handles PATCH /api/v1/groups/{chatID}/changelog
+func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		ChangelogEnabled bool   `json:"changelog_enabled"`
+		ActorTelegramID  int64  `json:"actor_telegram_id"`
+		ActorDisplay     string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.groupRepo.SetChangelogEnabled(r.Context(), chatID, req.ChangelogEnabled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupChangelog", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupChangelogToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.ChangelogEnabled)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // removeGroup handles DELETE /api/v1/groups/{chatID}
 // Optional query params: actor_tg_id, actor_display, group_title (for audit).
 func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {

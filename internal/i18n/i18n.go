@@ -197,6 +197,17 @@ const (
 	MsgTimezoneSet            = "msg.timezone_set"
 	BtnSetTimezone            = "btn.set_timezone"
 
+	// Changelog announcements
+	// MsgChangelogHeader: Args: %s = version
+	MsgChangelogHeader   = "msg.changelog_header"
+	MsgChangelogFeatures = "msg.changelog_features"
+	MsgChangelogFixes    = "msg.changelog_fixes"
+	// BtnChangelogOn/Off shown on settings keyboard based on current group state
+	BtnChangelogOn       = "btn.changelog_on"
+	BtnChangelogOff      = "btn.changelog_off"
+	MsgChangelogEnabled  = "msg.changelog_enabled"
+	MsgChangelogDisabled = "msg.changelog_disabled"
+
 	// New game wizard
 	MsgNewGameSelectDate         = "msg.new_game_select_date"
 	MsgNewGameEnterTime          = "msg.new_game_enter_time"
@@ -484,6 +495,15 @@ var translations = map[Lang]map[string]string{
 		MsgTimezoneSet:            "Timezone updated ✓",
 		BtnSetTimezone:            "🕐 Set Timezone",
 
+		// Changelog
+		MsgChangelogHeader:   "🆕 What's new in v%s",
+		MsgChangelogFeatures: "✨ Features",
+		MsgChangelogFixes:    "🐛 Fixes",
+		BtnChangelogOn:       "📋 Changelog: ON",
+		BtnChangelogOff:      "📋 Changelog: OFF",
+		MsgChangelogEnabled:  "Changelog notifications enabled ✓",
+		MsgChangelogDisabled: "Changelog notifications disabled",
+
 		// New game wizard
 		MsgNewGameSelectDate:         "Select a date for the new game:",
 		MsgNewGameEnterTime:          "Game on %s.\n\nEnter the time (HH:MM, e.g. 19:30):",
@@ -757,6 +777,15 @@ var translations = map[Lang]map[string]string{
 		MsgTimezoneSet:            "Zeitzone aktualisiert ✓",
 		BtnSetTimezone:            "🕐 Zeitzone festlegen",
 
+		// Changelog
+		MsgChangelogHeader:   "🆕 Neuigkeiten in v%s",
+		MsgChangelogFeatures: "✨ Features",
+		MsgChangelogFixes:    "🐛 Fixes",
+		BtnChangelogOn:       "📋 Changelog: AN",
+		BtnChangelogOff:      "📋 Changelog: AUS",
+		MsgChangelogEnabled:  "Changelog-Benachrichtigungen aktiviert ✓",
+		MsgChangelogDisabled: "Changelog-Benachrichtigungen deaktiviert",
+
 		// New game wizard
 		MsgNewGameSelectDate:         "Datum für das neue Spiel auswählen:",
 		MsgNewGameEnterTime:          "Spiel am %s.\n\nGib die Uhrzeit ein (HH:MM, z.B. 19:30):",
@@ -1025,6 +1054,15 @@ var translations = map[Lang]map[string]string{
 		MsgSelectTimezone:         "Выбери часовой пояс для своей группы:",
 		MsgTimezoneSet:            "Часовой пояс обновлён ✓",
 		BtnSetTimezone:            "🕐 Часовой пояс",
+
+		// Changelog
+		MsgChangelogHeader:   "🆕 Что нового в v%s",
+		MsgChangelogFeatures: "✨ Новое",
+		MsgChangelogFixes:    "🐛 Исправления",
+		BtnChangelogOn:       "📋 Changelog: ВКЛ",
+		BtnChangelogOff:      "📋 Changelog: ВЫКЛ",
+		MsgChangelogEnabled:  "Уведомления о новых версиях включены ✓",
+		MsgChangelogDisabled: "Уведомления о новых версиях отключены",
 
 		// New game wizard
 		MsgNewGameSelectDate:         "Выбери дату новой игры:",

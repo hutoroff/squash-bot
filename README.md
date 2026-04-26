@@ -14,6 +14,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At 10 AM on configured game days: for each auto-booked time slot the bot creates a separate game and posts the standard announcement (pinned); if no auto-booking results exist it DMs group admins with a booking reminder; already-created games are not duplicated on re-runs
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
+- On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/language` settings, default ON)
 
 ## Tech Stack
 
