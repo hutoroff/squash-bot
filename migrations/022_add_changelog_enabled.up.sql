@@ -1,0 +1,1 @@
+ALTER TABLE bot_groups ADD COLUMN changelog_enabled BOOLEAN NOT NULL DEFAULT TRUE;

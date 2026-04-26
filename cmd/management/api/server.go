@@ -87,6 +87,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)
 	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/language", h.setGroupLanguage)
 	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/timezone", h.setGroupTimezone)
+	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/changelog", h.setGroupChangelog)
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)

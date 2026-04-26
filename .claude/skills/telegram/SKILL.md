@@ -35,8 +35,9 @@ cmd/telegram/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
 │   │                          buildDateSelectionKeyboard, renderCourtPickKeyboard, renderTimeSlotKeyboard
 │   ├── settings_handlers.go — handleTrigger, handleSetLangGroup, handleSetLang,
-│   │                          handleSetTzPick, handleSetTz, handleNewGameGroupVenue,
-│   │                          handleGroupSelection
+│   │                          handleSetTzPick, handleSetTz, handleToggleChangelog,
+│   │                          handleNewGameGroupVenue, handleGroupSelection
+│   │                          renderLanguageKeyboard(ctx, groupID) — fetches group to show changelog toggle label
 │   └── venue_handlers.go    — handleVenueList/Add/EditMenu/StartEdit/Delete/DeleteConfirm,
 │                              handleVenueDayToggle/Confirm, handleVenueWizPreferredTimePick,
 │                              handleVenuePtimeToggle, handleVenuePtimeConfirm, handleVenuePtimeSet,
@@ -121,7 +122,7 @@ manage_kick, manage_kick_guest, manage_court_toggle, manage_court_confirm
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
-trigger, set_lang_group, set_lang, set_tz_pick, set_tz
+trigger, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog
 venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
@@ -197,11 +198,13 @@ State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleStat
 1. Admin sends `/language` in private chat.
 2. If admin in exactly one group → show language picker for that group immediately.
 3. If admin in multiple groups → show group picker first (`set_lang_group:<groupID>` callbacks), then language picker.
-4. Language picker: 3 language buttons + "🕐 Set Timezone" button.
+4. Language picker: 3 language buttons + "🕐 Set Timezone" button + changelog toggle button.
 5. Language button → `set_lang:<lang>:<groupID>` → `PATCH /api/v1/groups/{chatID}/language`.
 6. "Set Timezone" → `set_tz_pick:<groupID>` → curated timezone picker (18 IANA timezones, 2 per row).
 7. Timezone button → `set_tz:<groupID>:<tz>` → `PATCH /api/v1/groups/{chatID}/timezone`.
-8. Management returns 400 for invalid IANA strings, 404 if group not found.
+8. Changelog toggle → `toggle_changelog:<groupID>` → `SetGroupChangelog` → `PATCH /api/v1/groups/{chatID}/changelog`.
+   Button label shows current state ("📢 Changelog: ON" / "📢 Changelog: OFF"); `renderLanguageKeyboard` fetches group to determine label.
+9. Management returns 400 for invalid IANA strings, 404 if group not found.
 
 ### Venue Management (`/venues`)
 
@@ -281,7 +284,7 @@ Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
 Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
                 KickPlayer, KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
-                SetGroupLanguage, SetGroupTimezone
+                SetGroupLanguage, SetGroupTimezone, SetGroupChangelog
 Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue
 VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities

@@ -182,6 +182,37 @@ func TestRecordBotRemovedFromGroup(t *testing.T) {
 	}
 }
 
+// ── group changelog toggle ────────────────────────────────────────────────────
+
+func TestRecordGroupChangelogToggled_Enabled(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGroupChangelogToggled(context.Background(), 300, 99, "@admin", true)
+
+	if len(repo.inserted) != 1 {
+		t.Fatalf("want 1 event, got %d", len(repo.inserted))
+	}
+	evt := repo.inserted[0]
+	assertEventBase(t, evt, models.AuditEventGroupChangelogToggled, models.AuditVisibilityServerOwner, models.AuditSubjectGroup)
+	assertUserActor(t, evt, 99, "@admin")
+	if evt.GroupID == nil || *evt.GroupID != 300 {
+		t.Errorf("GroupID: got %v, want 300", evt.GroupID)
+	}
+	if evt.Metadata["enabled"] != true {
+		t.Errorf("Metadata[enabled]: got %v, want true", evt.Metadata["enabled"])
+	}
+}
+
+func TestRecordGroupChangelogToggled_Disabled(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGroupChangelogToggled(context.Background(), 400, 77, "@user", false)
+
+	evt := repo.inserted[0]
+	assertEventBase(t, evt, models.AuditEventGroupChangelogToggled, models.AuditVisibilityServerOwner, models.AuditSubjectGroup)
+	if evt.Metadata["enabled"] != false {
+		t.Errorf("Metadata[enabled]: got %v, want false", evt.Metadata["enabled"])
+	}
+}
+
 // ── system actor events ───────────────────────────────────────────────────────
 
 func TestRecordCourtBooked_SystemActor(t *testing.T) {
