@@ -147,7 +147,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 
-	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID)
+	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -211,7 +211,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID)
+	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -423,14 +423,15 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 	}
 
 	// Re-verify admin status before persisting changes.
-	if _, ok2 := b.checkManageAdmin(ctx, cb, gameID, lz); !ok2 {
+	game, ok2 := b.checkManageAdmin(ctx, cb, gameID, lz)
+	if !ok2 {
 		return // checkManageAdmin already answered the callback
 	}
 
 	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 
-	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
+	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, actorDisplayFrom(cb.From), cb.From.ID); err != nil {
 		slog.Error("handleManageCourtsConfirm: update courts", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)
 		return
@@ -484,7 +485,7 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 		return
 	}
 
-	if err := b.client.UpdateCourts(ctx, gameID, courts); err != nil {
+	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, actorDisplayFrom(msg.From), msg.From.ID); err != nil {
 		slog.Error("processCourtsEdit: update courts", "err", err, "game_id", gameID)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedUpdateCourts))
 		return

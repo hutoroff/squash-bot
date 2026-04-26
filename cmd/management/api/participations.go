@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 )
 
 // playerRequest is the request body used for player-bearing actions (join, skip, add guest).
@@ -10,6 +11,24 @@ type playerRequest struct {
 	Username   string `json:"username"`
 	FirstName  string `json:"first_name"`
 	LastName   string `json:"last_name"`
+	// GroupID (chat_id) associates the event with a group in the audit log.
+	// Optional: if omitted (0), the audit event has no group association.
+	GroupID int64 `json:"group_id"`
+}
+
+// actorDisplay formats a display name for audit from request fields.
+func actorDisplay(username, firstName, lastName string) string {
+	if username != "" {
+		return "@" + username
+	}
+	name := firstName
+	if lastName != "" {
+		if name != "" {
+			name += " "
+		}
+		name += lastName
+	}
+	return name
 }
 
 // joinGame handles POST /api/v1/games/{id}/join
@@ -30,6 +49,7 @@ func (h *Handler) joinGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.auditSvc.RecordPlayerJoined(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	writeJSON(w, http.StatusOK, participations)
 }
 
@@ -50,6 +70,9 @@ func (h *Handler) skipGame(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("skipGame", "err", err, "game_id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if skipped {
+		h.auditSvc.RecordPlayerSkipped(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"skipped":        skipped,
@@ -75,6 +98,9 @@ func (h *Handler) addGuest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if added {
+		h.auditSvc.RecordGuestAdded(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"added":          added,
 		"participations": participations,
@@ -91,7 +117,11 @@ func (h *Handler) removeGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		TelegramID int64 `json:"telegram_id"`
+		TelegramID int64  `json:"telegram_id"`
+		GroupID    int64  `json:"group_id"`
+		Username   string `json:"username"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -102,6 +132,9 @@ func (h *Handler) removeGuest(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("removeGuest", "err", err, "game_id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed {
+		h.auditSvc.RecordGuestRemoved(r.Context(), id, req.GroupID, req.TelegramID, actorDisplay(req.Username, req.FirstName, req.LastName))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,
@@ -143,6 +176,7 @@ func (h *Handler) getGuests(w http.ResponseWriter, r *http.Request) {
 }
 
 // kickPlayer handles DELETE /api/v1/games/{id}/players/{telegramID}
+// Optional query params: group_id, actor_tg_id, actor_display (for audit).
 func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 	gameID, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -154,11 +188,19 @@ func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid telegram_id")
 		return
 	}
+	q := r.URL.Query()
+	groupID, _ := strconv.ParseInt(q.Get("group_id"), 10, 64)
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+
 	participations, guests, removed, err := h.partService.KickPlayer(r.Context(), gameID, telegramID)
 	if err != nil {
 		h.logger.Error("kickPlayer", "err", err, "game_id", gameID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed && actorTgID != 0 {
+		h.auditSvc.RecordPlayerKicked(r.Context(), gameID, groupID, actorTgID, telegramID, actorDisp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,
@@ -168,6 +210,7 @@ func (h *Handler) kickPlayer(w http.ResponseWriter, r *http.Request) {
 }
 
 // kickGuest handles DELETE /api/v1/games/{id}/guests/{guestID}
+// Optional query params: group_id, actor_tg_id, actor_display (for audit).
 func (h *Handler) kickGuest(w http.ResponseWriter, r *http.Request) {
 	gameID, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -179,11 +222,19 @@ func (h *Handler) kickGuest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid guest_id")
 		return
 	}
+	q := r.URL.Query()
+	groupID, _ := strconv.ParseInt(q.Get("group_id"), 10, 64)
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+
 	participations, guests, removed, err := h.partService.KickGuestByID(r.Context(), gameID, guestID)
 	if err != nil {
 		h.logger.Error("kickGuest", "err", err, "game_id", gameID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if removed && actorTgID != 0 {
+		h.auditSvc.RecordGuestKicked(r.Context(), gameID, groupID, actorTgID, guestID, actorDisp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed":        removed,

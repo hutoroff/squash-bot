@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -36,12 +37,14 @@ func New(baseURL, apiSecret string) *Client {
 
 // ── Games ─────────────────────────────────────────────────────────────────────
 
-func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
+func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
-		"chat_id":   chatID,
-		"game_date": gameDate,
-		"courts":    courts,
-		"venue_id":  venueID,
+		"chat_id":            chatID,
+		"game_date":          gameDate,
+		"courts":             courts,
+		"venue_id":           venueID,
+		"actor_telegram_id":  actorTgID,
+		"actor_display":      actorDisplay,
 	}
 	var game models.Game
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games", body, &game); err != nil {
@@ -63,8 +66,13 @@ func (c *Client) UpdateMessageID(ctx context.Context, gameID, messageID int64) e
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/message-id", body, nil)
 }
 
-func (c *Client) UpdateCourts(ctx context.Context, gameID int64, courts string) error {
-	body := map[string]string{"courts": courts}
+func (c *Client) UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorTgID int64) error {
+	body := map[string]any{
+		"courts":            courts,
+		"group_id":          groupID,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body, nil)
 }
 
@@ -120,10 +128,11 @@ type playerBody struct {
 	Username   string `json:"username"`
 	FirstName  string `json:"first_name"`
 	LastName   string `json:"last_name"`
+	GroupID    int64  `json:"group_id"`
 }
 
-func (c *Client) Join(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) Join(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var participations []*models.GameParticipation
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/join", body, &participations); err != nil {
 		return nil, err
@@ -136,8 +145,8 @@ type skipResponse struct {
 	Participations []*models.GameParticipation `json:"participations"`
 }
 
-func (c *Client) Skip(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) Skip(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var resp skipResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/skip", body, &resp); err != nil {
 		return nil, false, err
@@ -151,8 +160,8 @@ type guestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName}
+func (c *Client) AddGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
 	var resp guestResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
@@ -166,8 +175,14 @@ type removeGuestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) RemoveGuest(ctx context.Context, gameID, telegramID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := map[string]int64{"telegram_id": telegramID}
+func (c *Client) RemoveGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := map[string]any{
+		"telegram_id": telegramID,
+		"group_id":    chatID,
+		"username":    username,
+		"first_name":  firstName,
+		"last_name":   lastName,
+	}
 	var resp removeGuestResponse
 	if err := c.do(ctx, http.MethodDelete, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
@@ -197,8 +212,9 @@ type kickResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/players/%d", gameID, telegramID)
+func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/players/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		gameID, telegramID, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -206,8 +222,9 @@ func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*m
 	return resp.Participations, resp.Guests, resp.Removed, nil
 }
 
-func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/guests/%d", gameID, guestID)
+func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/guests/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		gameID, guestID, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -217,13 +234,21 @@ func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID int64) ([]*m
 
 // ── Groups ────────────────────────────────────────────────────────────────────
 
-func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool) error {
-	body := map[string]any{"title": title, "bot_is_admin": botIsAdmin}
+func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool, actorTgID int64, actorDisplay string, isNewJoin bool) error {
+	body := map[string]any{
+		"title":             title,
+		"bot_is_admin":      botIsAdmin,
+		"is_new_join":       isNewJoin,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPut, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), body, nil)
 }
 
-func (c *Client) RemoveGroup(ctx context.Context, chatID int64) error {
-	return c.do(ctx, http.MethodDelete, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), nil, nil)
+func (c *Client) RemoveGroup(ctx context.Context, chatID, actorTgID int64, actorDisplay, groupTitle string) error {
+	path := fmt.Sprintf("/api/v1/groups/%d?actor_tg_id=%d&actor_display=%s&group_title=%s",
+		chatID, actorTgID, url.QueryEscape(actorDisplay), url.QueryEscape(groupTitle))
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 func (c *Client) GetGroups(ctx context.Context) ([]models.Group, error) {
@@ -278,15 +303,33 @@ func (c *Client) GetGroupByID(ctx context.Context, chatID int64) (*models.Group,
 }
 
 // SetGroupLanguage sets the language preference for a group.
-func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string) error {
-	body := map[string]string{"language": language}
+func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string, actorTgID int64, actorDisplay string) error {
+	body := map[string]any{
+		"language":          language,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/language", body, nil)
 }
 
 // SetGroupTimezone sets the IANA timezone for a group.
-func (c *Client) SetGroupTimezone(ctx context.Context, chatID int64, timezone string) error {
-	body := map[string]string{"timezone": timezone}
+func (c *Client) SetGroupTimezone(ctx context.Context, chatID int64, timezone string, actorTgID int64, actorDisplay string) error {
+	body := map[string]any{
+		"timezone":          timezone,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/timezone", body, nil)
+}
+
+// SetGroupChangelog sets the changelog_enabled flag for a group.
+func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error {
+	body := map[string]any{
+		"changelog_enabled": enabled,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
+	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/changelog", body, nil)
 }
 
 // ── Venues ────────────────────────────────────────────────────────────────────
@@ -303,14 +346,17 @@ type venueBody struct {
 	PreferredGameTimes string `json:"preferred_game_times"`
 	AutoBookingCourts  string `json:"auto_booking_courts"`
 	AutoBookingEnabled bool   `json:"auto_booking_enabled"`
+	ActorTelegramID    int64  `json:"actor_telegram_id,omitempty"`
+	ActorDisplay       string `json:"actor_display,omitempty"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
+		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
@@ -336,12 +382,13 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled,
+		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {
@@ -350,20 +397,23 @@ func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, court
 	return &venue, nil
 }
 
-func (c *Client) DeleteVenue(ctx context.Context, id, groupID int64) error {
-	path := fmt.Sprintf("/api/v1/venues/%d?group_id=%d", id, groupID)
+func (c *Client) DeleteVenue(ctx context.Context, id, groupID, actorTgID int64, actorDisplay string) error {
+	path := fmt.Sprintf("/api/v1/venues/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		id, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // ── Venue credentials ─────────────────────────────────────────────────────────
 
-func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int) (*models.VenueCredential, error) {
+func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int, actorTgID int64, actorDisplay string) (*models.VenueCredential, error) {
 	body := map[string]any{
-		"group_id":   groupID,
-		"login":      login,
-		"password":   password,
-		"priority":   priority,
-		"max_courts": maxCourts,
+		"group_id":          groupID,
+		"login":             login,
+		"password":          password,
+		"priority":          priority,
+		"max_courts":        maxCourts,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
 	}
 	var cred models.VenueCredential
 	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/venues/%d/credentials", venueID), body, &cred); err != nil {
@@ -381,8 +431,9 @@ func (c *Client) ListVenueCredentials(ctx context.Context, venueID, groupID int6
 	return creds, nil
 }
 
-func (c *Client) DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID int64) error {
-	path := fmt.Sprintf("/api/v1/venues/%d/credentials/%d?group_id=%d", venueID, credentialID, groupID)
+func (c *Client) DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID, actorTgID int64, actorDisplay string) error {
+	path := fmt.Sprintf("/api/v1/venues/%d/credentials/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
+		venueID, credentialID, groupID, actorTgID, url.QueryEscape(actorDisplay))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 

@@ -20,7 +20,7 @@ func (b *Bot) handleSetLangGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 
 	b.answerCallback(cb.ID, "")
-	b.renderLanguageKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+	b.renderLanguageKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleSetLang applies the chosen language to the group.
@@ -33,7 +33,7 @@ func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lan
 		return
 	}
 
-	if err := b.client.SetGroupLanguage(ctx, groupID, lang); err != nil {
+	if err := b.client.SetGroupLanguage(ctx, groupID, lang, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
 		slog.Error("handleSetLang: set language", "err", err, "group_id", groupID, "lang", lang)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -49,7 +49,12 @@ func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lan
 }
 
 // renderLanguageKeyboard edits (or sends) a message with language selection buttons for groupID.
-func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	changelogBtnKey := i18n.BtnChangelogOff
+	if group, err := b.client.GetGroupByID(ctx, groupID); err == nil && group != nil && group.ChangelogEnabled {
+		changelogBtnKey = i18n.BtnChangelogOn
+	}
+
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangEn), fmt.Sprintf("set_lang:en:%d", groupID)),
@@ -63,6 +68,9 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSetTimezone), fmt.Sprintf("set_tz_pick:%d", groupID)),
 		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(changelogBtnKey), fmt.Sprintf("toggle_changelog:%d", groupID)),
+		),
 	)
 
 	if messageID != 0 {
@@ -74,6 +82,43 @@ func (b *Bot) renderLanguageKeyboard(chatID int64, messageID int, groupID int64,
 		msg.ReplyMarkup = keyboard
 		b.api.Send(msg) //nolint:errcheck
 	}
+}
+
+// handleToggleChangelog toggles the changelog_enabled setting for the group.
+func (b *Bot) handleToggleChangelog(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	group, err := b.client.GetGroupByID(ctx, groupID)
+	if err != nil {
+		slog.Error("handleToggleChangelog: get group", "err", err, "group_id", groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if group == nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	newEnabled := !group.ChangelogEnabled
+	if err := b.client.SetGroupChangelog(ctx, groupID, newEnabled, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+		slog.Error("handleToggleChangelog: set changelog", "err", err, "group_id", groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Group changelog toggle", "group_id", groupID, "enabled", newEnabled, "by_user", cb.From.ID)
+	if newEnabled {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgChangelogEnabled))
+	} else {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgChangelogDisabled))
+	}
+	b.renderLanguageKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleSetTzPick shows the timezone selection keyboard for a specific group.
@@ -100,7 +145,7 @@ func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz st
 		return
 	}
 
-	if err := b.client.SetGroupTimezone(ctx, groupID, tz); err != nil {
+	if err := b.client.SetGroupTimezone(ctx, groupID, tz, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
 		slog.Error("handleSetTz: set timezone", "err", err, "group_id", groupID, "tz", tz)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return

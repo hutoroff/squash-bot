@@ -22,37 +22,40 @@ const tokenExpiry = 7 * 24 * time.Hour
 
 // AuthHandler handles Telegram Login Widget authentication and session management.
 type AuthHandler struct {
-	botToken   string
-	botName    string
-	jwtSecret  string
-	mgmtURL    string
-	mgmtSecret string
-	httpClient *http.Client
-	logger     *slog.Logger
+	botToken       string
+	botName        string
+	jwtSecret      string
+	mgmtURL        string
+	mgmtSecret     string
+	serverOwnerIDs map[int64]bool
+	httpClient     *http.Client
+	logger         *slog.Logger
 }
 
 // NewAuthHandler creates an AuthHandler.
-func NewAuthHandler(botToken, botName, jwtSecret, mgmtURL, mgmtSecret string, logger *slog.Logger) *AuthHandler {
+func NewAuthHandler(botToken, botName, jwtSecret, mgmtURL, mgmtSecret string, serverOwnerIDs map[int64]bool, logger *slog.Logger) *AuthHandler {
 	return &AuthHandler{
-		botToken:   botToken,
-		botName:    botName,
-		jwtSecret:  jwtSecret,
-		mgmtURL:    mgmtURL,
-		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		logger:     logger,
+		botToken:       botToken,
+		botName:        botName,
+		jwtSecret:      jwtSecret,
+		mgmtURL:        mgmtURL,
+		mgmtSecret:     mgmtSecret,
+		serverOwnerIDs: serverOwnerIDs,
+		httpClient:     &http.Client{Timeout: 5 * time.Second},
+		logger:         logger,
 	}
 }
 
 // JWTClaims holds the user information stored in the session JWT.
 type JWTClaims struct {
-	TelegramID int64  `json:"tid"`
-	PlayerID   *int64 `json:"pid,omitempty"`
-	FirstName  string `json:"fn"`
-	LastName   string `json:"ln,omitempty"`
-	Username   string `json:"un,omitempty"`
-	PhotoURL   string `json:"ph,omitempty"`
-	Exp        int64  `json:"exp"`
+	TelegramID    int64  `json:"tid"`
+	PlayerID      *int64 `json:"pid,omitempty"`
+	FirstName     string `json:"fn"`
+	LastName      string `json:"ln,omitempty"`
+	Username      string `json:"un,omitempty"`
+	PhotoURL      string `json:"ph,omitempty"`
+	IsServerOwner bool   `json:"so,omitempty"`
+	Exp           int64  `json:"exp"`
 }
 
 // handleCallback handles GET /api/auth/callback.
@@ -78,12 +81,13 @@ func (a *AuthHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claims := JWTClaims{
-		TelegramID: telegramID,
-		FirstName:  params["first_name"],
-		LastName:   params["last_name"],
-		Username:   params["username"],
-		PhotoURL:   params["photo_url"],
-		Exp:        time.Now().Add(tokenExpiry).Unix(),
+		TelegramID:    telegramID,
+		FirstName:     params["first_name"],
+		LastName:      params["last_name"],
+		Username:      params["username"],
+		PhotoURL:      params["photo_url"],
+		IsServerOwner: a.serverOwnerIDs[telegramID],
+		Exp:           time.Now().Add(tokenExpiry).Unix(),
 	}
 
 	if pid, err := a.lookupPlayer(r.Context(), telegramID); err == nil && pid != nil {
@@ -123,21 +127,23 @@ func (a *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type userResponse struct {
-		TelegramID int64  `json:"telegram_id"`
-		PlayerID   *int64 `json:"player_id,omitempty"`
-		FirstName  string `json:"first_name"`
-		LastName   string `json:"last_name,omitempty"`
-		Username   string `json:"username,omitempty"`
-		PhotoURL   string `json:"photo_url,omitempty"`
+		TelegramID    int64  `json:"telegram_id"`
+		PlayerID      *int64 `json:"player_id,omitempty"`
+		FirstName     string `json:"first_name"`
+		LastName      string `json:"last_name,omitempty"`
+		Username      string `json:"username,omitempty"`
+		PhotoURL      string `json:"photo_url,omitempty"`
+		IsServerOwner bool   `json:"is_server_owner,omitempty"`
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userResponse{ //nolint:errcheck
-		TelegramID: claims.TelegramID,
-		PlayerID:   claims.PlayerID,
-		FirstName:  claims.FirstName,
-		LastName:   claims.LastName,
-		Username:   claims.Username,
-		PhotoURL:   claims.PhotoURL,
+		TelegramID:    claims.TelegramID,
+		PlayerID:      claims.PlayerID,
+		FirstName:     claims.FirstName,
+		LastName:      claims.LastName,
+		Username:      claims.Username,
+		PhotoURL:      claims.PhotoURL,
+		IsServerOwner: a.serverOwnerIDs[claims.TelegramID],
 	})
 }
 

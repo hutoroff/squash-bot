@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -17,8 +18,11 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title      string `json:"title"`
-		BotIsAdmin bool   `json:"bot_is_admin"`
+		Title           string `json:"title"`
+		BotIsAdmin      bool   `json:"bot_is_admin"`
+		IsNewJoin       bool   `json:"is_new_join"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -28,6 +32,9 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("upsertGroup", "err", err, "chat_id", chatID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.IsNewJoin && req.ActorTelegramID != 0 {
+		h.auditSvc.RecordBotAddedToGroup(r.Context(), chatID, req.Title, req.ActorTelegramID, req.ActorDisplay)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -40,7 +47,9 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Language string `json:"language"`
+		Language        string `json:"language"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -53,6 +62,12 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported language; use en, de, or ru")
 		return
 	}
+	var oldLang string
+	if req.ActorTelegramID != 0 {
+		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
+			oldLang = g.Language
+		}
+	}
 	if err := h.groupRepo.SetLanguage(r.Context(), chatID, req.Language); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "group not found")
@@ -61,6 +76,9 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "language", oldLang, req.Language)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -73,7 +91,9 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Timezone string `json:"timezone"`
+		Timezone        string `json:"timezone"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -82,6 +102,12 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 	if _, err := time.LoadLocation(req.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid IANA timezone")
 		return
+	}
+	var oldTZ string
+	if req.ActorTelegramID != 0 {
+		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
+			oldTZ = g.Timezone
+		}
 	}
 	if err := h.groupRepo.SetTimezone(r.Context(), chatID, req.Timezone); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -92,15 +118,58 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "timezone", oldTZ, req.Timezone)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setGroupChangelog handles PATCH /api/v1/groups/{chatID}/changelog
+func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		ChangelogEnabled bool   `json:"changelog_enabled"`
+		ActorTelegramID  int64  `json:"actor_telegram_id"`
+		ActorDisplay     string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.groupRepo.SetChangelogEnabled(r.Context(), chatID, req.ChangelogEnabled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupChangelog", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupChangelogToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.ChangelogEnabled)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // removeGroup handles DELETE /api/v1/groups/{chatID}
+// Optional query params: actor_tg_id, actor_display, group_title (for audit).
 func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 	chatID, err := parseID(r.PathValue("chatID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid chat_id")
 		return
+	}
+	q := r.URL.Query()
+	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorDisp := q.Get("actor_display")
+	groupTitle := q.Get("group_title")
+
+	if actorTgID != 0 {
+		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorTgID, actorDisp)
 	}
 	if err := h.groupRepo.Remove(r.Context(), chatID); err != nil {
 		h.logger.Error("removeGroup", "err", err, "chat_id", chatID)

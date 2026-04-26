@@ -14,6 +14,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At 10 AM on configured game days: for each auto-booked time slot the bot creates a separate game and posts the standard announcement (pinned); if no auto-booking results exist it DMs group admins with a booking reminder; already-created games are not duplicated on re-runs
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
+- On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/language` settings, default ON)
 
 ## Tech Stack
 
@@ -369,9 +370,10 @@ Guest spots count toward capacity.
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
-| `AUTO_BOOKING_COURTS_COUNT`  | No | `3`              | Number of courts to book automatically at midnight; requires `SPORTS_BOOKING_SERVICE_URL` |
 | `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
+| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants three privileges: (1) use of the `/trigger` command in the telegram bot, (2) server-owner visibility tier in the audit log (can see all events for all groups, filter by `group_id`/`actor_tg_id`), and (3) server-owner flag in the web SPA (unlocks group/actor filters on the audit page). Must be set consistently on the management, telegram, and web services. |
+| `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
 
 ### telegram
 
@@ -383,7 +385,7 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
-| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger` |
+| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger`. Must match the value set on the management service. |
 
 ### booking
 
@@ -398,6 +400,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
 | `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
 | `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
+| `SERVICE_ADMIN_IDS`      | No       | _(empty)_ | Comma-separated Telegram user IDs treated as server owners. Grants full audit visibility (all events, all groups, `group_id`/`actor_tg_id` filters). Must match the value set on the management service. |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
 | `LOG_DIR`                | No       | _(empty)_ | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
@@ -416,7 +419,7 @@ A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using 
 
 `/trigger <event>` bypasses the cron time-window gate for the chosen task. Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`) and `game_days` validation still apply.
 
-**Auto-booking**: fires at midnight in each group's timezone on configured game days, for venues with `preferred_game_times` set. Requires `SPORTS_BOOKING_SERVICE_URL`. Iterates each comma-separated time slot independently — per-slot dedup prevents double-booking if the job re-runs. For each fresh slot: queries available (unbooked) courts at that time for the date `today + booking_opens_days`, books up to `AUTO_BOOKING_COURTS_COUNT` courts, and saves one `auto_booking_result` row per slot (carrying the slot's `game_time`). The venue-level `last_auto_booking_at` is updated after any successful slot. On full success, sends a silent DM to all group admins. On partial or full failure, silently DMs all group admins.
+**Auto-booking**: fires at midnight in each group's timezone on configured game days, for venues with `preferred_game_times` and `auto_booking_courts` set. Requires `SPORTS_BOOKING_SERVICE_URL`. Iterates each comma-separated time slot independently — per-slot dedup prevents double-booking if the job re-runs. For each fresh slot: queries available (unbooked) courts at that time for the date `today + booking_opens_days`, books up to `len(auto_booking_courts)` courts in the configured priority order, and saves one `auto_booking_result` row per slot (carrying the slot's `game_time`). The venue-level `last_auto_booking_at` is updated after any successful slot. On full success, sends a silent DM to all group admins. On partial or full failure, silently DMs all group admins.
 
 **Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 

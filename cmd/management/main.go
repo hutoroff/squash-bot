@@ -89,6 +89,10 @@ func main() {
 	venueCredRepo := storage.NewVenueCredentialRepo(pool)
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
+	auditEventRepo := storage.NewAuditEventRepo(pool)
+
+	auditSvc := service.NewAuditService(auditEventRepo, logger)
+	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
 
 	gameService := service.NewGameService(gameRepo, venueRepo)
 	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
@@ -113,14 +117,8 @@ func main() {
 
 	var bookingClient service.BookingServiceClient
 	if cfg.SportsBookingServiceURL != "" {
-		if cfg.AutoBookingCourtsCount <= 0 {
-			slog.Error("AUTO_BOOKING_COURTS_COUNT must be a positive integer", "value", cfg.AutoBookingCourtsCount)
-			os.Exit(1)
-		}
 		bookingClient = service.NewHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
-		slog.Info("booking service enabled",
-			"booking_service", cfg.SportsBookingServiceURL,
-			"auto_booking_courts", cfg.AutoBookingCourtsCount)
+		slog.Info("booking service enabled", "booking_service", cfg.SportsBookingServiceURL)
 	} else {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
@@ -128,10 +126,10 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 
-	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, loc, logger, pollWindow)
+	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, loc, logger, cfg.AutoBookingCourtsCount, cfg.CredentialErrorCooldown)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))
@@ -139,11 +137,22 @@ func main() {
 		slog.Error("add poll cron", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
+	retentionDays := cfg.AuditRetentionDays
+	if _, err := c.AddFunc("0 2 * * *", func() {
+		auditSvc.RunRetention(context.Background(), retentionDays)
+	}); err != nil {
+		slog.Error("add audit retention cron", "err", err)
+		os.Exit(1)
+	}
 	c.Start()
 	defer c.Stop()
 	slog.Info("cron scheduler started", "poll_interval", cfg.CronPoll)
 
-	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, logger, Version)
+	stateRepo := storage.NewServiceStateRepo(pool)
+	service.AnnounceChangelog(ctx, tgAPI, groupRepo, stateRepo, loc, logger, Version)
+
+	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
+	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
@@ -184,6 +193,20 @@ func parsePollWindow(spec string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid poll interval %q in cron spec %q", minField, spec)
 	}
 	return time.Duration(n) * time.Minute / 2, nil
+}
+
+func parseAdminIDs(raw string) map[int64]bool {
+	result := map[int64]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			result[id] = true
+		}
+	}
+	return result
 }
 
 func runMigrations(databaseURL string) error {

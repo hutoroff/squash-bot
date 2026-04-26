@@ -199,7 +199,7 @@ func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, 
 
 	if len(adminGroupIDs) == 1 {
 		// Show language selection directly.
-		b.renderLanguageKeyboard(msg.Chat.ID, 0, adminGroupIDs[0], lz)
+		b.renderLanguageKeyboard(ctx, msg.Chat.ID, 0, adminGroupIDs[0], lz)
 		return
 	}
 

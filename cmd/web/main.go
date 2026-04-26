@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,16 +61,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	ownerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
 	auth := webserver.NewAuthHandler(
 		cfg.TelegramBotToken,
 		cfg.TelegramBotName,
 		cfg.JWTSecret,
 		cfg.ManagementServiceURL,
 		cfg.InternalAPISecret,
+		ownerIDs,
 		logger,
 	)
 	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	h := webserver.NewHandler(distFS, Version, logger, auth, games)
+	audit := webserver.NewAuditHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit)
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
 	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)
@@ -77,6 +82,20 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("web stopped")
+}
+
+func parseAdminIDs(raw string) map[int64]bool {
+	result := map[int64]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			result[id] = true
+		}
+	}
+	return result
 }
 
 func loadTimezone(name string) (*time.Location, error) {

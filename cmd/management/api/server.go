@@ -21,6 +21,9 @@ type Handler struct {
 	groupRepo        *storage.GroupRepo
 	playerRepo       *storage.PlayerRepo
 	scheduler        *service.Scheduler
+	auditSvc         *service.AuditService
+	adminResolver    adminGroupsResolver
+	serverOwnerIDs   map[int64]bool
 	logger           *slog.Logger
 	version          string
 }
@@ -33,6 +36,9 @@ func NewHandler(
 	groupRepo *storage.GroupRepo,
 	playerRepo *storage.PlayerRepo,
 	scheduler *service.Scheduler,
+	auditSvc *service.AuditService,
+	adminResolver adminGroupsResolver,
+	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
 ) *Handler {
@@ -44,6 +50,9 @@ func NewHandler(
 		groupRepo:        groupRepo,
 		playerRepo:       playerRepo,
 		scheduler:        scheduler,
+		auditSvc:         auditSvc,
+		adminResolver:    adminResolver,
+		serverOwnerIDs:   serverOwnerIDs,
 		logger:           logger,
 		version:          version,
 	}
@@ -78,6 +87,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)
 	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/language", h.setGroupLanguage)
 	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/timezone", h.setGroupTimezone)
+	mux.HandleFunc("PATCH /api/v1/groups/{chatID}/changelog", h.setGroupChangelog)
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)
@@ -97,6 +107,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Scheduler triggers
 	mux.HandleFunc("POST /api/v1/scheduler/trigger/{event}", h.triggerScheduler)
+
+	// Audit
+	mux.HandleFunc("GET /api/v1/audit", h.listAuditEvents)
 }
 
 // NewServer builds an http.Server with the handler's routes registered.

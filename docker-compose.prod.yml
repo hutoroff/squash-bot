@@ -40,11 +40,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       SPORTS_BOOKING_SERVICE_URL: ${SPORTS_BOOKING_SERVICE_URL:-}
-      AUTO_BOOKING_COURTS_COUNT: ${AUTO_BOOKING_COURTS_COUNT:-3}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       LOG_DIR: /logs/management
     volumes:
-      - logs:/logs/management
+      - logs:/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +76,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/telegram
     volumes:
-      - logs:/logs/telegram
+      - logs:/logs
     depends_on:
       management:
         condition: service_healthy
@@ -96,8 +95,6 @@ services:
     image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-stable}
     environment:
       SERVER_PORT: "8081"
-      EVERSPORTS_EMAIL: ${EVERSPORTS_EMAIL:-}
-      EVERSPORTS_PASSWORD: ${EVERSPORTS_PASSWORD:-}
       EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
       EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
       EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:-}
@@ -107,7 +104,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/booking
     volumes:
-      - logs:/logs/booking
+      - logs:/logs
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
       interval: 10s
@@ -137,7 +134,7 @@ services:
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/web
     volumes:
-      - logs:/logs/web
+      - logs:/logs
     depends_on:
       management:
         condition: service_healthy

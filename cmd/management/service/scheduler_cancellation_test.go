@@ -77,6 +77,28 @@ func makeGameWithVenue(courts string, courtsCount int, gameDate time.Time, autoB
 
 func matchPtr(uuid string) *SlotMatchID { return &SlotMatchID{UUID: uuid} }
 
+// algorithmCredID is the credential ID used by tests that exercise the court-selection
+// algorithm but don't care about the specific login/password values.
+var algorithmCredID = int64(1)
+
+// algorithmCourtEntry creates a CourtBooking entry with algorithmCredID for algorithm tests.
+func algorithmCourtEntry(label, matchID string) *models.CourtBooking {
+	id := algorithmCredID
+	return &models.CourtBooking{CourtLabel: label, MatchID: matchID, CredentialID: &id}
+}
+
+// makeAlgorithmCredService returns a VenueCredentialService that resolves credential ID 1
+// to a fixed test account, for use in algorithm tests that need credentials but don't
+// care about the specific login/password values.
+func makeAlgorithmCredService() *VenueCredentialService {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("test-pass")
+	credRepo := &stubCredRepo{creds: []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "test@test.com", EncryptedPassword: encPw},
+	}}
+	return NewVenueCredentialService(credRepo, &stubVenueRepo{}, nil, enc)
+}
+
 // ── cancelUnusedCourtsLogicOnly tests ────────────────────────────────────────
 
 func TestCancelUnusedCourts_NilClient(t *testing.T) {
@@ -112,47 +134,52 @@ func TestCancelUnusedCourts_ZeroCourtsToCancel(t *testing.T) {
 	}
 }
 
-func TestCancelUnusedCourts_ListError(t *testing.T) {
-	client := &mockBookingClient{listErr: errors.New("network error")}
+// TestCancelUnusedCourts_LegacyPath_ReturnsError verifies that when the legacy ListMatches
+// fallback is reached (no booking entries, no venue), an explicit error is returned —
+// cancellation cannot proceed without per-credential court_bookings records.
+func TestCancelUnusedCourts_LegacyPath_ReturnsError(t *testing.T) {
+	client := &mockBookingClient{}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err == nil {
-		t.Fatal("expected error from ListMatches, got nil")
+		t.Fatal("expected error from legacy path, got nil")
+	}
+	if client.listCalls != 0 {
+		t.Errorf("expected ListMatches NOT called, got %d calls", client.listCalls)
 	}
 }
 
-func TestCancelUnusedCourts_NoOwnedSlots(t *testing.T) {
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: false, Match: matchPtr("uuid-1")},
-		},
-	}
+func TestCancelUnusedCourts_NoCourtBookings_ReturnsError(t *testing.T) {
+	client := &mockBookingClient{}
 	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
 	game := makeGame("1", 1, time.Now().Add(time.Hour))
 
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no cancellations, got %v", result.canceledCourts)
+	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
+	if err == nil {
+		t.Fatal("expected error when no court_bookings records exist, got nil")
 	}
 }
 
 func TestCancelUnusedCourts_CancelsCorrectCourts(t *testing.T) {
 	// Booked courts: 5, 6, 8, 9 → groups {5,6}, {8,9}; cancel 1 → should pick 6 (end of {5,6})
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
-			{Court: 6, IsUserBookingOwner: true, Match: matchPtr("uuid-6")},
-			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
-			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("5", "uuid-5"),
+		algorithmCourtEntry("6", "uuid-6"),
+		algorithmCourtEntry("8", "uuid-8"),
+		algorithmCourtEntry("9", "uuid-9"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGame("5,6,8,9", 4, time.Now().Add(time.Hour))
+	game.Venue = &models.Venue{ID: 10}
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	var updatedCourts string
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC,
@@ -181,16 +208,22 @@ func TestCancelUnusedCourts_Cancel2Courts_SpecExample(t *testing.T) {
 	// Booked: 1, 7, 8, 9 → groups {1}, {7,8,9}; cancel 2:
 	//   round 1: {1} is smaller (len=1) → cancel 1 (uuid-1)
 	//   round 2: now only {7,8,9} → cancel 9 (uuid-9)
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: true, Match: matchPtr("uuid-1")},
-			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
-			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
-			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("1", "uuid-1"),
+		algorithmCourtEntry("7", "uuid-7"),
+		algorithmCourtEntry("8", "uuid-8"),
+		algorithmCourtEntry("9", "uuid-9"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGame("1,7,8,9", 4, time.Now().Add(time.Hour))
+	game.Venue = &models.Venue{ID: 10}
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
@@ -216,14 +249,20 @@ func TestCancelUnusedCourts_DBWriteFailure_ReturnsError(t *testing.T) {
 	// Courts are successfully canceled at the booking service, but the DB write fails.
 	// The function must return an error so the caller can fall back to no-op and keep
 	// the notification consistent with the persisted state.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: true, Match: matchPtr("uuid-1")},
-			{Court: 2, IsUserBookingOwner: true, Match: matchPtr("uuid-2")},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("1", "uuid-1"),
+		algorithmCourtEntry("2", "uuid-2"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
+	game.Venue = &models.Venue{ID: 10}
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	dbErr := errors.New("connection reset")
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC,
@@ -235,34 +274,10 @@ func TestCancelUnusedCourts_DBWriteFailure_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestCancelUnusedCourts_MismatchedLengths_ReturnsError(t *testing.T) {
-	// Booking service returns 3 slots but game only has 2 courts.
-	// The positional mapping would be ambiguous, so the function must return an error.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: true, Match: matchPtr("uuid-1")},
-			{Court: 2, IsUserBookingOwner: true, Match: matchPtr("uuid-2")},
-			{Court: 3, IsUserBookingOwner: true, Match: matchPtr("uuid-3")},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
-	// Game says 2 courts but Eversports has 3 bookings.
-	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
-
-	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err == nil {
-		t.Fatal("expected error for mismatched court counts, got nil")
-	}
-}
-
 func TestCancelUnusedCourts_CancelError_PartialSuccess(t *testing.T) {
 	// CancelMatch returns error for the first call only.
 	callCount := 0
 	client := &mockBookingClientCustomCancel{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: true, Match: matchPtr("uuid-1")},
-			{Court: 2, IsUserBookingOwner: true, Match: matchPtr("uuid-2")},
-		},
 		cancelFn: func(uuid string) error {
 			callCount++
 			if callCount == 1 {
@@ -271,8 +286,19 @@ func TestCancelUnusedCourts_CancelError_PartialSuccess(t *testing.T) {
 			return nil
 		},
 	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("1", "uuid-1"),
+		algorithmCourtEntry("2", "uuid-2"),
+	}}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
+	game.Venue = &models.Venue{ID: 10}
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
@@ -307,23 +333,22 @@ func (m *mockBookingClientCustomCancel) BookMatch(_ context.Context, _, _, _, _,
 func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
 	// auto_booking_courts = "5,7,8,9" (priority: 5 highest, 9 lowest)
 	// All 4 are booked; cancel 2 → should cancel 9 first, then 8 (lowest priority first).
-	// Courts list maps Eversports IDs to name-numbers so Phase 1 priority matching works.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
-			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
-			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
-			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
-		},
-		courts: []BookingCourt{
-			{ID: "5", UUID: "u5", Name: "Court 5"},
-			{ID: "7", UUID: "u7", Name: "Court 7"},
-			{ID: "8", UUID: "u8", Name: "Court 8"},
-			{ID: "9", UUID: "u9", Name: "Court 9"},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("5", "uuid-5"),
+		algorithmCourtEntry("7", "uuid-7"),
+		algorithmCourtEntry("8", "uuid-8"),
+		algorithmCourtEntry("9", "uuid-9"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGameWithVenue("5,7,8,9", 4, time.Now().Add(time.Hour), "5,7,8,9")
+	game.Venue.ID = 10
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
@@ -351,20 +376,21 @@ func TestCancelUnusedCourts_AutoBookingCourts_ReverseOrder(t *testing.T) {
 func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testing.T) {
 	// auto_booking_courts = "7"; courts 8 and 9 are booked but not in the priority list.
 	// Cancel 2 → priority gives court 7; grouping fallback on {8,9} gives court 9.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 7, IsUserBookingOwner: true, Match: matchPtr("uuid-7")},
-			{Court: 8, IsUserBookingOwner: true, Match: matchPtr("uuid-8")},
-			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
-		},
-		courts: []BookingCourt{
-			{ID: "7", UUID: "u7", Name: "Court 7"},
-			{ID: "8", UUID: "u8", Name: "Court 8"},
-			{ID: "9", UUID: "u9", Name: "Court 9"},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("7", "uuid-7"),
+		algorithmCourtEntry("8", "uuid-8"),
+		algorithmCourtEntry("9", "uuid-9"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGameWithVenue("7,8,9", 3, time.Now().Add(time.Hour), "7")
+	game.Venue.ID = 10
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 2, time.UTC, noopUpdate)
 	if err != nil {
@@ -393,18 +419,20 @@ func TestCancelUnusedCourts_AutoBookingCourts_FallbackForUnlistedCourts(t *testi
 func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 	// auto_booking_courts = "5,7,8,9"; only courts 5 and 9 are booked.
 	// Cancel 1 → should cancel 9 (lowest priority that is actually booked).
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 5, IsUserBookingOwner: true, Match: matchPtr("uuid-5")},
-			{Court: 9, IsUserBookingOwner: true, Match: matchPtr("uuid-9")},
-		},
-		courts: []BookingCourt{
-			{ID: "5", UUID: "u5", Name: "Court 5"},
-			{ID: "9", UUID: "u9", Name: "Court 9"},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
+	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
+		algorithmCourtEntry("5", "uuid-5"),
+		algorithmCourtEntry("9", "uuid-9"),
+	}}
+	client := &mockBookingClient{}
 	game := makeGameWithVenue("5,9", 2, time.Now().Add(time.Hour), "5,7,8,9")
+	game.Venue.ID = 10
+
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 
 	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err != nil {
@@ -415,62 +443,6 @@ func TestCancelUnusedCourts_AutoBookingCourts_SomeMissing(t *testing.T) {
 	}
 	if len(client.cancelCalls) != 1 || client.cancelCalls[0] != "uuid-9" {
 		t.Errorf("cancel calls: got %v, want [uuid-9]", client.cancelCalls)
-	}
-}
-
-// ── cancelUsingListMatches court-name translation ─────────────────────────────
-
-func TestCancelUnusedCourts_TranslatesEversportsIDToNameNumber(t *testing.T) {
-	// Eversports court ID (500) is intentionally different from the venue name-number (3)
-	// to verify the translation path. AutoBookingCourts is NOT set — only Phase 2 runs.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
-		},
-		courts: []BookingCourt{
-			{ID: "500", UUID: "u500", Name: "Court 3"},
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
-	game := makeGame("3", 1, time.Now().Add(time.Hour))
-
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.canceledCourts) != 1 {
-		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
-	}
-	// Must be the venue name-number (3), not the raw Eversports ID (500).
-	if result.canceledCourts[0] != 3 {
-		t.Errorf("expected court name-number 3, got %d (raw Eversports ID would be 500)", result.canceledCourts[0])
-	}
-}
-
-func TestCancelUnusedCourts_FallsBackToEversportsID_WhenNoNameMapping(t *testing.T) {
-	// ListCourts returns a court with no parseable number in the name.
-	// The raw Eversports ID must be used as a fallback for display.
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 500, IsUserBookingOwner: true, Match: matchPtr("uuid-500")},
-		},
-		courts: []BookingCourt{
-			{ID: "500", UUID: "u500", Name: "Squash"}, // no number → no mapping
-		},
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
-	game := makeGame("1", 1, time.Now().Add(time.Hour))
-
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.canceledCourts) != 1 {
-		t.Fatalf("expected 1 cancellation, got %d: %v", len(result.canceledCourts), result.canceledCourts)
-	}
-	// No name mapping → falls back to raw Eversports ID 500.
-	if result.canceledCourts[0] != 500 {
-		t.Errorf("expected fallback to raw Eversports ID 500, got %d", result.canceledCourts[0])
 	}
 }
 
@@ -547,66 +519,6 @@ func TestCourtsToCancel_Calculation(t *testing.T) {
 // noopUpdate is a courtsUpdater that does nothing, for tests that don't need DB writes.
 func noopUpdate(_ context.Context, _ int64, _ string, _ int) error { return nil }
 
-// ── recordingBookingClient ─────────────────────────────────────────────────────
-
-// recordingBookingClient records the arguments passed to ListMatches so tests can
-// assert that the caller passed the correct date and time parameters.
-type recordingBookingClient struct {
-	listedDate      string
-	listedStartHHMM string
-	listedEndHHMM   string
-	slots           []BookingSlot
-}
-
-func (r *recordingBookingClient) ListMatches(_ context.Context, date, startHHMM, endHHMM string, _ bool, _, _ string) ([]BookingSlot, error) {
-	r.listedDate = date
-	r.listedStartHHMM = startHHMM
-	r.listedEndHHMM = endHHMM
-	return r.slots, nil
-}
-func (r *recordingBookingClient) CancelMatch(_ context.Context, _, _, _ string) error { return nil }
-func (r *recordingBookingClient) ListCourts(_ context.Context, _, _, _ string) ([]BookingCourt, error) {
-	return nil, nil
-}
-func (r *recordingBookingClient) BookMatch(_ context.Context, _, _, _, _, _ string) (*BookMatchResult, error) {
-	return nil, nil
-}
-
-// ── timezone regression test ─────────────────────────────────────────────────
-
-func TestCancelUnusedCourts_UsesLocalTimeForSlotQuery(t *testing.T) {
-	// Regression: the original code called game.GameDate.UTC().Format(...) when
-	// building the ListMatches parameters. For a game stored at 23:30 UTC (which is
-	// 00:30 CET / Berlin the NEXT calendar day), that produced the wrong date and HHMM.
-	//
-	// Berlin in January is CET (UTC+1).
-	// GameDate = 2026-01-15 23:30 UTC == 2026-01-16 00:30 CET.
-	//
-	// Correct (local Berlin): date "2026-01-16", startHHMM "0030", endHHMM "0040".
-	// Wrong (UTC):            date "2026-01-15", startHHMM "2330", endHHMM "2340".
-	berlin, err := time.LoadLocation("Europe/Berlin")
-	if err != nil {
-		t.Fatalf("load location: %v", err)
-	}
-
-	gameDate := time.Date(2026, 1, 15, 23, 30, 0, 0, time.UTC)
-	recorder := &recordingBookingClient{slots: nil} // empty → no-op, but ListMatches is still called
-	s := &CancellationReminderJob{bookingClient: recorder, logger: noopLogger()}
-	game := makeGame("1,2", 2, gameDate)
-
-	_, _ = s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, berlin, noopUpdate)
-
-	if recorder.listedDate != "2026-01-16" {
-		t.Errorf("date: got %q, want %q (local Berlin date, not UTC)", recorder.listedDate, "2026-01-16")
-	}
-	if recorder.listedStartHHMM != "0030" {
-		t.Errorf("startHHMM: got %q, want %q (local Berlin time)", recorder.listedStartHHMM, "0030")
-	}
-	if recorder.listedEndHHMM != "0040" {
-		t.Errorf("endHHMM: got %q, want %q (local Berlin time +10 min)", recorder.listedEndHHMM, "0040")
-	}
-}
-
 // ── stubCourtBookingRepo ──────────────────────────────────────────────────────
 
 type stubCourtBookingRepo struct {
@@ -660,14 +572,19 @@ func TestCancelUnusedCourts_NewFlow_EntriesFound_SkipsListMatches(t *testing.T) 
 	// When court_bookings entries exist, the new flow must be used and
 	// ListMatches must NOT be called.
 	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
 	}}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -677,8 +594,10 @@ func TestCancelUnusedCourts_NewFlow_EntriesFound_SkipsListMatches(t *testing.T) 
 	}
 }
 
-func TestCancelUnusedCourts_NewFlow_EmptyEntries_FallsBackToListMatches(t *testing.T) {
-	// Empty booking entries must fall through to the legacy ListMatches path.
+// TestCancelUnusedCourts_NewFlow_EmptyEntries_Error verifies that when the court_bookings
+// repo returns no entries, the function falls through to the legacy path which now returns
+// an explicit error — per-credential records are required for cancellation.
+func TestCancelUnusedCourts_NewFlow_EmptyEntries_Error(t *testing.T) {
 	cbRepo := &stubCourtBookingRepo{entries: nil}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
@@ -686,16 +605,18 @@ func TestCancelUnusedCourts_NewFlow_EmptyEntries_FallsBackToListMatches(t *testi
 
 	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when court_bookings returns no entries, got nil")
 	}
-	if client.listCalls != 1 {
-		t.Errorf("expected ListMatches to be called once on fallback, got %d", client.listCalls)
+	if client.listCalls != 0 {
+		t.Errorf("expected ListMatches NOT called, got %d", client.listCalls)
 	}
 }
 
-func TestCancelUnusedCourts_NewFlow_RepoError_FallsBackToListMatches(t *testing.T) {
-	// A repo error must be logged and the legacy path must be used.
+// TestCancelUnusedCourts_NewFlow_RepoError_Error verifies that a repo error falls through
+// to the legacy path which now returns an explicit error — cancellation cannot continue
+// without per-credential court_bookings records.
+func TestCancelUnusedCourts_NewFlow_RepoError_Error(t *testing.T) {
 	cbRepo := &stubCourtBookingRepo{getErr: errors.New("db timeout")}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
@@ -703,11 +624,11 @@ func TestCancelUnusedCourts_NewFlow_RepoError_FallsBackToListMatches(t *testing.
 
 	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
 	_, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when court_bookings repo fails, got nil")
 	}
-	if client.listCalls != 1 {
-		t.Errorf("expected ListMatches fallback on repo error, got %d calls", client.listCalls)
+	if client.listCalls != 0 {
+		t.Errorf("expected ListMatches NOT called, got %d calls", client.listCalls)
 	}
 }
 
@@ -717,15 +638,20 @@ func TestCancelUsingBookingEntries_Phase2ConsecutiveGrouping(t *testing.T) {
 	// No AutoBookingCourts → Phase 1 skipped, Phase 2 picks from the smallest group.
 	// Courts 1,2,3 form one group; cancel 1 → picks 3 (end of the group).
 	entries := []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
-		courtBookingEntry("3", "match-3", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
+		algorithmCourtEntry("3", "match-3"),
 	}
 	client := &mockBookingClient{}
 	game := makeGame("1,2,3", 3, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: &stubCourtBookingRepo{}, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: &stubCourtBookingRepo{},
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 1, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -744,17 +670,21 @@ func TestCancelUsingBookingEntries_Phase2ConsecutiveGrouping(t *testing.T) {
 func TestCancelUsingBookingEntries_Phase1PrioritySelection(t *testing.T) {
 	// auto_booking_courts = "5,7,8" (5 = highest priority, 8 = lowest).
 	// Cancel 2: Phase 1 iterates in reverse → picks 8 first, then 7.
-	credID := int64(1)
 	entries := []*models.CourtBooking{
-		courtBookingEntry("5", "match-5", &credID),
-		courtBookingEntry("7", "match-7", &credID),
-		courtBookingEntry("8", "match-8", &credID),
+		algorithmCourtEntry("5", "match-5"),
+		algorithmCourtEntry("7", "match-7"),
+		algorithmCourtEntry("8", "match-8"),
 	}
 	client := &mockBookingClient{}
 	game := makeGame("5,7,8", 3, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10, AutoBookingCourts: "5,7,8"}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: &stubCourtBookingRepo{}, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: &stubCourtBookingRepo{},
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 2, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -768,8 +698,10 @@ func TestCancelUsingBookingEntries_Phase1PrioritySelection(t *testing.T) {
 	}
 }
 
-func TestCancelUsingBookingEntries_NilCredService_UsesEmptyCredentials(t *testing.T) {
-	// credService == nil: cancel must still proceed with empty login/password.
+// TestCancelUsingBookingEntries_NilCredService_SkipsCourt verifies that when credService
+// is nil, courts with a non-nil CredentialID cannot have their credential resolved and
+// are skipped — added to cancelErrors rather than canceled.
+func TestCancelUsingBookingEntries_NilCredService_SkipsCourt(t *testing.T) {
 	credID := int64(99)
 	entries := []*models.CourtBooking{
 		courtBookingEntry("1", "match-1", &credID),
@@ -778,30 +710,43 @@ func TestCancelUsingBookingEntries_NilCredService_UsesEmptyCredentials(t *testin
 	game := makeGame("1", 1, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: &stubCourtBookingRepo{}, credService: nil, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: &stubCourtBookingRepo{},
+		credService:      nil, // cannot resolve credentials
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 1, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.canceledCourts) != 1 {
-		t.Fatalf("expected 1 canceled, got %d", len(result.canceledCourts))
+	if len(result.canceledCourts) != 0 {
+		t.Errorf("expected no canceled courts (credential missing), got %v", result.canceledCourts)
 	}
-	if client.cancelLoginCalls[0] != "" {
-		t.Errorf("expected empty login (env-var fallback), got %q", client.cancelLoginCalls[0])
+	if len(result.cancelErrors) == 0 {
+		t.Errorf("expected cancelErrors to be populated when credential is missing")
+	}
+	if len(client.cancelCalls) != 0 {
+		t.Errorf("expected CancelMatch NOT called, got %v", client.cancelCalls)
 	}
 }
 
 func TestCancelUsingBookingEntries_MarkCanceledCalledOnSuccess(t *testing.T) {
 	cbRepo := &stubCourtBookingRepo{}
 	entries := []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
 	}
 	client := &mockBookingClient{}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: cbRepo, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: cbRepo,
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 2, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -818,13 +763,12 @@ func TestCancelUsingBookingEntries_PartialCancelFailure(t *testing.T) {
 	// First cancel attempt fails; second succeeds.
 	// canceledCourts must contain only the success; cancelErrors must contain the failure.
 	entries := []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
 	}
 	callNum := 0
 	cancelErr := errors.New("cancel failed")
 	client := &mockBookingClientCustomCancel{
-		slots: nil,
 		cancelFn: func(uuid string) error {
 			callNum++
 			if callNum == 1 {
@@ -836,7 +780,12 @@ func TestCancelUsingBookingEntries_PartialCancelFailure(t *testing.T) {
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: &stubCourtBookingRepo{}, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: &stubCourtBookingRepo{},
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 2, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -852,15 +801,20 @@ func TestCancelUsingBookingEntries_PartialCancelFailure(t *testing.T) {
 func TestCancelUsingBookingEntries_AllCancelsFail_PopulatesCancelErrors(t *testing.T) {
 	// All CancelMatch calls fail → canceledCourts empty, cancelErrors contains each failure.
 	entries := []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
 	}
 	cancelErr := errors.New("eversports: 403 forbidden")
 	client := &mockBookingClient{cancelErr: cancelErr}
 	game := makeGame("1,2", 2, time.Now().Add(time.Hour))
 	game.Venue = &models.Venue{ID: 10}
 
-	s := &CancellationReminderJob{bookingClient: client, courtBookingRepo: &stubCourtBookingRepo{}, logger: noopLogger()}
+	s := &CancellationReminderJob{
+		bookingClient:    client,
+		courtBookingRepo: &stubCourtBookingRepo{},
+		credService:      makeAlgorithmCredService(),
+		logger:           noopLogger(),
+	}
 	result, err := s.cancelUsingBookingEntries(context.Background(), game, entries, 2, noopUpdate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -875,31 +829,6 @@ func TestCancelUsingBookingEntries_AllCancelsFail_PopulatesCancelErrors(t *testi
 		if !errors.Is(e, cancelErr) {
 			t.Errorf("cancelErrors[%d] = %v, want wrapping %v", i, e, cancelErr)
 		}
-	}
-}
-
-func TestCancelUnusedCourts_ListMatchesPath_CancelFail_PopulatesCancelErrors(t *testing.T) {
-	// Legacy ListMatches path: CancelMatch returns an error.
-	// cancelErrors must be populated; no infrastructure error returned.
-	cancelErr := errors.New("eversports: session expired")
-	client := &mockBookingClient{
-		slots: []BookingSlot{
-			{Court: 1, IsUserBookingOwner: true, Match: matchPtr("uuid-1")},
-		},
-		cancelErr: cancelErr,
-	}
-	s := &CancellationReminderJob{bookingClient: client, logger: noopLogger()}
-	game := makeGame("1", 1, time.Now().Add(time.Hour))
-
-	result, err := s.cancelUnusedCourtsLogicOnly(context.Background(), game, 1, time.UTC, noopUpdate)
-	if err != nil {
-		t.Fatalf("unexpected infrastructure error: %v", err)
-	}
-	if len(result.canceledCourts) != 0 {
-		t.Errorf("expected no canceled courts, got %v", result.canceledCourts)
-	}
-	if len(result.cancelErrors) != 1 || !errors.Is(result.cancelErrors[0], cancelErr) {
-		t.Errorf("expected cancelErrors to contain the booking-service error, got %v", result.cancelErrors)
 	}
 }
 
@@ -1026,7 +955,7 @@ func TestCancelUnusedCourts_RoutesToSlotEntries_WhenGameLinkedToResult(t *testin
 	game.ID = 42
 	game.Venue = &models.Venue{ID: 10}
 
-	entries18 := []*models.CourtBooking{courtBookingEntry("1", "match-18", nil)}
+	entries18 := []*models.CourtBooking{algorithmCourtEntry("1", "match-18")}
 	cbRepo := &routingCourtBookingRepo{
 		byTimeEntries: map[string][]*models.CourtBooking{
 			"18:00": entries18,
@@ -1041,6 +970,7 @@ func TestCancelUnusedCourts_RoutesToSlotEntries_WhenGameLinkedToResult(t *testin
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: abrRepo,
 		logger:                noopLogger(),
 	}
@@ -1059,7 +989,6 @@ func TestCancelUnusedCourts_RoutesToSlotEntries_WhenGameLinkedToResult(t *testin
 	if cbRepo.byDateCalled {
 		t.Error("GetByVenueAndDate must NOT be called when slot routing succeeded")
 	}
-	// ListMatches must not be called when booking entries are found.
 	if len(result.canceledCourts) != 1 || result.canceledCourts[0] != 1 {
 		t.Errorf("expected court 1 canceled, got %v", result.canceledCourts)
 	}
@@ -1075,13 +1004,14 @@ func TestCancelUnusedCourts_FallsBackToAllDate_WhenNoLinkedResult(t *testing.T) 
 	game.Venue = &models.Venue{ID: 10}
 
 	cbRepo := &routingCourtBookingRepo{
-		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-fallback", nil)},
+		byDateEntries: []*models.CourtBooking{algorithmCourtEntry("1", "match-fallback")},
 	}
 	abrRepo := &perGameAutoBookingResultRepo{} // GetByGameID returns nil
 
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: abrRepo,
 		logger:                noopLogger(),
 	}
@@ -1112,12 +1042,13 @@ func TestLoadCourtBookingEntries_NilAutoBookingResultRepo_FallsBackToByDate(t *t
 	game.Venue = &models.Venue{ID: 10}
 
 	cbRepo := &routingCourtBookingRepo{
-		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-nil-repo", nil)},
+		byDateEntries: []*models.CourtBooking{algorithmCourtEntry("1", "match-nil-repo")},
 	}
 
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: nil, // intentionally not set
 		logger:                noopLogger(),
 	}
@@ -1148,7 +1079,7 @@ func TestLoadCourtBookingEntries_GetByGameIDError_FallsBackToByDate(t *testing.T
 	game.Venue = &models.Venue{ID: 10}
 
 	cbRepo := &routingCourtBookingRepo{
-		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-err-fallback", nil)},
+		byDateEntries: []*models.CourtBooking{algorithmCourtEntry("1", "match-err-fallback")},
 	}
 	abrRepo := &perGameAutoBookingResultRepo{
 		errGetByGameID: errors.New("db timeout"),
@@ -1157,6 +1088,7 @@ func TestLoadCourtBookingEntries_GetByGameIDError_FallsBackToByDate(t *testing.T
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: abrRepo,
 		logger:                noopLogger(),
 	}
@@ -1188,7 +1120,7 @@ func TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate(t *testing.T) {
 	game.Venue = &models.Venue{ID: 10}
 
 	cbRepo := &routingCourtBookingRepo{
-		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-legacy-gametime", nil)},
+		byDateEntries: []*models.CourtBooking{algorithmCourtEntry("1", "match-legacy-gametime")},
 	}
 	abrRepo := &perGameAutoBookingResultRepo{
 		resultByGameID: map[int64]*models.AutoBookingResult{
@@ -1199,6 +1131,7 @@ func TestLoadCourtBookingEntries_EmptyGameTime_FallsBackToByDate(t *testing.T) {
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: abrRepo,
 		logger:                noopLogger(),
 	}
@@ -1230,7 +1163,7 @@ func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate
 	game.Venue = &models.Venue{ID: 10}
 
 	cbRepo := &routingCourtBookingRepo{
-		byDateEntries: []*models.CourtBooking{courtBookingEntry("1", "match-date-fallback", nil)},
+		byDateEntries: []*models.CourtBooking{algorithmCourtEntry("1", "match-date-fallback")},
 		byTimeErr:     errors.New("db: connection refused"),
 	}
 	abrRepo := &perGameAutoBookingResultRepo{
@@ -1242,6 +1175,7 @@ func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate
 	s := &CancellationReminderJob{
 		bookingClient:         &mockBookingClient{},
 		courtBookingRepo:      cbRepo,
+		credService:           makeAlgorithmCredService(),
 		autoBookingResultRepo: abrRepo,
 		logger:                noopLogger(),
 	}
@@ -1256,7 +1190,6 @@ func TestLoadCourtBookingEntries_GetByVenueAndDateAndTimeError_FallsBackToByDate
 	if !cbRepo.byDateCalled {
 		t.Error("expected GetByVenueAndDate to be called as fallback after GetByVenueAndDateAndTime error")
 	}
-	// Cancellation must still succeed via the credential-aware path using the all-date entries.
 	if len(result.canceledCourts) != 1 {
 		t.Errorf("expected 1 court canceled via fallback, got %v", result.canceledCourts)
 	}
@@ -1297,11 +1230,12 @@ func (r *stubGuestRepoPC) GetCountByGame(_ context.Context, _ int64) (int, error
 
 type stubGroupRepoPC struct{ group *models.Group }
 
-func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error { return nil }
-func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error    { return nil }
-func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error    { return nil }
-func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                    { return nil }
-func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)            { return true, nil }
+func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error   { return nil }
+func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error      { return nil }
+func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error      { return nil }
+func (r *stubGroupRepoPC) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error { return nil }
+func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                     { return nil }
+func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)             { return true, nil }
 func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, error) {
 	return r.group, nil
 }
@@ -1394,8 +1328,8 @@ func TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled(t *test
 	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
 	// 0 players, 2 courts → capacity=4, courtsToCancel=2 → both courts canceled.
 	cbRepo := &stubCourtBookingRepo{entries: []*models.CourtBooking{
-		courtBookingEntry("1", "match-1", nil),
-		courtBookingEntry("2", "match-2", nil),
+		algorithmCourtEntry("1", "match-1"),
+		algorithmCourtEntry("2", "match-2"),
 	}}
 	notifier := &spyNotifier{}
 
@@ -1404,6 +1338,7 @@ func TestProcessCancellationReminder_NotifierCalledWhenCourtsAreCanceled(t *test
 	game.Venue = &models.Venue{ID: 5}
 
 	job := makeJobForPC(&captureSendAPI{}, &stubGameRepoPC{}, 0, 0, group, notifier, cbRepo, &mockBookingClient{})
+	job.credService = makeAlgorithmCredService()
 	job.processCancellationReminder(context.Background(), game)
 
 	if len(notifier.calledGameIDs) != 1 || notifier.calledGameIDs[0] != 10 {

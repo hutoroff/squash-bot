@@ -21,15 +21,21 @@ cmd/management/
 ├── main.go            — wiring: DB pool, repos, services, HTTP server, cron
 ├── api/
 │   ├── server.go      — Handler struct, RegisterRoutes, NewServer, requireBearer middleware
-│   ├── games.go       — game + participation HTTP handlers
-│   ├── groups.go      — group HTTP handlers
+│   ├── games.go       — game HTTP handlers
+│   ├── participations.go — participation HTTP handlers; kick endpoints accept audit query params
+│   ├── groups.go      — group HTTP handlers; upsertGroup/removeGroup accept actor audit params
 │   ├── venues.go      — venue HTTP handlers
+│   ├── audit.go       — GET /api/v1/audit (listAuditEvents); enforces visibility per caller
 │   └── scheduler.go   — POST /api/v1/scheduler/trigger/{event}
 └── service/
 │   ├── interfaces.go           — ALL repository + Telegram interfaces (source of truth)
 │   ├── game_service.go         — GameService: Create, GetByID, UpdateCourts, …
 │   ├── participation_service.go — ParticipationService: Join, Skip, AddGuest, RemoveGuest, KickPlayer, KickGuest
 │   ├── venue_service.go        — VenueService: Create, GetByGroup, Update, Delete
+│   ├── audit_service.go        — AuditService: 15+ Record* methods, Query, RunRetention
+│   ├── changelog_announcer.go  — AnnounceChangelog: on startup, send new-version changelog to opted-in groups
+│   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
+│   │                              a caller administers (satisfies api.adminGroupsResolver interface)
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
 │   ├── scheduler.go            — Scheduler: RunScheduledTasks, ForceRun, registers 4 jobs
 │   ├── cancellation_reminder.go — CancellationReminderJob
@@ -48,7 +54,9 @@ cmd/management/
     ├── group_repo.go            — GroupRepo implements GroupRepository
     ├── venue_repo.go            — VenueRepo implements VenueRepository
     ├── venue_credential_repo.go — VenueCredentialRepo implements VenueCredentialRepository
-    └── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
+    ├── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
+    ├── audit_event_repo.go      — AuditEventRepo implements AuditEventRepository
+    └── service_state_repo.go    — ServiceStateRepo implements ServiceStateRepository (KV store)
 ```
 
 ---
@@ -66,13 +74,18 @@ GameRepository   — Create, GetByID, GetUpcomingGames, UpdateMessageID, UpdateC
 PlayerRepository — Upsert, GetByTelegramID
 ParticipationRepository — Upsert, GetByGame, DeleteByGameAndPlayer, GetRegisteredCount
 GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCountByGame
-GroupRepository  — Upsert, SetLanguage, SetTimezone, Remove, Exists, GetByID, GetAll
+GroupRepository  — Upsert, SetLanguage, SetTimezone, SetChangelogEnabled, Remove, Exists, GetByID, GetAll
+ServiceStateRepository — Get(ctx, key) (string, error), Set(ctx, key, value string) error
+                   — backed by `service_state` table (TEXT key PK, TEXT value); `pgx.ErrNoRows` when key absent
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
                    SetLastBookingReminderAt, SetLastAutoBookingAt
 VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxCourts),
                    ListByVenueID, ListWithPasswordByVenueID, GetWithPasswordByID(id),
                    Delete(id, venueID), ExistsByLogin(venueID, login),
                    PrioritiesInUse(venueID), SetLastErrorAt(id)
+AuditEventRepository — Insert(ctx, *models.AuditEvent),
+                   Query(ctx, models.AuditQueryFilter) []*models.AuditEvent,
+                   DeleteOlderThan(ctx, cutoff time.Time) int64
 CourtBookingRepository — Save(ctx, *models.CourtBooking),
                    GetByVenueAndDate(ctx, venueID, gameDate) — returns only active (canceled_at IS NULL),
                    GetByVenueAndDateAndTime(ctx, venueID int64, date time.Time, gameTime string) — active rows filtered by game_time column,
@@ -135,6 +148,7 @@ GET /api/v1/players/{playerID}/games               — listPlayerGames
 PUT    /api/v1/groups/{chatID}                     — upsertGroup
 PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
 PATCH  /api/v1/groups/{chatID}/timezone            — setGroupTimezone
+PATCH  /api/v1/groups/{chatID}/changelog           — setGroupChangelog (body: changelog_enabled bool, actor fields)
 DELETE /api/v1/groups/{chatID}                     — removeGroup
 GET    /api/v1/groups                              — listGroups
 GET    /api/v1/groups/{chatID}                     — getGroup
@@ -151,11 +165,58 @@ DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: 
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
 
 POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
+
+GET  /api/v1/audit                                 — listAuditEvents
+     required header: X-Caller-Tg-Id (caller's Telegram ID, injected by web service)
+     query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339, exclusive upper bound)
+     server-owner-only params: group_id, actor_tg_id
+     visibility scoping (non-owners):
+       - own player events: visibility='player' AND actor_tg_id = caller's TG ID
+       - group admin events: visibility IN ('player','group_admin') AND group_id IN (groups where caller is admin)
+       both scopes are OR-combined; AdminGroupsResolver calls GetChatAdministrators per group (errors silently ignored)
 ```
 
 ---
 
 ## Service layer patterns
+
+### AuditService (`service/audit_service.go`)
+
+Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silently log errors — they never return errors to callers.
+
+**Event types and visibility:**
+
+| Event type | Visibility | Triggered by |
+|---|---|---|
+| `game.created` | group_admin | Admin creates game |
+| `game.courts_reserved` | group_admin | Admin updates courts |
+| `participation.joined` | player | Player joins |
+| `participation.skipped` | player | Player skips |
+| `participation.guest_added` | player | Player adds guest |
+| `participation.guest_removed` | player | Player removes guest |
+| `participation.player_kicked` | group_admin | Admin kicks player |
+| `participation.guest_kicked` | group_admin | Admin kicks guest |
+| `credential.added` | group_admin | Admin adds booking credential |
+| `credential.removed` | group_admin | Admin removes booking credential |
+| `venue.created` | group_admin | Admin creates venue |
+| `venue.updated` | group_admin | Admin updates venue |
+| `venue.deleted` | group_admin | Admin deletes venue |
+| `group.bot_added` | server_owner | Bot added to a new group |
+| `group.bot_removed` | server_owner | Bot removed from group |
+| `group.settings_changed` | group_admin | Admin changes language/timezone |
+| `group.changelog_toggled` | server_owner | Admin enables/disables changelog announcements for group |
+| `court.booked` | group_admin | Scheduler auto-books a court |
+| `court.canceled` | group_admin | Scheduler cancels a court |
+
+**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
+
+**Retention:** `RunRetention(ctx, days)` deletes rows older than `days` days. Called daily by a cron entry in `main.go` (controlled by `AUDIT_RETENTION_DAYS`, default 365).
+
+**Actor propagation pattern:** HTTP handlers receive actor info from the caller:
+- POST/PATCH bodies carry `actor_telegram_id` and `actor_display` JSON fields
+- DELETE endpoints carry `actor_tg_id` and `actor_display` query params (no body)
+- `group_id` is passed as a query param for kick endpoints (handler doesn't know chat ID from path alone)
+- Audit is skipped when `actorTgID == 0` (system/anonymous callers)
 
 ### GameService / ParticipationService / VenueService
 
@@ -261,7 +322,9 @@ games:              id, chat_id, message_id, game_date, courts_count, courts,
 players:            id, telegram_id UNIQUE, username, first_name, last_name
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id
-bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC'
+bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC',
+                    changelog_enabled BOOLEAN DEFAULT TRUE
+service_state:      key TEXT PK, value TEXT NOT NULL  — generic KV store; used to track `last_changelog_version`
 venues:             id, group_id FK→bot_groups, name, courts, time_slots, address,
                     grace_period_hours DEFAULT 24, game_days, booking_opens_days DEFAULT 14,
                     last_booking_reminder_at, preferred_game_times TEXT DEFAULT '', last_auto_booking_at,
@@ -282,6 +345,13 @@ auto_booking_results: id, venue_id FK→venues ON DELETE CASCADE, game_date DATE
                     courts (comma-sep court numbers), courts_count INT,
                     game_id BIGINT FK→games ON DELETE SET NULL (NULL = game not yet created by BookingReminderJob),
                     created_at, UNIQUE(venue_id, game_date, game_time)
+audit_events:       id BIGSERIAL PK, occurred_at TIMESTAMPTZ DEFAULT NOW(),
+                    event_type TEXT, visibility TEXT ('player'|'group_admin'|'server_owner'),
+                    actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable),
+                    actor_display TEXT, group_id BIGINT (nullable, NO FK — stored value; deleting a group does not null-out historical events),
+                    subject_type TEXT, subject_id TEXT, description TEXT, metadata JSONB (nullable)
+                    INDEX: (group_id, occurred_at DESC), (actor_tg_id, occurred_at DESC),
+                           (event_type, occurred_at DESC)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
@@ -300,15 +370,22 @@ LOG_LEVEL=INFO
 LOG_DIR=                      optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
 SPORTS_BOOKING_SERVICE_URL=   optional; enables auto court cancellation + auto booking
-AUTO_BOOKING_COURTS_COUNT=3   courts to book per midnight run; requires SPORTS_BOOKING_SERVICE_URL
 CREDENTIALS_ENCRYPTION_KEY=   optional; 64 hex chars (AES-256-GCM) for venue booking credentials at rest; 503 when unset
 CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before retry
+SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs treated as server owners;
+                              grants /trigger access and full audit event visibility (server_owner tier)
+AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily retention cron deletes older rows)
 ```
 
 ---
 
 ## Constraints and conventions
 
+- **Audit any action that meaningfully changes state.** Every new endpoint or service method that creates, updates, or deletes a meaningful entity must call the appropriate `AuditService.Record*` method. Use the table in the AuditService section to pick visibility. Steps:
+  1. Add an `AuditEventType` constant in `internal/models/audit.go`.
+  2. Add a `Record<Action>` method on `AuditService` in `audit_service.go` following the best-effort pattern (call `s.record`, never return error). Set `Visibility` to the lowest tier that should see the event: `player` for self-service actions, `group_admin` for admin-gated actions, `server_owner` for global/infra events.
+  3. Call the method from the API handler (after the state-changing operation succeeds) or from the scheduler job. Propagate actor info via the **actor propagation pattern** (body fields for POST/PATCH/PUT; query params `actor_tg_id`, `actor_display`, `group_id` for DELETE). Skip the call when `actorTgID == 0`.
+  4. Update the event-type table in this SKILL.md.
 - New business rules go in `service/`, not `api/`
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`

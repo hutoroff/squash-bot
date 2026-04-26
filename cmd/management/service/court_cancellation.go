@@ -155,12 +155,19 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 		if entry.CredentialID != nil && j.credService != nil {
 			cred, err := j.credService.GetDecryptedByID(ctx, *entry.CredentialID)
 			if err != nil {
-				j.logger.Error("court cancellation: get credential for cancel",
+				j.logger.Error("court cancellation: get credential for cancel, skipping court",
 					"game_id", game.ID, "cred_id", *entry.CredentialID, "err", err)
-				// Proceed with empty credentials (env-var fallback).
+				cancelErrors = append(cancelErrors, fmt.Errorf("credential lookup failed for court %d: %w", label, err))
+				continue
 			} else if cred != nil {
 				login, password = cred.Login, cred.Password
 			}
+		}
+		if login == "" {
+			j.logger.Warn("court cancellation: no credentials for court, skipping",
+				"game_id", game.ID, "court_label", label, "match_id", entry.MatchID)
+			cancelErrors = append(cancelErrors, fmt.Errorf("no credentials available for court %d", label))
+			continue
 		}
 		if err := j.bookingClient.CancelMatch(ctx, entry.MatchID, login, password); err != nil {
 			j.logger.Error("court cancellation: cancel match failed",
@@ -175,6 +182,9 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 				"game_id", game.ID, "match_id", entry.MatchID, "err", err)
 		}
 		canceledLabels = append(canceledLabels, label)
+		if j.auditSvc != nil && game.Venue != nil {
+			j.auditSvc.RecordCourtCanceled(ctx, game.Venue.ID, game.ChatID, game.Venue.Name, strconv.Itoa(label), game.GameDate)
+		}
 	}
 
 	if len(canceledLabels) == 0 {
@@ -215,157 +225,21 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 	}, nil
 }
 
-// cancelUsingListMatches is the legacy fallback path for courts that were booked
-// before the court_bookings table was introduced. It queries the booking service
-// with the default (env-var) account and cancels using empty credentials.
+// cancelUsingListMatches was the legacy fallback for courts booked before the
+// court_bookings table existed, relying on the service-level Eversports account
+// (EVERSPORTS_EMAIL/PASSWORD). Those env vars have been removed — the booking
+// service now requires per-request credentials. All active bookings are expected
+// to carry credential records and be handled by cancelUsingBookingEntries.
 func (j *CancellationReminderJob) cancelUsingListMatches(
 	ctx context.Context,
 	game *models.Game,
-	courtsToCancel int,
-	loc *time.Location,
-	updateFn courtsUpdater,
+	_ int,
+	_ *time.Location,
+	_ courtsUpdater,
 ) (*courtCancellationResult, error) {
-	// Format time parameters in local (venue) time.
-	date, startHHMM, endHHMM := slotQueryWindow(game.GameDate.In(loc))
-
-	slots, err := j.bookingClient.ListMatches(ctx, date, startHHMM, endHHMM, true, "", "")
-	if err != nil {
-		return nil, fmt.Errorf("list matches: %w", err)
-	}
-
-	type bookedCourt struct {
-		courtID   int
-		matchUUID string
-	}
-	var booked []bookedCourt
-	for _, sl := range slots {
-		if sl.IsUserBookingOwner && sl.Match != nil && sl.Match.UUID != "" {
-			booked = append(booked, bookedCourt{courtID: sl.Court, matchUUID: sl.Match.UUID})
-		}
-	}
-
-	if len(booked) == 0 {
-		j.logger.Info("court cancellation: no owned bookings found", "game_id", game.ID)
-		return buildNoOpResult(game), nil
-	}
-
-	sort.Slice(booked, func(i, k int) bool { return booked[i].courtID < booked[k].courtID })
-
-	courtIDs := make([]int, len(booked))
-	for i, b := range booked {
-		courtIDs[i] = b.courtID
-	}
-
-	// Build Eversports ID → court name-number mapping for display and priority-based selection.
-	var nameNumByID map[int]int
-	allCourts, listErr := j.bookingClient.ListCourts(ctx, date, "", "")
-	if listErr != nil {
-		j.logger.Warn("court cancellation: list courts failed, court names unavailable for display",
-			"game_id", game.ID, "err", listErr)
-	} else {
-		nameNumByID = make(map[int]int, len(allCourts))
-		for _, c := range allCourts {
-			id, err := strconv.Atoi(c.ID)
-			if err != nil {
-				continue
-			}
-			if n := extractCourtNumber(c.Name); n > 0 && id > 0 {
-				nameNumByID[id] = n
-			}
-		}
-	}
-
-	var selected []int
-	if game.Venue != nil && game.Venue.AutoBookingCourts != "" && len(nameNumByID) > 0 {
-		bookedByNameNum := make(map[int]int, len(booked))
-		for _, b := range booked {
-			if n := nameNumByID[b.courtID]; n > 0 {
-				bookedByNameNum[n] = b.courtID
-			}
-		}
-		orderedPreferred := parseCourtIDs(game.Venue.AutoBookingCourts)
-		for i := len(orderedPreferred) - 1; i >= 0 && len(selected) < courtsToCancel; i-- {
-			if eversportsID, ok := bookedByNameNum[orderedPreferred[i]]; ok {
-				selected = append(selected, eversportsID)
-			}
-		}
-	}
-	if len(selected) < courtsToCancel {
-		selectedSet := make(map[int]bool, len(selected))
-		for _, cID := range selected {
-			selectedSet[cID] = true
-		}
-		var remaining []int
-		for _, cID := range courtIDs {
-			if !selectedSet[cID] {
-				remaining = append(remaining, cID)
-			}
-		}
-		selected = append(selected, selectCourtsToCancel(remaining, courtsToCancel-len(selected))...)
-	}
-
-	uuidByCourtID := make(map[int]string, len(booked))
-	for _, b := range booked {
-		uuidByCourtID[b.courtID] = b.matchUUID
-	}
-
-	var canceled []int
-	var cancelErrors []error
-	for _, cID := range selected {
-		uuid := uuidByCourtID[cID]
-		if err := j.bookingClient.CancelMatch(ctx, uuid, "", ""); err != nil {
-			j.logger.Error("court cancellation: cancel match failed",
-				"game_id", game.ID, "court_id", cID, "match_uuid", uuid, "err", err)
-			cancelErrors = append(cancelErrors, err)
-			continue
-		}
-		j.logger.Info("court cancellation: canceled",
-			"game_id", game.ID, "court_id", cID, "match_uuid", uuid)
-		canceled = append(canceled, cID)
-	}
-
-	if len(canceled) == 0 {
-		result := buildNoOpResult(game)
-		result.cancelErrors = cancelErrors
-		return result, nil
-	}
-
-	gameCourts := splitCourts(game.Courts)
-	newCourts, err := removeCanceledFromGameCourts(gameCourts, canceled, courtIDs)
-	if err != nil {
-		j.logger.Error("court cancellation: cannot map canceled courts to game record",
-			"game_id", game.ID,
-			"game_courts", len(gameCourts),
-			"booked_courts", len(courtIDs),
-			"err", err)
-		return nil, fmt.Errorf("map canceled courts: %w", err)
-	}
-
-	newCourtsStr := strings.Join(newCourts, ",")
-	newCount := len(newCourts)
-
-	if err := updateFn(ctx, game.ID, newCourtsStr, newCount); err != nil {
-		j.logger.Error("court cancellation: update game courts", "game_id", game.ID, "err", err)
-		return nil, fmt.Errorf("persist updated courts: %w", err)
-	}
-
-	// Translate Eversports court IDs to venue name-numbers for display.
-	// Falls back to the raw Eversports ID when no mapping is available.
-	displayCanceled := make([]int, 0, len(canceled))
-	for _, cID := range canceled {
-		if n, ok := nameNumByID[cID]; ok {
-			displayCanceled = append(displayCanceled, n)
-		} else {
-			displayCanceled = append(displayCanceled, cID)
-		}
-	}
-
-	return &courtCancellationResult{
-		canceledCourts:  displayCanceled,
-		remainingCourts: newCourtsStr,
-		remainingCount:  newCount,
-		cancelErrors:    cancelErrors,
-	}, nil
+	j.logger.Error("court cancellation: legacy ListMatches path reached — no service-level credentials available; booking has no court_bookings record and cannot be canceled",
+		"game_id", game.ID)
+	return nil, fmt.Errorf("game %d has no court_bookings records and cannot be canceled: per-credential booking records are required", game.ID)
 }
 
 // selectCourtsToCancel applies the consecutive-grouping algorithm and returns up to n court IDs

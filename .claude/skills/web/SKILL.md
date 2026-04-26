@@ -18,7 +18,7 @@ The web service serves the React SPA and a small JSON API for authenticated user
 
 ```
 cmd/web/
-├── main.go              — wiring: embed FS, AuthHandler, GamesHandler, Handler, Server
+├── main.go              — wiring: embed FS, AuthHandler, GamesHandler, AuditHandler, Handler, Server
 └── webserver/
     ├── server.go        — NewServer, Run
     ├── handler.go       — Handler struct, NewHandler, RegisterRoutes, spaFileServer,
@@ -27,6 +27,7 @@ cmd/web/
     │                      verifyTelegramAuth, issueJWT, parseJWT, jwtClaims struct
     ├── games.go         — GamesHandler: handleListGames, handleGetParticipants,
     │                      handleJoinGame, handleSkipGame, handleAddGuest, handleRemoveGuest
+    ├── audit.go         — AuditHandler: handleListAuditEvents (JWT-authenticated proxy)
 
 web/
 ├── embed.go             — //go:embed frontend/dist; var FS embed.FS
@@ -60,6 +61,10 @@ POST /api/games/{id}/skip         — skip game (requires session)
 POST /api/games/{id}/guest        — add guest (requires session)
 DELETE /api/games/{id}/guest      — remove guest (requires session)
 
+GET  /api/audit                   — list audit events (requires session); all query params
+                                    forwarded to management; caller's TG ID injected via
+                                    X-Caller-Tg-Id header; visibility enforced by management
+
 GET  /                            — SPA fallback (serves index.html for all unmatched routes)
 ```
 
@@ -81,17 +86,22 @@ GET  /                            — SPA fallback (serves index.html for all un
    - HttpOnly, SameSite=Lax
    - `Secure` flag when `r.TLS != nil` OR `X-Forwarded-Proto: https`
 
-### JWT claims (`jwtClaims` struct in auth.go)
+### JWT claims (`JWTClaims` struct in auth.go)
 
 ```go
-type jwtClaims struct {
-    TelegramID int64  `json:"telegram_id"`
-    FirstName  string `json:"first_name"`
-    Username   string `json:"username,omitempty"`
-    PlayerID   *int64 `json:"player_id,omitempty"`  // nil if not yet a player
-    jwt.RegisteredClaims
+type JWTClaims struct {
+    TelegramID    int64  `json:"telegram_id"`
+    FirstName     string `json:"first_name"`
+    LastName      string `json:"last_name,omitempty"`
+    Username      string `json:"username,omitempty"`
+    PhotoURL      string `json:"photo_url,omitempty"`
+    PlayerID      *int64 `json:"player_id,omitempty"`  // nil if not yet a player
+    IsServerOwner bool   `json:"so,omitempty"`          // set at login; stale after config change
+    Exp           int64  `json:"exp"`
 }
 ```
+
+`GET /api/auth/me` always reads `is_server_owner` from the live `serverOwnerIDs` config map, not from the JWT claim. This means revoking or granting server-owner status takes effect on the next page load without requiring a re-login.
 
 ### Player ID lazy lookup
 
@@ -135,6 +145,19 @@ Mutating handlers (join/skip/guest):
 
 ---
 
+## Audit handler (`webserver/audit.go`)
+
+`AuditHandler` is a thin JWT-authenticated proxy for `GET /api/v1/audit` on the management service.
+
+1. Reads the caller's `TelegramID` from the JWT session cookie via `auth.claimsFromRequest`. Returns 401 if the session is missing or invalid.
+2. Forwards the full query string (limit, before_id, event_type, from, to, group_id, actor_tg_id) to management unchanged.
+3. Injects `X-Caller-Tg-Id: <telegramID>` so management can enforce per-user visibility rules.
+4. Streams the management response body directly to the client (status code + body proxied verbatim).
+
+Visibility enforcement happens entirely in management — the web service never filters events itself.
+
+---
+
 ## Management service calls made by web service
 
 All with `Authorization: Bearer <INTERNAL_API_SECRET>`.
@@ -148,6 +171,7 @@ POST /api/v1/games/{id}/join              — join
 POST /api/v1/games/{id}/skip              — skip
 POST /api/v1/games/{id}/guests            — add guest
 DELETE /api/v1/games/{id}/guests          — remove guest
+GET  /api/v1/audit                        — audit event query (with X-Caller-Tg-Id injected)
 ```
 
 ---
@@ -160,6 +184,9 @@ TELEGRAM_BOT_NAME=           required (bot username without @, for widget config
 MANAGEMENT_SERVICE_URL=      required (e.g. http://management:8080)
 INTERNAL_API_SECRET=         required (calls to management service)
 JWT_SECRET=                  required (HS256, 7-day expiry; generate: openssl rand -hex 32)
+SERVICE_ADMIN_IDS=           optional; comma-separated Telegram user IDs treated as server owners;
+                             sets is_server_owner in JWT at login and is re-checked live on every
+                             GET /api/auth/me call — changes take effect without re-login
 SERVER_PORT=8082             default
 LOG_LEVEL=INFO
 LOG_DIR=               optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout

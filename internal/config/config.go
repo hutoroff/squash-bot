@@ -35,9 +35,6 @@ type ManagementConfig struct {
 	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
 	// and the auto-booking scheduler will book courts when booking opens at midnight.
 	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
-	// AutoBookingCourtsCount is the number of courts to book automatically at midnight
-	// when booking opens. Requires SPORTS_BOOKING_SERVICE_URL to be set.
-	AutoBookingCourtsCount int `env:"AUTO_BOOKING_COURTS_COUNT" envDefault:"3"`
 	// CredentialsEncryptionKey is a 32-byte (64 hex chars) AES-256 key used to
 	// encrypt venue booking credentials at rest. Optional at startup — credential
 	// operations will fail gracefully if this is not set.
@@ -45,6 +42,11 @@ type ManagementConfig struct {
 	// CredentialErrorCooldown is how long a credential must sit out after a booking
 	// error before the auto-booking job will try it again. Defaults to 24 hours.
 	CredentialErrorCooldown time.Duration `env:"CREDENTIAL_ERROR_COOLDOWN" envDefault:"24h"`
+	// ServiceAdminIDs is a comma-separated list of Telegram user IDs recognized as
+	// server owners. Used to enforce audit event visibility in GET /api/v1/audit.
+	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
+	// AuditRetentionDays controls how long audit events are kept. Defaults to 365 days (1 year).
+	AuditRetentionDays int `env:"AUDIT_RETENTION_DAYS" envDefault:"365"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {
@@ -67,8 +69,6 @@ func LoadManagement() (*ManagementConfig, error) {
 
 // BookingConfig holds configuration for the booking service.
 type BookingConfig struct {
-	EversportsEmail    string `env:"EVERSPORTS_EMAIL,required"`
-	EversportsPassword string `env:"EVERSPORTS_PASSWORD,required"`
 	// EversportsFacilityID is the numeric Eversports facility ID (visible in the
 	// venue page URL, e.g. eversports.de/s/venue-name-76443). Required for
 	// GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
@@ -112,6 +112,10 @@ type WebConfig struct {
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	// JWTSecret is used to sign and verify session JWT tokens (≥32 random bytes recommended).
 	JWTSecret string `env:"JWT_SECRET,required"`
+	// ServiceAdminIDs is a comma-separated list of Telegram user IDs treated as server owners.
+	// Used to set the is_server_owner flag in JWT claims (UI hint only; management enforces
+	// authority independently).
+	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 }
 
 func LoadWeb() (*WebConfig, error) {
