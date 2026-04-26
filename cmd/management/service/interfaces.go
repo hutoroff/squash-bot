@@ -65,10 +65,17 @@ type GroupRepository interface {
 	Upsert(ctx context.Context, chatID int64, title string, botIsAdmin bool) error
 	SetLanguage(ctx context.Context, chatID int64, language string) error
 	SetTimezone(ctx context.Context, chatID int64, timezone string) error
+	SetChangelogEnabled(ctx context.Context, chatID int64, enabled bool) error
 	Remove(ctx context.Context, chatID int64) error
 	Exists(ctx context.Context, chatID int64) (bool, error)
 	GetByID(ctx context.Context, chatID int64) (*models.Group, error)
 	GetAll(ctx context.Context) ([]models.Group, error)
+}
+
+// ServiceStateRepository stores and retrieves arbitrary key-value state for the service.
+type ServiceStateRepository interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string) error
 }
 
 // AutoBookingResultRepository is the data access interface for auto-booking results.

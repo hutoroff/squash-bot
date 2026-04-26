@@ -32,7 +32,8 @@ cmd/management/
 │   ├── game_service.go         — GameService: Create, GetByID, UpdateCourts, …
 │   ├── participation_service.go — ParticipationService: Join, Skip, AddGuest, RemoveGuest, KickPlayer, KickGuest
 │   ├── venue_service.go        — VenueService: Create, GetByGroup, Update, Delete
-│   ├── audit_service.go        — AuditService: 14+ Record* methods, Query, RunRetention
+│   ├── audit_service.go        — AuditService: 15+ Record* methods, Query, RunRetention
+│   ├── changelog_announcer.go  — AnnounceChangelog: on startup, send new-version changelog to opted-in groups
 │   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
 │   │                              a caller administers (satisfies api.adminGroupsResolver interface)
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
@@ -54,7 +55,8 @@ cmd/management/
     ├── venue_repo.go            — VenueRepo implements VenueRepository
     ├── venue_credential_repo.go — VenueCredentialRepo implements VenueCredentialRepository
     ├── court_booking_repo.go    — CourtBookingRepo implements CourtBookingRepository
-    └── audit_event_repo.go      — AuditEventRepo implements AuditEventRepository
+    ├── audit_event_repo.go      — AuditEventRepo implements AuditEventRepository
+    └── service_state_repo.go    — ServiceStateRepo implements ServiceStateRepository (KV store)
 ```
 
 ---
@@ -72,7 +74,9 @@ GameRepository   — Create, GetByID, GetUpcomingGames, UpdateMessageID, UpdateC
 PlayerRepository — Upsert, GetByTelegramID
 ParticipationRepository — Upsert, GetByGame, DeleteByGameAndPlayer, GetRegisteredCount
 GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCountByGame
-GroupRepository  — Upsert, SetLanguage, SetTimezone, Remove, Exists, GetByID, GetAll
+GroupRepository  — Upsert, SetLanguage, SetTimezone, SetChangelogEnabled, Remove, Exists, GetByID, GetAll
+ServiceStateRepository — Get(ctx, key) (string, error), Set(ctx, key, value string) error
+                   — backed by `service_state` table (TEXT key PK, TEXT value); `pgx.ErrNoRows` when key absent
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
                    SetLastBookingReminderAt, SetLastAutoBookingAt
 VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxCourts),
@@ -144,6 +148,7 @@ GET /api/v1/players/{playerID}/games               — listPlayerGames
 PUT    /api/v1/groups/{chatID}                     — upsertGroup
 PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
 PATCH  /api/v1/groups/{chatID}/timezone            — setGroupTimezone
+PATCH  /api/v1/groups/{chatID}/changelog           — setGroupChangelog (body: changelog_enabled bool, actor fields)
 DELETE /api/v1/groups/{chatID}                     — removeGroup
 GET    /api/v1/groups                              — listGroups
 GET    /api/v1/groups/{chatID}                     — getGroup
@@ -199,6 +204,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `group.bot_added` | server_owner | Bot added to a new group |
 | `group.bot_removed` | server_owner | Bot removed from group |
 | `group.settings_changed` | group_admin | Admin changes language/timezone |
+| `group.changelog_toggled` | server_owner | Admin enables/disables changelog announcements for group |
 | `court.booked` | group_admin | Scheduler auto-books a court |
 | `court.canceled` | group_admin | Scheduler cancels a court |
 
@@ -316,7 +322,9 @@ games:              id, chat_id, message_id, game_date, courts_count, courts,
 players:            id, telegram_id UNIQUE, username, first_name, last_name
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id
-bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC'
+bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC',
+                    changelog_enabled BOOLEAN DEFAULT TRUE
+service_state:      key TEXT PK, value TEXT NOT NULL  — generic KV store; used to track `last_changelog_version`
 venues:             id, group_id FK→bot_groups, name, courts, time_slots, address,
                     grace_period_hours DEFAULT 24, game_days, booking_opens_days DEFAULT 14,
                     last_booking_reminder_at, preferred_game_times TEXT DEFAULT '', last_auto_booking_at,
