@@ -364,12 +364,12 @@ var translations = map[Lang]map[string]string{
 
 		SchedCancellationFailDM: "⚠️ Automatic court cancellation failed for game on %s: %s. Please cancel courts manually.",
 
-		SchedReminderAllGood:      "✅ Upcoming game on %s — all good! %d/%d players, %d courts confirmed.",
-		SchedReminderCanceled:     "✅ Courts %s canceled. Game on %s is all set! %d/%d players, %d courts.",
-		SchedReminderOddNoCancel:  "⚠️ 1 free spot for the game on %s. %d/%d players, %d courts.",
-		SchedReminderOddCanceled:  "⚠️ Courts %s canceled. 1 free spot for the game on %s. %d/%d players, %d courts.",
+		SchedReminderAllGood:      "✅ Upcoming game on %s — all good! %d/%d players, %d courts are booked.",
+		SchedReminderCanceled:     "✅ Courts #%s canceled. Game on %s is all set! %d/%d players, %d courts are booked.",
+		SchedReminderOddNoCancel:  "⚠️ 1 free spot for the game on %s. %d/%d players, %d courts are booked.",
+		SchedReminderOddCanceled:  "⚠️ Courts #%s canceled. 1 free spot for the game on %s. %d/%d players, %d courts booked.",
 		SchedReminderAllCanceled:  "❌ All courts (%s) canceled for the game on %s. The game will not happen.",
-		SchedReminderEvenNoCancel: "⚠️ Upcoming game on %s — %d/%d players, %d courts. Please cancel unused courts.",
+		SchedReminderEvenNoCancel: "⚠️ Upcoming game on %s — %d/%d players, %d courts are booked. Please cancel unused courts.",
 
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
@@ -637,12 +637,12 @@ var translations = map[Lang]map[string]string{
 
 		SchedCancellationFailDM: "⚠️ Automatische Stornierung fehlgeschlagen für Spiel am %s: %s. Bitte Plätze manuell stornieren.",
 
-		SchedReminderAllGood:      "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze bestätigt.",
-		SchedReminderCanceled:     "✅ Plätze %s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze.",
-		SchedReminderOddNoCancel:  "⚠️ 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze.",
-		SchedReminderOddCanceled:  "⚠️ Plätze %s storniert. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze.",
+		SchedReminderAllGood:      "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze sind reserviert.",
+		SchedReminderCanceled:     "✅ Plätze #%s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze sind reserviert.",
+		SchedReminderOddNoCancel:  "⚠️ 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze sind reserviert.",
+		SchedReminderOddCanceled:  "⚠️ Plätze #%s storniert. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze sind reserviert.",
 		SchedReminderAllCanceled:  "❌ Alle Plätze (%s) für das Spiel am %s storniert. Das Spiel findet nicht statt.",
-		SchedReminderEvenNoCancel: "⚠️ Spiel am %s — %d/%d Spieler, %d Plätze. Bitte ungenutzte Plätze stornieren.",
+		SchedReminderEvenNoCancel: "⚠️ Spiel am %s — %d/%d Spieler, %d Plätze sind reserviert. Bitte ungenutzte Plätze stornieren.",
 
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
@@ -906,12 +906,12 @@ var translations = map[Lang]map[string]string{
 
 		SchedCancellationFailDM: "⚠️ Автоматическая отмена кортов не удалась для игры %s: %s. Пожалуйста, отмените корты вручную.",
 
-		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) подтверждено.",
-		SchedReminderCanceled:     "✅ Корт(ы) %s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а).",
-		SchedReminderOddNoCancel:  "⚠️ 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
-		SchedReminderOddCanceled:  "⚠️ Корт(ы) %s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а).",
+		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) забронировано.",
+		SchedReminderCanceled:     "✅ Корт(ы) #%s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а) забронировано.",
+		SchedReminderOddNoCancel:  "⚠️ 1 свободное место на игру %s. %d/%d игроков, %d корт(а) забронировано.",
+		SchedReminderOddCanceled:  "⚠️ Корт(ы) #%s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) забронировано.",
 		SchedReminderAllCanceled:  "❌ Все корты (%s) отменены для игры %s. Игра не состоится.",
-		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, %d корт(а). Отмените незаполненные корты.",
+		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, %d корт(а) забронировано. Отмените незаполненные корты.",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",
