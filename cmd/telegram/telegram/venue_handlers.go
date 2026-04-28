@@ -227,11 +227,19 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		autoBookingCourts := ""
 		if text != "-" && text != "" {
 			normalized := normalizeCourts(text)
+			courtSet := makeStringSet(wiz.courts)
+			seen := make(map[string]bool)
+			valid := true
 			for _, part := range splitCSV(normalized) {
-				if _, err := strconv.Atoi(part); err != nil {
-					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
-					return
+				if _, err := strconv.Atoi(part); err != nil || !courtSet[part] || seen[part] {
+					valid = false
+					break
 				}
+				seen[part] = true
+			}
+			if !valid {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
+				return
 			}
 			autoBookingCourts = normalized
 		}
@@ -469,7 +477,7 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 	case venueEditFieldGracePeriod:
 		prompt = lz.T(i18n.MsgVenueAskGracePeriod)
 	case venueEditFieldAutoBookingCourts:
-		prompt = lz.T(i18n.MsgVenueAskAutoBookingCourts)
+		prompt = lz.Tf(i18n.MsgVenueAskAutoBookingCourts, venue.Courts)
 	case venueEditFieldAutoBookingGamesCount:
 		prompt = lz.T(i18n.MsgVenueAskAutoBookingGamesCount)
 	case venueEditFieldBookingOpensDays:
@@ -539,11 +547,19 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 			venue.AutoBookingCourts = ""
 		} else {
 			normalized := normalizeCourts(text)
+			courtSet := makeStringSet(venue.Courts)
+			seen := make(map[string]bool)
+			valid := true
 			for _, part := range splitCSV(normalized) {
-				if _, err := strconv.Atoi(part); err != nil {
-					b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
-					return
+				if _, err := strconv.Atoi(part); err != nil || !courtSet[part] || seen[part] {
+					valid = false
+					break
 				}
+				seen[part] = true
+			}
+			if !valid {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueInvalidAutoBookingCourts))
+				return
 			}
 			venue.AutoBookingCourts = normalized
 		}
@@ -1129,7 +1145,7 @@ func (b *Bot) handleVenueWizAutoBookingPick(ctx context.Context, cb *tgbotapi.Ca
 		// Proceed to courts priority step.
 		wiz.step = venueStepAutoBookingCourts
 		b.pendingVenueWizard.Store(cb.Message.Chat.ID, wiz)
-		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskAutoBookingCourts))
+		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.Tf(i18n.MsgVenueAskAutoBookingCourts, wiz.courts))
 		edit.ReplyMarkup = &emptyKeyboard
 		b.api.Send(edit) //nolint:errcheck
 	} else {
