@@ -269,6 +269,12 @@ const (
 	MsgVenueInvalidAutoBookingCourts = "msg.venue_invalid_auto_booking_courts"
 	BtnVenueEditAutoBookingCourts    = "btn.venue_edit_auto_booking_courts"
 
+	// Games to book (auto-booking slot limit)
+	// Args for MsgVenueAutoBookingGamesCountLine: %d = count
+	MsgVenueAskAutoBookingGamesCount  = "msg.venue_ask_auto_booking_games_count"
+	MsgVenueAutoBookingGamesCountLine = "msg.venue_auto_booking_games_count_line"
+	BtnVenueEditAutoBookingGamesCount = "btn.venue_edit_auto_booking_games_count"
+
 	// Booking opens days
 	// Args for MsgVenueBookingOpensDaysLine: %d = days
 	MsgVenueAskBookingOpensDays  = "msg.venue_ask_booking_opens_days"
@@ -560,6 +566,10 @@ var translations = map[Lang]map[string]string{
 		MsgVenueInvalidAutoBookingCourts: "Invalid format — enter comma-separated numeric court IDs with no duplicates. Please try again:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-booking Courts",
 
+		MsgVenueAskAutoBookingGamesCount:  "How many games (time slots) to book per day? Enter a positive integer:",
+		MsgVenueAutoBookingGamesCountLine: "Games to book: %d",
+		BtnVenueEditAutoBookingGamesCount: "🎯 Games to book",
+
 		MsgVenueAskBookingOpensDays:  "How many days in advance does booking open? (default: 14). Send - to use default:",
 		MsgVenueBookingOpensDaysLine: "Booking opens: %d days before",
 		BtnVenueEditBookingOpensDays: "📆 Booking Opens",
@@ -842,6 +852,10 @@ var translations = map[Lang]map[string]string{
 		MsgVenueInvalidAutoBookingCourts: "Ungültiges Format — kommagetrennte numerische Platz-IDs ohne Duplikate eingeben. Bitte erneut versuchen:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-Buchungsplätze",
 
+		MsgVenueAskAutoBookingGamesCount:  "Wie viele Spiele (Zeitfenster) pro Tag buchen? Eine positive ganze Zahl eingeben:",
+		MsgVenueAutoBookingGamesCountLine: "Zu buchende Spiele: %d",
+		BtnVenueEditAutoBookingGamesCount: "🎯 Zu buchende Spiele",
+
 		MsgVenueAskBookingOpensDays:  "Wie viele Tage im Voraus öffnet die Buchung? (Standard: 14). Sende - für Standard:",
 		MsgVenueBookingOpensDaysLine: "Buchung öffnet: %d Tage vorher",
 		BtnVenueEditBookingOpensDays: "📆 Buchung öffnet",
@@ -1119,6 +1133,10 @@ var translations = map[Lang]map[string]string{
 		MsgVenueAutoBookingCourtsLine:    "Корты автобронирования: %s",
 		MsgVenueInvalidAutoBookingCourts: "Неверный формат — введи числовые ID кортов через запятую без повторений. Попробуй снова:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Корты автобронирования",
+
+		MsgVenueAskAutoBookingGamesCount:  "Сколько игр (временных слотов) бронировать в день? Введи положительное целое число:",
+		MsgVenueAutoBookingGamesCountLine: "Игр для бронирования: %d",
+		BtnVenueEditAutoBookingGamesCount: "🎯 Игр для бронирования",
 
 		MsgVenueAskBookingOpensDays:  "За сколько дней открывается бронирование? (по умолчанию: 14). Отправь - для значения по умолчанию:",
 		MsgVenueBookingOpensDaysLine: "Бронирование: за %d дней",

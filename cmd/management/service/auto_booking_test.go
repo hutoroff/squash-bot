@@ -552,12 +552,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *tes
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -605,12 +606,13 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -686,12 +688,13 @@ func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -766,12 +769,13 @@ func TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls(t *testing.
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -804,12 +808,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -898,12 +903,13 @@ func TestProcessAutoBookingForVenue_TwoTimeSlots_BooksAndSavesBoth(t *testing.T)
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00,20:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00,20:00",
+		AutoBookingGamesCount: 2,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -974,12 +980,13 @@ func TestProcessAutoBookingForVenue_SlotAlreadyBooked_SkipsIt(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00,20:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00,20:00",
+		AutoBookingGamesCount: 2,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1029,12 +1036,13 @@ func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *te
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1078,12 +1086,13 @@ func TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1",
-		AutoBookingCourts:  "1",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1",
+		AutoBookingCourts:     "1",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1136,12 +1145,13 @@ func TestProcessAutoBookingForVenue_PartialCourtAvailability_NoCredentialExhaust
 	}
 	// Two preferred courts but only one is free — partial availability, not credential exhaustion.
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1,2",
-		AutoBookingCourts:  "1,2",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1,2",
+		AutoBookingCourts:     "1,2",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1190,12 +1200,13 @@ func TestProcessAutoBookingForVenue_CredentialQuotaExhausted_SendsCredentialsExh
 	}
 	// Two preferred courts, both free, but credential quota covers only one.
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1,2",
-		AutoBookingCourts:  "1,2",
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                    1,
+		AutoBookingEnabled:    true,
+		Courts:                "1,2",
+		AutoBookingCourts:     "1,2",
+		PreferredGameTimes:    "18:00",
+		AutoBookingGamesCount: 1,
+		BookingOpensDays:      14,
 	}
 	lz := i18n.New(i18n.En)
 

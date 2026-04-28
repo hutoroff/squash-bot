@@ -29,9 +29,9 @@ type AutoBookingJob struct {
 	autoBookingResultRepo AutoBookingResultRepository
 	courtBookingRepo      CourtBookingRepository
 	auditSvc              *AuditService
-	loc          *time.Location
-	logger       *slog.Logger
-	credCooldown time.Duration
+	loc                   *time.Location
+	logger                *slog.Logger
+	credCooldown          time.Duration
 }
 
 func NewAutoBookingJob(
@@ -137,6 +137,14 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	times := splitPreferredTimes(venue.PreferredGameTimes)
 	if len(times) == 0 {
 		return false
+	}
+
+	if venue.AutoBookingGamesCount == 0 {
+		j.logger.Info("auto-booking: skipping venue with games_count=0", "venue_id", venue.ID)
+		return false
+	}
+	if len(times) > venue.AutoBookingGamesCount {
+		times = times[:venue.AutoBookingGamesCount]
 	}
 
 	anyBooked := false

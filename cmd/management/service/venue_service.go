@@ -69,7 +69,7 @@ func validateAutoBookingCourts(autoBookingCourts string) error {
 	return nil
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int) (*models.Venue, error) {
 	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
 		return nil, err
 	}
@@ -77,17 +77,18 @@ func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, cou
 		return nil, err
 	}
 	venue := &models.Venue{
-		GroupID:            groupID,
-		Name:               name,
-		Courts:             courts,
-		TimeSlots:          timeSlots,
-		Address:            address,
-		GracePeriodHours:   gracePeriodHours,
-		GameDays:           gameDays,
-		BookingOpensDays:   bookingOpensDays,
-		PreferredGameTimes: preferredGameTimes,
-		AutoBookingCourts:  autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled,
+		GroupID:               groupID,
+		Name:                  name,
+		Courts:                courts,
+		TimeSlots:             timeSlots,
+		Address:               address,
+		GracePeriodHours:      gracePeriodHours,
+		GameDays:              gameDays,
+		BookingOpensDays:      bookingOpensDays,
+		PreferredGameTimes:    preferredGameTimes,
+		AutoBookingCourts:     autoBookingCourts,
+		AutoBookingEnabled:    autoBookingEnabled,
+		AutoBookingGamesCount: autoBookingGamesCount,
 	}
 	created, err := s.repo.Create(ctx, venue)
 	if err != nil {
@@ -104,7 +105,7 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool) (*models.Venue, error) {
+func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int) (*models.Venue, error) {
 	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
 		return nil, err
 	}
@@ -112,18 +113,19 @@ func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name,
 		return nil, err
 	}
 	venue := &models.Venue{
-		ID:                 id,
-		GroupID:            groupID,
-		Name:               name,
-		Courts:             courts,
-		TimeSlots:          timeSlots,
-		Address:            address,
-		GracePeriodHours:   gracePeriodHours,
-		GameDays:           gameDays,
-		BookingOpensDays:   bookingOpensDays,
-		PreferredGameTimes: preferredGameTimes,
-		AutoBookingCourts:  autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled,
+		ID:                    id,
+		GroupID:               groupID,
+		Name:                  name,
+		Courts:                courts,
+		TimeSlots:             timeSlots,
+		Address:               address,
+		GracePeriodHours:      gracePeriodHours,
+		GameDays:              gameDays,
+		BookingOpensDays:      bookingOpensDays,
+		PreferredGameTimes:    preferredGameTimes,
+		AutoBookingCourts:     autoBookingCourts,
+		AutoBookingEnabled:    autoBookingEnabled,
+		AutoBookingGamesCount: autoBookingGamesCount,
 	}
 	updated, err := s.repo.Update(ctx, venue)
 	if err != nil {
