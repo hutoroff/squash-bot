@@ -39,10 +39,10 @@ type ManagementClient interface {
 	SetGroupChangelog(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error
 
 	// Venues
-	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error)
+	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error)
 	GetVenuesByGroup(ctx context.Context, groupID int64) ([]*models.Venue, error)
 	GetVenueByID(ctx context.Context, id int64) (*models.Venue, error)
-	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error)
+	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error)
 	DeleteVenue(ctx context.Context, id, groupID, actorTgID int64, actorDisplay string) error
 
 	// Venue credentials
