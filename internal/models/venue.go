@@ -22,4 +22,5 @@ type Venue struct {
 	LastAutoBookingAt     *time.Time `json:"last_auto_booking_at,omitempty"`     // dedup: last time auto-booking was performed
 	AutoBookingEnabled    bool       `json:"auto_booking_enabled"`               // whether automatic court booking is enabled for this venue
 	AutoBookingCourts     string     `json:"auto_booking_courts"`                // ordered comma-separated court IDs for auto-booking; subset of courts (empty = all courts eligible)
+	AutoBookingGamesCount int        `json:"auto_booking_games_count"`           // 0 = skip booking; N = book at most N time slots per run
 }

@@ -39,12 +39,12 @@ func New(baseURL, apiSecret string) *Client {
 
 func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
-		"chat_id":            chatID,
-		"game_date":          gameDate,
-		"courts":             courts,
-		"venue_id":           venueID,
-		"actor_telegram_id":  actorTgID,
-		"actor_display":      actorDisplay,
+		"chat_id":           chatID,
+		"game_date":         gameDate,
+		"courts":            courts,
+		"venue_id":          venueID,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
 	}
 	var game models.Game
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games", body, &game); err != nil {
@@ -335,27 +335,28 @@ func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bo
 // ── Venues ────────────────────────────────────────────────────────────────────
 
 type venueBody struct {
-	GroupID            int64  `json:"group_id"`
-	Name               string `json:"name"`
-	Courts             string `json:"courts"`
-	TimeSlots          string `json:"time_slots"`
-	Address            string `json:"address,omitempty"`
-	GracePeriodHours   int    `json:"grace_period_hours"`
-	GameDays           string `json:"game_days"`
-	BookingOpensDays   int    `json:"booking_opens_days"`
-	PreferredGameTimes string `json:"preferred_game_times"`
-	AutoBookingCourts  string `json:"auto_booking_courts"`
-	AutoBookingEnabled bool   `json:"auto_booking_enabled"`
-	ActorTelegramID    int64  `json:"actor_telegram_id,omitempty"`
-	ActorDisplay       string `json:"actor_display,omitempty"`
+	GroupID               int64  `json:"group_id"`
+	Name                  string `json:"name"`
+	Courts                string `json:"courts"`
+	TimeSlots             string `json:"time_slots"`
+	Address               string `json:"address,omitempty"`
+	GracePeriodHours      int    `json:"grace_period_hours"`
+	GameDays              string `json:"game_days"`
+	BookingOpensDays      int    `json:"booking_opens_days"`
+	PreferredGameTimes    string `json:"preferred_game_times"`
+	AutoBookingCourts     string `json:"auto_booking_courts"`
+	AutoBookingEnabled    bool   `json:"auto_booking_enabled"`
+	AutoBookingGamesCount int    `json:"auto_booking_games_count"`
+	ActorTelegramID       int64  `json:"actor_telegram_id,omitempty"`
+	ActorDisplay          string `json:"actor_display,omitempty"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled,
+		AutoBookingEnabled: autoBookingEnabled, AutoBookingGamesCount: autoBookingGamesCount,
 		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
@@ -382,12 +383,12 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled,
+		AutoBookingEnabled: autoBookingEnabled, AutoBookingGamesCount: autoBookingGamesCount,
 		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
