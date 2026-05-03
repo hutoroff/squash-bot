@@ -94,7 +94,7 @@ func main() {
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
 
-	gameService := service.NewGameService(gameRepo, venueRepo)
+	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger)
 	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
 
 	var venueCredService *service.VenueCredentialService
@@ -127,9 +127,9 @@ func main() {
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
-	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
+	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, gameService, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
-	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
+	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
 
 	c := cron.New(cron.WithLocation(loc))

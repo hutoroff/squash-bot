@@ -2,12 +2,14 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -75,7 +77,13 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 		lz.FormatGameDate(localDate), localDate.Format("15:04"),
 		escapeMarkdown(game.Courts), registered, game.CourtsCount*2, len(guests))
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if game.MessageID == nil {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnPublishGame), fmt.Sprintf("publish_game:%d", game.ID)),
+		))
+	}
+	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnKickPlayer), fmt.Sprintf("manage_players:%d", game.ID)),
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnKickGuest), fmt.Sprintf("manage_guests:%d", game.ID)),
@@ -87,6 +95,7 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnClose), fmt.Sprintf("manage_close:%d", game.ID)),
 		),
 	)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 
 	edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
@@ -441,6 +450,37 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 
 	b.scheduleGameMessageEdit(gameID)
 	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtsUpdated, courts), nil)
+}
+
+// handleManagePublish publishes an unpublished game from the manage menu.
+func (b *Bot) handleManagePublish(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
+	if !ok {
+		return
+	}
+
+	_, err := b.client.PublishGame(ctx, gameID, cb.From.ID, actorDisplayFrom(cb.From))
+	if err != nil {
+		if errors.Is(err, client.ErrAlreadyPublished) {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgPublishAlreadyDone))
+		} else {
+			slog.Error("handleManagePublish: publish failed", "err", err, "game_id", gameID)
+			b.answerCallback(cb.ID, lz.T(i18n.MsgPublishFailed))
+		}
+		b.renderManageScreen(ctx, cb, game, lz)
+		return
+	}
+
+	b.answerCallback(cb.ID, lz.T(i18n.MsgGamePublished))
+
+	// Re-fetch the game so the updated MessageID removes the Publish button on re-render.
+	updated, err := b.client.GetGameByID(ctx, gameID)
+	if err != nil {
+		slog.Error("handleManagePublish: re-fetch game", "err", err, "game_id", gameID)
+		updated = game
+	}
+	b.renderManageScreen(ctx, cb, updated, lz)
 }
 
 // processCourtsEdit handles the admin's text response after clicking "Edit Courts".

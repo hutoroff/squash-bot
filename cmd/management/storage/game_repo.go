@@ -260,8 +260,7 @@ func (r *GameRepo) GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID 
 		FROM games
 		WHERE chat_id = $1
 		  AND game_date >= $2 AND game_date < $3
-		  AND completed = false
-		  AND message_id IS NOT NULL`
+		  AND completed = false`
 
 	slog.Debug("GameRepo.GetUncompletedGamesByGroupAndDay", "chat_id", chatID, "from", from, "to", to)
 

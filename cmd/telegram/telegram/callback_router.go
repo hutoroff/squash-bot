@@ -62,6 +62,7 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"guest_remove": int64H(b.handleGuestRemove),
 
 		// ── Game management ───────────────────────────────────────────────────────
+		"publish_game":   int64H(b.handleManagePublish),
 		"manage":         int64H(b.handleManage),
 		"manage_players": int64H(b.handleManageShowPlayers),
 		"manage_guests":  int64H(b.handleManageShowGuests),
