@@ -19,15 +19,17 @@ func NewAutoBookingResultRepo(pool *pgxpool.Pool) *AutoBookingResultRepo {
 	return &AutoBookingResultRepo{pool: pool}
 }
 
-// Save inserts a new auto-booking result for a specific time slot.
-// Duplicate entries (same venue_id + game_date + game_time) are silently ignored.
-func (r *AutoBookingResultRepo) Save(ctx context.Context, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) error {
+// Save inserts or upserts an auto-booking result for a specific time slot.
+// Returns the id of the affected row.
+func (r *AutoBookingResultRepo) Save(ctx context.Context, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) (int64, error) {
 	const q = `
 		INSERT INTO auto_booking_results (venue_id, game_date, game_time, courts, courts_count)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (venue_id, game_date, game_time) DO NOTHING`
-	_, err := r.pool.Exec(ctx, q, venueID, gameDate, gameTime, courts, courtsCount)
-	return err
+		ON CONFLICT (venue_id, game_date, game_time) DO UPDATE SET game_date = EXCLUDED.game_date
+		RETURNING id`
+	var id int64
+	err := r.pool.QueryRow(ctx, q, venueID, gameDate, gameTime, courts, courtsCount).Scan(&id)
+	return id, err
 }
 
 // GetByVenueAndDate returns all auto-booking results for a venue on a specific game date.

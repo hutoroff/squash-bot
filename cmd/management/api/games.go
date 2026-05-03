@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -181,6 +183,39 @@ func (h *Handler) listPlayerGames(w http.ResponseWriter, r *http.Request) {
 		games = []models.PlayerGame{}
 	}
 	writeJSON(w, http.StatusOK, games)
+}
+
+// publishGame handles POST /api/v1/games/{id}/publish
+func (h *Handler) publishGame(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid game id")
+		return
+	}
+	var req struct {
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	game, err := h.gameService.PublishGame(r.Context(), id, req.ActorTelegramID, req.ActorDisplay)
+	if err != nil {
+		if errors.Is(err, service.ErrGameNotFound) {
+			writeError(w, http.StatusNotFound, "game not found")
+			return
+		}
+		if errors.Is(err, service.ErrGameAlreadyPublished) {
+			writeError(w, http.StatusConflict, "game already published")
+			return
+		}
+		h.logger.Error("publishGame: send failed", "err", err, "id", id)
+		writeError(w, http.StatusBadGateway, "failed to send announcement")
+		return
+	}
+	writeJSON(w, http.StatusOK, game)
 }
 
 // parseID parses a string path value into int64.

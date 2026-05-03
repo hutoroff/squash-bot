@@ -17,7 +17,7 @@ func TestGameService_CreateGame(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	gameDate := time.Now().Add(48 * time.Hour)
 	game, err := svc.CreateGame(ctx, -1001, gameDate, "2,3,4", nil)
@@ -45,7 +45,7 @@ func TestGameService_CreateGame_SingleCourt(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	game, err := svc.CreateGame(ctx, -1, time.Now().Add(24*time.Hour), "5", nil)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestGameService_UpdateMessageID(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	game, _ := svc.CreateGame(ctx, -1, time.Now().Add(24*time.Hour), "1", nil)
 	if err := svc.UpdateMessageID(ctx, game.ID, 12345); err != nil {
@@ -82,7 +82,7 @@ func TestGameService_GetByID_NotFound(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	_, err := svc.GetByID(ctx, 9999999)
 	if err == nil {
@@ -96,7 +96,7 @@ func TestGameService_GetNextGameForTelegramUser_Registered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gameSvc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	gameSvc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 	partSvc := service.NewParticipationService(
 		storage.NewPlayerRepo(testPool),
 		storage.NewParticipationRepo(testPool),
@@ -124,7 +124,7 @@ func TestGameService_GetNextGameForTelegramUser_NoGame(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	got, err := svc.GetNextGameForTelegramUser(ctx, 99999)
 	if err != nil {
@@ -140,7 +140,7 @@ func TestGameService_UpdateCourts(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool))
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil)
 
 	game, _ := svc.CreateGame(ctx, -1, time.Now().Add(24*time.Hour), "1,2", nil)
 

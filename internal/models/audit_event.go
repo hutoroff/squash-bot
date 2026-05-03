@@ -35,6 +35,7 @@ const (
 	AuditEventGroupChangelogToggled AuditEventType = "group.changelog_toggled"
 	AuditEventCourtBooked         AuditEventType = "court.booked"
 	AuditEventCourtCanceled       AuditEventType = "court.canceled"
+	AuditEventGamePublished       AuditEventType = "game.published"
 
 	// Subject types.
 	AuditSubjectGame        = "game"

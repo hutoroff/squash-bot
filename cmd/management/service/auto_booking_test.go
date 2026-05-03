@@ -14,11 +14,12 @@ import (
 // ── mockTelegramAPI ───────────────────────────────────────────────────────────
 
 type mockTelegramAPI struct {
-	sendCalls  []tgbotapi.Chattable
-	sendErr    error
-	sendResult tgbotapi.Message // returned by Send (zero value by default)
-	admins     []tgbotapi.ChatMember
-	adminsErr  error
+	sendCalls    []tgbotapi.Chattable
+	sendErr      error
+	sendResult   tgbotapi.Message // returned by Send (zero value by default)
+	requestCalls []tgbotapi.Chattable
+	admins       []tgbotapi.ChatMember
+	adminsErr    error
 }
 
 func (m *mockTelegramAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
@@ -27,6 +28,7 @@ func (m *mockTelegramAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 }
 
 func (m *mockTelegramAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	m.requestCalls = append(m.requestCalls, c)
 	return nil, nil
 }
 
@@ -635,8 +637,8 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 
 type stubAutoBookingResultRepo struct{}
 
-func (r *stubAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
-	return nil
+func (r *stubAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) (int64, error) {
+	return 0, nil
 }
 
 func (r *stubAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
@@ -839,9 +841,9 @@ type recordingAutoBookingResultRepo struct {
 	getByTimeErr   error                                // if set, GetByVenueAndDateAndTime returns this error for all calls
 }
 
-func (r *recordingAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, gameTime, _ string, _ int) error {
+func (r *recordingAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, gameTime, _ string, _ int) (int64, error) {
 	r.savedGameTimes = append(r.savedGameTimes, gameTime)
-	return nil
+	return 0, nil
 }
 
 func (r *recordingAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {

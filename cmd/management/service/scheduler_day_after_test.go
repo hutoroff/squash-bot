@@ -16,7 +16,11 @@ func TestProcessDayAfter_NilMessageID(t *testing.T) {
 	// s.api is intentionally nil — if the nil-guard is missing the function would
 	// panic on *game.MessageID before ever reaching the API, but having api=nil
 	// ensures any accidental API call also panics, making the test self-validating.
-	s := &DayAfterCleanupJob{logger: noopLogger()}
+	s := &DayAfterCleanupJob{
+		api:      nil, // nil intentionally: any API call panics, proving we never reach it
+		gameRepo: &stubGameRepoForDayAfter{},
+		logger:   noopLogger(),
+	}
 
 	game := &models.Game{
 		ID:        42,
