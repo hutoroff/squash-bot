@@ -92,43 +92,42 @@ func (j *DayAfterCleanupJob) runDayAfterCleanup(force bool) {
 }
 
 func (j *DayAfterCleanupJob) processDayAfter(ctx context.Context, game *models.Game, groupTZ *time.Location) {
-	if game.MessageID == nil {
-		j.logger.Warn("day-after cleanup: skipping game with nil message_id", "game_id", game.ID)
-		return
-	}
-	messageID := int(*game.MessageID)
+	if game.MessageID != nil {
+		messageID := int(*game.MessageID)
 
-	unpin := tgbotapi.UnpinChatMessageConfig{
-		ChatID:    game.ChatID,
-		MessageID: messageID,
-	}
-	if _, err := j.api.Request(unpin); err != nil {
-		j.logger.Error("day-after cleanup: unpin message", "game_id", game.ID, "message_id", messageID, "err", err)
-		// Continue — still remove buttons and mark completed
-	}
+		unpin := tgbotapi.UnpinChatMessageConfig{
+			ChatID:    game.ChatID,
+			MessageID: messageID,
+		}
+		if _, err := j.api.Request(unpin); err != nil {
+			j.logger.Error("day-after cleanup: unpin message", "game_id", game.ID, "message_id", messageID, "err", err)
+			// Continue — still remove buttons and mark completed.
+		}
 
-	participations, err := j.partRepo.GetByGame(ctx, game.ID)
-	if err != nil {
-		j.logger.Error("day-after cleanup: get participants", "game_id", game.ID, "err", err)
-		return
-	}
+		participations, err := j.partRepo.GetByGame(ctx, game.ID)
+		if err != nil {
+			j.logger.Error("day-after cleanup: get participants", "game_id", game.ID, "err", err)
+			return
+		}
 
-	guests, err := j.guestRepo.GetByGame(ctx, game.ID)
-	if err != nil {
-		j.logger.Error("day-after cleanup: get guests", "game_id", game.ID, "err", err)
-		return
-	}
+		guests, err := j.guestRepo.GetByGame(ctx, game.ID)
+		if err != nil {
+			j.logger.Error("day-after cleanup: get guests", "game_id", game.ID, "err", err)
+			return
+		}
 
-	lz := groupLang(ctx, j.groupRepo, game.ChatID)
-	text := formatCompletedMessage(game, participations, guests, groupTZ, lz)
-	edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
-	// Empty keyboard explicitly removes the inline buttons.
-	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	edit.ReplyMarkup = &emptyKeyboard
+		lz := groupLang(ctx, j.groupRepo, game.ChatID)
+		text := formatCompletedMessage(game, participations, guests, groupTZ, lz)
+		edit := tgbotapi.NewEditMessageText(game.ChatID, messageID, text)
+		emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+		edit.ReplyMarkup = &emptyKeyboard
 
-	if _, err := j.api.Send(edit); err != nil {
-		j.logger.Error("day-after cleanup: edit message", "game_id", game.ID, "err", err)
-		return
+		if _, err := j.api.Send(edit); err != nil {
+			j.logger.Error("day-after cleanup: edit message", "game_id", game.ID, "err", err)
+			return
+		}
+	} else {
+		j.logger.Info("day-after cleanup: game was never published, marking complete silently", "game_id", game.ID)
 	}
 
 	if err := j.gameRepo.MarkCompleted(ctx, game.ID); err != nil {
@@ -144,9 +143,7 @@ func (j *DayAfterCleanupJob) processDayAfter(ctx context.Context, game *models.G
 
 	j.logger.Info("day-after cleanup",
 		"game_id", game.ID,
-		"message_id", messageID,
-		"unpinned", true,
-		"buttons_removed", true,
+		"published", game.MessageID != nil,
 	)
 }
 

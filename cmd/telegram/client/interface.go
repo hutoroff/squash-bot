@@ -53,4 +53,7 @@ type ManagementClient interface {
 
 	// Scheduler
 	TriggerScheduledEvent(ctx context.Context, event string) error
+
+	// PublishGame sends the game announcement and pins it. Returns ErrAlreadyPublished (HTTP 409) if already done.
+	PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -466,6 +467,40 @@ func (c *Client) GetVersion(ctx context.Context) (string, error) {
 // on the management service. The job runs asynchronously on the server side.
 func (c *Client) TriggerScheduledEvent(ctx context.Context, event string) error {
 	return c.do(ctx, http.MethodPost, "/api/v1/scheduler/trigger/"+event, nil, nil)
+}
+
+// ErrAlreadyPublished is returned by PublishGame when the management service responds with HTTP 409.
+var ErrAlreadyPublished = errors.New("already published")
+
+// PublishGame sends the game announcement and pins it.
+// Returns ErrAlreadyPublished if the game is already published (HTTP 409).
+func (c *Client) PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error) {
+	body := map[string]any{
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/publish", body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST /publish: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return nil, ErrAlreadyPublished
+	}
+	if resp.StatusCode >= 400 {
+		return nil, parseErrorBody(resp)
+	}
+
+	var game models.Game
+	if err := json.NewDecoder(resp.Body).Decode(&game); err != nil {
+		return nil, fmt.Errorf("decode publish response: %w", err)
+	}
+	return &game, nil
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

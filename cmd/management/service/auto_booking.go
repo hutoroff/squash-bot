@@ -24,6 +24,7 @@ type AutoBookingJob struct {
 	api                   TelegramAPI
 	groupRepo             GroupRepository
 	venueRepo             VenueRepository
+	gameRepo              GameRepository
 	bookingClient         BookingServiceClient
 	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
@@ -38,6 +39,7 @@ func NewAutoBookingJob(
 	api TelegramAPI,
 	groupRepo GroupRepository,
 	venueRepo VenueRepository,
+	gameRepo GameRepository,
 	bookingClient BookingServiceClient,
 	credService *VenueCredentialService,
 	autoBookingResultRepo AutoBookingResultRepository,
@@ -51,6 +53,7 @@ func NewAutoBookingJob(
 		api:                   api,
 		groupRepo:             groupRepo,
 		venueRepo:             venueRepo,
+		gameRepo:              gameRepo,
 		bookingClient:         bookingClient,
 		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
@@ -397,14 +400,111 @@ func (j *AutoBookingJob) processTimeSlot(
 		return false
 	}
 
-	// Persist result for BookingReminderJob to consume at 10:00.
+	// Persist result and eagerly create the unpublished game record.
 	courtsStr := strings.Join(bookedCourtLabels, ",")
-	if err := j.autoBookingResultRepo.Save(ctx, venue.ID, gameDate, gameTime, courtsStr, bookedCount); err != nil {
+	resultID, err := j.autoBookingResultRepo.Save(ctx, venue.ID, gameDate, gameTime, courtsStr, bookedCount)
+	if err != nil {
 		j.logger.Error("auto-booking: save result", "venue_id", venue.ID, "time", gameTime, "err", err)
+	} else {
+		j.createUnpublishedGame(ctx, chatID, venue, gameDate, gameTime, courtsStr, bookedCount, resultID, groupTZ, lz)
 	}
 
 	j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, gameTime, bookedCount, lz)
 	return true
+}
+
+// createUnpublishedGame creates a games row with message_id=NULL immediately after booking succeeds.
+// On failure, DMs admins and logs the error; the booking itself is NOT rolled back.
+// No-ops when gameRepo is nil (allows tests that don't need game creation to omit it).
+func (j *AutoBookingJob) createUnpublishedGame(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDate time.Time,
+	gameTime string,
+	courts string,
+	courtsCount int,
+	resultID int64,
+	groupTZ *time.Location,
+	lz *i18n.Localizer,
+) {
+	if j.gameRepo == nil {
+		return
+	}
+
+	// Combine gameDate + gameTime in the group timezone (mirrors booking_reminder.go).
+	gameDateWithTime := gameDate
+	if gameTime != "" {
+		parts := strings.SplitN(gameTime, ":", 2)
+		if len(parts) == 2 {
+			h, errH := strconv.Atoi(parts[0])
+			m, errM := strconv.Atoi(parts[1])
+			if errH == nil && errM == nil {
+				gameDateWithTime = time.Date(
+					gameDate.Year(), gameDate.Month(), gameDate.Day(),
+					h, m, 0, 0, groupTZ,
+				)
+			}
+		}
+	}
+
+	venueID := venue.ID
+	created, err := j.gameRepo.Create(ctx, &models.Game{
+		ChatID:      chatID,
+		GameDate:    gameDateWithTime,
+		Courts:      courts,
+		CourtsCount: courtsCount,
+		VenueID:     &venueID,
+		// MessageID intentionally nil — game is unpublished until BookingReminderJob or manual publish.
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: create unpublished game", "venue_id", venue.ID, "time", gameTime, "err", err)
+		j.notifyAutoBookingGameCreateFailed(ctx, chatID, venue, gameDate, gameTime, lz)
+		return
+	}
+
+	if err := j.autoBookingResultRepo.SetGameID(ctx, resultID, created.ID); err != nil {
+		j.logger.Error("auto-booking: set game_id on result",
+			"result_id", resultID, "game_id", created.ID, "err", err)
+		// Non-fatal: game exists; cancellation falls back to GetByVenueAndDate.
+	}
+
+	j.logger.Info("auto-booking: unpublished game created",
+		"game_id", created.ID, "venue_id", venue.ID,
+		"game_date", gameDate.Format(time.DateOnly), "game_time", gameTime)
+}
+
+// notifyAutoBookingGameCreateFailed DMs group admins when booking succeeded but game DB insert failed.
+func (j *AutoBookingJob) notifyAutoBookingGameCreateFailed(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDate time.Time,
+	gameTime string,
+	lz *i18n.Localizer,
+) {
+	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
+	})
+	if err != nil {
+		j.logger.Error("auto-booking: get chat administrators for game-create-failed DM", "chat_id", chatID, "err", err)
+		return
+	}
+
+	text := lz.Tf(i18n.SchedAutoBookingGameCreateFailed, venue.Name, gameDate.Format(time.DateOnly), gameTime)
+	seen := make(map[int64]bool)
+	for _, admin := range admins {
+		if admin.User.IsBot || seen[admin.User.ID] {
+			continue
+		}
+		seen[admin.User.ID] = true
+		msg := tgbotapi.NewMessage(admin.User.ID, text)
+		msg.ParseMode = "Markdown"
+		if _, err := j.api.Send(msg); err != nil {
+			j.logger.Error("auto-booking: send game-create-failed DM",
+				"user_id", admin.User.ID, "venue_id", venue.ID, "err", err)
+		}
+	}
 }
 
 // splitPreferredTimes splits a comma-separated preferred times string and returns

@@ -30,6 +30,7 @@ cmd/telegram/
 │   ├── game_manage_handlers.go  — handleManage, handleManageShowPlayers/Guests, handleManageEditCourts,
 │   │                              handleManageClose, handleManageKickPlayer/Guest,
 │   │                              handleManageCourtsToggle, handleManageCourtsConfirm,
+│   │                              handleManagePublish (Publish button for unpublished games),
 │   │                              processCourtsEdit
 │   ├── newgame_handlers.go  — /newGame wizard: handleNewGameDate/Group/Venue/CourtToggle/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
@@ -119,6 +120,7 @@ All callback actions:
 join, skip, guest_add, guest_remove
 manage, manage_players, manage_guests, manage_courts, manage_close
 manage_kick, manage_kick_guest, manage_court_toggle, manage_court_confirm
+publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publish)
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
@@ -280,7 +282,8 @@ Works in private chat only. Group @mentions redirected to private chat. At least
 
 ```
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
-                GetUpcomingGamesByChatIDs, GetNextGameForTelegramUser
+                GetUpcomingGamesByChatIDs, GetNextGameForTelegramUser,
+                PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)
 Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
                 KickPlayer, KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
@@ -292,6 +295,8 @@ Scheduler:      TriggerScheduledEvent
 ```
 
 **Error propagation:** `client.go` defines `HTTPError{StatusCode int, Message string}` — a typed error returned by `parseErrorBody`. Handlers use `errors.As(err, &httpErr)` to branch on specific HTTP status codes (e.g. 409 Conflict) before falling through to generic error messages. Always return `*HTTPError` from `parseErrorBody` for new error cases; do not wrap with `fmt.Errorf`.
+
+`client.go` also defines package-level sentinel errors for specific status codes: `ErrAlreadyPublished` (mapped from HTTP 409 on `PublishGame`). Handlers use `errors.Is(err, client.ErrAlreadyPublished)` to show a dedicated message.
 
 **Adding a new management API call:** Add the method to `ManagementClient` in `client/interface.go`, implement it in `client/client.go`, then use it in the appropriate handler file.
 
@@ -325,5 +330,6 @@ SERVICE_ADMIN_IDS=            optional; comma-sep Telegram user IDs allowed to u
 - Callback data format is stable — changing it requires coordinated migration (old messages in Telegram still have old button data)
 - UTF-16 encoding matters for `@mention` entity offsets — see `isBotMentioned` in `handlers.go`
 - `b.client` field is `client.ManagementClient` (interface), never `*client.Client` — this enables test doubles
+- `/games` admin list prefixes unpublished games (those with `game.MessageID == nil`) with `📝` via `formatGamesListMessage` in `commands.go`; the Manage screen for such games shows a "📢 Publish" button as the first row via `renderManageScreen` in `game_manage_handlers.go`
 - `serviceAdminIDs` (env `SERVICE_ADMIN_IDS`) controls `/trigger` only — group admin rights are verified via `GetChatAdministrators` at runtime
 - Updates can arrive concurrently for the same user — wizard state in `sync.Map` is safe, but individual wizard steps within a single chat are processed sequentially because only one update per user tends to be in flight

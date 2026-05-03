@@ -343,6 +343,27 @@ func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID,
 	})
 }
 
+// RecordGamePublished records that a game was published (announcement sent to group).
+// When actorTgID == 0, the action is treated as a system event (e.g. BookingReminderJob).
+func (s *AuditService) RecordGamePublished(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
+	evt := &models.AuditEvent{
+		EventType:   models.AuditEventGamePublished,
+		Visibility:  models.AuditVisibilityGroupAdmin,
+		GroupID:     groupIDPtr(groupID),
+		SubjectType: models.AuditSubjectGame,
+		SubjectID:   fmt.Sprintf("%d", gameID),
+		Description: fmt.Sprintf("Game %d published", gameID),
+	}
+	if actorTgID != 0 {
+		evt.ActorKind = models.AuditActorUser
+		evt.ActorTgID = &actorTgID
+		evt.ActorDisplay = actorDisplay
+	} else {
+		evt.ActorKind = models.AuditActorSystem
+	}
+	s.record(ctx, evt)
+}
+
 // Scheduler (system) events
 
 func (s *AuditService) RecordCourtBooked(ctx context.Context, venueID, groupID int64, venueName, courtLabel string, gameDate time.Time) {
