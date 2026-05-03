@@ -19,6 +19,7 @@ type mockGameRepo struct {
 	getByIDResult *models.Game
 	getByIDErr    error
 	updateMsgErr  error
+	updateMsgCalled bool
 	existingGames []*models.Game
 	existingErr   error
 }
@@ -46,6 +47,7 @@ func (m *mockGameRepo) GetByID(_ context.Context, id int64) (*models.Game, error
 }
 
 func (m *mockGameRepo) UpdateMessageID(_ context.Context, _, _ int64) error {
+	m.updateMsgCalled = true
 	return m.updateMsgErr
 }
 
@@ -107,9 +109,9 @@ type mockAutoBookingResultRepo struct {
 	setGameErr error
 }
 
-func (m *mockAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
+func (m *mockAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) (int64, error) {
 	m.saveCalls++
-	return m.saveErr
+	return 0, m.saveErr
 }
 
 func (m *mockAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
@@ -394,6 +396,9 @@ func TestHandleAutoBookingReminder_BothResultsHaveGameID_IsIdempotent(t *testing
 			{ID: 2, GameTime: "20:00", Courts: "2", CourtsCount: 1, GameDate: gameDate, GameID: &gameID2},
 		},
 	}
+	// Games are already published (MessageID != nil) — PublishGame must NOT be called.
+	publishedMsgID := int64(555)
+	gameRepo.getByIDResult = &models.Game{ID: gameID1, MessageID: &publishedMsgID}
 	job := &BookingReminderJob{
 		api:                   api,
 		gameRepo:              gameRepo,
@@ -411,5 +416,47 @@ func TestHandleAutoBookingReminder_BothResultsHaveGameID_IsIdempotent(t *testing
 	}
 	if len(api.sendCalls) != 0 {
 		t.Errorf("expected no Telegram sends on second run, got %d", len(api.sendCalls))
+	}
+}
+
+// TestHandleAutoBookingReminder_GetByIDFails_FallsBackToAdminDM verifies that when a
+// linked game exists but GetByID fails (transient DB error), the job sends an admin DM
+// instead of silently swallowing the error and writing last_booking_reminder_at.
+func TestHandleAutoBookingReminder_GetByIDFails_FallsBackToAdminDM(t *testing.T) {
+	const chatID int64 = -1001
+	api := &mockTelegramAPI{
+		admins:     []tgbotapi.ChatMember{makeChatMember(101, false)},
+		sendResult: tgbotapi.Message{MessageID: 5},
+	}
+	gameID := int64(10)
+	resultRepo := &mockAutoBookingResultRepo{
+		results: []*models.AutoBookingResult{
+			{ID: 1, GameTime: "18:00", Courts: "1", CourtsCount: 1,
+				GameDate: time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC), GameID: &gameID},
+		},
+	}
+	job := &BookingReminderJob{
+		api:                   api,
+		gameRepo:              &mockGameRepo{getByIDErr: errors.New("db timeout")},
+		autoBookingResultRepo: resultRepo,
+		logger:                noopLogger(),
+	}
+
+	venue := &models.Venue{ID: 1, Name: "Venue", PreferredGameTimes: "18:00"}
+	lz := i18n.New(i18n.En)
+
+	ok := job.handleAutoBookingReminder(context.Background(), chatID, venue,
+		time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC), time.Now().UTC(), time.UTC, lz)
+	if !ok {
+		t.Error("expected true: admin DM should count as actioned")
+	}
+	dmSent := false
+	for _, call := range api.sendCalls {
+		if msg, ok := call.(tgbotapi.MessageConfig); ok && msg.ChatID == 101 {
+			dmSent = true
+		}
+	}
+	if !dmSent {
+		t.Error("expected admin DM when GetByID fails for linked game")
 	}
 }

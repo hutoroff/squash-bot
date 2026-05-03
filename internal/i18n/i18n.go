@@ -310,6 +310,20 @@ const (
 	// Args: %d = suggested default
 	MsgVenueCredAskMaxCourts = "msg.venue_cred_ask_max_courts"
 
+	// Publish-game UX
+	BtnPublishGame = "btn.publish_game"
+	// MsgGamePublished: shown as callback toast on success
+	MsgGamePublished = "msg.game_published"
+	// MsgPublishFailed: shown as callback toast on API/send failure
+	MsgPublishFailed = "msg.publish_failed"
+	// MsgPublishAlreadyDone: shown as callback toast when already published (HTTP 409)
+	MsgPublishAlreadyDone = "msg.publish_already_done"
+	// MsgUnpublishedMarker: prefix in /games list when MessageID == nil
+	MsgUnpublishedMarker = "msg.unpublished_marker"
+	// SchedAutoBookingGameCreateFailed: DM to admins when booking succeeded but game DB insert failed
+	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = game time (HH:MM)
+	SchedAutoBookingGameCreateFailed = "sched.auto_booking_game_create_failed"
+
 	// Auto-booking scheduler — credential error notifications.
 	// SchedAutoBookingCredError: sent WITH notification when a credential fails.
 	// Args: %s = login, %s = venue name, %s = error text
@@ -648,6 +662,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredError:     "⚠️ Auto-booking for *%s*: credential *%s* failed with error:\n%s\n\nWill not use this credential for the next %s.",
 		SchedAutoBookingCredExhausted: "⚠️ Auto-booking for *%s*: all credentials exhausted. Booked %d of %d courts. Please book the remaining courts manually.",
 		SchedAutoBookingNoCredentials: "⚠️ Auto-booking for *%s* skipped: no usable credentials available. Add credentials or wait for the cooldown to expire.",
+
+		// Publish-game UX
+		BtnPublishGame:                   "📢 Publish",
+		MsgGamePublished:                 "Game published ✓",
+		MsgPublishFailed:                 "Failed to publish game. Please try again.",
+		MsgPublishAlreadyDone:            "Game is already published",
+		MsgUnpublishedMarker:             "📝",
+		SchedAutoBookingGameCreateFailed: "⚠️ Auto-booking succeeded for *%s* on %s at %s but the game record could not be created. Please create the game manually.",
 	},
 
 	De: {
@@ -930,6 +952,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredError:     "⚠️ Automatische Buchung für *%s*: Konto *%s* ist fehlgeschlagen:\n%s\n\nDieses Konto wird für die nächsten %s nicht verwendet.",
 		SchedAutoBookingCredExhausted: "⚠️ Automatische Buchung für *%s*: Alle Konten ausgeschöpft. %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
 		SchedAutoBookingNoCredentials: "⚠️ Automatische Buchung für *%s* übersprungen: Keine verwendbaren Konten verfügbar. Füge Konten hinzu oder warte auf das Ende der Abklingzeit.",
+
+		// Publish-game UX
+		BtnPublishGame:                   "📢 Veröffentlichen",
+		MsgGamePublished:                 "Spiel veröffentlicht ✓",
+		MsgPublishFailed:                 "Spiel konnte nicht veröffentlicht werden. Bitte versuche es erneut.",
+		MsgPublishAlreadyDone:            "Spiel ist bereits veröffentlicht",
+		MsgUnpublishedMarker:             "📝",
+		SchedAutoBookingGameCreateFailed: "⚠️ Automatische Buchung für *%s* am %s um %s erfolgreich, aber der Spieleintrag konnte nicht erstellt werden. Bitte Spiel manuell erstellen.",
 	},
 
 	Ru: {
@@ -1212,6 +1242,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredError:     "⚠️ Автобронирование для *%s*: аккаунт *%s* вернул ошибку:\n%s\n\nАккаунт не будет использоваться в течение %s.",
 		SchedAutoBookingCredExhausted: "⚠️ Автобронирование для *%s*: все аккаунты исчерпаны. Забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
 		SchedAutoBookingNoCredentials: "⚠️ Автобронирование для *%s* пропущено: нет доступных аккаунтов. Добавьте аккаунты или подождите окончания периода блокировки.",
+
+		// Publish-game UX
+		BtnPublishGame:                   "📢 Опубликовать",
+		MsgGamePublished:                 "Игра опубликована ✓",
+		MsgPublishFailed:                 "Не удалось опубликовать игру. Попробуйте снова.",
+		MsgPublishAlreadyDone:            "Игра уже опубликована",
+		MsgUnpublishedMarker:             "📝",
+		SchedAutoBookingGameCreateFailed: "⚠️ Автобронирование для *%s* на %s в %s прошло успешно, но запись об игре не была создана. Пожалуйста, создайте игру вручную.",
 	},
 }
 

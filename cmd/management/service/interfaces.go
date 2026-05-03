@@ -81,8 +81,8 @@ type ServiceStateRepository interface {
 // AutoBookingResultRepository is the data access interface for auto-booking results.
 type AutoBookingResultRepository interface {
 	// Save persists the courts booked by AutoBookingJob for a venue on a specific game date and time slot.
-	// Silently ignores duplicate entries (same venue_id + game_date + game_time).
-	Save(ctx context.Context, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) error
+	// Returns the row id of the inserted (or upserted) record.
+	Save(ctx context.Context, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) (int64, error)
 	// GetByVenueAndDate returns all stored results for the given venue and game date,
 	// ordered by game_time ASC. Returns an empty (non-nil) slice when none exist.
 	GetByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) ([]*models.AutoBookingResult, error)

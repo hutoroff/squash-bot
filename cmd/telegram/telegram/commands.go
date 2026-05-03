@@ -291,7 +291,11 @@ func formatGamesListMessage(games []*models.Game, groups []models.Group, lz *i18
 			title = fmt.Sprintf("Chat %d", game.ChatID)
 		}
 
-		sb.WriteString(fmt.Sprintf("📅 %s · %s\n", lz.FormatGameDate(localDate), localDate.Format("15:04")))
+		datePrefix := ""
+		if game.MessageID == nil {
+			datePrefix = lz.T(i18n.MsgUnpublishedMarker) + " "
+		}
+		sb.WriteString(fmt.Sprintf("%s📅 %s · %s\n", datePrefix, lz.FormatGameDate(localDate), localDate.Format("15:04")))
 		sb.WriteString(lz.Tf(i18n.MsgGameCourtsCapacity, escapeMarkdown(game.Courts), game.CourtsCount*2))
 		sb.WriteString(lz.Tf(i18n.MsgGroupLabel, escapeMarkdown(title)))
 

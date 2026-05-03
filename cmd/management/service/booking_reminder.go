@@ -20,6 +20,7 @@ import (
 type BookingReminderJob struct {
 	api                   TelegramAPI
 	gameRepo              GameRepository
+	gameService           *GameService
 	groupRepo             GroupRepository
 	venueRepo             VenueRepository
 	autoBookingResultRepo AutoBookingResultRepository
@@ -30,6 +31,7 @@ type BookingReminderJob struct {
 func NewBookingReminderJob(
 	api TelegramAPI,
 	gameRepo GameRepository,
+	gameService *GameService,
 	groupRepo GroupRepository,
 	venueRepo VenueRepository,
 	autoBookingResultRepo AutoBookingResultRepository,
@@ -39,6 +41,7 @@ func NewBookingReminderJob(
 	return &BookingReminderJob{
 		api:                   api,
 		gameRepo:              gameRepo,
+		gameService:           gameService,
 		groupRepo:             groupRepo,
 		venueRepo:             venueRepo,
 		autoBookingResultRepo: autoBookingResultRepo,
@@ -142,16 +145,38 @@ func (j *BookingReminderJob) handleAutoBookingReminder(
 	anyActioned := false
 	for _, result := range results {
 		if result.GameID != nil {
-			j.logger.Info("booking reminder: game already created for slot, skipping",
-				"venue_id", venue.ID, "game_time", result.GameTime, "game_id", *result.GameID)
-			// Count pre-existing games as handled so the timestamp is written.
+			// Game was eagerly created by AutoBookingJob at 00:00.
+			game, err := j.gameRepo.GetByID(ctx, *result.GameID)
+			if err != nil {
+				j.logger.Error("booking reminder: fetch linked game", "game_id", *result.GameID, "err", err)
+				// Fall back to admin DM so courts don't go unannounced.
+				if j.sendBookingReminderToAdmins(chatID, venue, lz) {
+					anyActioned = true
+				}
+				continue
+			}
+			if game.MessageID != nil {
+				// Already published (e.g. admin tapped Publish before 10:00).
+				j.logger.Info("booking reminder: game already published, skipping",
+					"venue_id", venue.ID, "game_time", result.GameTime, "game_id", *result.GameID)
+				anyActioned = true
+				continue
+			}
+			// Publish the unpublished game.
+			if _, err := j.gameService.PublishGame(ctx, *result.GameID, 0, ""); err != nil {
+				j.logger.Error("booking reminder: publish game failed",
+					"game_id", *result.GameID, "venue_id", venue.ID, "err", err)
+				j.sendBookingReminderToAdmins(chatID, venue, lz)
+				// Still count as actioned so last_booking_reminder_at is set (single-attempt policy).
+			}
 			anyActioned = true
 			continue
 		}
+
+		// Legacy: no game linked (should not happen after one deploy cycle, but handle gracefully).
 		if j.createGameAndAnnounce(ctx, chatID, venue, result, localNow, groupTZ, lz) {
 			anyActioned = true
 		} else {
-			// Game creation failed — DM admins so the booking isn't lost.
 			j.logger.Warn("booking reminder: game creation failed, falling back to admin DM",
 				"venue_id", venue.ID, "game_time", result.GameTime)
 			if j.sendBookingReminderToAdmins(chatID, venue, lz) {

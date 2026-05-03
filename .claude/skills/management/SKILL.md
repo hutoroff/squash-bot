@@ -93,11 +93,11 @@ CourtBookingRepository — Save(ctx, *models.CourtBooking),
                    MarkCanceledByVenueAndDate(ctx, venueID, gameDate) — bulk soft-delete all active rows for venue+date,
                    HasActiveByCredentialID(ctx, credentialID) bool,
                    HasActiveByVenueID(ctx, venueID) bool
-AutoBookingResultRepository — Save(ctx, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int),
+AutoBookingResultRepository — Save(ctx, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) (int64, error) — returns the saved row ID (used by AutoBookingJob to call SetGameID immediately),
                    GetByVenueAndDate(ctx, venueID int64, date time.Time) []*models.AutoBookingResult,
                    GetByVenueAndDateAndTime(ctx, venueID int64, date time.Time, gameTime string) *models.AutoBookingResult — nil if not yet booked,
                    GetByGameID(ctx, gameID int64) *models.AutoBookingResult — used by cancellation to find game_time,
-                   SetGameID(ctx, resultID, gameID int64) — links result to the Telegram game created by BookingReminderJob
+                   SetGameID(ctx, resultID, gameID int64) — links result to a game; called by both AutoBookingJob (at 00:00) and BookingReminderJob (legacy path)
 ```
 
 `VenueCredentialService` (`service/venue_credential_service.go`) wraps the repository with:
@@ -131,6 +131,8 @@ GET    /api/v1/games                               — listGames (query: chatIDs
 GET    /api/v1/games/{id}                          — getGame
 PATCH  /api/v1/games/{id}/message-id               — updateMessageID
 PATCH  /api/v1/games/{id}/courts                   — updateCourts
+POST   /api/v1/games/{id}/publish                  — publishGame; body: actor_telegram_id, actor_display;
+                                                     404 if not found, 409 if already published, 502 on Telegram send failure
 
 POST   /api/v1/games/{id}/join                     — joinGame
 POST   /api/v1/games/{id}/skip                     — skipGame
@@ -207,6 +209,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `group.changelog_toggled` | server_owner | Admin enables/disables changelog announcements for group |
 | `court.booked` | group_admin | Scheduler auto-books a court |
 | `court.canceled` | group_admin | Scheduler cancels a court |
+| `game.published` | group_admin | Game announcement sent to group (by scheduler or admin) |
 
 **Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
 
@@ -224,6 +227,18 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 - Methods return domain types from `internal/models`
 - `ParticipationService` calls `Notifier.EditGameMessage(ctx, gameID)` asynchronously after every join/skip/guest mutation — this fires a Telegram message edit in a background goroutine
 - All write operations update the DB then notify; notification failures are logged but do not fail the API response
+
+**`GameService.PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)`**
+
+The canonical publication primitive. Sends the game announcement to the group chat, pins it silently, sets `message_id`, and records a `game.published` audit event.
+
+- Returns `ErrGameNotFound` when `gameRepo.GetByID` returns `pgx.ErrNoRows`; propagates other DB errors as-is.
+- Returns `ErrGameAlreadyPublished` when `game.MessageID != nil` — idempotency guard.
+- On `api.Send` failure: returns error without touching the DB (game stays cleanly unpublished).
+- On `gameRepo.UpdateMessageID` failure: deletes the orphaned Telegram message, then returns error.
+- `actorTgID == 0` → audit records `actor_kind = system`; non-zero → `actor_kind = user`.
+
+`NewGameService` signature (9 args): `gameRepo, venueRepo, participationRepo, guestRepo, groupRepo GameRepository…, auditSvc *AuditService, api TelegramAPI, defaultLoc *time.Location, logger *slog.Logger`.
 
 ### Scheduler (`service/scheduler.go`)
 
@@ -267,17 +282,19 @@ Group notification scenarios:
 - `all_canceled` — all courts canceled, game will not happen
 - `even_no_cancel` — even count < capacity, nothing canceled (booking service absent or no owned bookings)
 
-**BookingReminderJob**: Fires in the `[10:00, 10:05)` window per group timezone for venues with matching `game_days`. Deduplicates via `last_booking_reminder_at` (date-scoped).
+**BookingReminderJob**: Fires in the `[10:00, 10:05)` window per group timezone for venues with matching `game_days`. Deduplicates via `last_booking_reminder_at` (date-scoped). Injected with `*GameService` to call `PublishGame`.
 
 For venues with `auto_booking_enabled`:
 1. `GetByVenueAndDate(venueID, targetDate)` → list of `AutoBookingResult` rows.
 2. If empty → DM admins (no booking happened), mark `last_booking_reminder_at`.
-3. For each result where `GameID == nil`: parse `result.GameTime`, create `Game`, call `SetGameID(resultID, gameID)`.
-4. If ALL results already have `GameID != nil` → nothing to do (idempotent on retry), mark `last_booking_reminder_at`.
+3. For each result:
+   - `GameID != nil` (game was eagerly created by AutoBookingJob at 00:00): call `gameRepo.GetByID`. On error → fall back to admin DM (not silent). If `game.MessageID != nil` → already published, skip. If `game.MessageID == nil` → call `gameService.PublishGame(ctx, gameID, 0, "")`. On `PublishGame` failure → DM admins. Either way, counts as actioned (single-attempt policy).
+   - `GameID == nil` (legacy path — no longer produced after one deploy cycle): create game + announce the old way, call `SetGameID`.
+4. Returns true when any slot was actioned → `last_booking_reminder_at` written.
 
 For venues without `auto_booking_enabled` (manual reminder): DM admins a booking reminder (venue name + `booking_opens_days`); mark `last_booking_reminder_at`.
 
-**AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone for venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_times` configured. Deduplicates via `last_auto_booking_at`.
+**AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone for venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_times` configured. Deduplicates via `last_auto_booking_at`. After a successful booking, immediately creates an **unpublished** game row (`message_id = NULL`) in the DB via `createUnpublishedGame` and calls `SetGameID(resultID, gameID)` to link result → game. The game stays invisible to group members until `BookingReminderJob` calls `PublishGame` at 10:00. If the DB insert fails, DMs group admins (silent) — the auto-booking result still exists and the legacy create-at-10:00 path handles it gracefully.
 
 Algorithm (outer loop iterates each time slot in `preferred_game_times`):
 1. `VenueCredentialService.ListForBooking(venueID, cooldown)` — loads all usable credentials **before** any Eversports network calls. No credentials → `notifyNoCredentials`, bail out. First credential's `Login`/`Password` are used for the list steps below.
@@ -292,7 +309,7 @@ Algorithm (outer loop iterates each time slot in `preferred_game_times`):
 
 Admin notification types: `notifyNoCredentials` (sound, no usable creds), `notifyCredentialError` (sound, per-credential failure with login + error + cooldown), `notifyCredentialsExhausted` (silent, all creds tried but courts remain).
 
-**DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group. Unpins message, removes keyboard, marks game complete. If the game has a `venue_id`, calls `courtBookingRepo.MarkCanceledByVenueAndDate` to bulk-close any orphaned active `court_bookings` rows (soft-delete via `canceled_at = NOW()`).
+**DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group (includes unpublished games — no `message_id IS NOT NULL` filter). For games with `message_id != nil`: unpins message and removes keyboard. For games with `message_id == nil` (never announced): skips all Telegram ops, logs silently. Always calls `gameRepo.MarkCompleted` and, if the game has a `venue_id`, `courtBookingRepo.MarkCanceledByVenueAndDate` to bulk-close orphaned active `court_bookings` rows.
 
 ### Localisation in scheduler jobs
 

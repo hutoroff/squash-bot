@@ -919,8 +919,8 @@ type perGameAutoBookingResultRepo struct {
 	errGetByGameID error // if set, GetByGameID returns this error
 }
 
-func (r *perGameAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) error {
-	return nil
+func (r *perGameAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) (int64, error) {
+	return 0, nil
 }
 
 func (r *perGameAutoBookingResultRepo) GetByVenueAndDate(_ context.Context, _ int64, _ time.Time) ([]*models.AutoBookingResult, error) {
