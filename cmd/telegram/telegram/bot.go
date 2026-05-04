@@ -152,6 +152,17 @@ type manageCourtsToggleState struct {
 	selectedCourts map[string]bool
 }
 
+// manageCourtsCancelPromptState holds context for the confirmation step shown when
+// removing courts that have active Eversports bookings.
+// Keyed by private chat ID in pendingManageCourtsCancelPrompt.
+type manageCourtsCancelPromptState struct {
+	gameID       int64
+	groupID      int64
+	newCourts    string   // the courts string the admin wants to apply
+	bookedLabels []string // court labels that have active bookings
+	venueCourts  []string // all venue courts (for the "back" re-render)
+}
+
 // gameEditWorker serializes and coalesces Telegram message edits for a single game.
 // Multiple concurrent triggers (e.g. rapid join/skip button clicks) collapse into
 // at most two sequential Telegram API calls, preventing 429 rate-limit errors.
@@ -225,7 +236,8 @@ type Bot struct {
 	logger                        *slog.Logger
 	pendingGames                  sync.Map      // map[pendingGameKey]*pendingGame
 	pendingCourtsEdit             sync.Map      // map[chatID int64]gameID int64
-	pendingManageCourtsToggle     sync.Map      // map[chatID int64]*manageCourtsToggleState
+	pendingManageCourtsToggle        sync.Map      // map[chatID int64]*manageCourtsToggleState
+	pendingManageCourtsCancelPrompt  sync.Map      // map[chatID int64]*manageCourtsCancelPromptState
 	pendingNewGameWizard          sync.Map      // map[chatID int64]*newGameWizard
 	pendingVenueWizard            sync.Map      // map[chatID int64]*venueWizard
 	pendingVenueEdit              sync.Map      // map[chatID int64]*venueEditState

@@ -469,6 +469,66 @@ func (c *Client) TriggerScheduledEvent(ctx context.Context, event string) error 
 	return c.do(ctx, http.MethodPost, "/api/v1/scheduler/trigger/"+event, nil, nil)
 }
 
+// CourtBookingInfo is a slim DTO for an active court booking returned by ListActiveCourtBookings.
+type CourtBookingInfo struct {
+	CourtLabel string `json:"court_label"`
+	GameTime   string `json:"game_time"`
+	MatchID    string `json:"match_id"`
+}
+
+// CancelFailure describes a court whose booking cancellation failed.
+type CancelFailure struct {
+	Court  string `json:"court"`
+	Reason string `json:"reason"`
+}
+
+// ListActiveCourtBookings returns active Eversports bookings for the given court labels on a game.
+func (c *Client) ListActiveCourtBookings(ctx context.Context, gameID int64, courts []string) ([]CourtBookingInfo, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/active-court-bookings?courts=%s",
+		gameID, url.QueryEscape(strings.Join(courts, ",")))
+	var infos []CourtBookingInfo
+	if err := c.do(ctx, http.MethodGet, path, nil, &infos); err != nil {
+		return nil, err
+	}
+	return infos, nil
+}
+
+// UpdateCourtsAndCancelBookings cancels active bookings for removed courts then persists the new courts list.
+// On partial failure, failed contains per-court errors and courts are still updated.
+func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error) {
+	body := map[string]any{
+		"courts":            newCourts,
+		"group_id":          groupID,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+		"cancel_bookings":   true,
+	}
+	req, reqErr := c.newRequest(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body)
+	if reqErr != nil {
+		return nil, nil, reqErr
+	}
+	resp, doErr := c.httpClient.Do(req)
+	if doErr != nil {
+		return nil, nil, fmt.Errorf("PATCH /courts: %w", doErr)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, nil, parseErrorBody(resp)
+	}
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil, nil
+	}
+	var partial struct {
+		Canceled []string        `json:"canceled"`
+		Failed   []CancelFailure `json:"failed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&partial); err != nil {
+		return nil, nil, fmt.Errorf("decode partial response: %w", err)
+	}
+	return partial.Canceled, partial.Failed, nil
+}
+
 // ErrAlreadyPublished is returned by PublishGame when the management service responds with HTTP 409.
 var ErrAlreadyPublished = errors.New("already published")
 

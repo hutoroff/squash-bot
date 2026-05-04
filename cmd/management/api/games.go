@@ -116,7 +116,8 @@ func (h *Handler) updateMessageID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// updateCourts handles PATCH /api/v1/games/{id}/courts
+// updateCourts handles PATCH /api/v1/games/{id}/courts.
+// When cancel_bookings=true, active Eversports bookings for removed courts are canceled first.
 func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -128,11 +129,46 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		GroupID         int64  `json:"group_id"`
 		ActorTelegramID int64  `json:"actor_telegram_id"`
 		ActorDisplay    string `json:"actor_display"`
+		CancelBookings  bool   `json:"cancel_bookings"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	if req.CancelBookings {
+		canceledLabels, cancelErrors, svcErr := h.gameService.RemoveCourtsAndCancelBookings(r.Context(), id, req.Courts)
+		if svcErr != nil {
+			h.logger.Error("updateCourts (cancel)", "err", svcErr, "id", id)
+			writeError(w, http.StatusInternalServerError, svcErr.Error())
+			return
+		}
+		if req.ActorTelegramID != 0 {
+			h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Courts)
+		}
+		if len(cancelErrors) > 0 {
+			type failureItem struct {
+				Court  string `json:"court"`
+				Reason string `json:"reason"`
+			}
+			failures := make([]failureItem, len(cancelErrors))
+			for i, ce := range cancelErrors {
+				failures[i] = failureItem{Court: ce.CourtLabel, Reason: ce.Err.Error()}
+			}
+			for _, ce := range cancelErrors {
+				h.logger.Warn("updateCourts: partial cancellation failure",
+					"id", id, "court", ce.CourtLabel, "err", ce.Err)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"canceled": canceledLabels,
+				"failed":   failures,
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if err := h.gameService.UpdateCourts(r.Context(), id, req.Courts); err != nil {
 		h.logger.Error("updateCourts", "err", err, "id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -142,6 +178,33 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Courts)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// listActiveCourtBookings handles GET /api/v1/games/{id}/active-court-bookings?courts=1,2
+func (h *Handler) listActiveCourtBookings(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid game id")
+		return
+	}
+	var courts []string
+	if raw := r.URL.Query().Get("courts"); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if t := strings.TrimSpace(p); t != "" {
+				courts = append(courts, t)
+			}
+		}
+	}
+	infos, err := h.gameService.ListActiveCourtBookings(r.Context(), id, courts)
+	if err != nil {
+		h.logger.Error("listActiveCourtBookings", "err", err, "id", id)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if infos == nil {
+		infos = []service.CourtBookingInfo{}
+	}
+	writeJSON(w, http.StatusOK, infos)
 }
 
 // getNextGame handles GET /api/v1/players/{telegramID}/next-game

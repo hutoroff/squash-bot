@@ -115,6 +115,9 @@ type CourtBookingRepository interface {
 	// MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
 	// Called by DayAfterCleanupJob to close out kept bookings after a game completes.
 	MarkCanceledByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) error
+	// GetActiveByVenueDateAndLabels returns active bookings for the venue+date whose court_label
+	// matches one of the provided labels. Used by the manual court-removal flow.
+	GetActiveByVenueDateAndLabels(ctx context.Context, venueID int64, gameDate time.Time, labels []string) ([]*models.CourtBooking, error)
 }
 
 // VenueCredentialRepository is the data access interface for venue booking credentials.

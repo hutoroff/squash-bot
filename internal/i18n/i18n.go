@@ -310,6 +310,18 @@ const (
 	// Args: %d = suggested default
 	MsgVenueCredAskMaxCourts = "msg.venue_cred_ask_max_courts"
 
+	// Court cancellation confirmation (inline toggle UI — admin removes a court with active booking)
+	// MsgCourtCancelPromptSingle: Args: %s = court label
+	MsgCourtCancelPromptSingle = "msg.court_cancel_prompt_single"
+	// MsgCourtCancelPromptMulti: Args: %s = comma-separated court labels
+	MsgCourtCancelPromptMulti = "msg.court_cancel_prompt_multi"
+	BtnCourtCancelConfirm     = "btn.court_cancel_confirm"
+	BtnCourtCancelAbort       = "btn.court_cancel_abort"
+	// MsgCourtCancelSuccess: Args: %s = final courts string
+	MsgCourtCancelSuccess = "msg.court_cancel_success"
+	// MsgCourtCancelPartial: Args: %s = final courts string, %s = failed court labels
+	MsgCourtCancelPartial = "msg.court_cancel_partial"
+
 	// Publish-game UX
 	BtnPublishGame = "btn.publish_game"
 	// MsgGamePublished: shown as callback toast on success
@@ -663,6 +675,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredExhausted: "⚠️ Auto-booking for *%s*: all credentials exhausted. Booked %d of %d courts. Please book the remaining courts manually.",
 		SchedAutoBookingNoCredentials: "⚠️ Auto-booking for *%s* skipped: no usable credentials available. Add credentials or wait for the cooldown to expire.",
 
+		// Court cancellation confirmation
+		MsgCourtCancelPromptSingle: "Court *%s* has an active booking. To remove it the booking must be cancelled.\n\nProceed?",
+		MsgCourtCancelPromptMulti:  "Courts *%s* have active bookings. To remove them the bookings must be cancelled.\n\nProceed?",
+		BtnCourtCancelConfirm:      "Cancel booking & remove",
+		BtnCourtCancelAbort:        "← Back to selection",
+		MsgCourtCancelSuccess:      "Booking(s) cancelled. Courts updated to: %s ✓",
+		MsgCourtCancelPartial:      "Courts updated to: %s, but failed to cancel bookings for: %s",
+
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Publish",
 		MsgGamePublished:                 "Game published ✓",
@@ -953,6 +973,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredExhausted: "⚠️ Automatische Buchung für *%s*: Alle Konten ausgeschöpft. %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
 		SchedAutoBookingNoCredentials: "⚠️ Automatische Buchung für *%s* übersprungen: Keine verwendbaren Konten verfügbar. Füge Konten hinzu oder warte auf das Ende der Abklingzeit.",
 
+		// Court cancellation confirmation
+		MsgCourtCancelPromptSingle: "Platz *%s* hat eine aktive Buchung. Um ihn zu entfernen, muss die Buchung storniert werden.\n\nFortfahren?",
+		MsgCourtCancelPromptMulti:  "Plätze *%s* haben aktive Buchungen. Um sie zu entfernen, müssen die Buchungen storniert werden.\n\nFortfahren?",
+		BtnCourtCancelConfirm:      "Buchung stornieren & entfernen",
+		BtnCourtCancelAbort:        "← Zurück zur Auswahl",
+		MsgCourtCancelSuccess:      "Buchung(en) storniert. Plätze aktualisiert auf: %s ✓",
+		MsgCourtCancelPartial:      "Plätze aktualisiert auf: %s, aber Buchungen konnten nicht storniert werden für: %s",
+
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Veröffentlichen",
 		MsgGamePublished:                 "Spiel veröffentlicht ✓",
@@ -1242,6 +1270,14 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredError:     "⚠️ Автобронирование для *%s*: аккаунт *%s* вернул ошибку:\n%s\n\nАккаунт не будет использоваться в течение %s.",
 		SchedAutoBookingCredExhausted: "⚠️ Автобронирование для *%s*: все аккаунты исчерпаны. Забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
 		SchedAutoBookingNoCredentials: "⚠️ Автобронирование для *%s* пропущено: нет доступных аккаунтов. Добавьте аккаунты или подождите окончания периода блокировки.",
+
+		// Court cancellation confirmation
+		MsgCourtCancelPromptSingle: "Корт *%s* имеет активное бронирование. Для его удаления необходимо отменить бронирование.\n\nПродолжить?",
+		MsgCourtCancelPromptMulti:  "Корты *%s* имеют активные бронирования. Для их удаления необходимо отменить бронирования.\n\nПродолжить?",
+		BtnCourtCancelConfirm:      "Отменить бронирование и удалить",
+		BtnCourtCancelAbort:        "← Назад к выбору",
+		MsgCourtCancelSuccess:      "Бронирование(я) отменено. Корты обновлены: %s ✓",
+		MsgCourtCancelPartial:      "Корты обновлены: %s, но не удалось отменить бронирования для: %s",
 
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Опубликовать",
