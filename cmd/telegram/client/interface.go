@@ -56,4 +56,11 @@ type ManagementClient interface {
 
 	// PublishGame sends the game announcement and pins it. Returns ErrAlreadyPublished (HTTP 409) if already done.
 	PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)
+
+	// ListActiveCourtBookings returns active Eversports bookings for the given courts of a game.
+	ListActiveCourtBookings(ctx context.Context, gameID int64, courts []string) ([]CourtBookingInfo, error)
+
+	// UpdateCourtsAndCancelBookings cancels active bookings for removed courts then updates courts.
+	// On partial cancellation failure, failed is non-empty and the courts update still happened.
+	UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error)
 }

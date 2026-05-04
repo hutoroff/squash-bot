@@ -15,20 +15,43 @@ import (
 )
 
 var (
-	ErrGameNotFound       = errors.New("game not found")
+	ErrGameNotFound         = errors.New("game not found")
 	ErrGameAlreadyPublished = errors.New("game already published")
 )
 
+// CourtBookingInfo is a slim DTO returned by ListActiveCourtBookings.
+type CourtBookingInfo struct {
+	CourtLabel string `json:"court_label"`
+	GameTime   string `json:"game_time"`
+	MatchID    string `json:"match_id"`
+}
+
+// CourtCancelError carries the court label and the underlying error from a single
+// CancelMatch attempt, so the API layer can surface per-court failure details.
+type CourtCancelError struct {
+	CourtLabel string
+	Err        error
+}
+
+func (e *CourtCancelError) Error() string {
+	return fmt.Sprintf("court %s: %v", e.CourtLabel, e.Err)
+}
+
 type GameService struct {
-	gameRepo        GameRepository
-	venueRepo       VenueRepository
+	gameRepo          GameRepository
+	venueRepo         VenueRepository
 	participationRepo ParticipationRepository
-	guestRepo       GuestRepository
-	groupRepo       GroupRepository
-	auditSvc        *AuditService
-	api             TelegramAPI
-	defaultLoc      *time.Location
-	logger          *slog.Logger
+	guestRepo         GuestRepository
+	groupRepo         GroupRepository
+	auditSvc          *AuditService
+	api               TelegramAPI
+	defaultLoc        *time.Location
+	logger            *slog.Logger
+	// Optional booking deps — nil when booking infrastructure is not configured.
+	courtBookingRepo    CourtBookingRepository
+	bookingClient       BookingServiceClient
+	credService         *VenueCredentialService
+	autoBookingResultRepo AutoBookingResultRepository
 }
 
 func NewGameService(
@@ -41,17 +64,25 @@ func NewGameService(
 	api TelegramAPI,
 	defaultLoc *time.Location,
 	logger *slog.Logger,
+	courtBookingRepo CourtBookingRepository,
+	bookingClient BookingServiceClient,
+	credService *VenueCredentialService,
+	autoBookingResultRepo AutoBookingResultRepository,
 ) *GameService {
 	return &GameService{
-		gameRepo:          gameRepo,
-		venueRepo:         venueRepo,
-		participationRepo: participationRepo,
-		guestRepo:         guestRepo,
-		groupRepo:         groupRepo,
-		auditSvc:          auditSvc,
-		api:               api,
-		defaultLoc:        defaultLoc,
-		logger:            logger,
+		gameRepo:              gameRepo,
+		venueRepo:             venueRepo,
+		participationRepo:     participationRepo,
+		guestRepo:             guestRepo,
+		groupRepo:             groupRepo,
+		auditSvc:              auditSvc,
+		api:                   api,
+		defaultLoc:            defaultLoc,
+		logger:                logger,
+		courtBookingRepo:      courtBookingRepo,
+		bookingClient:         bookingClient,
+		credService:           credService,
+		autoBookingResultRepo: autoBookingResultRepo,
 	}
 }
 
@@ -182,4 +213,162 @@ func (s *GameService) PublishGame(ctx context.Context, gameID, actorTgID int64, 
 		return game, nil
 	}
 	return updated, nil
+}
+
+// activeBookingsByLabels returns active bookings for the given court labels on a game,
+// using time-slot scoping when the game is linked to an auto-booking result.
+// This prevents false matches when a venue hosts multiple sessions on the same date
+// that share the same court labels.
+func (s *GameService) activeBookingsByLabels(ctx context.Context, game *models.Game, labels []string) ([]*models.CourtBooking, error) {
+	var gameTime string
+	if s.autoBookingResultRepo != nil {
+		if abr, err := s.autoBookingResultRepo.GetByGameID(ctx, game.ID); err == nil && abr != nil {
+			gameTime = abr.GameTime
+		}
+	}
+
+	if gameTime != "" {
+		// Time-slot scoping: fetch only bookings for this game's time slot, then filter by label.
+		all, err := s.courtBookingRepo.GetByVenueAndDateAndTime(ctx, game.Venue.ID, game.GameDate, gameTime)
+		if err != nil {
+			return nil, err
+		}
+		labelSet := make(map[string]bool, len(labels))
+		for _, l := range labels {
+			labelSet[l] = true
+		}
+		var out []*models.CourtBooking
+		for _, b := range all {
+			if labelSet[b.CourtLabel] {
+				out = append(out, b)
+			}
+		}
+		return out, nil
+	}
+
+	// No game_time known (manually created game or legacy data) — fall back to date+label matching.
+	return s.courtBookingRepo.GetActiveByVenueDateAndLabels(ctx, game.Venue.ID, game.GameDate, labels)
+}
+
+// ListActiveCourtBookings returns slim booking info for active (non-canceled) bookings whose
+// court_label matches one of the provided labels. Returns empty slice when booking
+// infrastructure is absent or the game has no venue.
+func (s *GameService) ListActiveCourtBookings(ctx context.Context, gameID int64, courts []string) ([]CourtBookingInfo, error) {
+	if len(courts) == 0 || s.courtBookingRepo == nil {
+		return nil, nil
+	}
+	game, err := s.gameRepo.GetByID(ctx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("get game %d: %w", gameID, err)
+	}
+	if game.Venue == nil || game.Venue.ID == 0 {
+		return nil, nil
+	}
+	entries, err := s.activeBookingsByLabels(ctx, game, courts)
+	if err != nil {
+		return nil, fmt.Errorf("get active bookings: %w", err)
+	}
+	result := make([]CourtBookingInfo, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, CourtBookingInfo{
+			CourtLabel: e.CourtLabel,
+			GameTime:   e.GameTime,
+			MatchID:    e.MatchID,
+		})
+	}
+	return result, nil
+}
+
+// RemoveCourtsAndCancelBookings cancels active Eversports bookings for courts that are
+// being removed (present in game.Courts but not in newCourts), then persists newCourts.
+// The DB update always runs regardless of cancellation failures — the admin's chosen
+// court list is persisted and partial failures are reported back via CourtCancelError.
+func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID int64, newCourts string) (canceledLabels []string, cancelErrors []CourtCancelError, err error) {
+	game, err := s.gameRepo.GetByID(ctx, gameID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get game %d: %w", gameID, err)
+	}
+
+	current := splitCourts(game.Courts)
+	incoming := splitCourts(newCourts)
+
+	// Multiset diff: labels in current but not in incoming.
+	incomingCount := make(map[string]int, len(incoming))
+	for _, c := range incoming {
+		incomingCount[c]++
+	}
+	var removed []string
+	for _, c := range current {
+		if incomingCount[c] > 0 {
+			incomingCount[c]--
+		} else {
+			removed = append(removed, c)
+		}
+	}
+
+	if len(removed) == 0 || game.Venue == nil || game.Venue.ID == 0 ||
+		s.courtBookingRepo == nil || s.bookingClient == nil {
+		return nil, nil, s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming))
+	}
+
+	// Unique labels for the repo query; cancel count per label caps how many we cancel.
+	cancelQuota := make(map[string]int, len(removed))
+	uniqueLabels := make([]string, 0, len(removed))
+	for _, l := range removed {
+		if cancelQuota[l] == 0 {
+			uniqueLabels = append(uniqueLabels, l)
+		}
+		cancelQuota[l]++
+	}
+
+	entries, err := s.activeBookingsByLabels(ctx, game, uniqueLabels)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get active bookings: %w", err)
+	}
+
+	for _, entry := range entries {
+		if cancelQuota[entry.CourtLabel] <= 0 {
+			continue
+		}
+		cancelQuota[entry.CourtLabel]--
+		login, password := "", ""
+		if entry.CredentialID != nil && s.credService != nil {
+			cred, credErr := s.credService.GetDecryptedByID(ctx, *entry.CredentialID)
+			if credErr != nil {
+				s.logger.Error("RemoveCourtsAndCancelBookings: get credential",
+					"game_id", gameID, "cred_id", *entry.CredentialID, "err", credErr)
+				cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: credErr})
+				continue
+			}
+			if cred != nil {
+				login, password = cred.Login, cred.Password
+			}
+		}
+		if login == "" {
+			noCredErr := fmt.Errorf("no credentials available")
+			s.logger.Warn("RemoveCourtsAndCancelBookings: no credentials for court",
+				"game_id", gameID, "court_label", entry.CourtLabel)
+			cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: noCredErr})
+			continue
+		}
+		if cancelErr := s.bookingClient.CancelMatch(ctx, entry.MatchID, login, password); cancelErr != nil {
+			s.logger.Error("RemoveCourtsAndCancelBookings: cancel match",
+				"game_id", gameID, "court_label", entry.CourtLabel, "match_id", entry.MatchID, "err", cancelErr)
+			cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: cancelErr})
+			continue
+		}
+		if markErr := s.courtBookingRepo.MarkCanceled(ctx, entry.MatchID); markErr != nil {
+			s.logger.Error("RemoveCourtsAndCancelBookings: mark canceled",
+				"game_id", gameID, "match_id", entry.MatchID, "err", markErr)
+		}
+		if s.auditSvc != nil {
+			s.auditSvc.RecordCourtCanceled(ctx, game.Venue.ID, game.ChatID, game.Venue.Name, entry.CourtLabel, game.GameDate)
+		}
+		canceledLabels = append(canceledLabels, entry.CourtLabel)
+	}
+
+	if updateErr := s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming)); updateErr != nil {
+		return canceledLabels, cancelErrors, fmt.Errorf("update courts: %w", updateErr)
+	}
+	return canceledLabels, cancelErrors, nil
 }

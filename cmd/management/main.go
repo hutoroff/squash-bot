@@ -94,7 +94,6 @@ func main() {
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
 
-	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger)
 	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
 
 	var venueCredService *service.VenueCredentialService
@@ -122,6 +121,8 @@ func main() {
 	} else {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
+
+	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo)
 
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
