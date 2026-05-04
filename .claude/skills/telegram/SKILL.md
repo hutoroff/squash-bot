@@ -30,8 +30,9 @@ cmd/telegram/
 │   ├── game_manage_handlers.go  — handleManage, handleManageShowPlayers/Guests, handleManageEditCourts,
 │   │                              handleManageClose, handleManageKickPlayer/Guest,
 │   │                              handleManageCourtsToggle, handleManageCourtsConfirm,
+│   │                              handleManageCourtsCancelConfirm, handleManageCourtsCancelAbort,
 │   │                              handleManagePublish (Publish button for unpublished games),
-│   │                              processCourtsEdit
+│   │                              courtsBeingRemoved, renderCourtCancelPrompt, processCourtsEdit
 │   ├── newgame_handlers.go  — /newGame wizard: handleNewGameDate/Group/Venue/CourtToggle/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
 │   │                          buildDateSelectionKeyboard, renderCourtPickKeyboard, renderTimeSlotKeyboard
@@ -70,8 +71,9 @@ type Bot struct {
     pendingVenueGameDaysEdit      sync.Map  // chatID → *venueGameDaysEditState
     pendingVenuePreferredTimeEdit sync.Map  // chatID → *venuePreferredTimeEditState
     pendingGroupVenuePick         sync.Map  // chatID → *groupVenuePickState
-    pendingVenueCredAdd           sync.Map  // chatID → *venueCredWizard
-    handlerSem                    chan struct{}  // semaphore, maxConcurrentHandlers=50
+    pendingVenueCredAdd                sync.Map  // chatID → *venueCredWizard
+    pendingManageCourtsCancelPrompt    sync.Map  // chatID → *manageCourtsCancelPromptState
+    handlerSem                         chan struct{}  // semaphore, maxConcurrentHandlers=50
     callbackRouter                map[string]callbackHandler
 }
 ```
@@ -120,6 +122,8 @@ All callback actions:
 join, skip, guest_add, guest_remove
 manage, manage_players, manage_guests, manage_courts, manage_close
 manage_kick, manage_kick_guest, manage_court_toggle, manage_court_confirm
+manage_courts_cancel_confirm (confirm cancel-booking-and-remove after pre-flight prompt)
+manage_courts_cancel_abort   (go back to court toggle keyboard, restoring prior selection)
 publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publish)
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
@@ -191,6 +195,21 @@ The "🔑 Credentials" button in the venue edit menu is only shown when `venue.A
 ### Courts Edit (`game_manage_handlers.go`)
 State: `pendingManageCourtsToggle sync.Map` (chatID → `*manageCourtsToggleState`)
 
+### Courts Cancel Prompt (`game_manage_handlers.go`)
+State: `pendingManageCourtsCancelPrompt sync.Map` (chatID → `*manageCourtsCancelPromptState`)
+
+```go
+type manageCourtsCancelPromptState struct {
+    gameID       int64
+    groupID      int64
+    newCourts    string    // the confirmed court selection being applied
+    bookedLabels []string  // court labels that have active bookings
+    venueCourts  []string  // all venue courts (for restoring toggle keyboard on abort)
+}
+```
+
+Populated by `handleManageCourtsConfirm` when `ListActiveCourtBookings` returns active bookings for removed courts. Cleared by both confirm and abort handlers.
+
 ---
 
 ## Business logic flows
@@ -249,6 +268,21 @@ Works in private chat only. Group @mentions redirected to private chat. At least
 - If game has a venue with courts configured → inline court-toggle keyboard (same ✓ UX). Pre-selects current courts. Confirm → `manage_court_confirm:<gameID>`.
 - If game has no venue → falls back to free-text input.
 
+**Booking cancellation pre-flight (two-step confirmation):**
+
+When admin confirms court removal (`manage_court_confirm`), the handler:
+1. Computes which courts are being removed via `courtsBeingRemoved` (multiset diff).
+2. Calls `client.ListActiveCourtBookings(gameID, removedCourts)` to check for active Eversports bookings.
+3. On error → answers callback, shows `MsgSomethingWentWrong`, returns (blocking — no silent fallthrough).
+4. On active bookings found → stores `*manageCourtsCancelPromptState` in `pendingManageCourtsCancelPrompt`, answers callback, calls `renderCourtCancelPrompt` which edits the message with:
+   - Text: `MsgCourtCancelPromptSingle` / `MsgCourtCancelPromptMulti` (lists booked court labels)
+   - Buttons: `BtnCourtCancelConfirm` (`manage_courts_cancel_confirm:<gameID>`) + `BtnCourtCancelAbort` (`manage_courts_cancel_abort:<gameID>`)
+5. On no active bookings → proceeds directly to `UpdateCourts` as before (no prompt).
+
+`handleManageCourtsCancelConfirm`: re-validates admin via `isAdminInGroup`, clears both pending states, calls `UpdateCourtsAndCancelBookings`. Partial failures → `MsgCourtCancelPartial`; full success → `MsgCourtCancelSuccess`.
+
+`handleManageCourtsCancelAbort`: clears cancel prompt state, restores `pendingManageCourtsToggle` pre-seeded from `state.newCourts`, calls `renderManageCourtsKeyboard`.
+
 ### Button Click Flow (join / skip / guest)
 
 1. Parse callback data (`action:game_id`, e.g. `join:123`).
@@ -283,7 +317,9 @@ Works in private chat only. Group @mentions redirected to private chat. At least
 ```
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
                 GetUpcomingGamesByChatIDs, GetNextGameForTelegramUser,
-                PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)
+                PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error),
+                ListActiveCourtBookings(ctx, gameID int64, courts []string) ([]CourtBookingInfo, error),
+                UpdateCourtsAndCancelBookings(ctx, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error)
 Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
                 KickPlayer, KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
@@ -293,6 +329,10 @@ VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, pri
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
 Scheduler:      TriggerScheduledEvent
 ```
+
+**Client-side types** (defined in `client.go`, used by handlers):
+- `CourtBookingInfo{CourtLabel, GameTime, MatchID string}` — returned by `ListActiveCourtBookings`
+- `CancelFailure{Court, Reason string}` — element of `failed` slice returned by `UpdateCourtsAndCancelBookings` on partial failure; mapped from HTTP 200+JSON body `{canceled:[], failed:[{court,reason}]}`
 
 **Error propagation:** `client.go` defines `HTTPError{StatusCode int, Message string}` — a typed error returned by `parseErrorBody`. Handlers use `errors.As(err, &httpErr)` to branch on specific HTTP status codes (e.g. 409 Conflict) before falling through to generic error messages. Always return `*HTTPError` from `parseErrorBody` for new error cases; do not wrap with `fmt.Errorf`.
 

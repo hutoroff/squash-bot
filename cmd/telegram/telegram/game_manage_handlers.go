@@ -408,6 +408,7 @@ func (b *Bot) handleManageCourtsToggle(ctx context.Context, cb *tgbotapi.Callbac
 }
 
 // handleManageCourtsConfirm confirms the court selection and updates the game.
+// When courts being removed have active Eversports bookings, shows a cancel-or-back prompt first.
 func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
 
@@ -437,6 +438,40 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 		return // checkManageAdmin already answered the callback
 	}
 
+	// Pre-flight: check for active bookings on courts that are being removed.
+	removedCourts := courtsBeingRemoved(game.Courts, courts)
+	if len(removedCourts) > 0 {
+		bookings, err := b.client.ListActiveCourtBookings(ctx, gameID, removedCourts)
+		if err != nil {
+			slog.Error("handleManageCourtsConfirm: list active bookings", "err", err, "game_id", gameID)
+			b.answerCallback(cb.ID, "")
+			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			return
+		}
+		if len(bookings) > 0 {
+			// Collect unique booked labels for the prompt.
+			seen := make(map[string]bool)
+			var bookedLabels []string
+			for _, bk := range bookings {
+				if !seen[bk.CourtLabel] {
+					seen[bk.CourtLabel] = true
+					bookedLabels = append(bookedLabels, bk.CourtLabel)
+				}
+			}
+			promptState := &manageCourtsCancelPromptState{
+				gameID:       gameID,
+				groupID:      game.ChatID,
+				newCourts:    courts,
+				bookedLabels: bookedLabels,
+				venueCourts:  state.venueCourts,
+			}
+			b.pendingManageCourtsCancelPrompt.Store(cb.Message.Chat.ID, promptState)
+			b.answerCallback(cb.ID, "")
+			b.renderCourtCancelPrompt(cb.Message.Chat.ID, cb.Message.MessageID, promptState, lz)
+			return
+		}
+	}
+
 	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 
@@ -450,6 +485,140 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 
 	b.scheduleGameMessageEdit(gameID)
 	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtsUpdated, courts), nil)
+}
+
+// courtsBeingRemoved returns court labels present in currentCSV but not in newCSV (multiset diff).
+func courtsBeingRemoved(currentCSV, newCSV string) []string {
+	current := splitCSV(currentCSV)
+	incoming := splitCSV(newCSV)
+	incomingCount := make(map[string]int, len(incoming))
+	for _, c := range incoming {
+		incomingCount[c]++
+	}
+	var removed []string
+	for _, c := range current {
+		if incomingCount[c] > 0 {
+			incomingCount[c]--
+		} else {
+			removed = append(removed, c)
+		}
+	}
+	return removed
+}
+
+// renderCourtCancelPrompt edits the message to show the cancellation confirmation prompt.
+func (b *Bot) renderCourtCancelPrompt(chatID int64, messageID int, state *manageCourtsCancelPromptState, lz *i18n.Localizer) {
+	labels := strings.Join(state.bookedLabels, ", ")
+	var text string
+	if len(state.bookedLabels) == 1 {
+		text = lz.Tf(i18n.MsgCourtCancelPromptSingle, labels)
+	} else {
+		text = lz.Tf(i18n.MsgCourtCancelPromptMulti, labels)
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				lz.T(i18n.BtnCourtCancelConfirm),
+				fmt.Sprintf("manage_courts_cancel_confirm:%d", state.gameID),
+			),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				lz.T(i18n.BtnCourtCancelAbort),
+				fmt.Sprintf("manage_courts_cancel_abort:%d", state.gameID),
+			),
+		),
+	)
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ParseMode = "Markdown"
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit) //nolint:errcheck
+}
+
+// handleManageCourtsCancelConfirm cancels active bookings for removed courts then updates courts.
+func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingManageCourtsCancelPrompt.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*manageCourtsCancelPromptState)
+	if state.gameID != gameID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, state.groupID)
+	if err != nil {
+		slog.Error("handleManageCourtsCancelConfirm: check admin", "err", err, "user_id", cb.From.ID, "group_id", state.groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgFailedVerifyPermissions))
+		return
+	}
+	if !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgLostAdminAccess))
+		return
+	}
+
+	b.pendingManageCourtsCancelPrompt.Delete(cb.Message.Chat.ID)
+	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
+	b.answerCallback(cb.ID, "")
+
+	canceledLabels, failed, err := b.client.UpdateCourtsAndCancelBookings(ctx, gameID, state.groupID, state.newCourts, actorDisplayFrom(cb.From), cb.From.ID)
+	if err != nil {
+		slog.Error("handleManageCourtsCancelConfirm: update+cancel", "err", err, "game_id", gameID)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)
+		return
+	}
+
+	slog.Info("Courts updated with booking cancellation", "game_id", gameID, "courts", state.newCourts,
+		"canceled", canceledLabels, "failed", len(failed))
+
+	b.scheduleGameMessageEdit(gameID)
+
+	if len(failed) > 0 {
+		var failedLabels []string
+		for _, f := range failed {
+			failedLabels = append(failedLabels, f.Court)
+		}
+		b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtCancelPartial, state.newCourts, strings.Join(failedLabels, ", ")), nil)
+		return
+	}
+	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtCancelSuccess, state.newCourts), nil)
+}
+
+// handleManageCourtsCancelAbort discards the cancellation prompt and returns to the court-toggle picker.
+func (b *Bot) handleManageCourtsCancelAbort(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+
+	raw, ok := b.pendingManageCourtsCancelPrompt.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*manageCourtsCancelPromptState)
+	if state.gameID != gameID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	b.pendingManageCourtsCancelPrompt.Delete(cb.Message.Chat.ID)
+	b.answerCallback(cb.ID, "")
+
+	// Restore toggle state so the admin can adjust the selection.
+	selected := make(map[string]bool)
+	for _, c := range splitCSV(state.newCourts) {
+		selected[c] = true
+	}
+	toggleState := &manageCourtsToggleState{
+		gameID:         gameID,
+		venueCourts:    state.venueCourts,
+		selectedCourts: selected,
+	}
+	b.pendingManageCourtsToggle.Store(cb.Message.Chat.ID, toggleState)
+	b.renderManageCourtsKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, toggleState, lz)
 }
 
 // handleManagePublish publishes an unpublished game from the manage menu.

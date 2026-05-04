@@ -69,6 +69,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/games/{id}/message-id", h.updateMessageID)
 	mux.HandleFunc("PATCH /api/v1/games/{id}/courts", h.updateCourts)
 	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
+	mux.HandleFunc("GET /api/v1/games/{id}/active-court-bookings", h.listActiveCourtBookings)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)

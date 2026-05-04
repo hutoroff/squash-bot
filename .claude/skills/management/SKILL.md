@@ -92,7 +92,8 @@ CourtBookingRepository — Save(ctx, *models.CourtBooking),
                    MarkCanceled(ctx, matchID) — soft-delete: sets canceled_at = NOW(),
                    MarkCanceledByVenueAndDate(ctx, venueID, gameDate) — bulk soft-delete all active rows for venue+date,
                    HasActiveByCredentialID(ctx, credentialID) bool,
-                   HasActiveByVenueID(ctx, venueID) bool
+                   HasActiveByVenueID(ctx, venueID) bool,
+                   GetActiveByVenueDateAndLabels(ctx, venueID int64, gameDate time.Time, labels []string) — active rows whose court_label matches one of the given labels; used by the manual court-removal flow
 AutoBookingResultRepository — Save(ctx, venueID int64, gameDate time.Time, gameTime, courts string, courtsCount int) (int64, error) — returns the saved row ID (used by AutoBookingJob to call SetGameID immediately),
                    GetByVenueAndDate(ctx, venueID int64, date time.Time) []*models.AutoBookingResult,
                    GetByVenueAndDateAndTime(ctx, venueID int64, date time.Time, gameTime string) *models.AutoBookingResult — nil if not yet booked,
@@ -130,7 +131,12 @@ POST   /api/v1/games                               — createGame
 GET    /api/v1/games                               — listGames (query: chatIDs)
 GET    /api/v1/games/{id}                          — getGame
 PATCH  /api/v1/games/{id}/message-id               — updateMessageID
-PATCH  /api/v1/games/{id}/courts                   — updateCourts
+PATCH  /api/v1/games/{id}/courts                   — updateCourts; when body contains cancel_bookings=true,
+                                                     calls RemoveCourtsAndCancelBookings instead: 204 on full
+                                                     success, 200+JSON {canceled:[],failed:[{court,reason}]}
+                                                     on partial failure
+GET    /api/v1/games/{id}/active-court-bookings    — listActiveCourtBookings; query: courts (comma-sep labels);
+                                                     returns [{court_label,game_time,match_id}] for active bookings
 POST   /api/v1/games/{id}/publish                  — publishGame; body: actor_telegram_id, actor_display;
                                                      404 if not found, 409 if already published, 502 on Telegram send failure
 
@@ -238,7 +244,19 @@ The canonical publication primitive. Sends the game announcement to the group ch
 - On `gameRepo.UpdateMessageID` failure: deletes the orphaned Telegram message, then returns error.
 - `actorTgID == 0` → audit records `actor_kind = system`; non-zero → `actor_kind = user`.
 
-`NewGameService` signature (9 args): `gameRepo, venueRepo, participationRepo, guestRepo, groupRepo GameRepository…, auditSvc *AuditService, api TelegramAPI, defaultLoc *time.Location, logger *slog.Logger`.
+`NewGameService` signature (13 args): `gameRepo, venueRepo, participationRepo, guestRepo, groupRepo GameRepository…, auditSvc *AuditService, api TelegramAPI, defaultLoc *time.Location, logger *slog.Logger, courtBookingRepo CourtBookingRepository, bookingClient BookingServiceClient, credService *VenueCredentialService, autoBookingResultRepo AutoBookingResultRepository`.
+
+**`GameService.ListActiveCourtBookings(ctx, gameID int64, courts []string) ([]CourtBookingInfo, error)`**
+
+Returns slim booking info (`CourtBookingInfo{CourtLabel, GameTime, MatchID string}`) for active bookings whose `court_label` matches one of the provided labels. Uses `activeBookingsByLabels` for time-slot scoping. Returns nil/empty when booking infrastructure is absent or the game has no venue.
+
+**`GameService.RemoveCourtsAndCancelBookings(ctx, gameID int64, newCourts string) (canceledLabels []string, cancelErrors []CourtCancelError, err error)`**
+
+Computes a multiset diff of removed courts, looks up active bookings via `activeBookingsByLabels`, cancels each via `BookingServiceClient.CancelMatch` with per-entry credentials (fetched via `VenueCredentialService.GetDecryptedByID`), records audit, then always persists `newCourts` regardless of cancellation failures. Returns `CourtCancelError{CourtLabel, Err}` slices for partial failures. The DB update always runs — partial failures do not block the court list change.
+
+**`GameService.activeBookingsByLabels(ctx, game, labels)` (private)**
+
+Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID)` to find `game_time`. If non-empty: `GetByVenueAndDateAndTime` + app-level label filter. Otherwise: `GetActiveByVenueDateAndLabels`. Prevents cross-session false matches when a venue hosts multiple sessions on the same date.
 
 ### Scheduler (`service/scheduler.go`)
 

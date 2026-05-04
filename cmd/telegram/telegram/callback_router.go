@@ -100,8 +100,10 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			}
 			b.handleManageKickGuest(ctx, cb, gid, tid)
 		},
-		"manage_court_toggle":  b.handleManageCourtsToggle,
-		"manage_court_confirm": int64H(b.handleManageCourtsConfirm),
+		"manage_court_toggle":          b.handleManageCourtsToggle,
+		"manage_court_confirm":         int64H(b.handleManageCourtsConfirm),
+		"manage_courts_cancel_confirm": int64H(b.handleManageCourtsCancelConfirm),
+		"manage_courts_cancel_abort":   int64H(b.handleManageCourtsCancelAbort),
 
 		// ── New-game wizard ───────────────────────────────────────────────────────
 		"select_group": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {

@@ -14,14 +14,16 @@ import (
 // ── mockGameRepo ──────────────────────────────────────────────────────────────
 
 type mockGameRepo struct {
-	createResult  *models.Game
-	createErr     error
-	getByIDResult *models.Game
-	getByIDErr    error
-	updateMsgErr  error
+	createResult    *models.Game
+	createErr       error
+	getByIDResult   *models.Game
+	getByIDErr      error
+	updateMsgErr    error
 	updateMsgCalled bool
-	existingGames []*models.Game
-	existingErr   error
+	existingGames   []*models.Game
+	existingErr     error
+	updateCourtsArg string
+	updateCourtsErr error
 }
 
 func (m *mockGameRepo) Create(_ context.Context, game *models.Game) (*models.Game, error) {
@@ -61,7 +63,10 @@ func (m *mockGameRepo) GetUpcomingGames(_ context.Context) ([]*models.Game, erro
 func (m *mockGameRepo) GetUpcomingGamesByChatIDs(_ context.Context, _ []int64) ([]*models.Game, error) {
 	return nil, nil
 }
-func (m *mockGameRepo) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error { return nil }
+func (m *mockGameRepo) UpdateCourts(_ context.Context, _ int64, newCourts string, _ int) error {
+	m.updateCourtsArg = newCourts
+	return m.updateCourtsErr
+}
 func (m *mockGameRepo) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
@@ -102,11 +107,12 @@ func (m *mockVenueRepo) SetLastAutoBookingAt(_ context.Context, _ int64) error {
 // ── mockAutoBookingResultRepo ─────────────────────────────────────────────────
 
 type mockAutoBookingResultRepo struct {
-	saveErr    error
-	saveCalls  int
-	results    []*models.AutoBookingResult
-	getByIDErr error
-	setGameErr error
+	saveErr      error
+	saveCalls    int
+	results      []*models.AutoBookingResult
+	getByIDErr   error
+	setGameErr   error
+	gameIDResult *models.AutoBookingResult // returned by GetByGameID
 }
 
 func (m *mockAutoBookingResultRepo) Save(_ context.Context, _ int64, _ time.Time, _, _ string, _ int) (int64, error) {
@@ -123,7 +129,7 @@ func (m *mockAutoBookingResultRepo) GetByVenueAndDateAndTime(_ context.Context, 
 }
 
 func (m *mockAutoBookingResultRepo) GetByGameID(_ context.Context, _ int64) (*models.AutoBookingResult, error) {
-	return nil, nil
+	return m.gameIDResult, nil
 }
 
 func (m *mockAutoBookingResultRepo) SetGameID(_ context.Context, _, _ int64) error {

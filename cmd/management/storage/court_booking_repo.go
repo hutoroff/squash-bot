@@ -114,6 +114,34 @@ func (r *CourtBookingRepo) HasActiveByVenueID(ctx context.Context, venueID int64
 	return exists, err
 }
 
+// GetActiveByVenueDateAndLabels returns active bookings for the venue+date whose court_label
+// matches one of the provided labels. Used by the manual court-removal flow.
+func (r *CourtBookingRepo) GetActiveByVenueDateAndLabels(ctx context.Context, venueID int64, gameDate time.Time, labels []string) ([]*models.CourtBooking, error) {
+	const q = `
+		SELECT id, venue_id, game_date, game_time, court_uuid, court_label, match_id, booking_uuid,
+		       credential_id, canceled_at, created_at
+		FROM court_bookings
+		WHERE venue_id = $1 AND game_date = $2 AND court_label = ANY($3) AND canceled_at IS NULL
+		ORDER BY id ASC`
+	rows, err := r.pool.Query(ctx, q, venueID, gameDate, labels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*models.CourtBooking
+	for rows.Next() {
+		var b models.CourtBooking
+		if err := rows.Scan(
+			&b.ID, &b.VenueID, &b.GameDate, &b.GameTime, &b.CourtUUID, &b.CourtLabel,
+			&b.MatchID, &b.BookingUUID, &b.CredentialID, &b.CanceledAt, &b.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, &b)
+	}
+	return result, rows.Err()
+}
+
 // MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
 func (r *CourtBookingRepo) MarkCanceledByVenueAndDate(ctx context.Context, venueID int64, gameDate time.Time) error {
 	const q = `UPDATE court_bookings SET canceled_at = NOW() WHERE venue_id = $1 AND game_date = $2 AND canceled_at IS NULL`
