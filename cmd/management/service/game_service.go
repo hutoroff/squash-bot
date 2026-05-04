@@ -311,12 +311,26 @@ func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID 
 		return nil, nil, s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming))
 	}
 
-	entries, err := s.activeBookingsByLabels(ctx, game, removed)
+	// Unique labels for the repo query; cancel count per label caps how many we cancel.
+	cancelQuota := make(map[string]int, len(removed))
+	uniqueLabels := make([]string, 0, len(removed))
+	for _, l := range removed {
+		if cancelQuota[l] == 0 {
+			uniqueLabels = append(uniqueLabels, l)
+		}
+		cancelQuota[l]++
+	}
+
+	entries, err := s.activeBookingsByLabels(ctx, game, uniqueLabels)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get active bookings: %w", err)
 	}
 
 	for _, entry := range entries {
+		if cancelQuota[entry.CourtLabel] <= 0 {
+			continue
+		}
+		cancelQuota[entry.CourtLabel]--
 		login, password := "", ""
 		if entry.CredentialID != nil && s.credService != nil {
 			cred, credErr := s.credService.GetDecryptedByID(ctx, *entry.CredentialID)
