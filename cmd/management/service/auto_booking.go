@@ -171,12 +171,8 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 // processTimeSlot books courts for a single (venue, date, time) combination.
 // Returns true if at least one court was successfully booked.
 //
-// Algorithm:
-//  1. Call ListCourts to get all courts at the facility for the game date.
-//  2. Call ListMatches for the exact target start time — courts appearing in the
-//     response are occupied (reserved, training, club-blocked). Courts ABSENT
-//     from the response are truly free for ad-hoc booking.
-//  3. Book free courts up to len(venue.AutoBookingCourts) using their UUID from step 1.
+// Algorithm delegates to bookFreeCourts (steps 1–5), then handles notifications
+// and result persistence which must stay in this function.
 func (j *AutoBookingJob) processTimeSlot(
 	ctx context.Context,
 	chatID int64,
@@ -188,212 +184,68 @@ func (j *AutoBookingJob) processTimeSlot(
 	lz *i18n.Localizer,
 	courtsCount int,
 ) bool {
-	// Parse "HH:MM" into a concrete time.Time for booking.
-	gameStart, err := parsePreferredTime(gameDateStr, gameTime, groupTZ)
-	if err != nil {
-		j.logger.Error("auto-booking: parse preferred time",
-			"venue_id", venue.ID, "time", gameTime, "err", err)
-		return false
+	deps := bookingDeps{
+		bookingClient:    j.bookingClient,
+		credService:      j.credService,
+		courtBookingRepo: j.courtBookingRepo,
+		auditSvc:         j.auditSvc,
+		credCooldown:     j.credCooldown,
+		logger:           j.logger,
 	}
 
-	j.logger.Debug("auto-booking: game time resolved",
-		"venue_id", venue.ID,
-		"game_date", gameDateStr,
-		"game_time", gameTime,
-		"game_start", gameStart.Format(time.RFC3339),
-		"game_start_tz", gameStart.Location().String(),
-	)
-
-	checkDateLocal := gameStart.Format("2006-01-02")
-	checkStartHHMM := gameStart.Format("1504")
-
-	j.logger.Debug("auto-booking: querying availability",
-		"venue_id", venue.ID,
-		"date", checkDateLocal, "start_hhmm", checkStartHHMM,
-	)
-
-	// Load credentials before any Eversports calls so we can bail out early.
-	creds, err := j.credService.ListForBooking(ctx, venue.ID, j.credCooldown)
+	res, err := bookFreeCourts(ctx, deps, venue, chatID, gameDate, gameDateStr, gameTime, groupTZ, courtsCount)
 	if err != nil {
-		j.logger.Error("auto-booking: list credentials", "venue_id", venue.ID, "err", err)
+		j.logger.Error("auto-booking: bookFreeCourts failed", "venue_id", venue.ID, "time", gameTime, "err", err)
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
 		return false
 	}
-	if len(creds) == 0 {
+
+	if res == nil {
+		return false
+	}
+
+	// No credentials available.
+	if len(res.BookedLabels) == 0 && len(res.Failures) == 0 {
 		j.logger.Warn("auto-booking: no usable credentials", "venue_id", venue.ID)
 		j.notifyNoCredentials(ctx, chatID, venue, lz)
 		return false
 	}
-	firstLogin, firstPassword := creds[0].Login, creds[0].Password
 
-	// Step 1: Fetch all courts at the facility for the game date.
-	allCourts, err := j.bookingClient.ListCourts(ctx, checkDateLocal, firstLogin, firstPassword)
-	if err != nil {
-		j.logger.Error("auto-booking: list courts",
-			"venue_id", venue.ID, "date", checkDateLocal, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
-		return false
-	}
-	j.logger.Debug("auto-booking: courts fetched",
-		"venue_id", venue.ID, "date", checkDateLocal, "count", len(allCourts))
-
-	// Step 2: Fetch matches at target start time; courts in this response are occupied.
-	occupiedSlots, err := j.bookingClient.ListMatches(ctx, checkDateLocal, checkStartHHMM, checkStartHHMM, false, firstLogin, firstPassword)
-	if err != nil {
-		j.logger.Error("auto-booking: list matches",
-			"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM, "err", err)
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
-		return false
-	}
-	j.logger.Debug("auto-booking: matches at target time",
-		"venue_id", venue.ID, "date", checkDateLocal, "time", checkStartHHMM,
-		"occupied_count", len(occupiedSlots))
-
-	occupied := make(map[int]bool, len(occupiedSlots))
-	for _, sl := range occupiedSlots {
-		occupied[sl.Court] = true
-		j.logger.Debug("auto-booking: occupied court",
-			"venue_id", venue.ID, "court", sl.Court,
-			"booked", sl.Booking != nil, "present", sl.Present, "title", sl.Title)
-	}
-
-	venueCourts := make(map[int]bool)
-	for _, c := range strings.Split(venue.Courts, ",") {
-		if t := strings.TrimSpace(c); t != "" {
-			if id, err := strconv.Atoi(t); err == nil {
-				venueCourts[id] = true
+	// Check if failures contain a credential error that warrants per-cred notifications.
+	// bookFreeCourts already called MarkError for each failing cred.
+	// We need to surface notifyCredentialError for the first cred-specific failure
+	// and notifyCredentialsExhausted for remaining capacity failures.
+	// For backward compat, map Failures → existing notify functions.
+	for _, f := range res.Failures {
+		if strings.Contains(f.Reason, "credential ") {
+			// Extract login from "credential <login>: <err>" prefix.
+			rest := strings.TrimPrefix(f.Reason, "credential ")
+			colonIdx := strings.Index(rest, ":")
+			login := rest
+			var bookErr error
+			if colonIdx >= 0 {
+				login = rest[:colonIdx]
+				bookErr = fmt.Errorf("%s", strings.TrimSpace(rest[colonIdx+1:]))
+			} else {
+				bookErr = fmt.Errorf("%s", rest)
 			}
-		}
-	}
-
-	orderedPreferred := parseCourtIDs(venue.AutoBookingCourts)
-
-	// Step 3: Free courts = courts from ListCourts NOT in the occupied set.
-	available := filterFreeCourts(allCourts, occupied, venueCourts, orderedPreferred)
-
-	j.logger.Debug("auto-booking: courts selected for booking",
-		"venue_id", venue.ID,
-		"venue_courts_config", venue.Courts,
-		"auto_booking_courts_config", venue.AutoBookingCourts,
-		"available_count", len(available),
-		"available_uuids", available,
-	)
-
-	if len(available) == 0 {
-		j.logger.Info("auto-booking: no available courts",
-			"venue_id", venue.ID, "date", gameDateStr, "time", gameTime,
-			"total_courts", len(allCourts), "occupied", len(occupiedSlots))
-		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)
-		return false
-	}
-
-	gameEnd := gameStart.Add(autoBookingCourtDuration)
-	startRFC := gameStart.Format(time.RFC3339)
-	endRFC := gameEnd.Format(time.RFC3339)
-
-	j.logger.Debug("auto-booking: booking params",
-		"venue_id", venue.ID,
-		"start_rfc", startRFC,
-		"end_rfc", endRFC,
-		"courts_target", courtsCount,
-	)
-
-	// Build UUID → court-number map for human-readable labels.
-	uuidToCourtNum := make(map[string]string, len(allCourts))
-	for _, c := range allCourts {
-		if c.UUID == "" {
-			continue
-		}
-		num := extractCourtNumber(c.Name)
-		if num > 0 {
-			uuidToCourtNum[c.UUID] = strconv.Itoa(num)
+			j.notifyCredentialError(ctx, chatID, venue, login, bookErr, j.credCooldown, lz)
+		} else if strings.Contains(f.Reason, "credentials exhausted") {
+			bookedCount := len(res.BookedLabels)
+			j.notifyCredentialsExhausted(ctx, chatID, venue, bookedCount, courtsCount, lz)
 		} else {
-			uuidToCourtNum[c.UUID] = c.UUID
+			// No-free-courts or other failure.
+			j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, len(res.BookedLabels), courtsCount, lz)
 		}
 	}
 
-	// ── Credential-rotation booking loop ─────────────────────────────────────
-
-	remaining := courtsCount
-	bookedCount := 0
-	var bookedCourtLabels []string
-
-	for _, cred := range creds {
-		if remaining == 0 || len(available) == 0 {
-			break
-		}
-		courtLimit := cred.MaxCourts
-		if courtLimit > remaining {
-			courtLimit = remaining
-		}
-		for i := 0; i < courtLimit && len(available) > 0; i++ {
-			courtUUID := available[0]
-			available = available[1:]
-
-			j.logger.Debug("auto-booking: attempting court",
-				"venue_id", venue.ID,
-				"court_uuid", courtUUID,
-				"login", cred.Login,
-				"start", startRFC,
-				"end", endRFC,
-			)
-			bookResult, err := j.bookingClient.BookMatch(ctx, courtUUID, startRFC, endRFC, cred.Login, cred.Password)
-			if err != nil {
-				j.logger.Error("auto-booking: book court failed",
-					"venue_id", venue.ID, "court_uuid", courtUUID, "login", cred.Login,
-					"start", startRFC, "end", endRFC, "err", err)
-				if markErr := j.credService.MarkError(ctx, cred.ID); markErr != nil {
-					j.logger.Error("auto-booking: mark credential error", "cred_id", cred.ID, "err", markErr)
-				}
-				j.notifyCredentialError(ctx, chatID, venue, cred.Login, err, j.credCooldown, lz)
-				available = append([]string{courtUUID}, available...)
-				break
-			}
-			j.logger.Info("auto-booking: court booked",
-				"venue_id", venue.ID, "court_uuid", courtUUID, "login", cred.Login,
-				"date", gameDateStr, "time", gameTime)
-			bookedCount++
-			remaining--
-			label := ""
-			if l, ok := uuidToCourtNum[courtUUID]; ok {
-				label = l
-				bookedCourtLabels = append(bookedCourtLabels, label)
-			}
-			if j.auditSvc != nil {
-				j.auditSvc.RecordCourtBooked(ctx, venue.ID, chatID, venue.Name, label, gameDate)
-			}
-			if j.courtBookingRepo != nil && bookResult.MatchID != "" {
-				cb := &models.CourtBooking{
-					VenueID:      venue.ID,
-					GameDate:     gameDate,
-					GameTime:     gameTime,
-					CourtUUID:    courtUUID,
-					CourtLabel:   label,
-					MatchID:      bookResult.MatchID,
-					BookingUUID:  bookResult.BookingUUID,
-					CredentialID: &cred.ID,
-				}
-				if saveErr := j.courtBookingRepo.Save(ctx, cb); saveErr != nil {
-					j.logger.Error("auto-booking: save court booking",
-						"venue_id", venue.ID, "match_id", bookResult.MatchID, "err", saveErr)
-				}
-			} else if bookResult.MatchID == "" {
-				j.logger.Warn("auto-booking: match_id empty after booking, court booking record not saved",
-					"venue_id", venue.ID, "court_uuid", courtUUID, "booking_uuid", bookResult.BookingUUID)
-			}
-		}
-	}
-
-	if remaining > 0 && len(available) > 0 {
-		j.notifyCredentialsExhausted(ctx, chatID, venue, bookedCount, courtsCount, lz)
-	}
-
-	if bookedCount == 0 {
+	if len(res.BookedLabels) == 0 {
 		return false
 	}
 
 	// Persist result and eagerly create the unpublished game record.
-	courtsStr := strings.Join(bookedCourtLabels, ",")
+	courtsStr := strings.Join(res.BookedLabels, ",")
+	bookedCount := len(res.BookedLabels)
 	resultID, err := j.autoBookingResultRepo.Save(ctx, venue.ID, gameDate, gameTime, courtsStr, bookedCount)
 	if err != nil {
 		j.logger.Error("auto-booking: save result", "venue_id", venue.ID, "time", gameTime, "err", err)

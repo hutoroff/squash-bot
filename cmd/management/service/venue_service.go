@@ -105,6 +105,10 @@ func (s *VenueService) GetVenueByID(ctx context.Context, id int64) (*models.Venu
 	return s.repo.GetByID(ctx, id)
 }
 
+func (s *VenueService) GetVenueByIDAndGroupID(ctx context.Context, id, groupID int64) (*models.Venue, error) {
+	return s.repo.GetByIDAndGroupID(ctx, id, groupID)
+}
+
 func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int) (*models.Venue, error) {
 	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
 		return nil, err

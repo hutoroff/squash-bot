@@ -379,6 +379,28 @@ func (s *AuditService) RecordCourtBooked(ctx context.Context, venueID, groupID i
 	})
 }
 
+// RecordCourtsAutoBooked records that courts were auto-booked on-demand for an existing game.
+func (s *AuditService) RecordCourtsAutoBooked(ctx context.Context, chatID, actorTgID int64, actorDisplay string, gameID int64, venueName, gameDate string, bookedCount, requested int, courtLabels []string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventCourtsAutoBooked,
+		Visibility:   models.AuditVisibilityGroupAdmin,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(chatID),
+		SubjectType:  models.AuditSubjectGame,
+		SubjectID:    fmt.Sprintf("%d", gameID),
+		Description:  fmt.Sprintf("Auto-booked %d of %d courts at %q for %s", bookedCount, requested, venueName, gameDate),
+		Metadata: map[string]any{
+			"requested":    requested,
+			"booked_count": bookedCount,
+			"court_labels": courtLabels,
+			"game_date":    gameDate,
+		},
+	})
+}
+
 func (s *AuditService) RecordCourtCanceled(ctx context.Context, venueID, groupID int64, venueName, courtLabel string, gameDate time.Time) {
 	s.record(ctx, &models.AuditEvent{
 		EventType:   models.AuditEventCourtCanceled,

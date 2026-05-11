@@ -137,6 +137,10 @@ PATCH  /api/v1/games/{id}/courts                   — updateCourts; when body c
                                                      on partial failure
 GET    /api/v1/games/{id}/active-court-bookings    — listActiveCourtBookings; query: courts (comma-sep labels);
                                                      returns [{court_label,game_time,match_id}] for active bookings
+POST   /api/v1/games/{id}/book-courts              — bookCourts; body: {count int, group_id, actor_telegram_id, actor_display};
+                                                     409 (ErrAutoBookingNotAvailable) when venue has no auto-booking or no usable credentials;
+                                                     returns {requested, booked_count, booked_labels, failures};
+                                                     credCooldown defaults to 24h (defaultCredentialErrorCooldown in server.go)
 POST   /api/v1/games/{id}/publish                  — publishGame; body: actor_telegram_id, actor_display;
                                                      404 if not found, 409 if already published, 502 on Telegram send failure
 
@@ -166,6 +170,9 @@ GET    /api/v1/venues                              — listVenues (query: groupI
 GET    /api/v1/venues/{id}                         — getVenue
 PATCH  /api/v1/venues/{id}                         — updateVenue
 DELETE /api/v1/venues/{id}                         — deleteVenue; 409 Conflict if venue has active court_bookings
+GET    /api/v1/venues/{id}/booking-readiness       — bookingReadiness; query: group_id (required, enforces ownership);
+                                                     200 {ready bool, max_courts int, reason string};
+                                                     reason: "credentials_not_configured" | "auto_booking_disabled" | "no_usable_credentials" | ""
 
 POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority, max_courts); 503 when CREDENTIALS_ENCRYPTION_KEY unset
 GET    /api/v1/venues/{id}/credentials             — listCredentials (query: group_id); passwords never returned
@@ -213,7 +220,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `group.bot_removed` | server_owner | Bot removed from group |
 | `group.settings_changed` | group_admin | Admin changes language/timezone |
 | `group.changelog_toggled` | server_owner | Admin enables/disables changelog announcements for group |
-| `court.booked` | group_admin | Scheduler auto-books a court |
+| `court.booked` | group_admin | Court booked (scheduler or admin via BookGameCourts) |
 | `court.canceled` | group_admin | Scheduler cancels a court |
 | `game.published` | group_admin | Game announcement sent to group (by scheduler or admin) |
 
@@ -245,6 +252,23 @@ The canonical publication primitive. Sends the game announcement to the group ch
 - `actorTgID == 0` → audit records `actor_kind = system`; non-zero → `actor_kind = user`.
 
 `NewGameService` signature (13 args): `gameRepo, venueRepo, participationRepo, guestRepo, groupRepo GameRepository…, auditSvc *AuditService, api TelegramAPI, defaultLoc *time.Location, logger *slog.Logger, courtBookingRepo CourtBookingRepository, bookingClient BookingServiceClient, credService *VenueCredentialService, autoBookingResultRepo AutoBookingResultRepository`.
+
+**`GameService.BookGameCourts(ctx, gameID int64, count int, actorTgID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error)`**
+
+On-demand court booking for an existing game. Delegates to `bookFreeCourts` (shared with `AutoBookingJob`). Appends booked labels to `game.Courts` (multiset-dedup: skips labels already present). Upserts `auto_booking_results` (insert only when no row exists for venue+date+time). Fires `notifier.EditGameMessage` asynchronously using `context.Background()` (detached from request context).
+
+- Returns `ErrGameNotFound` when game is missing.
+- Returns `ErrAutoBookingNotAvailable` when venue is nil, `auto_booking_enabled = false`, or `bookingClient`/`credService` is nil.
+- Rejects games with time 00:00 (plain error — likely unset game time).
+- `BookGameCourtsResult`: `{Requested int, BookedLabels []string, Failures []BookingFailure}`.
+
+**`VenueCredentialService.HasUsableCredentials(ctx, venueID int64, cooldown time.Duration) (ready bool, maxCourts int, err error)`**
+
+Returns `(true, sum-of-MaxCourts, nil)` when at least one credential for the venue is usable (not cooling down). `maxCourts` is the sum of `MaxCourts` across all usable credentials. Returns `(false, 0, nil)` when no credentials exist or all are cooling down. Uses `ListWithPasswordByVenueID` internally and applies the same cooldown logic as `ListForBooking`.
+
+**`VenueService.GetVenueByIDAndGroupID(ctx, id, groupID int64) (*models.Venue, error)`**
+
+Fetches a venue with group ownership enforcement. Used by `bookingReadiness` to prevent cross-group probing.
 
 **`GameService.ListActiveCourtBookings(ctx, gameID int64, courts []string) ([]CourtBookingInfo, error)`**
 

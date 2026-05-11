@@ -166,6 +166,59 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, venue)
 }
 
+// bookingReadiness handles GET /api/v1/venues/{id}/booking-readiness?group_id=X
+func (h *Handler) bookingReadiness(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid venue id")
+		return
+	}
+	groupID, err := parseID(r.URL.Query().Get("group_id"))
+	if err != nil || groupID == 0 {
+		writeError(w, http.StatusBadRequest, "group_id query parameter is required")
+		return
+	}
+	if h.venueCredService == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ready":      false,
+			"max_courts": 0,
+			"reason":     "credentials_not_configured",
+		})
+		return
+	}
+
+	venue, err := h.venueService.GetVenueByIDAndGroupID(r.Context(), id, groupID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "venue not found")
+		return
+	}
+	if !venue.AutoBookingEnabled {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ready":      false,
+			"max_courts": 0,
+			"reason":     "auto_booking_disabled",
+		})
+		return
+	}
+
+	ready, maxCourts, err := h.venueCredService.HasUsableCredentials(r.Context(), id, h.credentialErrorCooldown)
+	if err != nil {
+		h.logger.Error("bookingReadiness: HasUsableCredentials", "err", err, "venue_id", id)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reason := ""
+	if !ready {
+		reason = "no_usable_credentials"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ready":      ready,
+		"max_courts": maxCourts,
+		"reason":     reason,
+	})
+}
+
 // deleteVenue handles DELETE /api/v1/venues/{id}?group_id=X[&actor_tg_id=Y&actor_display=Z]
 func (h *Handler) deleteVenue(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
