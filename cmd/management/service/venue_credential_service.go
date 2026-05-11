@@ -165,6 +165,20 @@ func (s *VenueCredentialService) ListForBooking(ctx context.Context, venueID int
 	return result, nil
 }
 
+// HasUsableCredentials returns (true, totalMaxCourts) when at least one credential
+// for the venue is not in cooldown. Returns (false, 0) when none are usable.
+func (s *VenueCredentialService) HasUsableCredentials(ctx context.Context, venueID int64, cooldown time.Duration) (bool, int, error) {
+	creds, err := s.ListForBooking(ctx, venueID, cooldown)
+	if err != nil {
+		return false, 0, err
+	}
+	total := 0
+	for _, c := range creds {
+		total += c.MaxCourts
+	}
+	return len(creds) > 0, total, nil
+}
+
 // MarkError sets last_error_at to now for the given credential.
 func (s *VenueCredentialService) MarkError(ctx context.Context, credID int64) error {
 	if err := s.repo.SetLastErrorAt(ctx, credID); err != nil {

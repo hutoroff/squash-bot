@@ -15,9 +15,17 @@ import (
 )
 
 var (
-	ErrGameNotFound         = errors.New("game not found")
-	ErrGameAlreadyPublished = errors.New("game already published")
+	ErrGameNotFound              = errors.New("game not found")
+	ErrGameAlreadyPublished      = errors.New("game already published")
+	ErrAutoBookingNotAvailable   = errors.New("auto-booking not available for this game")
 )
+
+// BookGameCourtsResult is returned by BookGameCourts.
+type BookGameCourtsResult struct {
+	Requested    int
+	BookedLabels []string
+	Failures     []BookingFailure
+}
 
 // CourtBookingInfo is a slim DTO returned by ListActiveCourtBookings.
 type CourtBookingInfo struct {
@@ -45,6 +53,7 @@ type GameService struct {
 	groupRepo         GroupRepository
 	auditSvc          *AuditService
 	api               TelegramAPI
+	notifier          Notifier
 	defaultLoc        *time.Location
 	logger            *slog.Logger
 	// Optional booking deps — nil when booking infrastructure is not configured.
@@ -84,6 +93,12 @@ func NewGameService(
 		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
 	}
+}
+
+// SetNotifier injects the Notifier used for async game message edits after BookGameCourts.
+// Must be called after construction when the notifier is available (avoids circular deps).
+func (s *GameService) SetNotifier(n Notifier) {
+	s.notifier = n
 }
 
 func (s *GameService) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
@@ -213,6 +228,118 @@ func (s *GameService) PublishGame(ctx context.Context, gameID, actorTgID int64, 
 		return game, nil
 	}
 	return updated, nil
+}
+
+// BookGameCourts books `count` additional courts for an existing game using the venue's
+// auto-booking configuration. The booked court labels are appended to game.Courts.
+//
+// Returns ErrGameNotFound when the game doesn't exist, ErrAutoBookingNotAvailable when the
+// game has no venue or the venue's auto-booking is disabled.
+// Sanity check: rejects games whose time is exactly 00:00 (likely unset).
+func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count int, actorTgID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error) {
+	game, err := s.gameRepo.GetByID(ctx, gameID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrGameNotFound
+		}
+		return nil, fmt.Errorf("fetch game %d: %w", gameID, err)
+	}
+	if game == nil {
+		return nil, ErrGameNotFound
+	}
+	if game.Venue == nil || !game.Venue.AutoBookingEnabled {
+		return nil, ErrAutoBookingNotAvailable
+	}
+	if s.bookingClient == nil || s.credService == nil {
+		return nil, ErrAutoBookingNotAvailable
+	}
+
+	groupTZ, ok := groupTZByID(ctx, s.groupRepo, game.ChatID, s.defaultLoc, s.logger)
+	if !ok {
+		groupTZ = s.defaultLoc
+	}
+
+	gameInTZ := game.GameDate.In(groupTZ)
+	// Sanity check: game time 00:00 almost certainly means the time was never set.
+	if gameInTZ.Hour() == 0 && gameInTZ.Minute() == 0 {
+		return nil, fmt.Errorf("game time is 00:00 — cannot infer booking time slot")
+	}
+
+	gameTime := gameInTZ.Format("15:04")
+	gameDateStr := gameInTZ.Format("2006-01-02")
+	gameDate := time.Date(gameInTZ.Year(), gameInTZ.Month(), gameInTZ.Day(), 0, 0, 0, 0, groupTZ)
+
+	deps := bookingDeps{
+		bookingClient:    s.bookingClient,
+		credService:      s.credService,
+		courtBookingRepo: s.courtBookingRepo,
+		auditSvc:         s.auditSvc,
+		credCooldown:     credCooldown,
+		logger:           s.logger,
+	}
+
+	res, err := bookFreeCourts(ctx, deps, game.Venue, game.ChatID, gameDate, gameDateStr, gameTime, groupTZ, count)
+	if err != nil {
+		return nil, fmt.Errorf("book free courts: %w", err)
+	}
+
+	result := &BookGameCourtsResult{
+		Requested:    count,
+		BookedLabels: res.BookedLabels,
+		Failures:     res.Failures,
+	}
+
+	if len(res.BookedLabels) > 0 {
+		existingCourts := splitCourts(game.Courts)
+		existing := make(map[string]int, len(existingCourts))
+		for _, c := range existingCourts {
+			existing[c]++
+		}
+		allCourts := existingCourts
+		for _, label := range res.BookedLabels {
+			if existing[label] > 0 {
+				existing[label]--
+				continue
+			}
+			allCourts = append(allCourts, label)
+		}
+		newCourtsStr := strings.Join(allCourts, ",")
+		if updateErr := s.gameRepo.UpdateCourts(ctx, gameID, newCourtsStr, len(allCourts)); updateErr != nil {
+			return result, fmt.Errorf("update game courts: %w", updateErr)
+		}
+
+		// Upsert auto_booking_results: only insert when none exists yet for this slot.
+		if s.autoBookingResultRepo != nil {
+			existing, _ := s.autoBookingResultRepo.GetByVenueAndDateAndTime(ctx, game.Venue.ID, gameDate, gameTime)
+			if existing == nil {
+				courtsStr := strings.Join(res.BookedLabels, ",")
+				resultID, saveErr := s.autoBookingResultRepo.Save(ctx, game.Venue.ID, gameDate, gameTime, courtsStr, len(res.BookedLabels))
+				if saveErr != nil {
+					s.logger.Error("BookGameCourts: save auto_booking_result", "game_id", gameID, "err", saveErr)
+				} else {
+					if linkErr := s.autoBookingResultRepo.SetGameID(ctx, resultID, gameID); linkErr != nil {
+						s.logger.Error("BookGameCourts: set game_id on result", "result_id", resultID, "err", linkErr)
+					}
+				}
+			}
+			// If a row already exists: leave it untouched. court_bookings carry game_time for
+			// cancellation scoping, so the existing result's courts/courts_count may understate
+			// reality, but cancellation still works correctly via court_bookings.
+		}
+
+		if s.auditSvc != nil {
+			s.auditSvc.RecordCourtsAutoBooked(ctx, game.ChatID, actorTgID, actorDisplay, gameID,
+				game.Venue.Name, gameDateStr, len(res.BookedLabels), count, res.BookedLabels)
+		}
+
+		// Async refresh of the game message in the group chat.
+		// Use context.Background() so the goroutine is not tied to the HTTP request lifetime.
+		if s.notifier != nil {
+			go s.notifier.EditGameMessage(context.Background(), gameID)
+		}
+	}
+
+	return result, nil
 }
 
 // activeBookingsByLabels returns active bookings for the given court labels on a game,

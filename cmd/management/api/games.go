@@ -281,6 +281,58 @@ func (h *Handler) publishGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, game)
 }
 
+// bookCourts handles POST /api/v1/games/{id}/book-courts
+func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid game id")
+		return
+	}
+	var req struct {
+		Count           int    `json:"count"`
+		GroupID         int64  `json:"group_id"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Count <= 0 {
+		writeError(w, http.StatusBadRequest, "count must be a positive integer")
+		return
+	}
+
+	result, err := h.gameService.BookGameCourts(r.Context(), id, req.Count, req.ActorTelegramID, req.ActorDisplay, h.credentialErrorCooldown)
+	if err != nil {
+		if errors.Is(err, service.ErrGameNotFound) {
+			writeError(w, http.StatusNotFound, "game not found")
+			return
+		}
+		if errors.Is(err, service.ErrAutoBookingNotAvailable) {
+			writeError(w, http.StatusConflict, "auto-booking not available for this game")
+			return
+		}
+		h.logger.Error("bookCourts", "err", err, "id", id)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type failureItem struct {
+		Reason string `json:"reason"`
+	}
+	failures := make([]failureItem, len(result.Failures))
+	for i, f := range result.Failures {
+		failures[i] = failureItem{Reason: f.Reason}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requested":     result.Requested,
+		"booked_count":  len(result.BookedLabels),
+		"booked_labels": result.BookedLabels,
+		"failures":      failures,
+	})
+}
+
 // parseID parses a string path value into int64.
 func parseID(s string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)

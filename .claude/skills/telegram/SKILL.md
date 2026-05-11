@@ -32,6 +32,9 @@ cmd/telegram/
 │   │                              handleManageCourtsToggle, handleManageCourtsConfirm,
 │   │                              handleManageCourtsCancelConfirm, handleManageCourtsCancelAbort,
 │   │                              handleManagePublish (Publish button for unpublished games),
+│   │                              handleManageCourtsMode, renderCourtsModePicker,
+│   │                              handleManageBook, renderBookCountKeyboard,
+│   │                              handleManageBookCancel,
 │   │                              courtsBeingRemoved, renderCourtCancelPrompt, processCourtsEdit
 │   ├── newgame_handlers.go  — /newGame wizard: handleNewGameDate/Group/Venue/CourtToggle/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
@@ -46,7 +49,7 @@ cmd/telegram/
 │                              renderPreferredTimeEditKeyboard, joinSelectedTimesOrdered,
 │                              processVenueWizard, processVenueEdit
 └── client/
-    ├── interface.go         — ManagementClient interface (37 methods across 5 groups)
+    ├── interface.go         — ManagementClient interface (39 methods across 5 groups)
     └── client.go            — *Client HTTP implementation (satisfies ManagementClient structurally)
 ```
 
@@ -73,6 +76,7 @@ type Bot struct {
     pendingGroupVenuePick         sync.Map  // chatID → *groupVenuePickState
     pendingVenueCredAdd                sync.Map  // chatID → *venueCredWizard
     pendingManageCourtsCancelPrompt    sync.Map  // chatID → *manageCourtsCancelPromptState
+    pendingManageBookCount             sync.Map  // chatID → *manageBookCountState
     handlerSem                         chan struct{}  // semaphore, maxConcurrentHandlers=50
     callbackRouter                map[string]callbackHandler
 }
@@ -124,6 +128,9 @@ manage, manage_players, manage_guests, manage_courts, manage_close
 manage_kick, manage_kick_guest, manage_court_toggle, manage_court_confirm
 manage_courts_cancel_confirm (confirm cancel-booking-and-remove after pre-flight prompt)
 manage_courts_cancel_abort   (go back to court toggle keyboard, restoring prior selection)
+manage_courts_mode:<gameID>:auto|manual  (mode picker: choose auto-book vs manual edit)
+manage_book:<gameID>:<count>             (book N courts via BookGameCourts)
+manage_book_cancel:<gameID>              (dismiss book-count picker, re-render manage screen)
 publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publish)
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
@@ -265,6 +272,29 @@ Works in private chat only. Group @mentions redirected to private chat. At least
 
 ### Courts Update (`/games` → Manage → Edit Courts)
 
+**Mode picker (auto-booking venues):**
+
+When `handleManageEditCourts` fires for a game whose venue has `AutoBookingEnabled = true`, it calls `GetVenueBookingReadiness` first:
+- If `readiness.Ready && readiness.MaxCourts > 0` → stores `manageBookCountState{gameID, groupID, max}` in `pendingManageBookCount`, calls `renderCourtsModePicker` which shows two buttons:
+  - `BtnEditCourtsAutoBook` → `manage_courts_mode:<gameID>:auto`
+  - `BtnEditCourtsManual`   → `manage_courts_mode:<gameID>:manual`
+- On readiness error or `!ready` → falls through to the normal toggle keyboard (admin is never blocked).
+
+`handleManageCourtsMode` (rawID = `<gameID>:<mode>`):
+- `"auto"` → validates state, calls `renderBookCountKeyboard` (buttons 1..max, each `manage_book:<gameID>:<n>` + Cancel button `manage_book_cancel:<gameID>`).
+- `"manual"` → clears `pendingManageBookCount`, shows the normal toggle keyboard or free-text.
+
+`handleManageBook` (rawID = `<gameID>:<count>`): validates admin, calls `client.BookGameCourts`, shows:
+- All booked → `MsgBookSuccess` (toast + refreshes manage screen)
+- Some booked → `MsgBookPartial`
+- None booked → `MsgBookNoneBooked`
+
+`handleManageBookCancel` (rawID = `<gameID>`): toast `MsgBookCanceled` + re-renders manage screen.
+
+`manageBookCountState` struct: `gameID, groupID, max int64/int`.
+
+**Normal toggle flow (manual mode or venues without auto-booking):**
+
 - If game has a venue with courts configured → inline court-toggle keyboard (same ✓ UX). Pre-selects current courts. Confirm → `manage_court_confirm:<gameID>`.
 - If game has no venue → falls back to free-text input.
 
@@ -312,19 +342,21 @@ When admin confirms court removal (`manage_court_confirm`), the handler:
 
 ## ManagementClient interface (`client/interface.go`)
 
-41 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
+43 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
 
 ```
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
                 GetUpcomingGamesByChatIDs, GetNextGameForTelegramUser,
                 PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error),
                 ListActiveCourtBookings(ctx, gameID int64, courts []string) ([]CourtBookingInfo, error),
-                UpdateCourtsAndCancelBookings(ctx, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error)
+                UpdateCourtsAndCancelBookings(ctx, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error),
+                BookGameCourts(ctx, gameID, groupID, actorTgID int64, actorDisplay string, count int) (*BookGameCourtsResult, error)
 Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
                 KickPlayer, KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
                 SetGroupLanguage, SetGroupTimezone, SetGroupChangelog
-Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue
+Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue,
+                GetVenueBookingReadiness(ctx, venueID, groupID int64) (*BookingReadiness, error)
 VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
 Scheduler:      TriggerScheduledEvent
@@ -333,10 +365,12 @@ Scheduler:      TriggerScheduledEvent
 **Client-side types** (defined in `client.go`, used by handlers):
 - `CourtBookingInfo{CourtLabel, GameTime, MatchID string}` — returned by `ListActiveCourtBookings`
 - `CancelFailure{Court, Reason string}` — element of `failed` slice returned by `UpdateCourtsAndCancelBookings` on partial failure; mapped from HTTP 200+JSON body `{canceled:[], failed:[{court,reason}]}`
+- `BookGameCourtsResult{Requested, BookedCount int, BookedLabels []string, Failures []BookingCourtsFailure}` — returned by `BookGameCourts`; HTTP 409 → `ErrAutoBookingNotAvailable`
+- `BookingReadiness{Ready bool, MaxCourts int, Reason string}` — returned by `GetVenueBookingReadiness`
 
 **Error propagation:** `client.go` defines `HTTPError{StatusCode int, Message string}` — a typed error returned by `parseErrorBody`. Handlers use `errors.As(err, &httpErr)` to branch on specific HTTP status codes (e.g. 409 Conflict) before falling through to generic error messages. Always return `*HTTPError` from `parseErrorBody` for new error cases; do not wrap with `fmt.Errorf`.
 
-`client.go` also defines package-level sentinel errors for specific status codes: `ErrAlreadyPublished` (mapped from HTTP 409 on `PublishGame`). Handlers use `errors.Is(err, client.ErrAlreadyPublished)` to show a dedicated message.
+`client.go` also defines package-level sentinel errors for specific status codes: `ErrAlreadyPublished` (mapped from HTTP 409 on `PublishGame`), `ErrAutoBookingNotAvailable` (mapped from HTTP 409 on `BookGameCourts`). Handlers use `errors.Is` to show dedicated messages.
 
 **Adding a new management API call:** Add the method to `ManagementClient` in `client/interface.go`, implement it in `client/client.go`, then use it in the appropriate handler file.
 

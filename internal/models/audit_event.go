@@ -36,6 +36,7 @@ const (
 	AuditEventCourtBooked         AuditEventType = "court.booked"
 	AuditEventCourtCanceled       AuditEventType = "court.canceled"
 	AuditEventGamePublished       AuditEventType = "game.published"
+	AuditEventCourtsAutoBooked    AuditEventType = "game.courts_auto_booked"
 
 	// Subject types.
 	AuditSubjectGame        = "game"
