@@ -163,6 +163,15 @@ type manageCourtsCancelPromptState struct {
 	venueCourts  []string // all venue courts (for the "back" re-render)
 }
 
+// manageBookCountState holds context while the admin is choosing how many courts
+// to auto-book via the inline count-picker.
+// Keyed by private chat ID in pendingManageBookCount.
+type manageBookCountState struct {
+	gameID  int64
+	groupID int64
+	max     int // maximum bookable courts from GetVenueBookingReadiness
+}
+
 // gameEditWorker serializes and coalesces Telegram message edits for a single game.
 // Multiple concurrent triggers (e.g. rapid join/skip button clicks) collapse into
 // at most two sequential Telegram API calls, preventing 429 rate-limit errors.
@@ -238,6 +247,7 @@ type Bot struct {
 	pendingCourtsEdit             sync.Map      // map[chatID int64]gameID int64
 	pendingManageCourtsToggle        sync.Map      // map[chatID int64]*manageCourtsToggleState
 	pendingManageCourtsCancelPrompt  sync.Map      // map[chatID int64]*manageCourtsCancelPromptState
+	pendingManageBookCount           sync.Map      // map[chatID int64]*manageBookCountState
 	pendingNewGameWizard          sync.Map      // map[chatID int64]*newGameWizard
 	pendingVenueWizard            sync.Map      // map[chatID int64]*venueWizard
 	pendingVenueEdit              sync.Map      // map[chatID int64]*venueEditState

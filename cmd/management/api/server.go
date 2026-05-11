@@ -12,6 +12,9 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 )
 
+// defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
+const defaultCredentialErrorCooldown = 24 * time.Hour
+
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
 	gameService      *service.GameService
@@ -26,6 +29,8 @@ type Handler struct {
 	serverOwnerIDs   map[int64]bool
 	logger           *slog.Logger
 	version          string
+	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
+	credentialErrorCooldown time.Duration
 }
 
 func NewHandler(
@@ -41,20 +46,25 @@ func NewHandler(
 	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
+	credentialErrorCooldown time.Duration,
 ) *Handler {
+	if credentialErrorCooldown <= 0 {
+		credentialErrorCooldown = defaultCredentialErrorCooldown
+	}
 	return &Handler{
-		gameService:      gameService,
-		partService:      partService,
-		venueService:     venueService,
-		venueCredService: venueCredService,
-		groupRepo:        groupRepo,
-		playerRepo:       playerRepo,
-		scheduler:        scheduler,
-		auditSvc:         auditSvc,
-		adminResolver:    adminResolver,
-		serverOwnerIDs:   serverOwnerIDs,
-		logger:           logger,
-		version:          version,
+		gameService:             gameService,
+		partService:             partService,
+		venueService:            venueService,
+		venueCredService:        venueCredService,
+		groupRepo:               groupRepo,
+		playerRepo:              playerRepo,
+		scheduler:               scheduler,
+		auditSvc:                auditSvc,
+		adminResolver:           adminResolver,
+		serverOwnerIDs:          serverOwnerIDs,
+		logger:                  logger,
+		version:                 version,
+		credentialErrorCooldown: credentialErrorCooldown,
 	}
 }
 
@@ -70,6 +80,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/games/{id}/courts", h.updateCourts)
 	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
 	mux.HandleFunc("GET /api/v1/games/{id}/active-court-bookings", h.listActiveCourtBookings)
+	mux.HandleFunc("POST /api/v1/games/{id}/book-courts", h.bookCourts)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)
@@ -102,6 +113,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/venues/{id}", h.deleteVenue)
 
 	// Venue credentials
+	mux.HandleFunc("GET /api/v1/venues/{id}/booking-readiness", h.bookingReadiness)
 	mux.HandleFunc("POST /api/v1/venues/{id}/credentials", h.addCredential)
 	mux.HandleFunc("GET /api/v1/venues/{id}/credentials", h.listCredentials)
 	mux.HandleFunc("DELETE /api/v1/venues/{id}/credentials/{cid}", h.removeCredential)

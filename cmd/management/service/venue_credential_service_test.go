@@ -338,3 +338,61 @@ func TestListForBooking_SkipsDecryptError(t *testing.T) {
 		t.Errorf("expected good@e.com, got %q", result[0].Login)
 	}
 }
+
+// ── HasUsableCredentials ──────────────────────────────────────────────────────
+
+func TestHasUsableCredentials_NoCredentials(t *testing.T) {
+	svc := newTestCredService(&stubCredRepo{}, &stubVenueRepo{venue: testVenue})
+	ready, max, err := svc.HasUsableCredentials(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ready {
+		t.Error("want ready=false when no credentials, got true")
+	}
+	if max != 0 {
+		t.Errorf("want max_courts=0, got %d", max)
+	}
+}
+
+func TestHasUsableCredentials_WithCredentials_SumsMaxCourts(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("secret")
+
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 10, Login: "a@e.com", EncryptedPassword: encPw, Priority: 1, MaxCourts: 2},
+		{ID: 2, VenueID: 10, Login: "b@e.com", EncryptedPassword: encPw, Priority: 2, MaxCourts: 3},
+	}
+	svc := newTestCredService(&stubCredRepo{creds: creds}, &stubVenueRepo{venue: testVenue})
+
+	ready, max, err := svc.HasUsableCredentials(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ready {
+		t.Error("want ready=true, got false")
+	}
+	if max != 5 {
+		t.Errorf("want max_courts=5 (2+3), got %d", max)
+	}
+}
+
+func TestHasUsableCredentials_RepoError_Propagated(t *testing.T) {
+	errRepo := &stubCredRepoWithListError{err: errors.New("db unreachable")}
+	enc, _ := NewEncryptor(testHexKey)
+	svc := NewVenueCredentialService(errRepo, &stubVenueRepo{venue: testVenue}, nil, enc)
+
+	_, _, err := svc.HasUsableCredentials(context.Background(), 10, 0)
+	if err == nil {
+		t.Fatal("expected error from repo, got nil")
+	}
+}
+
+type stubCredRepoWithListError struct {
+	stubCredRepo
+	err error
+}
+
+func (r *stubCredRepoWithListError) ListWithPasswordByVenueID(_ context.Context, _ int64) ([]*models.VenueCredential, error) {
+	return nil, r.err
+}

@@ -286,13 +286,34 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 	b.api.Send(edit) //nolint:errcheck
 }
 
-// handleManageEditCourts either shows an inline court-toggle keyboard (when the game
-// has a venue with configured courts) or falls back to prompting for free-text input.
+// handleManageEditCourts either shows a mode chooser (auto-book vs manual) when the
+// game's venue has auto-booking ready, shows the inline court-toggle keyboard for a
+// venue with courts, or falls back to free-text input when there is no venue.
 func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
+	}
+
+	// If the game has a venue, check whether auto-booking is available.
+	if game.Venue != nil && game.Venue.AutoBookingEnabled {
+		readiness, err := b.client.GetVenueBookingReadiness(ctx, game.Venue.ID, game.ChatID)
+		if err != nil {
+			slog.Warn("handleManageEditCourts: booking readiness check failed", "err", err, "venue_id", game.Venue.ID)
+			// Fall through to manual picker on error — don't block the admin.
+		} else if readiness.Ready && readiness.MaxCourts > 0 {
+			b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
+			b.pendingCourtsEdit.Delete(cb.Message.Chat.ID)
+			b.pendingManageBookCount.Store(cb.Message.Chat.ID, &manageBookCountState{
+				gameID:  gameID,
+				groupID: game.ChatID,
+				max:     readiness.MaxCourts,
+			})
+			b.answerCallback(cb.ID, "")
+			b.renderCourtsModePicker(cb.Message.Chat.ID, cb.Message.MessageID, gameID, readiness.MaxCourts, lz)
+			return
+		}
 	}
 
 	// If the game has a venue with courts, show the inline toggle picker.
@@ -325,6 +346,185 @@ func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQ
 
 	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, lz.T(i18n.MsgSendNewCourts))
 	b.api.Send(prompt) //nolint:errcheck
+}
+
+// renderCourtsModePicker edits the message to show Auto-book vs Manual selection.
+func (b *Bot) renderCourtsModePicker(chatID int64, messageID int, gameID int64, maxCourts int, lz *i18n.Localizer) {
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				lz.T(i18n.BtnEditCourtsAutoBook),
+				fmt.Sprintf("manage_courts_mode:%d:auto", gameID),
+			),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				lz.T(i18n.BtnEditCourtsManual),
+				fmt.Sprintf("manage_courts_mode:%d:manual", gameID),
+			),
+		),
+	)
+	b.editText(chatID, messageID, lz.T(i18n.MsgEditCourtsChooseMode), &keyboard)
+}
+
+// handleManageCourtsMode handles the manage_courts_mode:<gameID>:<mode> callback.
+// mode is "auto" or "manual".
+func (b *Bot) handleManageCourtsMode(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	sub := strings.SplitN(rawID, ":", 2)
+	if len(sub) != 2 {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	gameID, err := strconv.ParseInt(sub[0], 10, 64)
+	if err != nil {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	mode := sub[1]
+
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
+	if !ok {
+		return
+	}
+
+	if mode == "auto" {
+		raw, exists := b.pendingManageBookCount.Load(cb.Message.Chat.ID)
+		if !exists {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+			return
+		}
+		state := raw.(*manageBookCountState)
+		if state.gameID != gameID {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+			return
+		}
+		b.answerCallback(cb.ID, "")
+		b.renderBookCountKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, state, lz)
+		return
+	}
+
+	// Manual mode: show toggle keyboard or free-text.
+	b.pendingManageBookCount.Delete(cb.Message.Chat.ID)
+	if game.Venue != nil && game.Venue.Courts != "" {
+		courts := splitCSV(game.Venue.Courts)
+		selected := make(map[string]bool)
+		for _, c := range splitCSV(game.Courts) {
+			selected[c] = true
+		}
+		toggleState := &manageCourtsToggleState{
+			gameID:         gameID,
+			venueCourts:    courts,
+			selectedCourts: selected,
+		}
+		b.pendingCourtsEdit.Delete(cb.Message.Chat.ID)
+		b.pendingManageCourtsToggle.Store(cb.Message.Chat.ID, toggleState)
+		b.answerCallback(cb.ID, "")
+		b.renderManageCourtsKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, toggleState, lz)
+		return
+	}
+	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
+	b.pendingCourtsEdit.Store(cb.Message.Chat.ID, gameID)
+	b.answerCallback(cb.ID, "")
+	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, lz.T(i18n.MsgSendNewCourts))
+	b.api.Send(prompt) //nolint:errcheck
+}
+
+// renderBookCountKeyboard shows inline buttons 1…max for choosing how many courts to book.
+func (b *Bot) renderBookCountKeyboard(chatID int64, messageID int, state *manageBookCountState, lz *i18n.Localizer) {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for n := 1; n <= state.max; n++ {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("%d", n),
+				fmt.Sprintf("manage_book:%d:%d", state.gameID, n),
+			),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(
+			lz.T(i18n.BtnBookCancel),
+			fmt.Sprintf("manage_book_cancel:%d", state.gameID),
+		),
+	))
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.editText(chatID, messageID, lz.T(i18n.MsgBookCountPrompt), &keyboard)
+}
+
+// handleManageBook handles manage_book:<gameID>:<count> — triggers auto-booking.
+func (b *Bot) handleManageBook(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	sub := strings.SplitN(rawID, ":", 2)
+	if len(sub) != 2 {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	gameID, err1 := strconv.ParseInt(sub[0], 10, 64)
+	count, err2 := strconv.ParseInt(sub[1], 10, 64)
+	if err1 != nil || err2 != nil || count <= 0 {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+
+	raw, exists := b.pendingManageBookCount.Load(cb.Message.Chat.ID)
+	if !exists {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	state := raw.(*manageBookCountState)
+	if state.gameID != gameID {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, state.groupID)
+	if err != nil {
+		slog.Error("handleManageBook: check admin", "err", err, "user_id", cb.From.ID, "group_id", state.groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgFailedVerifyPermissions))
+		return
+	}
+	if !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgLostAdminAccess))
+		return
+	}
+
+	b.pendingManageBookCount.Delete(cb.Message.Chat.ID)
+	b.answerCallback(cb.ID, "")
+
+	result, err := b.client.BookGameCourts(ctx, gameID, state.groupID, cb.From.ID, actorDisplayFrom(cb.From), int(count))
+	if err != nil {
+		slog.Error("handleManageBook: book courts", "err", err, "game_id", gameID)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+
+	slog.Info("Auto-booked courts on demand", "game_id", gameID, "requested", result.Requested,
+		"booked", result.BookedCount, "labels", result.BookedLabels)
+
+	b.scheduleGameMessageEdit(gameID)
+
+	switch {
+	case result.BookedCount == 0:
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgBookNoneBooked), nil)
+	case result.BookedCount < result.Requested:
+		b.sendText(cb.Message.Chat.ID,
+			lz.Tf(i18n.MsgBookPartial, result.BookedCount, result.Requested, strings.Join(result.BookedLabels, ", ")), nil)
+	default:
+		b.sendText(cb.Message.Chat.ID,
+			lz.Tf(i18n.MsgBookSuccess, result.BookedCount, strings.Join(result.BookedLabels, ", ")), nil)
+	}
+}
+
+// handleManageBookCancel cancels the count-picker and returns to the manage screen.
+func (b *Bot) handleManageBookCancel(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
+	lz := b.userLocalizer(cb.From.LanguageCode)
+	b.pendingManageBookCount.Delete(cb.Message.Chat.ID)
+	b.answerCallback(cb.ID, lz.T(i18n.MsgBookCanceled))
+	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
+	if !ok {
+		return
+	}
+	b.renderManageScreen(ctx, cb, game, lz)
 }
 
 // renderManageCourtsKeyboard renders the inline toggle keyboard for the courts-update flow.

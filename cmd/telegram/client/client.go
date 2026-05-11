@@ -532,6 +532,29 @@ func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, grou
 // ErrAlreadyPublished is returned by PublishGame when the management service responds with HTTP 409.
 var ErrAlreadyPublished = errors.New("already published")
 
+// ErrAutoBookingNotAvailable is returned by BookGameCourts when the management service responds with HTTP 409.
+var ErrAutoBookingNotAvailable = errors.New("auto-booking not available")
+
+// BookGameCourtsResult is the result of booking courts for a game on demand.
+type BookGameCourtsResult struct {
+	Requested    int                   `json:"requested"`
+	BookedCount  int                   `json:"booked_count"`
+	BookedLabels []string              `json:"booked_labels"`
+	Failures     []BookingCourtsFailure `json:"failures"`
+}
+
+// BookingCourtsFailure describes a single booking attempt that failed.
+type BookingCourtsFailure struct {
+	Reason string `json:"reason"`
+}
+
+// BookingReadiness describes whether a venue is ready to auto-book courts.
+type BookingReadiness struct {
+	Ready     bool   `json:"ready"`
+	MaxCourts int    `json:"max_courts"`
+	Reason    string `json:"reason"`
+}
+
 // PublishGame sends the game announcement and pins it.
 // Returns ErrAlreadyPublished if the game is already published (HTTP 409).
 func (c *Client) PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error) {
@@ -561,6 +584,47 @@ func (c *Client) PublishGame(ctx context.Context, gameID, actorTgID int64, actor
 		return nil, fmt.Errorf("decode publish response: %w", err)
 	}
 	return &game, nil
+}
+
+// BookGameCourts calls POST /api/v1/games/{id}/book-courts.
+// Returns ErrAutoBookingNotAvailable when the server responds with HTTP 409.
+func (c *Client) BookGameCourts(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string, count int) (*BookGameCourtsResult, error) {
+	body := map[string]any{
+		"count":             count,
+		"group_id":          groupID,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, fmt.Sprintf("/api/v1/games/%d/book-courts", gameID), body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST /book-courts: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil, ErrAutoBookingNotAvailable
+	}
+	if resp.StatusCode >= 400 {
+		return nil, parseErrorBody(resp)
+	}
+	var result BookGameCourtsResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode book-courts response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetVenueBookingReadiness calls GET /api/v1/venues/{id}/booking-readiness.
+func (c *Client) GetVenueBookingReadiness(ctx context.Context, venueID, groupID int64) (*BookingReadiness, error) {
+	path := fmt.Sprintf("/api/v1/venues/%d/booking-readiness?group_id=%d", venueID, groupID)
+	var r BookingReadiness
+	if err := c.do(ctx, http.MethodGet, path, nil, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
