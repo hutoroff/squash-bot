@@ -53,7 +53,7 @@ func TestAutoBookingResultRepo_Save_GetByVenueAndDate(t *testing.T) {
 	}
 
 	// Save a result for a specific time slot.
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -88,10 +88,10 @@ func TestAutoBookingResultRepo_Save_MultipleSlots(t *testing.T) {
 
 	gameDate := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
 		t.Fatalf("Save 18:00: %v", err)
 	}
-	if _, err := repo.Save(ctx, venueID, gameDate, "20:00", "3,4", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "20:00", "3,4", 2); err != nil {
 		t.Fatalf("Save 20:00: %v", err)
 	}
 
@@ -117,11 +117,11 @@ func TestAutoBookingResultRepo_Save_UniqueConstraint(t *testing.T) {
 	gameDate := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
 
 	// First save succeeds.
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 	// Duplicate (same venue+date+time) is silently ignored.
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "3,4", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "3,4", 2); err != nil {
 		t.Fatalf("duplicate Save should be ignored, got: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestAutoBookingResultRepo_GetByVenueAndDate_WrongDate(t *testing.T) {
 	repo := storage.NewAutoBookingResultRepo(testPool)
 
 	gameDate := time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC)
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1", 1); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1", 1); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -167,7 +167,7 @@ func TestAutoBookingResultRepo_GetByVenueAndDateAndTime(t *testing.T) {
 	repo := storage.NewAutoBookingResultRepo(testPool)
 
 	gameDate := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1,2", 2); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestAutoBookingResultRepo_SetGameID_GetByGameID(t *testing.T) {
 	repo := storage.NewAutoBookingResultRepo(testPool)
 
 	gameDate := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
-	if _, err := repo.Save(ctx, venueID, gameDate, "18:00", "1", 1); err != nil {
+	if err := repo.Save(ctx, venueID, gameDate, "18:00", "1", 1); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	results, err := repo.GetByVenueAndDate(ctx, venueID, gameDate)
