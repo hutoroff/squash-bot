@@ -1,4 +1,4 @@
-package api
+package http
 
 import (
 	"context"
@@ -8,63 +8,52 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hutoroff/squash-bot/cmd/management/service"
-	"github.com/hutoroff/squash-bot/internal/management/adapters/outbound/postgres"
+	"github.com/hutoroff/squash-bot/internal/management/application/ports/inbound"
 )
-
-// defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
-const defaultCredentialErrorCooldown = 24 * time.Hour
 
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
-	gameService      *service.GameService
-	partService      *service.ParticipationService
-	venueService     *service.VenueService
-	venueCredService *service.VenueCredentialService
-	groupRepo        *postgres.GroupRepo
-	playerRepo       *postgres.PlayerRepo
-	scheduler        *service.Scheduler
-	auditSvc         *service.AuditService
-	adminResolver    adminGroupsResolver
-	serverOwnerIDs   map[int64]bool
-	logger           *slog.Logger
-	version          string
-	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
-	credentialErrorCooldown time.Duration
+	gameSvc        inbound.GameUseCases
+	partSvc        inbound.ParticipationUseCases
+	venueSvc       inbound.VenueUseCases
+	venueCredSvc   inbound.VenueCredentialUseCases
+	groupSvc       inbound.GroupUseCases
+	playerSvc      inbound.PlayerUseCases
+	scheduler      inbound.SchedulerUseCases
+	auditSvc       inbound.AuditUseCases
+	adminResolver  inbound.AdminGroupsResolver
+	serverOwnerIDs map[int64]bool
+	logger         *slog.Logger
+	version        string
 }
 
 func NewHandler(
-	gameService *service.GameService,
-	partService *service.ParticipationService,
-	venueService *service.VenueService,
-	venueCredService *service.VenueCredentialService,
-	groupRepo *postgres.GroupRepo,
-	playerRepo *postgres.PlayerRepo,
-	scheduler *service.Scheduler,
-	auditSvc *service.AuditService,
-	adminResolver adminGroupsResolver,
+	gameSvc inbound.GameUseCases,
+	partSvc inbound.ParticipationUseCases,
+	venueSvc inbound.VenueUseCases,
+	venueCredSvc inbound.VenueCredentialUseCases,
+	groupSvc inbound.GroupUseCases,
+	playerSvc inbound.PlayerUseCases,
+	scheduler inbound.SchedulerUseCases,
+	auditSvc inbound.AuditUseCases,
+	adminResolver inbound.AdminGroupsResolver,
 	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
-	credentialErrorCooldown time.Duration,
 ) *Handler {
-	if credentialErrorCooldown <= 0 {
-		credentialErrorCooldown = defaultCredentialErrorCooldown
-	}
 	return &Handler{
-		gameService:             gameService,
-		partService:             partService,
-		venueService:            venueService,
-		venueCredService:        venueCredService,
-		groupRepo:               groupRepo,
-		playerRepo:              playerRepo,
-		scheduler:               scheduler,
-		auditSvc:                auditSvc,
-		adminResolver:           adminResolver,
-		serverOwnerIDs:          serverOwnerIDs,
-		logger:                  logger,
-		version:                 version,
-		credentialErrorCooldown: credentialErrorCooldown,
+		gameSvc:        gameSvc,
+		partSvc:        partSvc,
+		venueSvc:       venueSvc,
+		venueCredSvc:   venueCredSvc,
+		groupSvc:       groupSvc,
+		playerSvc:      playerSvc,
+		scheduler:      scheduler,
+		auditSvc:       auditSvc,
+		adminResolver:  adminResolver,
+		serverOwnerIDs: serverOwnerIDs,
+		logger:         logger,
+		version:        version,
 	}
 }
 
@@ -78,9 +67,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)
 	mux.HandleFunc("PATCH /api/v1/games/{id}/message-id", h.updateMessageID)
 	mux.HandleFunc("PATCH /api/v1/games/{id}/courts", h.updateCourts)
-	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
-	mux.HandleFunc("GET /api/v1/games/{id}/active-court-bookings", h.listActiveCourtBookings)
-	mux.HandleFunc("POST /api/v1/games/{id}/book-courts", h.bookCourts)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)
@@ -113,7 +99,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/venues/{id}", h.deleteVenue)
 
 	// Venue credentials
-	mux.HandleFunc("GET /api/v1/venues/{id}/booking-readiness", h.bookingReadiness)
 	mux.HandleFunc("POST /api/v1/venues/{id}/credentials", h.addCredential)
 	mux.HandleFunc("GET /api/v1/venues/{id}/credentials", h.listCredentials)
 	mux.HandleFunc("DELETE /api/v1/venues/{id}/credentials/{cid}", h.removeCredential)
@@ -127,7 +112,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // NewServer builds an http.Server with the handler's routes registered.
-// secret is the shared bearer token; all routes except /health and /version require it.
 func NewServer(addr string, h *Handler, secret string) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -140,10 +124,6 @@ func NewServer(addr string, h *Handler, secret string) *http.Server {
 	}
 }
 
-// requireBearer is middleware that validates the Authorization: Bearer <secret> header.
-// The /health and /version endpoints are exempt so container health checks and version
-// probes work without credentials.
-// Comparison is constant-time to prevent timing-based secret oracle attacks.
 func requireBearer(secret string, next http.Handler) http.Handler {
 	expected := []byte("Bearer " + secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +149,6 @@ func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
 }
 
-// writeJSON serialises v as JSON and writes it with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -178,12 +157,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-// writeError writes {"error": msg} with the given status code.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// decodeJSON reads and decodes a JSON body into v.
 func decodeJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
@@ -208,4 +185,8 @@ func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
 		logger.Info("HTTP server shutting down")
 		return srv.Shutdown(shutCtx)
 	}
+}
+
+func (h *Handler) isServerOwner(tgID int64) bool {
+	return h.serverOwnerIDs[tgID]
 }

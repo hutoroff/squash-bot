@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
-	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	storage "github.com/hutoroff/squash-bot/internal/management/adapters/outbound/postgres"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 

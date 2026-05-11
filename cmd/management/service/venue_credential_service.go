@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/hutoroff/squash-bot/internal/management/application/ports/outbound"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -24,24 +25,18 @@ var ErrCredentialNotFound = errors.New("credential not found")
 
 // DecryptedCredential is a credential with its plaintext password available for
 // use by the auto-booking job. It is never persisted or returned via any API.
-type DecryptedCredential struct {
-	ID        int64
-	VenueID   int64
-	Login     string
-	Password  string
-	Priority  int
-	MaxCourts int
-}
+// Alias to the canonical definition in the outbound port package.
+type DecryptedCredential = outbound.DecryptedCredential
 
 // VenueCredentialService manages encrypted booking credentials per venue.
 type VenueCredentialService struct {
 	repo             VenueCredentialRepository
 	venueRepo        VenueRepository
 	courtBookingRepo CourtBookingRepository
-	enc              *Encryptor
+	enc              outbound.CredentialEncryptor
 }
 
-func NewVenueCredentialService(repo VenueCredentialRepository, venueRepo VenueRepository, courtBookingRepo CourtBookingRepository, enc *Encryptor) *VenueCredentialService {
+func NewVenueCredentialService(repo VenueCredentialRepository, venueRepo VenueRepository, courtBookingRepo CourtBookingRepository, enc outbound.CredentialEncryptor) *VenueCredentialService {
 	return &VenueCredentialService{repo: repo, venueRepo: venueRepo, courtBookingRepo: courtBookingRepo, enc: enc}
 }
 
