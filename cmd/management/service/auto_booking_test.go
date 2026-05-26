@@ -320,27 +320,28 @@ func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T
 	}
 }
 
-func TestProcessAutoBookingForVenue_EmptyAutoBookingCourts_SkipsWithoutCallingBookingService(t *testing.T) {
+func TestProcessAutoBookingForVenue_ZeroCourtsCount_SkipsWithoutCallingBookingService(t *testing.T) {
 	client := &mockBookingClient{}
 	s := &AutoBookingJob{
 		bookingClient: client,
 		logger:        noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                 1,
-		AutoBookingEnabled: true,
-		Courts:             "1,2",
-		AutoBookingCourts:  "", // not configured — must skip
-		PreferredGameTimes: "18:00",
-		BookingOpensDays:   14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1,2",
+		AutoBookingCourts:      "1,2", // priority list is set, but count is 0 — must skip
+		AutoBookingCourtsCount: 0,
+		PreferredGameTimes:     "18:00",
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 	got := s.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
 	if got {
-		t.Error("expected false when AutoBookingCourts is empty")
+		t.Error("expected false when AutoBookingCourtsCount is zero")
 	}
 	if client.listCalls != 0 {
-		t.Errorf("booking service must not be called when AutoBookingCourts is empty, got %d calls", client.listCalls)
+		t.Errorf("booking service must not be called when AutoBookingCourtsCount is zero, got %d calls", client.listCalls)
 	}
 }
 
@@ -552,13 +553,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_NotifiesAndReturnsFalse(t *tes
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -606,13 +607,13 @@ func TestProcessAutoBookingForVenue_AllCredentialsInCooldown_NotifiesAndReturnsF
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -688,13 +689,13 @@ func TestProcessAutoBookingForVenue_SavesCourtBookingEntry(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -769,13 +770,13 @@ func TestProcessAutoBookingForVenue_PassesFirstCredentialToListCalls(t *testing.
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -808,13 +809,13 @@ func TestProcessAutoBookingForVenue_NoCredentials_SkipsListCalls(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -903,13 +904,13 @@ func TestProcessAutoBookingForVenue_TwoTimeSlots_BooksAndSavesBoth(t *testing.T)
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00,20:00",
-		AutoBookingGamesCount: 2,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00,20:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -980,13 +981,13 @@ func TestProcessAutoBookingForVenue_SlotAlreadyBooked_SkipsIt(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00,20:00",
-		AutoBookingGamesCount: 2,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00,20:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1036,13 +1037,13 @@ func TestProcessAutoBookingForVenue_SkipsCourtBookingEntryWhenMatchIDEmpty(t *te
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1086,13 +1087,13 @@ func TestProcessAutoBookingForVenue_DedupCheckError_SkipsSlot(t *testing.T) {
 		logger:                noopLogger(),
 	}
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1",
-		AutoBookingCourts:     "1",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1",
+		AutoBookingCourts:      "1",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1145,13 +1146,13 @@ func TestProcessAutoBookingForVenue_PartialCourtAvailability_NoCredentialExhaust
 	}
 	// Two preferred courts but only one is free — partial availability, not credential exhaustion.
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1,2",
-		AutoBookingCourts:     "1,2",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1,2",
+		AutoBookingCourts:      "1,2",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1200,13 +1201,13 @@ func TestProcessAutoBookingForVenue_CredentialQuotaExhausted_SendsCredentialsExh
 	}
 	// Two preferred courts, both free, but credential quota covers only one.
 	venue := &models.Venue{
-		ID:                    1,
-		AutoBookingEnabled:    true,
-		Courts:                "1,2",
-		AutoBookingCourts:     "1,2",
-		PreferredGameTimes:    "18:00",
-		AutoBookingGamesCount: 1,
-		BookingOpensDays:      14,
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1,2",
+		AutoBookingCourts:      "1,2",
+		PreferredGameTimes:     "18:00",
+		AutoBookingCourtsCount: 3,
+		BookingOpensDays:       14,
 	}
 	lz := i18n.New(i18n.En)
 
@@ -1218,5 +1219,62 @@ func TestProcessAutoBookingForVenue_CredentialQuotaExhausted_SendsCredentialsExh
 	// Two DMs expected: credentials-exhausted + success.
 	if len(api.sendCalls) != 2 {
 		t.Fatalf("expected 2 DMs (credentials-exhausted + success), got %d", len(api.sendCalls))
+	}
+}
+
+// TestProcessAutoBookingForVenue_CourtsCountLimitsCourtsBooked verifies that
+// AutoBookingCourtsCount (not len(AutoBookingCourts)) controls how many courts
+// are booked per game. This is the fix for the original bug where listing all
+// 9 courts in AutoBookingCourts caused the bot to book all 9.
+func TestProcessAutoBookingForVenue_CourtsCountLimitsCourtsBooked(t *testing.T) {
+	enc, _ := NewEncryptor(testHexKey)
+	encPw, _ := enc.Encrypt("pass")
+	creds := []*models.VenueCredential{
+		{ID: 1, VenueID: 1, Login: "a@b.com", EncryptedPassword: encPw, Priority: 0, MaxCourts: 10},
+	}
+	credSvc := newCredServiceForTest(creds)
+
+	// Three courts free, all listed in AutoBookingCourts priority list.
+	client := &mockBookingClient{
+		courts: []BookingCourt{
+			{ID: "1", UUID: "uuid-1", Name: "Court 1"},
+			{ID: "2", UUID: "uuid-2", Name: "Court 2"},
+			{ID: "3", UUID: "uuid-3", Name: "Court 3"},
+		},
+		slots:      nil, // all free
+		bookResult: &BookMatchResult{MatchID: "match-1", BookingUUID: "bk-1"},
+	}
+	cbRepo := &stubCourtBookingRepo{}
+	api := &mockTelegramAPI{admins: []tgbotapi.ChatMember{makeChatMember(101, false)}}
+	api.sendResult = tgbotapi.Message{MessageID: 1}
+
+	job := &AutoBookingJob{
+		api:                   api,
+		bookingClient:         client,
+		credService:           credSvc,
+		courtBookingRepo:      cbRepo,
+		autoBookingResultRepo: &stubAutoBookingResultRepo{},
+		venueRepo:             &stubVenueRepo{},
+		credCooldown:          24 * time.Hour,
+		logger:                noopLogger(),
+	}
+	venue := &models.Venue{
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "1,2,3",
+		AutoBookingCourts:      "1,2,3", // all 3 courts in priority list
+		AutoBookingCourtsCount: 2,       // but only 2 should be booked per game
+		PreferredGameTimes:     "18:00",
+		BookingOpensDays:       14,
+	}
+	lz := i18n.New(i18n.En)
+
+	got := job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, lz)
+
+	if !got {
+		t.Error("expected true: courts were booked")
+	}
+	if len(cbRepo.saved) != 2 {
+		t.Errorf("expected 2 court bookings (AutoBookingCourtsCount=2), got %d", len(cbRepo.saved))
 	}
 }

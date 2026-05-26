@@ -237,13 +237,13 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			}
 			b.handleVenueStartEdit(ctx, cb, venueID, groupID, venueEditFieldAutoBookingCourts)
 		},
-		"venue_edit_auto_booking_games_count": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+		"venue_edit_auto_booking_courts_count": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)
 			if !ok {
 				b.answerCallback(cb.ID, "")
 				return
 			}
-			b.handleVenueStartEdit(ctx, cb, venueID, groupID, venueEditFieldAutoBookingGamesCount)
+			b.handleVenueStartEdit(ctx, cb, venueID, groupID, venueEditFieldAutoBookingCourtsCount)
 		},
 		"venue_edit_booking_opens_days": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)

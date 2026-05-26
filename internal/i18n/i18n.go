@@ -269,11 +269,11 @@ const (
 	MsgVenueInvalidAutoBookingCourts = "msg.venue_invalid_auto_booking_courts"
 	BtnVenueEditAutoBookingCourts    = "btn.venue_edit_auto_booking_courts"
 
-	// Games to book (auto-booking slot limit)
-	// Args for MsgVenueAutoBookingGamesCountLine: %d = count
-	MsgVenueAskAutoBookingGamesCount  = "msg.venue_ask_auto_booking_games_count"
-	MsgVenueAutoBookingGamesCountLine = "msg.venue_auto_booking_games_count_line"
-	BtnVenueEditAutoBookingGamesCount = "btn.venue_edit_auto_booking_games_count"
+	// Courts per game (auto-booking count)
+	// Args for MsgVenueAutoBookingCourtsCountLine: %d = count
+	MsgVenueAskAutoBookingCourtsCount  = "msg.venue_ask_auto_booking_courts_count"
+	MsgVenueAutoBookingCourtsCountLine = "msg.venue_auto_booking_courts_count_line"
+	BtnVenueEditAutoBookingCourtsCount = "btn.venue_edit_auto_booking_courts_count"
 
 	// Booking opens days
 	// Args for MsgVenueBookingOpensDaysLine: %d = days
@@ -566,9 +566,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueInvalidAutoBookingCourts: "Invalid format — enter court numbers from the courts list, comma-separated, no duplicates. Please try again:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-booking Courts",
 
-		MsgVenueAskAutoBookingGamesCount:  "How many games (time slots) to book per day? Enter a positive integer:",
-		MsgVenueAutoBookingGamesCountLine: "Games to book: %d",
-		BtnVenueEditAutoBookingGamesCount: "🎯 Games to book",
+		MsgVenueAskAutoBookingCourtsCount:  "How many courts to book per game? Enter a positive integer (default 3):",
+		MsgVenueAutoBookingCourtsCountLine: "Courts per game: %d",
+		BtnVenueEditAutoBookingCourtsCount: "🏸 Courts per game",
 
 		MsgVenueAskBookingOpensDays:  "How many days in advance does booking open? (default: 14). Send - to use default:",
 		MsgVenueBookingOpensDaysLine: "Booking opens: %d days before",
@@ -852,9 +852,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueInvalidAutoBookingCourts: "Ungültiges Format — Platznummern aus der Platzkonfiguration eingeben, kommagetrennt, keine Duplikate. Bitte erneut versuchen:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Auto-Buchungsplätze",
 
-		MsgVenueAskAutoBookingGamesCount:  "Wie viele Spiele (Zeitfenster) pro Tag buchen? Eine positive ganze Zahl eingeben:",
-		MsgVenueAutoBookingGamesCountLine: "Zu buchende Spiele: %d",
-		BtnVenueEditAutoBookingGamesCount: "🎯 Zu buchende Spiele",
+		MsgVenueAskAutoBookingCourtsCount:  "Wie viele Plätze pro Spiel buchen? Eine positive ganze Zahl eingeben (Standard: 3):",
+		MsgVenueAutoBookingCourtsCountLine: "Plätze pro Spiel: %d",
+		BtnVenueEditAutoBookingCourtsCount: "🏸 Plätze pro Spiel",
 
 		MsgVenueAskBookingOpensDays:  "Wie viele Tage im Voraus öffnet die Buchung? (Standard: 14). Sende - für Standard:",
 		MsgVenueBookingOpensDaysLine: "Buchung öffnet: %d Tage vorher",
@@ -1134,9 +1134,9 @@ var translations = map[Lang]map[string]string{
 		MsgVenueInvalidAutoBookingCourts: "Неверный формат — введи номера кортов из списка кортов, через запятую, без повторений. Попробуй снова:",
 		BtnVenueEditAutoBookingCourts:    "🤖 Корты автобронирования",
 
-		MsgVenueAskAutoBookingGamesCount:  "Сколько игр (временных слотов) бронировать в день? Введи положительное целое число:",
-		MsgVenueAutoBookingGamesCountLine: "Игр для бронирования: %d",
-		BtnVenueEditAutoBookingGamesCount: "🎯 Игр для бронирования",
+		MsgVenueAskAutoBookingCourtsCount:  "Сколько кортов бронировать на игру? Введи положительное целое число (по умолчанию 3):",
+		MsgVenueAutoBookingCourtsCountLine: "Кортов на игру: %d",
+		BtnVenueEditAutoBookingCourtsCount: "🏸 Кортов на игру",
 
 		MsgVenueAskBookingOpensDays:  "За сколько дней открывается бронирование? (по умолчанию: 14). Отправь - для значения по умолчанию:",
 		MsgVenueBookingOpensDaysLine: "Бронирование: за %d дней",

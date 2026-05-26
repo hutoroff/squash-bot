@@ -126,9 +126,9 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	if !venue.AutoBookingEnabled {
 		return false
 	}
-	courtsCount := len(parseCourtIDs(venue.AutoBookingCourts))
+	courtsCount := venue.AutoBookingCourtsCount
 	if courtsCount == 0 {
-		j.logger.Warn("auto-booking: skipping venue with no auto_booking_courts configured", "venue_id", venue.ID)
+		j.logger.Warn("auto-booking: skipping venue with no courts per game configured", "venue_id", venue.ID)
 		return false
 	}
 	gameDate := localNow.AddDate(0, 0, venue.BookingOpensDays)
@@ -137,14 +137,6 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	times := splitPreferredTimes(venue.PreferredGameTimes)
 	if len(times) == 0 {
 		return false
-	}
-
-	if venue.AutoBookingGamesCount == 0 {
-		j.logger.Info("auto-booking: skipping venue with games_count=0", "venue_id", venue.ID)
-		return false
-	}
-	if len(times) > venue.AutoBookingGamesCount {
-		times = times[:venue.AutoBookingGamesCount]
 	}
 
 	anyBooked := false

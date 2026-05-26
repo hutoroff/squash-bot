@@ -335,28 +335,28 @@ func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bo
 // ── Venues ────────────────────────────────────────────────────────────────────
 
 type venueBody struct {
-	GroupID               int64  `json:"group_id"`
-	Name                  string `json:"name"`
-	Courts                string `json:"courts"`
-	TimeSlots             string `json:"time_slots"`
-	Address               string `json:"address,omitempty"`
-	GracePeriodHours      int    `json:"grace_period_hours"`
-	GameDays              string `json:"game_days"`
-	BookingOpensDays      int    `json:"booking_opens_days"`
-	PreferredGameTimes    string `json:"preferred_game_times"`
-	AutoBookingCourts     string `json:"auto_booking_courts"`
-	AutoBookingEnabled    bool   `json:"auto_booking_enabled"`
-	AutoBookingGamesCount int    `json:"auto_booking_games_count"`
-	ActorTelegramID       int64  `json:"actor_telegram_id,omitempty"`
-	ActorDisplay          string `json:"actor_display,omitempty"`
+	GroupID                int64  `json:"group_id"`
+	Name                   string `json:"name"`
+	Courts                 string `json:"courts"`
+	TimeSlots              string `json:"time_slots"`
+	Address                string `json:"address,omitempty"`
+	GracePeriodHours       int    `json:"grace_period_hours"`
+	GameDays               string `json:"game_days"`
+	BookingOpensDays       int    `json:"booking_opens_days"`
+	PreferredGameTimes     string `json:"preferred_game_times"`
+	AutoBookingCourts      string `json:"auto_booking_courts"`
+	AutoBookingEnabled     bool   `json:"auto_booking_enabled"`
+	AutoBookingCourtsCount int    `json:"auto_booking_courts_count"`
+	ActorTelegramID        int64  `json:"actor_telegram_id,omitempty"`
+	ActorDisplay           string `json:"actor_display,omitempty"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled, AutoBookingGamesCount: autoBookingGamesCount,
+		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
 		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
@@ -383,12 +383,12 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingGamesCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled, AutoBookingGamesCount: autoBookingGamesCount,
+		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
 		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue

@@ -69,10 +69,10 @@ const (
 	venueStepAddress
 	venueStepGameDays
 	venueStepGracePeriod
-	venueStepAutoBookingEnabled    // enable/disable automatic booking
-	venueStepAutoBookingCourts     // ordered subset of courts for auto-booking; only shown when auto-booking is enabled
-	venueStepAutoBookingGamesCount // how many time slots to book per run; only shown when auto-booking is enabled
-	venueStepBookingOpensDays      // days in advance booking opens
+	venueStepAutoBookingEnabled     // enable/disable automatic booking
+	venueStepAutoBookingCourts      // ordered subset of courts for auto-booking; only shown when auto-booking is enabled
+	venueStepAutoBookingCourtsCount // how many courts to book per game; only shown when auto-booking is enabled
+	venueStepBookingOpensDays       // days in advance booking opens
 )
 
 // venueWizard holds state for the add-venue multi-step dialog.
@@ -88,7 +88,7 @@ type venueWizard struct {
 	gracePeriod            int    // hours, 0 means use default (24)
 	autoBookingEnabled     bool   // whether automatic court booking is enabled
 	autoBookingCourts      string // ordered subset of courts for auto-booking; empty = any
-	autoBookingGamesCount  int    // how many time slots to book per run
+	autoBookingCourtsCount int    // how many courts to book per game
 	bookingOpensDays       int    // days in advance booking opens; 0 means use default (14)
 }
 
@@ -104,7 +104,7 @@ const (
 	venueEditFieldGracePeriod
 	venueEditFieldPreferredTime
 	venueEditFieldAutoBookingCourts
-	venueEditFieldAutoBookingGamesCount
+	venueEditFieldAutoBookingCourtsCount
 	venueEditFieldBookingOpensDays
 )
 
