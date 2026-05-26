@@ -65,6 +65,9 @@ GET  /api/audit                   — list audit events (requires session); all 
                                     forwarded to management; caller's TG ID injected via
                                     X-Caller-Tg-Id header; visibility enforced by management
 
+GET  /api/groups                  — list all groups the bot is in (server-owner only;
+                                    requires session; returns 403 for non-owners)
+
 GET  /                            — SPA fallback (serves index.html for all unmatched routes)
 ```
 
@@ -172,6 +175,7 @@ POST /api/v1/games/{id}/skip              — skip
 POST /api/v1/games/{id}/guests            — add guest
 DELETE /api/v1/games/{id}/guests          — remove guest
 GET  /api/v1/audit                        — audit event query (with X-Caller-Tg-Id injected)
+GET  /api/v1/groups                       — list all groups (server-owner only proxy)
 ```
 
 ---

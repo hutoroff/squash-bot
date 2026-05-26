@@ -162,8 +162,8 @@ PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
 PATCH  /api/v1/groups/{chatID}/timezone            — setGroupTimezone
 PATCH  /api/v1/groups/{chatID}/changelog           — setGroupChangelog (body: changelog_enabled bool, actor fields)
 DELETE /api/v1/groups/{chatID}                     — removeGroup
-GET    /api/v1/groups                              — listGroups
-GET    /api/v1/groups/{chatID}                     — getGroup
+GET    /api/v1/groups                              — listGroups (response includes added_at)
+GET    /api/v1/groups/{chatID}                     — getGroup (response includes added_at)
 
 POST   /api/v1/venues                              — createVenue
 GET    /api/v1/venues                              — listVenues (query: groupId)

@@ -4,6 +4,7 @@ import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import GamesPage from './components/GamesPage'
 import AuditPage from './components/AuditPage'
+import GroupsPage from './components/GroupsPage'
 import type { User } from './types'
 
 function App() {
@@ -35,6 +36,9 @@ function App() {
         <Route path="/" element={<Dashboard user={user} />}>
           <Route index element={<GamesPage user={user} />} />
           <Route path="audit" element={<AuditPage user={user} />} />
+          {user.is_server_owner && (
+            <Route path="groups" element={<GroupsPage user={user} />} />
+          )}
         </Route>
       </Routes>
     </BrowserRouter>
