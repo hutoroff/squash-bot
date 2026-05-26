@@ -19,6 +19,7 @@ const EVENT_LABELS: Record<AuditEventType, string> = {
   'group.settings_changed': 'Settings changed',
   'court.booked': 'Court booked',
   'court.canceled': 'Court canceled',
+  'group.auto_booking_allowed_toggled': 'Auto-booking toggled',
 }
 
 const dtFmt = new Intl.DateTimeFormat(undefined, {

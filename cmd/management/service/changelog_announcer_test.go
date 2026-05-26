@@ -165,6 +165,9 @@ func (r *stubGroupRepoAnnounce) Remove(_ context.Context, _ int64) error { retur
 func (r *stubGroupRepoAnnounce) Exists(_ context.Context, _ int64) (bool, error) {
 	return false, nil
 }
+func (r *stubGroupRepoAnnounce) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
+	return nil, nil
+}
 
 // announceWithContent bypasses the changelogs.Read file lookup by directly
 // invoking the inner logic so we can test branch behaviour without real files.

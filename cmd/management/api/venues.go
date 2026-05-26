@@ -6,6 +6,7 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // createVenue handles POST /api/v1/venues
@@ -47,6 +48,23 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
+	}
+
+	if req.AutoBookingEnabled {
+		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "group not found")
+			} else {
+				h.logger.Error("createVenue: group lookup", "err", err)
+				writeError(w, http.StatusInternalServerError, "failed to verify group")
+			}
+			return
+		}
+		if !group.AutoBookingAllowed {
+			writeError(w, http.StatusBadRequest, "auto_booking_disallowed_by_owner")
+			return
+		}
 	}
 
 	venue, err := h.venueService.CreateVenue(r.Context(),
@@ -151,6 +169,23 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		req.BookingOpensDays = 14
 	}
 
+	if req.AutoBookingEnabled {
+		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "group not found")
+			} else {
+				h.logger.Error("updateVenue: group lookup", "err", err)
+				writeError(w, http.StatusInternalServerError, "failed to verify group")
+			}
+			return
+		}
+		if !group.AutoBookingAllowed {
+			writeError(w, http.StatusBadRequest, "auto_booking_disallowed_by_owner")
+			return
+		}
+	}
+
 	venue, err := h.venueService.UpdateVenue(r.Context(),
 		id, req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
 		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTimes, req.AutoBookingCourts, req.AutoBookingEnabled, req.AutoBookingCourtsCount,
@@ -183,6 +218,25 @@ func (h *Handler) bookingReadiness(w http.ResponseWriter, r *http.Request) {
 			"ready":      false,
 			"max_courts": 0,
 			"reason":     "credentials_not_configured",
+		})
+		return
+	}
+
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("bookingReadiness: group lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to verify group")
+		}
+		return
+	}
+	if !group.AutoBookingAllowed {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ready":      false,
+			"max_courts": 0,
+			"reason":     "auto_booking_disallowed_by_owner",
 		})
 		return
 	}

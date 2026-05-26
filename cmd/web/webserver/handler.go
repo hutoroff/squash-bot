@@ -49,6 +49,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/games/{id}/guest", h.games.handleRemoveGuest)
 	mux.HandleFunc("GET /api/audit", h.audit.handleListAuditEvents)
 	mux.HandleFunc("GET /api/groups", h.groups.handleListGroups)
+	mux.HandleFunc("PATCH /api/groups/{chatID}/auto-booking-allowed", h.groups.handleSetGroupAutoBookingAllowed)
 	mux.Handle("/", spaFileServer(h.staticFS))
 }
 

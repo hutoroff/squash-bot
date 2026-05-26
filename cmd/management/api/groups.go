@@ -155,6 +155,50 @@ func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// setGroupAutoBookingAllowed handles PATCH /api/v1/groups/{chatID}/auto-booking-allowed
+func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		Enabled         bool   `json:"enabled"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	group, err := h.groupRepo.GetByID(r.Context(), chatID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupAutoBookingAllowed: getByID", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if group.AutoBookingAllowed == req.Enabled {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	cascadedIDs, err := h.groupRepo.SetAutoBookingAllowed(r.Context(), chatID, req.Enabled)
+	if err != nil {
+		h.logger.Error("setGroupAutoBookingAllowed", "err", err, "chat_id", chatID)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupAutoBookingAllowedToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.Enabled, cascadedIDs)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // removeGroup handles DELETE /api/v1/groups/{chatID}
 // Optional query params: actor_tg_id, actor_display, group_title (for audit).
 func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {

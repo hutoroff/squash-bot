@@ -111,6 +111,13 @@ func TestVenueWizard_AutoBookingEnabled_DefaultsFalse(t *testing.T) {
 	}
 }
 
+func TestVenueWizard_AutoBookingAllowed_DefaultsFalse(t *testing.T) {
+	wiz := &venueWizard{}
+	if wiz.autoBookingAllowed {
+		t.Error("autoBookingAllowed should default to false")
+	}
+}
+
 // ── wizard step ordering ──────────────────────────────────────────────────────
 
 func TestVenueWizardStep_AutoBookingEnabled_IsAfterGracePeriod(t *testing.T) {
@@ -223,5 +230,50 @@ func TestProcessVenueWizard_TextAtAutoBookingEnabledStep_StepUnchanged(t *testin
 
 	if wiz.step != venueStepAutoBookingEnabled {
 		t.Errorf("step advanced to %v, want venueStepAutoBookingEnabled", wiz.step)
+	}
+}
+
+func TestProcessVenueWizard_GracePeriodStep_SkipsAutoBookingWhenNotAllowed(t *testing.T) {
+	api := newFakeBotAPI(t)
+	b := &Bot{
+		api:    api,
+		logger: telegramNoopLogger(),
+	}
+
+	wiz := &venueWizard{step: venueStepGracePeriod, groupID: 1, autoBookingAllowed: false}
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 42, Type: "private"},
+		From: &tgbotapi.User{LanguageCode: "en"},
+		Text: "24",
+	}
+
+	b.processVenueWizard(context.Background(), msg, wiz)
+
+	if wiz.step != venueStepBookingOpensDays {
+		t.Errorf("step = %v, want venueStepBookingOpensDays (auto-booking steps should be skipped)", wiz.step)
+	}
+	if wiz.autoBookingEnabled {
+		t.Error("autoBookingEnabled should be false when autoBookingAllowed is false")
+	}
+}
+
+func TestProcessVenueWizard_GracePeriodStep_ShowsAutoBookingWhenAllowed(t *testing.T) {
+	api := newFakeBotAPI(t)
+	b := &Bot{
+		api:    api,
+		logger: telegramNoopLogger(),
+	}
+
+	wiz := &venueWizard{step: venueStepGracePeriod, groupID: 1, autoBookingAllowed: true}
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 42, Type: "private"},
+		From: &tgbotapi.User{LanguageCode: "en"},
+		Text: "24",
+	}
+
+	b.processVenueWizard(context.Background(), msg, wiz)
+
+	if wiz.step != venueStepAutoBookingEnabled {
+		t.Errorf("step = %v, want venueStepAutoBookingEnabled", wiz.step)
 	}
 }

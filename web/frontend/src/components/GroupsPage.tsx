@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { User, BotGroup } from '../types'
-import { fetchGroups } from '../api/groups'
+import { fetchGroups, updateGroupAutoBookingAllowed } from '../api/groups'
 import { ApiError } from '../api/http'
 import Badge from './Badge'
 
@@ -13,6 +13,7 @@ export default function GroupsPage(_props: GroupsPageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
+  const [togglingChatID, setTogglingChatID] = useState<number | null>(null)
 
   useEffect(() => {
     fetchGroups()
@@ -29,6 +30,31 @@ export default function GroupsPage(_props: GroupsPageProps) {
         setError(err instanceof Error ? err.message : 'Failed to load groups')
       })
       .finally(() => setLoading(false))
+  }, [])
+
+  const handleToggleAutoBooking = useCallback(async (g: BotGroup) => {
+    const newValue = !g.auto_booking_allowed
+    if (g.auto_booking_allowed && !window.confirm(
+      `Disable auto-booking for "${g.title}"? This will turn off auto-booking on all venues in this group.`
+    )) {
+      return
+    }
+
+    setTogglingChatID(g.chat_id)
+    setGroups(prev => prev.map(gr =>
+      gr.chat_id === g.chat_id ? { ...gr, auto_booking_allowed: newValue } : gr
+    ))
+
+    try {
+      await updateGroupAutoBookingAllowed(g.chat_id, newValue)
+    } catch (err) {
+      setGroups(prev => prev.map(gr =>
+        gr.chat_id === g.chat_id ? { ...gr, auto_booking_allowed: g.auto_booking_allowed } : gr
+      ))
+      setError(err instanceof Error ? err.message : 'Failed to update auto-booking')
+    } finally {
+      setTogglingChatID(null)
+    }
   }, [])
 
   if (forbidden) {
@@ -60,6 +86,7 @@ export default function GroupsPage(_props: GroupsPageProps) {
                 <th>Bot role</th>
                 <th>Language</th>
                 <th>Timezone</th>
+                <th>Auto-booking</th>
                 <th>Added</th>
               </tr>
             </thead>
@@ -75,6 +102,14 @@ export default function GroupsPage(_props: GroupsPageProps) {
                   </td>
                   <td>{g.language}</td>
                   <td>{g.timezone}</td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={g.auto_booking_allowed}
+                      disabled={togglingChatID === g.chat_id}
+                      onChange={() => handleToggleAutoBooking(g)}
+                    />
+                  </td>
                   <td className="groups-table__cell--when">
                     {new Date(g.added_at).toLocaleString()}
                   </td>

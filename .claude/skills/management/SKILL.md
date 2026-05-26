@@ -74,7 +74,7 @@ GameRepository   — Create, GetByID, GetUpcomingGames, UpdateMessageID, UpdateC
 PlayerRepository — Upsert, GetByTelegramID
 ParticipationRepository — Upsert, GetByGame, DeleteByGameAndPlayer, GetRegisteredCount
 GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCountByGame
-GroupRepository  — Upsert, SetLanguage, SetTimezone, SetChangelogEnabled, Remove, Exists, GetByID, GetAll
+GroupRepository  — Upsert, SetLanguage, SetTimezone, SetChangelogEnabled, SetAutoBookingAllowed, Remove, Exists, GetByID, GetAll
 ServiceStateRepository — Get(ctx, key) (string, error), Set(ctx, key, value string) error
                    — backed by `service_state` table (TEXT key PK, TEXT value); `pgx.ErrNoRows` when key absent
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
@@ -161,18 +161,23 @@ PUT    /api/v1/groups/{chatID}                     — upsertGroup
 PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
 PATCH  /api/v1/groups/{chatID}/timezone            — setGroupTimezone
 PATCH  /api/v1/groups/{chatID}/changelog           — setGroupChangelog (body: changelog_enabled bool, actor fields)
+PATCH  /api/v1/groups/{chatID}/auto-booking-allowed — setGroupAutoBookingAllowed (body: enabled bool, actor fields);
+                                                     no-op 204 if value unchanged; on disable: cascades
+                                                     auto_booking_enabled→false on all group venues (transactional)
 DELETE /api/v1/groups/{chatID}                     — removeGroup
 GET    /api/v1/groups                              — listGroups (response includes added_at)
 GET    /api/v1/groups/{chatID}                     — getGroup (response includes added_at)
 
-POST   /api/v1/venues                              — createVenue
+POST   /api/v1/venues                              — createVenue; rejects auto_booking_enabled=true
+                                                     when group auto_booking_allowed=false (400)
 GET    /api/v1/venues                              — listVenues (query: groupId)
 GET    /api/v1/venues/{id}                         — getVenue
-PATCH  /api/v1/venues/{id}                         — updateVenue
+PATCH  /api/v1/venues/{id}                         — updateVenue; same auto_booking_allowed guard as create
 DELETE /api/v1/venues/{id}                         — deleteVenue; 409 Conflict if venue has active court_bookings
 GET    /api/v1/venues/{id}/booking-readiness       — bookingReadiness; query: group_id (required, enforces ownership);
                                                      200 {ready bool, max_courts int, reason string};
-                                                     reason: "credentials_not_configured" | "auto_booking_disabled" | "no_usable_credentials" | ""
+                                                     reason: "credentials_not_configured" | "auto_booking_disabled" |
+                                                     "auto_booking_disallowed_by_owner" | "no_usable_credentials" | ""
 
 POST   /api/v1/venues/{id}/credentials             — addCredential (body: group_id, login, password, priority, max_courts); 503 when CREDENTIALS_ENCRYPTION_KEY unset
 GET    /api/v1/venues/{id}/credentials             — listCredentials (query: group_id); passwords never returned
@@ -220,6 +225,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `group.bot_removed` | server_owner | Bot removed from group |
 | `group.settings_changed` | group_admin | Admin changes language/timezone |
 | `group.changelog_toggled` | server_owner | Admin enables/disables changelog announcements for group |
+| `group.auto_booking_allowed_toggled` | server_owner | Server owner enables/disables auto-booking for group; metadata includes cascaded_venue_ids |
 | `court.booked` | group_admin | Court booked (scheduler or admin via BookGameCourts) |
 | `court.canceled` | group_admin | Scheduler cancels a court |
 | `game.published` | group_admin | Game announcement sent to group (by scheduler or admin) |
@@ -336,7 +342,7 @@ For venues with `auto_booking_enabled`:
 
 For venues without `auto_booking_enabled` (manual reminder): DM admins a booking reminder (venue name + `booking_opens_days`); mark `last_booking_reminder_at`.
 
-**AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone for venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_times` configured. Deduplicates via `last_auto_booking_at`. After a successful booking, immediately creates an **unpublished** game row (`message_id = NULL`) in the DB via `createUnpublishedGame` and calls `SetGameID(resultID, gameID)` to link result → game. The game stays invisible to group members until `BookingReminderJob` calls `PublishGame` at 10:00. If the DB insert fails, DMs group admins (silent) — the auto-booking result still exists and the legacy create-at-10:00 path handles it gracefully.
+**AutoBookingJob**: Fires in the `[00:00, 00:05)` window per group timezone. Skips groups where `auto_booking_allowed = false` (server-owner toggle). For remaining groups, processes venues with `auto_booking_enabled = true`, `game_days`, and `preferred_game_times` configured. Deduplicates via `last_auto_booking_at`. After a successful booking, immediately creates an **unpublished** game row (`message_id = NULL`) in the DB via `createUnpublishedGame` and calls `SetGameID(resultID, gameID)` to link result → game. The game stays invisible to group members until `BookingReminderJob` calls `PublishGame` at 10:00. If the DB insert fails, DMs group admins (silent) — the auto-booking result still exists and the legacy create-at-10:00 path handles it gracefully.
 
 Algorithm (outer loop iterates each time slot in `preferred_game_times`):
 1. `VenueCredentialService.ListForBooking(venueID, cooldown)` — loads all usable credentials **before** any Eversports network calls. No credentials → `notifyNoCredentials`, bail out. First credential's `Login`/`Password` are used for the list steps below.
@@ -382,7 +388,7 @@ players:            id, telegram_id UNIQUE, username, first_name, last_name
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id
 bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC',
-                    changelog_enabled BOOLEAN DEFAULT TRUE
+                    changelog_enabled BOOLEAN DEFAULT TRUE, auto_booking_allowed BOOLEAN DEFAULT TRUE
 service_state:      key TEXT PK, value TEXT NOT NULL  — generic KV store; used to track `last_changelog_version`
 venues:             id, group_id FK→bot_groups, name, courts, time_slots, address,
                     grace_period_hours DEFAULT 24, game_days, booking_opens_days DEFAULT 14,

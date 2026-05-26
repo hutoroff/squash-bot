@@ -343,6 +343,31 @@ func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID,
 	})
 }
 
+// RecordGroupAutoBookingAllowedToggled records when a server owner enables or disables auto-booking for a group.
+func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool, cascadedVenueIDs []int64) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	newVal := "false"
+	if enabled {
+		newVal = "true"
+	}
+	meta := map[string]any{"enabled": enabled}
+	if len(cascadedVenueIDs) > 0 {
+		meta["cascaded_venue_ids"] = cascadedVenueIDs
+	}
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGroupAutoBookingAllowedToggled,
+		Visibility:   models.AuditVisibilityServerOwner,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGroup,
+		SubjectID:    fmt.Sprintf("%d", groupID),
+		Description:  fmt.Sprintf("Auto-booking allowed set to %s for group %d", newVal, groupID),
+		Metadata:     meta,
+	})
+}
+
 // RecordGamePublished records that a game was published (announcement sent to group).
 // When actorTgID == 0, the action is treated as a system event (e.g. BookingReminderJob).
 func (s *AuditService) RecordGamePublished(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {

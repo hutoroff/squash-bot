@@ -333,6 +333,15 @@ func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bo
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/changelog", body, nil)
 }
 
+func (c *Client) SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorTgID int64, actorDisplay string) error {
+	body := map[string]any{
+		"enabled":           allowed,
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
+	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/auto-booking-allowed", body, nil)
+}
+
 // ── Venues ────────────────────────────────────────────────────────────────────
 
 type venueBody struct {

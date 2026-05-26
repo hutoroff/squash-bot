@@ -66,6 +66,7 @@ type GroupRepository interface {
 	SetLanguage(ctx context.Context, chatID int64, language string) error
 	SetTimezone(ctx context.Context, chatID int64, timezone string) error
 	SetChangelogEnabled(ctx context.Context, chatID int64, enabled bool) error
+	SetAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool) (cascadedVenueIDs []int64, err error)
 	Remove(ctx context.Context, chatID int64) error
 	Exists(ctx context.Context, chatID int64) (bool, error)
 	GetByID(ctx context.Context, chatID int64) (*models.Group, error)

@@ -258,6 +258,7 @@ const (
 	BtnVenueClearPreferredTime = "btn.venue_clear_preferred_time"
 
 	// Auto-booking enable/disable
+	MsgAutoBookingNotAllowed       = "msg.auto_booking_not_allowed"
 	MsgVenueAutoBookingEnabledLine = "msg.venue_auto_booking_enabled_line"
 	MsgVenueAskAutoBookingEnabled  = "msg.venue_ask_auto_booking_enabled"
 	BtnVenueEnableAutoBooking      = "btn.venue_enable_auto_booking"
@@ -603,6 +604,7 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Grace Period",
 		BtnVenueEditPreferredTime:        "⭐ Preferred Time",
 		BtnVenueClearPreferredTime:       "✕ No preference",
+		MsgAutoBookingNotAllowed:         "Auto-booking is not enabled for this group. Contact the bot owner.",
 		MsgVenueAutoBookingEnabledLine:   "Auto-booking: %s",
 		MsgVenueAskAutoBookingEnabled:    "Enable automatic court booking for this venue?",
 		BtnVenueEnableAutoBooking:        "✅ Enable",
@@ -916,6 +918,7 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Kulanzzeit",
 		BtnVenueEditPreferredTime:        "⭐ Bevorzugte Zeit",
 		BtnVenueClearPreferredTime:       "✕ Keine Präferenz",
+		MsgAutoBookingNotAllowed:         "Automatische Buchung ist für diese Gruppe nicht aktiviert. Kontaktiere den Bot-Besitzer.",
 		MsgVenueAutoBookingEnabledLine:   "Automatische Buchung: %s",
 		MsgVenueAskAutoBookingEnabled:    "Automatische Platzbuchung für diesen Ort aktivieren?",
 		BtnVenueEnableAutoBooking:        "✅ Aktivieren",
@@ -1225,6 +1228,7 @@ var translations = map[Lang]map[string]string{
 		BtnVenueEditGracePeriod:          "⏱ Период отмены",
 		BtnVenueEditPreferredTime:        "⭐ Предпочт. время",
 		BtnVenueClearPreferredTime:       "✕ Без предпочтений",
+		MsgAutoBookingNotAllowed:         "Автобронирование не разрешено для этой группы. Обратитесь к владельцу бота.",
 		MsgVenueAutoBookingEnabledLine:   "Автобронирование: %s",
 		MsgVenueAskAutoBookingEnabled:    "Включить автоматическое бронирование кортов для этой площадки?",
 		BtnVenueEnableAutoBooking:        "✅ Включить",

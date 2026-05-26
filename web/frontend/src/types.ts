@@ -29,6 +29,7 @@ export type AuditEventType =
   | 'group.settings_changed'
   | 'court.booked'
   | 'court.canceled'
+  | 'group.auto_booking_allowed_toggled'
 
 export interface AuditEvent {
   id: number
@@ -61,6 +62,7 @@ export interface BotGroup {
   bot_is_admin: boolean
   language: string
   timezone: string
+  auto_booking_allowed: boolean
   added_at: string
 }
 
