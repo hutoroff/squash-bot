@@ -55,6 +55,15 @@ export interface AuditFilters {
   limit?: number
 }
 
+export interface BotGroup {
+  chat_id: number
+  title: string
+  bot_is_admin: boolean
+  language: string
+  timezone: string
+  added_at: string
+}
+
 export type ParticipationStatus = 'registered' | 'skipped'
 
 export interface Game {
