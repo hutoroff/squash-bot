@@ -86,6 +86,7 @@ type venueWizard struct {
 	address                string
 	gameDays               []int  // weekday ints (0=Sun..6=Sat)
 	gracePeriod            int    // hours, 0 means use default (24)
+	autoBookingAllowed     bool   // server-owner group flag; when false, skip auto-booking steps
 	autoBookingEnabled     bool   // whether automatic court booking is enabled
 	autoBookingCourts      string // ordered subset of courts for auto-booking; empty = any
 	autoBookingCourtsCount int    // how many courts to book per game

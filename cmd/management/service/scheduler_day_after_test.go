@@ -186,3 +186,6 @@ func (r *stubGroupRepoForDayAfter) Remove(_ context.Context, _ int64) error { re
 func (r *stubGroupRepoForDayAfter) Exists(_ context.Context, _ int64) (bool, error) {
 	return false, nil
 }
+func (r *stubGroupRepoForDayAfter) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
+	return nil, nil
+}

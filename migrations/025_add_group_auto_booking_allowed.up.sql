@@ -1,0 +1,1 @@
+ALTER TABLE bot_groups ADD COLUMN auto_booking_allowed BOOLEAN NOT NULL DEFAULT TRUE;

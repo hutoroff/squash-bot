@@ -67,6 +67,8 @@ GET  /api/audit                   — list audit events (requires session); all 
 
 GET  /api/groups                  — list all groups the bot is in (server-owner only;
                                     requires session; returns 403 for non-owners)
+PATCH /api/groups/{chatID}/auto-booking-allowed — toggle group auto-booking flag (server-owner only;
+                                    body: {enabled bool}; proxies to management with actor info from JWT)
 
 GET  /                            — SPA fallback (serves index.html for all unmatched routes)
 ```
@@ -176,6 +178,7 @@ POST /api/v1/games/{id}/guests            — add guest
 DELETE /api/v1/games/{id}/guests          — remove guest
 GET  /api/v1/audit                        — audit event query (with X-Caller-Tg-Id injected)
 GET  /api/v1/groups                       — list all groups (server-owner only proxy)
+PATCH /api/v1/groups/{chatID}/auto-booking-allowed — toggle group auto-booking (proxied with actor info from JWT)
 ```
 
 ---

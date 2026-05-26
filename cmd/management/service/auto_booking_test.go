@@ -1280,3 +1280,101 @@ func TestProcessAutoBookingForVenue_CourtsCountLimitsCourtsBooked(t *testing.T) 
 		t.Errorf("expected 2 court bookings (AutoBookingCourtsCount=2), got %d", len(cbRepo.saved))
 	}
 }
+
+// ── runAutoBooking group-level gating ────────────────────────────────────────
+
+type spyVenueRepo struct {
+	getByGroupCalls int
+}
+
+func (r *spyVenueRepo) Create(_ context.Context, _ *models.Venue) (*models.Venue, error) {
+	return nil, nil
+}
+func (r *spyVenueRepo) GetByID(_ context.Context, _ int64) (*models.Venue, error) { return nil, nil }
+func (r *spyVenueRepo) GetByIDAndGroupID(_ context.Context, _, _ int64) (*models.Venue, error) {
+	return nil, nil
+}
+func (r *spyVenueRepo) GetByGroupID(_ context.Context, _ int64) ([]*models.Venue, error) {
+	r.getByGroupCalls++
+	return nil, nil
+}
+func (r *spyVenueRepo) Update(_ context.Context, _ *models.Venue) (*models.Venue, error) {
+	return nil, nil
+}
+func (r *spyVenueRepo) Delete(_ context.Context, _, _ int64) error             { return nil }
+func (r *spyVenueRepo) SetLastBookingReminderAt(_ context.Context, _ int64) error { return nil }
+func (r *spyVenueRepo) SetLastAutoBookingAt(_ context.Context, _ int64) error     { return nil }
+
+type stubGroupRepoAutoBooking struct {
+	groups []models.Group
+}
+
+func (r *stubGroupRepoAutoBooking) GetAll(_ context.Context) ([]models.Group, error) {
+	return r.groups, nil
+}
+func (r *stubGroupRepoAutoBooking) GetByID(_ context.Context, _ int64) (*models.Group, error) {
+	return nil, nil
+}
+func (r *stubGroupRepoAutoBooking) Upsert(_ context.Context, _ int64, _ string, _ bool) error {
+	return nil
+}
+func (r *stubGroupRepoAutoBooking) SetLanguage(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+func (r *stubGroupRepoAutoBooking) SetTimezone(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+func (r *stubGroupRepoAutoBooking) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
+func (r *stubGroupRepoAutoBooking) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
+	return nil, nil
+}
+func (r *stubGroupRepoAutoBooking) Remove(_ context.Context, _ int64) error          { return nil }
+func (r *stubGroupRepoAutoBooking) Exists(_ context.Context, _ int64) (bool, error) { return true, nil }
+
+func TestRunAutoBooking_SkipsGroupWithAutoBookingAllowedFalse(t *testing.T) {
+	venueRepo := &spyVenueRepo{}
+	groupRepo := &stubGroupRepoAutoBooking{
+		groups: []models.Group{
+			{ChatID: -1001, Language: "en", Timezone: "UTC", AutoBookingAllowed: false},
+		},
+	}
+
+	job := &AutoBookingJob{
+		api:           &mockTelegramAPI{},
+		bookingClient: &mockBookingClient{},
+		groupRepo:     groupRepo,
+		venueRepo:     venueRepo,
+		logger:        noopLogger(),
+	}
+
+	job.runAutoBooking(true) // force=true bypasses time window
+
+	if venueRepo.getByGroupCalls != 0 {
+		t.Errorf("expected 0 venue lookups for disallowed group, got %d", venueRepo.getByGroupCalls)
+	}
+}
+
+func TestRunAutoBooking_ProcessesGroupWithAutoBookingAllowedTrue(t *testing.T) {
+	venueRepo := &spyVenueRepo{}
+	groupRepo := &stubGroupRepoAutoBooking{
+		groups: []models.Group{
+			{ChatID: -1001, Language: "en", Timezone: "UTC", AutoBookingAllowed: true},
+		},
+	}
+
+	job := &AutoBookingJob{
+		api:           &mockTelegramAPI{},
+		bookingClient: &mockBookingClient{},
+		groupRepo:     groupRepo,
+		venueRepo:     venueRepo,
+		logger:        noopLogger(),
+	}
+
+	job.runAutoBooking(true)
+
+	if venueRepo.getByGroupCalls != 1 {
+		t.Errorf("expected 1 venue lookup for allowed group, got %d", venueRepo.getByGroupCalls)
+	}
+}

@@ -20,6 +20,7 @@ const EVENT_TYPES: { value: AuditEventType; label: string }[] = [
   { value: 'group.settings_changed', label: 'Group settings changed' },
   { value: 'court.booked', label: 'Court booked' },
   { value: 'court.canceled', label: 'Court canceled' },
+  { value: 'group.auto_booking_allowed_toggled', label: 'Auto-booking toggled' },
 ]
 
 interface AuditFiltersProps {

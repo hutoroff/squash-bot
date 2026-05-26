@@ -131,9 +131,15 @@ func (b *Bot) handleVenueAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gr
 		return
 	}
 
+	var autoBookingAllowed bool
+	if grp, err := b.client.GetGroupByID(ctx, groupID); err == nil {
+		autoBookingAllowed = grp.AutoBookingAllowed
+	}
+
 	b.pendingVenueWizard.Store(cb.Message.Chat.ID, &venueWizard{
-		groupID: groupID,
-		step:    venueStepName,
+		groupID:            groupID,
+		step:               venueStepName,
+		autoBookingAllowed: autoBookingAllowed,
 	})
 	b.answerCallback(cb.ID, "")
 
@@ -213,10 +219,17 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			gracePeriod = n
 		}
 		wiz.gracePeriod = gracePeriod
-		wiz.step = venueStepAutoBookingEnabled
-		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
-		keyboard := renderAutoBookingEnabledKeyboard(lz)
-		b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueAskAutoBookingEnabled), &keyboard)
+		if wiz.autoBookingAllowed {
+			wiz.step = venueStepAutoBookingEnabled
+			b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+			keyboard := renderAutoBookingEnabledKeyboard(lz)
+			b.sendText(msg.Chat.ID, lz.T(i18n.MsgVenueAskAutoBookingEnabled), &keyboard)
+		} else {
+			wiz.autoBookingEnabled = false
+			wiz.step = venueStepBookingOpensDays
+			b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskBookingOpensDays))
+		}
 
 	case venueStepAutoBookingEnabled:
 		// User typed text instead of clicking a button — re-send the prompt.
@@ -304,11 +317,16 @@ func (b *Bot) handleVenueEditMenu(ctx context.Context, cb *tgbotapi.CallbackQuer
 		return
 	}
 
+	var abAllowed bool
+	if grp, err := b.client.GetGroupByID(ctx, venue.GroupID); err == nil {
+		abAllowed = grp.AutoBookingAllowed
+	}
+
 	b.answerCallback(cb.ID, "")
-	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, venue, lz, abAllowed)
 }
 
-func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Venue, lz *i18n.Localizer) {
+func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Venue, lz *i18n.Localizer, abAllowed bool) {
 	timeSlots := venue.TimeSlots
 	if timeSlots == "" {
 		timeSlots = "—"
@@ -337,11 +355,14 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 		escapeMarkdown(venue.Courts),
 		escapeMarkdown(timeSlots),
 		escapeMarkdown(address),
-	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime)) +
-		"\n" + lz.Tf(i18n.MsgVenueAutoBookingEnabledLine, autoBookingStatus) +
-		"\n" + lz.Tf(i18n.MsgVenueBookingOpensDaysLine, venue.BookingOpensDays)
+	) + "\n" + lz.Tf(i18n.MsgVenuePreferredTimeLine, escapeMarkdown(preferredTime))
 
-	if venue.AutoBookingEnabled {
+	if abAllowed {
+		text += "\n" + lz.Tf(i18n.MsgVenueAutoBookingEnabledLine, autoBookingStatus)
+	}
+	text += "\n" + lz.Tf(i18n.MsgVenueBookingOpensDaysLine, venue.BookingOpensDays)
+
+	if abAllowed && venue.AutoBookingEnabled {
 		text += "\n" + lz.Tf(i18n.MsgVenueAutoBookingCourtsLine, escapeMarkdown(autoBookingCourts))
 		text += "\n" + lz.Tf(i18n.MsgVenueAutoBookingCourtsCountLine, venue.AutoBookingCourtsCount)
 	}
@@ -370,30 +391,32 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditPreferredTime), fmt.Sprintf("venue_edit_preferred_time:%d:%d", venue.ID, venue.GroupID)),
 		))
 	}
-	// Auto-booking toggle button.
-	toggleBtn := lz.T(i18n.BtnVenueEnableAutoBooking)
-	if venue.AutoBookingEnabled {
-		toggleBtn = lz.T(i18n.BtnVenueDisableAutoBooking)
-	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData(toggleBtn, fmt.Sprintf("venue_toggle_autobooking:%d:%d", venue.ID, venue.GroupID)),
-	))
-	// Only show "Auto-booking Courts" and "Courts per game" buttons when auto-booking is enabled.
-	if venue.AutoBookingEnabled && venue.Courts != "" {
+	if abAllowed {
+		// Auto-booking toggle button.
+		toggleBtn := lz.T(i18n.BtnVenueEnableAutoBooking)
+		if venue.AutoBookingEnabled {
+			toggleBtn = lz.T(i18n.BtnVenueDisableAutoBooking)
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourts), fmt.Sprintf("venue_edit_auto_booking_courts:%d:%d", venue.ID, venue.GroupID)),
+			tgbotapi.NewInlineKeyboardButtonData(toggleBtn, fmt.Sprintf("venue_toggle_autobooking:%d:%d", venue.ID, venue.GroupID)),
 		))
-	}
-	if venue.AutoBookingEnabled {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourtsCount), fmt.Sprintf("venue_edit_auto_booking_courts_count:%d:%d", venue.ID, venue.GroupID)),
-		))
-	}
-	// Only show "Credentials" button when auto-booking is enabled.
-	if venue.AutoBookingEnabled {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredentials), fmt.Sprintf("venue_creds:%d:%d", venue.ID, venue.GroupID)),
-		))
+		// Only show "Auto-booking Courts" and "Courts per game" buttons when auto-booking is enabled.
+		if venue.AutoBookingEnabled && venue.Courts != "" {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourts), fmt.Sprintf("venue_edit_auto_booking_courts:%d:%d", venue.ID, venue.GroupID)),
+			))
+		}
+		if venue.AutoBookingEnabled {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditAutoBookingCourtsCount), fmt.Sprintf("venue_edit_auto_booking_courts_count:%d:%d", venue.ID, venue.GroupID)),
+			))
+		}
+		// Only show "Credentials" button when auto-booking is enabled.
+		if venue.AutoBookingEnabled {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueCredentials), fmt.Sprintf("venue_creds:%d:%d", venue.ID, venue.GroupID)),
+			))
+		}
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_list:%d", venue.GroupID)),
@@ -896,7 +919,11 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 
 	slog.Info("Venue preferred times updated", "venue_id", updated.ID, "preferred_game_times", updated.PreferredGameTimes)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
-	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
+	abAllowed := true
+	if grp, err := b.client.GetGroupByID(ctx, updated.GroupID); err == nil {
+		abAllowed = grp.AutoBookingAllowed
+	}
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz, abAllowed)
 }
 
 // handleVenuePtimeToggle handles venue_ptime_toggle:<venueID>:<slot> callbacks.
@@ -969,7 +996,11 @@ func (b *Bot) handleVenuePtimeConfirm(ctx context.Context, cb *tgbotapi.Callback
 
 	slog.Info("Venue preferred times updated", "venue_id", updated.ID, "preferred_game_times", updated.PreferredGameTimes)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
-	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
+	abAllowed := true
+	if grp, err := b.client.GetGroupByID(ctx, state.groupID); err == nil {
+		abAllowed = grp.AutoBookingAllowed
+	}
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz, abAllowed)
 }
 
 // joinSelectedTimesOrdered returns a comma-separated string of selected times
@@ -1137,6 +1168,11 @@ func (b *Bot) handleVenueWizAutoBookingPick(ctx context.Context, cb *tgbotapi.Ca
 		return
 	}
 
+	if grp, err := b.client.GetGroupByID(ctx, wiz.groupID); err == nil && !grp.AutoBookingAllowed {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgAutoBookingNotAllowed))
+		return
+	}
+
 	b.answerCallback(cb.ID, "")
 	wiz.autoBookingEnabled = choice == "enable"
 
@@ -1169,6 +1205,15 @@ func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.Cal
 		return
 	}
 
+	abAllowed := true
+	if grp, err := b.client.GetGroupByID(ctx, groupID); err == nil {
+		abAllowed = grp.AutoBookingAllowed
+		if !abAllowed {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgAutoBookingNotAllowed))
+			return
+		}
+	}
+
 	venue, err := b.client.GetVenueByID(ctx, venueID)
 	if err != nil || venue.GroupID != groupID {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
@@ -1188,7 +1233,7 @@ func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.Cal
 
 	slog.Info("Venue auto-booking toggled", "venue_id", updated.ID, "auto_booking_enabled", updated.AutoBookingEnabled)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgVenueUpdated))
-	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
+	b.renderVenueEditMenu(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz, abAllowed)
 }
 
 // sendText sends a new message with optional keyboard.

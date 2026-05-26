@@ -174,7 +174,9 @@ Any slash command in private chat clears `pendingNewGameWizard` (and all other p
 ### Venue Creation Wizard (`venue_handlers.go`)
 State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`)
 
-Steps: `venueStepName` → `venueStepCourts` → `venueStepTimeSlots` → `venueStepPreferredTime` → `venueStepAddress` → `venueStepGameDays` → `venueStepGracePeriod` → `venueStepAutoBookingCourts` → `venueStepBookingOpensDays`
+Steps: `venueStepName` → `venueStepCourts` → `venueStepTimeSlots` → `venueStepPreferredTime` → `venueStepAddress` → `venueStepGameDays` → `venueStepGracePeriod` → [if `autoBookingAllowed`] `venueStepAutoBookingEnabled` → `venueStepAutoBookingCourts` → `venueStepBookingOpensDays` [else → `venueStepBookingOpensDays`]
+
+The wizard fetches `group.AutoBookingAllowed` via `GetGroupByID` at start and stores it on the `venueWizard` struct. When `autoBookingAllowed` is false, auto-booking steps are skipped entirely and `autoBookingEnabled` stays false.
 
 ### Venue Edit (`venue_handlers.go`)
 State: `pendingVenueEdit sync.Map` (chatID → `*venueEditState`)
@@ -241,7 +243,7 @@ Works in private chat only.
 1. Admin sends `/venues` → venue list for their group (or group picker if multiple groups).
 2. Each venue row: "Edit" and "Delete" buttons; "Add Venue" at bottom.
 3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game times (toggle keyboard: tap slots to toggle ✓ + "✓ Done" confirm / "✕ No preference" skip; skipped if no time slots entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
-4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Times (toggle keyboard pre-seeded from current `preferred_game_times` + "✓ Done" / "✕ Clear"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears.
+4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Times (toggle keyboard pre-seeded from current `preferred_game_times` + "✓ Done" / "✕ Clear"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears. When the group's `auto_booking_allowed` is false, the edit menu suppresses the auto-booking status line, toggle button, courts/count buttons, and credentials button.
 5. **Delete venue**: two-step confirmation. Blocked with user-friendly message if venue has active `court_bookings` (HTTP 409 → `MsgVenueHasActiveBookings`). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
 6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step; blocked with user-friendly message if credential has active court bookings (HTTP 409 → `MsgVenueCredHasActiveBookings`).
 
@@ -342,7 +344,7 @@ When admin confirms court removal (`manage_court_confirm`), the handler:
 
 ## ManagementClient interface (`client/interface.go`)
 
-43 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
+44 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
 
 ```
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
@@ -354,7 +356,7 @@ Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
 Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
                 KickPlayer, KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
-                SetGroupLanguage, SetGroupTimezone, SetGroupChangelog
+                SetGroupLanguage, SetGroupTimezone, SetGroupChangelog, SetGroupAutoBookingAllowed
 Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue,
                 GetVenueBookingReadiness(ctx, venueID, groupID int64) (*BookingReadiness, error)
 VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),

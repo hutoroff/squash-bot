@@ -1248,6 +1248,9 @@ func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, er
 	return r.group, nil
 }
 func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { return nil, nil }
+func (r *stubGroupRepoPC) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
+	return nil, nil
+}
 
 type stubGameRepoPC struct{}
 

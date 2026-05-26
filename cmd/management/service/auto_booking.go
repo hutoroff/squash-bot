@@ -87,6 +87,10 @@ func (j *AutoBookingJob) runAutoBooking(force bool) {
 		groupTZ := resolveGroupTimezone(&g, j.loc, j.logger)
 		localNow := now.In(groupTZ)
 
+		if !g.AutoBookingAllowed {
+			continue
+		}
+
 		// Only fire in the [00:00, 00:05) window in the group's local time.
 		if !force && (localNow.Hour() != 0 || localNow.Minute() >= 5) {
 			continue
