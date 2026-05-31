@@ -6,6 +6,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // TelegramAPI is the subset of the Telegram Bot API used by service-layer types.
@@ -33,14 +34,22 @@ type GameRepository interface {
 	GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error)
 	GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Game, error)
 	GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
+	// GetCompletedGamesByGroupAndDay returns completed games for a group whose
+	// game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
+	// on "24 h after the day's last game start".
+	GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
 	MarkNotifiedDayBefore(ctx context.Context, gameID int64) error
 	MarkCompleted(ctx context.Context, gameID int64) error
+	// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
+	// in a specific group within the last `days` days.
+	GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error)
 }
 
 // PlayerRepository is the data access interface for players.
 type PlayerRepository interface {
 	Upsert(ctx context.Context, player *models.Player) (*models.Player, error)
 	GetByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
+	GetByID(ctx context.Context, id int64) (*models.Player, error)
 }
 
 // ParticipationRepository is the data access interface for game participations.
@@ -71,6 +80,7 @@ type GroupRepository interface {
 	Exists(ctx context.Context, chatID int64) (bool, error)
 	GetByID(ctx context.Context, chatID int64) (*models.Group, error)
 	GetAll(ctx context.Context) ([]models.Group, error)
+	SetLastLeaderboardPostedFor(ctx context.Context, chatID int64, date time.Time) error
 }
 
 // ServiceStateRepository stores and retrieves arbitrary key-value state for the service.
@@ -144,6 +154,45 @@ type VenueCredentialRepository interface {
 	// SetLastErrorAt records the current timestamp as the last error time for a credential.
 	SetLastErrorAt(ctx context.Context, id int64) error
 }
+
+// GameResultRepository is the data access interface for game results.
+type GameResultRepository interface {
+	Create(ctx context.Context, r *models.GameResult) (int64, error)
+	GetByID(ctx context.Context, id int64) (*models.GameResult, error)
+	SetApprovalMessage(ctx context.Context, id, chatID int64, messageID int) error
+	// Decide transitions a pending result to approved/auto_approved/rejected/canceled.
+	// Returns ErrGameResultNotPending if the row is not currently pending.
+	Decide(ctx context.Context, id int64, status models.GameResultStatus, decidedAt time.Time) error
+	// DecideInTx is the same as Decide but runs inside the caller-provided transaction,
+	// so the status flip can be made atomic with downstream rating updates.
+	DecideInTx(ctx context.Context, tx pgx.Tx, id int64, status models.GameResultStatus, decidedAt time.Time) error
+	ListPendingOlderThan(ctx context.Context, cutoff time.Time) ([]*models.GameResult, error)
+	ListByGroupAndDate(ctx context.Context, groupID int64, gameDate time.Time) ([]*models.GameResult, error)
+	ListByGameID(ctx context.Context, gameID int64) ([]*models.GameResult, error)
+}
+
+// PlayerRatingRepository is the data access interface for Glicko-2 player ratings.
+type PlayerRatingRepository interface {
+	GetOrInit(ctx context.Context, groupID, playerID int64) (*models.PlayerRating, error)
+	Upsert(ctx context.Context, r *models.PlayerRating) error
+	ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error)
+	// ListGroupsForPlayer returns the group IDs where the player has a rating
+	// with at least one game played. Used to populate the per-user leaderboard
+	// group picker so it reflects actual rated participation.
+	ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
+}
+
+// RatingChangeRepository is the data access interface for rating change history.
+type RatingChangeRepository interface {
+	Insert(ctx context.Context, change *models.RatingChange) error
+	// InsertInTx writes a rating change inside the caller-provided transaction
+	// so it lands atomically with the corresponding player_ratings update.
+	InsertInTx(ctx context.Context, tx pgx.Tx, change *models.RatingChange) error
+	ListByGroupAndDateRange(ctx context.Context, groupID int64, from, to time.Time) ([]*models.RatingChange, error)
+}
+
+// GroupRepository also needs SetLastLeaderboardPostedFor.
+// (This is an extension added in migration 027 — method added to existing GroupRepository interface below.)
 
 // AuditEventRepository is the data access interface for audit events.
 type AuditEventRepository interface {

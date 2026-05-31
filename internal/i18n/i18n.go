@@ -371,6 +371,50 @@ const (
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
+	// Leaderboard
+	MsgLeaderboardTitle     = "msg.leaderboard_title"
+	MsgLeaderboardEmpty     = "msg.leaderboard_empty"
+	MsgLeaderboardPickGroup = "msg.leaderboard_pick_group"
+	MsgLeaderboardRowFmt    = "msg.leaderboard_row_fmt"
+	MsgLeaderboardGamesShort = "msg.leaderboard_games_short"
+	MsgCmdLeaderboard       = "msg.cmd_leaderboard"
+	BtnLbGroup              = "btn.lb_group"
+
+	// Game result wizard
+	MsgResultStepPickGroup       = "msg.result_step_pick_group"
+	MsgResultStepPickGame        = "msg.result_step_pick_game"
+	MsgResultStepPickOpponent    = "msg.result_step_pick_opponent"
+	MsgResultStepPickWinner      = "msg.result_step_pick_winner"
+	MsgResultStepEnterScore      = "msg.result_step_enter_score"
+	MsgResultPreview             = "msg.result_preview"
+	MsgResultSubmitted           = "msg.result_submitted"
+	MsgResultApprovalRequest     = "msg.result_approval_request"
+	MsgResultDeadlineLine        = "msg.result_deadline_line"
+	MsgResultApproved            = "msg.result_approved"
+	MsgResultRejected            = "msg.result_rejected"
+	MsgResultWithdrawn           = "msg.result_withdrawn"
+	MsgResultAutoApproved        = "msg.result_auto_approved"
+	MsgResultAutoApprovedCard    = "msg.result_auto_approved_card"
+	MsgResultDMUnreachable       = "msg.result_dm_unreachable"
+	MsgResultErrBadScore         = "msg.result_err_bad_score"
+	MsgResultErrNoCompletedGames = "msg.result_err_no_completed_games"
+	MsgResultWinnerMe            = "msg.result_winner_me"
+	MsgResultWinnerOpp           = "msg.result_winner_opp"
+	MsgResultWinnerDraw          = "msg.result_winner_draw"
+	MsgResultNotInGame           = "msg.result_not_in_game"
+	BtnResultEditGame            = "btn.result_edit_game"
+	BtnResultEditOpponent        = "btn.result_edit_opponent"
+	BtnResultEditWinner          = "btn.result_edit_winner"
+	BtnResultEditScore           = "btn.result_edit_score"
+	BtnResultScoreSkip           = "btn.result_score_skip"
+	BtnResultSubmit              = "btn.result_submit"
+	BtnResultCancel              = "btn.result_cancel"
+	BtnResultApprove             = "btn.result_approve"
+	BtnResultReject              = "btn.result_reject"
+	BtnResultWithdraw            = "btn.result_withdraw"
+	BtnResultResubmit            = "btn.result_resubmit"
+	MsgCmdResult                 = "msg.cmd_result"
+
 	// Calendar — weekday names
 	WeekdaySunday    = "weekday.sunday"
 	WeekdayMonday    = "weekday.monday"
@@ -723,6 +767,50 @@ var translations = map[Lang]map[string]string{
 		MsgPublishAlreadyDone:            "Game is already published",
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Auto-booking succeeded for *%s* on %s at %s but the game record could not be created. Please create the game manually.",
+
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Leaderboard",
+		MsgLeaderboardEmpty:      "No leaderboard data yet for this group.",
+		MsgLeaderboardPickGroup:  "Which group's leaderboard do you want to see?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dg)%s\n",
+		MsgLeaderboardGamesShort: "g",
+		MsgCmdLeaderboard:        "/leaderboard — Show the group leaderboard\n",
+		BtnLbGroup:               "%s",
+
+		// Game result wizard
+		MsgResultStepPickGroup:       "Pick a group for the result:",
+		MsgResultStepPickGame:        "Pick the game you played:",
+		MsgResultStepPickOpponent:    "Who did you play against?",
+		MsgResultStepPickWinner:      "Who won?",
+		MsgResultStepEnterScore:      "Enter the score (e.g. 3:1), or tap Skip:",
+		MsgResultPreview:             "Game: %s\nOpponent: %s\nWinner: %s\nScore: %s",
+		MsgResultSubmitted:           "Submitted — waiting for %s's approval.",
+		MsgResultApprovalRequest:     "%s says they played you on %s.\nOutcome: %s\nScore: %s\n",
+		MsgResultDeadlineLine:        "⏱ Auto-approves %s. No response = approval.",
+		MsgResultApproved:            "✅ %s approved your result.",
+		MsgResultRejected:            "❌ %s rejected your result.",
+		MsgResultWithdrawn:           "Withdrawn by author.",
+		MsgResultAutoApproved:        "⌛ Your game result was auto-approved (no response within 48 h).",
+		MsgResultAutoApprovedCard:    "⌛ Auto-approved (no response within 48 h)",
+		MsgResultDMUnreachable:       "Couldn't reach %s — they need to start the bot in private chat first (/start). The result wasn't saved. Try again once they do.",
+		MsgResultErrBadScore:         "Invalid score. Use format N:M where the winner's number ≥ loser's (e.g. 3:1):",
+		MsgResultErrNoCompletedGames: "No completed games in the last 14 days.",
+		MsgResultWinnerMe:            "🏆 Me",
+		MsgResultWinnerOpp:           "🏆 %s",
+		MsgResultWinnerDraw:          "🤝 Draw",
+		MsgResultNotInGame:           "You haven't joined a game yet, or are not registered for this game.",
+		BtnResultEditGame:            "✏️ Game",
+		BtnResultEditOpponent:        "✏️ Opponent",
+		BtnResultEditWinner:          "✏️ Winner",
+		BtnResultEditScore:           "✏️ Score",
+		BtnResultScoreSkip:           "Skip",
+		BtnResultSubmit:              "✓ Submit",
+		BtnResultCancel:              "✕ Cancel",
+		BtnResultApprove:             "✓ Approve",
+		BtnResultReject:              "✕ Reject",
+		BtnResultWithdraw:            "Withdraw",
+		BtnResultResubmit:            "✏️ Edit and resubmit",
+		MsgCmdResult:                 "/result — Submit a game result\n",
 	},
 
 	De: {
@@ -1033,6 +1121,50 @@ var translations = map[Lang]map[string]string{
 		MsgPublishAlreadyDone:            "Spiel ist bereits veröffentlicht",
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Automatische Buchung für *%s* am %s um %s erfolgreich, aber der Spieleintrag konnte nicht erstellt werden. Bitte Spiel manuell erstellen.",
+
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Rangliste",
+		MsgLeaderboardEmpty:      "Noch keine Rangliste für diese Gruppe.",
+		MsgLeaderboardPickGroup:  "Welche Gruppe's Rangliste möchtest du sehen?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dg)%s\n",
+		MsgLeaderboardGamesShort: "g",
+		MsgCmdLeaderboard:        "/leaderboard — Gruppenrangliste anzeigen\n",
+		BtnLbGroup:               "%s",
+
+		// Game result wizard
+		MsgResultStepPickGroup:       "Gruppe für das Ergebnis auswählen:",
+		MsgResultStepPickGame:        "Spiel auswählen:",
+		MsgResultStepPickOpponent:    "Gegen wen hast du gespielt?",
+		MsgResultStepPickWinner:      "Wer hat gewonnen?",
+		MsgResultStepEnterScore:      "Ergebnis eingeben (z.B. 3:1) oder Überspringen tippen:",
+		MsgResultPreview:             "Spiel: %s\nGegner: %s\nGewinner: %s\nErgebnis: %s",
+		MsgResultSubmitted:           "Eingereicht — warte auf %s's Bestätigung.",
+		MsgResultApprovalRequest:     "%s sagt, sie haben am %s gespielt.\nErgebnis: %s\nScore: %s\n",
+		MsgResultDeadlineLine:        "⏱ Automatische Bestätigung am %s. Keine Antwort = Bestätigung.",
+		MsgResultApproved:            "✅ %s hat dein Ergebnis bestätigt.",
+		MsgResultRejected:            "❌ %s hat dein Ergebnis abgelehnt.",
+		MsgResultWithdrawn:           "Vom Autor zurückgezogen.",
+		MsgResultAutoApproved:        "⌛ Dein Spielergebnis wurde automatisch bestätigt (keine Antwort innerhalb 48 h).",
+		MsgResultAutoApprovedCard:    "⌛ Automatisch bestätigt (keine Antwort innerhalb 48 h)",
+		MsgResultDMUnreachable:       "%s ist nicht erreichbar — sie müssen zuerst den Bot im privaten Chat starten (/start). Das Ergebnis wurde nicht gespeichert.",
+		MsgResultErrBadScore:         "Ungültiges Ergebnis. Verwende N:M wobei die Nummer des Gewinners ≥ Verlierer (z.B. 3:1):",
+		MsgResultErrNoCompletedGames: "Keine abgeschlossenen Spiele in den letzten 14 Tagen.",
+		MsgResultWinnerMe:            "🏆 Ich",
+		MsgResultWinnerOpp:           "🏆 %s",
+		MsgResultWinnerDraw:          "🤝 Unentschieden",
+		MsgResultNotInGame:           "Du hast noch kein Spiel beigetreten oder bist nicht für dieses Spiel registriert.",
+		BtnResultEditGame:            "✏️ Spiel",
+		BtnResultEditOpponent:        "✏️ Gegner",
+		BtnResultEditWinner:          "✏️ Gewinner",
+		BtnResultEditScore:           "✏️ Ergebnis",
+		BtnResultScoreSkip:           "Überspringen",
+		BtnResultSubmit:              "✓ Einreichen",
+		BtnResultCancel:              "✕ Abbrechen",
+		BtnResultApprove:             "✓ Bestätigen",
+		BtnResultReject:              "✕ Ablehnen",
+		BtnResultWithdraw:            "Zurückziehen",
+		BtnResultResubmit:            "✏️ Bearbeiten und erneut einreichen",
+		MsgCmdResult:                 "/result — Spielergebnis einreichen\n",
 	},
 
 	Ru: {
@@ -1343,6 +1475,50 @@ var translations = map[Lang]map[string]string{
 		MsgPublishAlreadyDone:            "Игра уже опубликована",
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Автобронирование для *%s* на %s в %s прошло успешно, но запись об игре не была создана. Пожалуйста, создайте игру вручную.",
+
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Рейтинг",
+		MsgLeaderboardEmpty:      "Рейтинговых данных для этой группы пока нет.",
+		MsgLeaderboardPickGroup:  "Рейтинг какой группы ты хочешь посмотреть?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dиг)%s\n",
+		MsgLeaderboardGamesShort: "иг",
+		MsgCmdLeaderboard:        "/leaderboard — Показать рейтинг группы\n",
+		BtnLbGroup:               "%s",
+
+		// Game result wizard
+		MsgResultStepPickGroup:       "Выберите группу для результата:",
+		MsgResultStepPickGame:        "Выберите игру:",
+		MsgResultStepPickOpponent:    "С кем ты играл(-а)?",
+		MsgResultStepPickWinner:      "Кто победил?",
+		MsgResultStepEnterScore:      "Введи счёт (например 3:1) или нажми Пропустить:",
+		MsgResultPreview:             "Игра: %s\nСоперник: %s\nПобедитель: %s\nСчёт: %s",
+		MsgResultSubmitted:           "Отправлено — ожидаем подтверждения от %s.",
+		MsgResultApprovalRequest:     "%s говорит, что вы сыграли %s.\nРезультат: %s\nСчёт: %s\n",
+		MsgResultDeadlineLine:        "⏱ Автоподтверждение %s. Нет ответа = подтверждение.",
+		MsgResultApproved:            "✅ %s подтвердил(-а) твой результат.",
+		MsgResultRejected:            "❌ %s отклонил(-а) твой результат.",
+		MsgResultWithdrawn:           "Отозвано автором.",
+		MsgResultAutoApproved:        "⌛ Результат игры автоматически подтверждён (нет ответа в течение 48 ч).",
+		MsgResultAutoApprovedCard:    "⌛ Автоподтверждено (нет ответа в течение 48 ч)",
+		MsgResultDMUnreachable:       "Не могу связаться с %s — им нужно сначала написать боту в личку (/start). Результат не сохранён. Попробуй позже.",
+		MsgResultErrBadScore:         "Неверный счёт. Используй формат N:M, где число победителя ≥ числу проигравшего (например 3:1):",
+		MsgResultErrNoCompletedGames: "Нет завершённых игр за последние 14 дней.",
+		MsgResultWinnerMe:            "🏆 Я",
+		MsgResultWinnerOpp:           "🏆 %s",
+		MsgResultWinnerDraw:          "🤝 Ничья",
+		MsgResultNotInGame:           "Ты ещё не присоединился(-ась) к игре или не зарегистрирован(-а) в этой игре.",
+		BtnResultEditGame:            "✏️ Игра",
+		BtnResultEditOpponent:        "✏️ Соперник",
+		BtnResultEditWinner:          "✏️ Победитель",
+		BtnResultEditScore:           "✏️ Счёт",
+		BtnResultScoreSkip:           "Пропустить",
+		BtnResultSubmit:              "✓ Отправить",
+		BtnResultCancel:              "✕ Отмена",
+		BtnResultApprove:             "✓ Подтвердить",
+		BtnResultReject:              "✕ Отклонить",
+		BtnResultWithdraw:            "Отозвать",
+		BtnResultResubmit:            "✏️ Изменить и отправить снова",
+		MsgCmdResult:                 "/result — Записать результат игры\n",
 	},
 }
 

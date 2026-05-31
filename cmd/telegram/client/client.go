@@ -546,9 +546,9 @@ var ErrAutoBookingNotAvailable = errors.New("auto-booking not available")
 
 // BookGameCourtsResult is the result of booking courts for a game on demand.
 type BookGameCourtsResult struct {
-	Requested    int                   `json:"requested"`
-	BookedCount  int                   `json:"booked_count"`
-	BookedLabels []string              `json:"booked_labels"`
+	Requested    int                    `json:"requested"`
+	BookedCount  int                    `json:"booked_count"`
+	BookedLabels []string               `json:"booked_labels"`
 	Failures     []BookingCourtsFailure `json:"failures"`
 }
 
@@ -705,4 +705,147 @@ func parseErrorBody(resp *http.Response) error {
 	data, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(data, &errBody)
 	return &HTTPError{StatusCode: resp.StatusCode, Message: errBody.Error}
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+
+// LeaderboardEntry is a single row in the leaderboard response.
+type LeaderboardEntry struct {
+	Rank        int            `json:"rank"`
+	Player      *models.Player `json:"player"`
+	Rating      float64        `json:"rating"`
+	RD          float64        `json:"rd"`
+	GamesPlayed int            `json:"games_played"`
+	DeltaToday  float64        `json:"delta_today"`
+}
+
+func (c *Client) GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error) {
+	path := fmt.Sprintf("/api/v1/groups/%d/leaderboard", groupID)
+	var entries []LeaderboardEntry
+	if err := c.do(ctx, http.MethodGet, path, nil, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (c *Client) GetPlayerGroupsWithResults(ctx context.Context, tgID int64) ([]models.Group, error) {
+	path := fmt.Sprintf("/api/v1/players/%d/groups-with-results", tgID)
+	var groups []models.Group
+	if err := c.do(ctx, http.MethodGet, path, nil, &groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
+// GetPlayerByTelegramID fetches a player by Telegram user ID.
+// Returns a nil *models.Player if not found (HTTP 404).
+func (c *Client) GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error) {
+	var p models.Player
+	if err := c.do(ctx, http.MethodGet, "/api/v1/players/"+strconv.FormatInt(telegramID, 10), nil, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ── Game Results ──────────────────────────────────────────────────────────────
+
+// GameResultDTO is the client-side representation of a game result.
+type GameResultDTO struct {
+	ID                int64          `json:"id"`
+	GameID            int64          `json:"game_id"`
+	GroupID           int64          `json:"group_id"`
+	AuthorID          int64          `json:"author_id"`
+	OpponentID        int64          `json:"opponent_id"`
+	WinnerID          *int64         `json:"winner_id,omitempty"`
+	Score             string         `json:"score"`
+	Status            string         `json:"status"`
+	SubmittedAt       string         `json:"submitted_at"`
+	DecidedAt         *string        `json:"decided_at,omitempty"`
+	ApprovalChatID    *int64         `json:"approval_chat_id,omitempty"`
+	ApprovalMessageID *int           `json:"approval_message_id,omitempty"`
+	AutoApproveAt     *string        `json:"auto_approve_at,omitempty"`
+	Author            *models.Player `json:"author,omitempty"`
+	Opponent          *models.Player `json:"opponent,omitempty"`
+}
+
+// ErrGameResultNotPending is returned when trying to act on a non-pending result.
+var ErrGameResultNotPending = errors.New("game result is not pending")
+
+func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
+	body := map[string]any{
+		"game_id":            gameID,
+		"author_telegram_id": authorTgID,
+		"opponent_player_id": opponentPlayerID,
+		"winner_player_id":   winnerPlayerID,
+		"score":              score,
+		"actor_display":      actorDisplay,
+	}
+	var result GameResultDTO
+	if err := c.do(ctx, http.MethodPost, "/api/v1/game-results", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) GetGameResult(ctx context.Context, id int64) (*GameResultDTO, error) {
+	var result GameResultDTO
+	if err := c.do(ctx, http.MethodGet, "/api/v1/game-results/"+strconv.FormatInt(id, 10), nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) SetGameResultApprovalMessage(ctx context.Context, id, chatID int64, messageID int) error {
+	body := map[string]any{"chat_id": chatID, "message_id": messageID}
+	return c.do(ctx, http.MethodPost, "/api/v1/game-results/"+strconv.FormatInt(id, 10)+"/approval-message", body, nil)
+}
+
+func (c *Client) ApproveGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "approve")
+}
+
+func (c *Client) RejectGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "reject")
+}
+
+func (c *Client) CancelGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "cancel")
+}
+
+func (c *Client) resultDecision(ctx context.Context, id, actorTgID int64, actorDisplay, action string) (*GameResultDTO, error) {
+	body := map[string]any{
+		"actor_telegram_id": actorTgID,
+		"actor_display":     actorDisplay,
+	}
+	path := fmt.Sprintf("/api/v1/game-results/%d/%s", id, action)
+	req, err := c.newRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil, ErrGameResultNotPending
+	}
+	if resp.StatusCode >= 400 {
+		return nil, parseErrorBody(resp)
+	}
+	var result GameResultDTO
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *Client) GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64, days int) ([]models.PlayerGame, error) {
+	path := fmt.Sprintf("/api/v1/players/%d/recent-completed-games?group_id=%d&days=%d",
+		playerTgID, groupID, days)
+	var games []models.PlayerGame
+	if err := c.do(ctx, http.MethodGet, path, nil, &games); err != nil {
+		return nil, err
+	}
+	return games, nil
 }

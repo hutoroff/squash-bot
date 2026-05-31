@@ -141,6 +141,9 @@ func (r *stubGameRepoForDayAfter) UpdateMessageID(_ context.Context, _, _ int64)
 func (r *stubGameRepoForDayAfter) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForDayAfter) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
 func (r *stubGameRepoForDayAfter) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }
@@ -154,6 +157,9 @@ func (r *stubGameRepoForDayAfter) GetNextGameForTelegramUser(_ context.Context, 
 	return nil, nil
 }
 func (r *stubGameRepoForDayAfter) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForDayAfter) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
 func (r *stubGameRepoForDayAfter) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
@@ -188,4 +194,7 @@ func (r *stubGroupRepoForDayAfter) Exists(_ context.Context, _ int64) (bool, err
 }
 func (r *stubGroupRepoForDayAfter) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
+}
+func (r *stubGroupRepoForDayAfter) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
 }

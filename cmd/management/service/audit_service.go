@@ -426,6 +426,96 @@ func (s *AuditService) RecordCourtsAutoBooked(ctx context.Context, chatID, actor
 	})
 }
 
+// Game result events
+
+func (s *AuditService) RecordGameResultSubmitted(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGameResultSubmitted,
+		Visibility:   models.AuditVisibilityPlayer,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGameResult,
+		SubjectID:    fmt.Sprintf("%d", resultID),
+		Description:  fmt.Sprintf("%s submitted game result %d", display, resultID),
+	})
+}
+
+func (s *AuditService) RecordGameResultApproved(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGameResultApproved,
+		Visibility:   models.AuditVisibilityPlayer,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGameResult,
+		SubjectID:    fmt.Sprintf("%d", resultID),
+		Description:  fmt.Sprintf("%s approved game result %d", display, resultID),
+	})
+}
+
+func (s *AuditService) RecordGameResultRejected(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGameResultRejected,
+		Visibility:   models.AuditVisibilityPlayer,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGameResult,
+		SubjectID:    fmt.Sprintf("%d", resultID),
+		Description:  fmt.Sprintf("%s rejected game result %d", display, resultID),
+	})
+}
+
+func (s *AuditService) RecordGameResultCanceled(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGameResultCanceled,
+		Visibility:   models.AuditVisibilityPlayer,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGameResult,
+		SubjectID:    fmt.Sprintf("%d", resultID),
+		Description:  fmt.Sprintf("%s canceled game result %d", display, resultID),
+	})
+}
+
+func (s *AuditService) RecordGameResultAutoApproved(ctx context.Context, resultID, groupID int64) {
+	s.record(ctx, &models.AuditEvent{
+		EventType:   models.AuditEventGameResultAutoApproved,
+		Visibility:  models.AuditVisibilityPlayer,
+		ActorKind:   models.AuditActorSystem,
+		GroupID:     groupIDPtr(groupID),
+		SubjectType: models.AuditSubjectGameResult,
+		SubjectID:   fmt.Sprintf("%d", resultID),
+		Description: fmt.Sprintf("Game result %d auto-approved after 48h", resultID),
+	})
+}
+
+func (s *AuditService) RecordRatingUpdated(ctx context.Context, resultID, groupID, authorID int64, authorDelta float64, opponentID int64, opponentDelta float64) {
+	s.record(ctx, &models.AuditEvent{
+		EventType:   models.AuditEventGameRatingUpdated,
+		Visibility:  models.AuditVisibilityPlayer,
+		ActorKind:   models.AuditActorSystem,
+		GroupID:     groupIDPtr(groupID),
+		SubjectType: models.AuditSubjectGameResult,
+		SubjectID:   fmt.Sprintf("%d", resultID),
+		Description: fmt.Sprintf("Ratings updated for game result %d", resultID),
+		Metadata: map[string]any{
+			"author_id": authorID, "author_delta": authorDelta,
+			"opponent_id": opponentID, "opponent_delta": opponentDelta,
+		},
+	})
+}
+
 func (s *AuditService) RecordCourtCanceled(ctx context.Context, venueID, groupID int64, venueName, courtLabel string, gameDate time.Time) {
 	s.record(ctx, &models.AuditEvent{
 		EventType:   models.AuditEventCourtCanceled,

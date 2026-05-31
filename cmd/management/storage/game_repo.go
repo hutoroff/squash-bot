@@ -327,6 +327,85 @@ func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]mod
 	return games, rows.Err()
 }
 
+// GetCompletedGamesByGroupAndDay returns completed games for a group whose
+// game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
+// on "24 h after the day's last game start".
+func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE chat_id = $1
+		  AND game_date >= $2 AND game_date < $3
+		  AND completed = true`
+
+	slog.Debug("GameRepo.GetCompletedGamesByGroupAndDay", "chat_id", chatID, "from", from, "to", to)
+
+	rows, err := r.pool.Query(ctx, q, chatID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query completed group day games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
+// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
+// in a specific group within the last `days` days. Used by the /result wizard game picker.
+func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {
+	const q = `
+		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
+		       gp.status,
+		       (SELECT COUNT(*) FROM game_participations gp2
+		        WHERE gp2.game_id = g.id AND gp2.status = 'registered')
+		       + (SELECT COUNT(*) FROM guest_participations gst
+		          WHERE gst.game_id = g.id) AS participant_count,
+		       COALESCE(v.name, '')    AS venue_name,
+		       COALESCE(v.address, '') AS venue_address,
+		       COALESCE(NULLIF(bg.title, ''), 'Unknown group') AS group_title,
+		       COALESCE(NULLIF(bg.timezone, ''), 'UTC')        AS timezone
+		FROM games g
+		JOIN game_participations gp ON gp.game_id = g.id
+		JOIN players p ON p.id = gp.player_id AND p.telegram_id = $1
+		LEFT JOIN venues v ON v.id = g.venue_id
+		LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
+		WHERE g.chat_id = $2
+		  AND g.completed = true
+		  AND g.game_date >= NOW() - ($3 || ' days')::interval
+		ORDER BY g.game_date DESC`
+
+	slog.Debug("GameRepo.GetRecentCompletedGamesForPlayer", "tg_id", tgID, "group_id", groupID, "days", days)
+
+	rows, err := r.pool.Query(ctx, q, tgID, groupID, days)
+	if err != nil {
+		return nil, fmt.Errorf("query recent completed games for player: %w", err)
+	}
+	defer rows.Close()
+
+	var games []models.PlayerGame
+	for rows.Next() {
+		var pg models.PlayerGame
+		if err := rows.Scan(
+			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Completed,
+			&pg.ParticipationStatus, &pg.ParticipantCount,
+			&pg.VenueName, &pg.VenueAddress,
+			&pg.GroupTitle, &pg.Timezone,
+		); err != nil {
+			return nil, fmt.Errorf("scan player game: %w", err)
+		}
+		games = append(games, pg)
+	}
+	return games, rows.Err()
+}
+
 // UpdateCourts updates the courts and courts_count for a game.
 func (r *GameRepo) UpdateCourts(ctx context.Context, gameID int64, courts string, courtsCount int) error {
 	const q = `UPDATE games SET courts = $1, courts_count = $2 WHERE id = $3`

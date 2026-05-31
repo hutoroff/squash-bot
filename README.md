@@ -14,6 +14,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - At 10 AM on configured game days: for each auto-booked result the bot **publishes** the pre-created game (sends the pinned group announcement); if no auto-booking results exist it DMs group admins with a booking reminder; already-published games are not duplicated on re-runs; admins can publish any game manually before 10 AM via the `/games` manage menu
 - When editing courts on a game whose venue has auto-booking configured and usable credentials, the admin sees a mode chooser ("🤖 Auto-book courts" / "✏️ Edit manually"); choosing auto-book shows a count picker and triggers an immediate on-demand court booking
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
+- After playing, any participant can submit a result via `/result` (private chat): pick the game, opponent, winner (or draw), and optional score; the opponent receives a DM with **Approve / Reject** buttons. Approved results immediately update a per-group **Glicko-2 leaderboard** (default rating 1500, RD 350); results left unanswered for 48 hours are auto-approved. Players see standings via `/leaderboard`; once a day, 24 h after that day's last game start, the bot also posts the leaderboard to the group automatically.
 - **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand. Server owners can manage groups on the Groups page, including toggling auto-booking per group.
 - On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/language` settings, default ON)
 
@@ -338,11 +339,13 @@ crontab -e
 | `/start`    | Anyone          | Show welcome message                             |
 | `/help`     | Anyone          | List available commands                          |
 | `/mygame`   | Anyone          | Show your next registered game with a link       |
+| `/result`   | Game participants | Submit a 1-v-1 game result (winner / draw + optional score). Opponent gets an approval DM with **Approve / Reject** buttons; left untouched for 48 h → auto-approved. Approved results update the group's Glicko-2 leaderboard. |
+| `/leaderboard` | Anyone with a rating | DM the leaderboard for a group in which the player has played a rated game. Auto-picks the group when there is exactly one; shows a picker otherwise. |
 | `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/language` | Group admins    | Set the bot language for a group (en/de/ru)      |
-| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup` |
+| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard` |
 
 ## Localisation
 
@@ -412,7 +415,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 
 ## Scheduled Tasks
 
-A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using per-group timezone and per-venue configuration:
+A single 5-minute poll (configured via `CRON_POLL`) runs the following tasks, each using per-group timezone and per-venue configuration:
 
 | Task                       | Trigger window (cron)  | What it does                                                                          |
 |----------------------------|------------------------|---------------------------------------------------------------------------------------|
@@ -420,14 +423,20 @@ A single 5-minute poll (configured via `CRON_POLL`) runs four tasks, each using 
 | Cancellation reminder      | ±2m30s of reminder time | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.        |
 | Booking reminder           | 10:00–10:05 (group TZ) | DMs admins on configured game days with booking info (or confirms auto-booking ran).  |
 | Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.                    |
+| Auto-approve results       | every poll              | Approves pending game-result submissions older than 48 h and applies the Glicko-2 update atomically. |
+| Leaderboard post           | every poll, gated by 24 h | Posts yesterday's leaderboard to the group once the last game has been over for ≥ 24 h. |
 
-`/trigger <event>` bypasses the cron time-window gate for the chosen task. Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`) and `game_days` validation still apply.
+`/trigger <event>` bypasses the cron time-window gate for the chosen task. Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`, `last_leaderboard_posted_for`) and `game_days` validation still apply.
 
 **Auto-booking**: fires at midnight in each group's timezone on configured game days. Skips groups where the server owner has disabled auto-booking (`auto_booking_allowed = false` on the group). For remaining groups, processes venues with `auto_booking_enabled = true`, `preferred_game_times`, and `auto_booking_courts` set. Skipped for any venue where `auto_booking_games_count = 0`. Requires `SPORTS_BOOKING_SERVICE_URL`. Iterates up to `auto_booking_games_count` time slots from `preferred_game_times` independently — per-slot dedup prevents double-booking if the job re-runs. For each fresh slot: queries available (unbooked) courts at that time for the date `today + booking_opens_days`, books up to `len(auto_booking_courts)` courts in the configured priority order, saves one `auto_booking_result` row per slot (carrying the slot's `game_time`), and **immediately creates an unpublished game** (`message_id = NULL`) linked to that result. The game is visible to admins in `/games` (marked `📝`) but not yet announced to the group. The venue-level `last_auto_booking_at` is updated after any successful slot. On full success, sends a silent DM to all group admins. On partial or full failure, silently DMs all group admins.
 
 **Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
 
 **Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). For venues with auto-booking enabled: fetches all `auto_booking_results` for the target date. For each result with a linked game: if the game is still unpublished (`message_id = NULL`), **publishes it** (sends pinned announcement, sets `message_id`); if already published, skips. If the game record is missing (DB error), falls back to a DM to group admins. If no results exist (auto-booking didn't run or failed), DMs all group admins with a booking reminder instead. For venues without auto-booking: checks whether a game already exists on the target date; if so, skips silently; otherwise DMs group admins.
+
+**Auto-approve results**: runs on every poll. A `/result` submission left untouched by the opponent for 48 h is auto-approved: status flips to `auto_approved` and the Glicko-2 update lands in the same transaction, so the leaderboard is never out of sync with the recorded outcome. Opponent's DM card is edited and both players receive a notification DM (best-effort).
+
+**Leaderboard post**: runs on every poll. Computes the candidate day as yesterday in the group's local timezone, then waits until **24 h after that day's last game start** before posting — so an evening game on Saturday isn't tallied at 00:01 Sunday. If no approved results exist for the day, marks the day done and exits silently. Otherwise renders the leaderboard, sends it as a plain-text message to the group, and only then advances `last_leaderboard_posted_for`; a Telegram send failure leaves the marker untouched so the next poll retries.
 
 **Timezone**: set per group via `/language` → "🕐 Set Timezone" → select from curated list of 18 IANA timezones. Default is UTC.
 

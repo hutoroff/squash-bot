@@ -1238,18 +1238,21 @@ func (r *stubGuestRepoPC) GetCountByGame(_ context.Context, _ int64) (int, error
 
 type stubGroupRepoPC struct{ group *models.Group }
 
-func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error   { return nil }
-func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error      { return nil }
-func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error      { return nil }
+func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error    { return nil }
+func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error       { return nil }
+func (r *stubGroupRepoPC) SetTimezone(_ context.Context, _ int64, _ string) error       { return nil }
 func (r *stubGroupRepoPC) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error { return nil }
-func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                     { return nil }
-func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)             { return true, nil }
+func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error                      { return nil }
+func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error)              { return true, nil }
 func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, error) {
 	return r.group, nil
 }
 func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { return nil, nil }
 func (r *stubGroupRepoPC) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
+}
+func (r *stubGroupRepoPC) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
 }
 
 type stubGameRepoPC struct{}
@@ -1274,14 +1277,20 @@ func (r *stubGameRepoPC) GetNextGameForTelegramUser(_ context.Context, _ int64) 
 func (r *stubGameRepoPC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (r *stubGameRepoPC) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
+	return nil, nil
+}
 func (r *stubGameRepoPC) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoPC) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return nil, nil
 }
+func (r *stubGameRepoPC) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
 func (r *stubGameRepoPC) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
-func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error          { return nil }
+func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error         { return nil }
 
 type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
 

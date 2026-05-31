@@ -152,6 +152,12 @@ func (s *GameService) GetGamesForPlayer(ctx context.Context, playerID int64) ([]
 	return s.gameRepo.GetGamesForPlayer(ctx, playerID)
 }
 
+// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
+// in a specific group within the last `days` days. Used by the /result wizard game picker.
+func (s *GameService) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {
+	return s.gameRepo.GetRecentCompletedGamesForPlayer(ctx, tgID, groupID, days)
+}
+
 // PublishGame sends the game announcement to the group, pins it silently, sets message_id, and records audit.
 // Returns ErrGameNotFound if the game doesn't exist, ErrGameAlreadyPublished if already published.
 // On send failure, returns an error without touching the DB — the game stays unpublished.

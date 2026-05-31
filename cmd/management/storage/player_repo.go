@@ -46,6 +46,17 @@ func (r *PlayerRepo) GetByTelegramID(ctx context.Context, telegramID int64) (*mo
 	return scanPlayer(row)
 }
 
+func (r *PlayerRepo) GetByID(ctx context.Context, id int64) (*models.Player, error) {
+	const q = `
+		SELECT id, telegram_id, username, first_name, last_name, created_at
+		FROM players WHERE id = $1`
+
+	slog.Debug("PlayerRepo.GetByID", "id", id)
+
+	row := r.pool.QueryRow(ctx, q, id)
+	return scanPlayer(row)
+}
+
 func scanPlayer(s scanner) (*models.Player, error) {
 	var p models.Player
 	err := s.Scan(&p.ID, &p.TelegramID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt)

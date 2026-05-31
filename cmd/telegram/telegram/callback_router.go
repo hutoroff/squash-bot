@@ -342,6 +342,49 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			b.handleVenueCredDelete(ctx, cb, credID, venueID, groupID)
 		},
 
+		// ── Leaderboard ───────────────────────────────────────────────────────────
+		"lb_group": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleLbGroup(ctx, cb, rawID)
+		},
+
+		// ── Game result wizard ────────────────────────────────────────────────────
+		"res_group": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultPickGroup(ctx, cb, rawID)
+		},
+		"res_game": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultPickGame(ctx, cb, rawID)
+		},
+		"res_opp": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultPickOpponent(ctx, cb, rawID)
+		},
+		"res_winner": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultPickWinner(ctx, cb, rawID)
+		},
+		"res_score_skip": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
+			b.handleResultScoreSkip(ctx, cb, "")
+		},
+		"res_edit": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultEdit(ctx, cb, rawID)
+		},
+		"res_submit": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
+			b.handleResultSubmit(ctx, cb, "")
+		},
+		"res_cancel": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
+			b.handleResultCancel(ctx, cb, "")
+		},
+		"res_approve": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultApprove(ctx, cb, rawID)
+		},
+		"res_reject": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultReject(ctx, cb, rawID)
+		},
+		"res_withdraw": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultWithdraw(ctx, cb, rawID)
+		},
+		"res_resubmit": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleResultResubmit(ctx, cb, rawID)
+		},
+
 		"venue_wiz_ptime": b.handleVenueWizPreferredTimePick,
 		"venue_ptime_set": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			// rawID: venueID:slot  (slot may contain ":") — legacy single-pick handler

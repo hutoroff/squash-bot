@@ -39,12 +39,23 @@ const (
 	AuditEventGamePublished       AuditEventType = "game.published"
 	AuditEventCourtsAutoBooked    AuditEventType = "game.courts_auto_booked"
 
+	// Game result events.
+	AuditEventGameResultSubmitted    AuditEventType = "game.result_submitted"
+	AuditEventGameResultApproved     AuditEventType = "game.result_approved"
+	AuditEventGameResultRejected     AuditEventType = "game.result_rejected"
+	AuditEventGameResultAutoApproved AuditEventType = "game.result_auto_approved"
+	AuditEventGameResultCanceled     AuditEventType = "game.result_canceled"
+
+	// Rating events.
+	AuditEventGameRatingUpdated AuditEventType = "game.rating_updated"
+
 	// Subject types.
 	AuditSubjectGame        = "game"
 	AuditSubjectVenue       = "venue"
 	AuditSubjectCredential  = "credential"
 	AuditSubjectGroup       = "group"
 	AuditSubjectCourtSlot   = "court_slot"
+	AuditSubjectGameResult  = "game_result"
 )
 
 // AuditQueryFilter defines constraints for listing audit events.
