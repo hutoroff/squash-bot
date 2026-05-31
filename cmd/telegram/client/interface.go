@@ -71,4 +71,16 @@ type ManagementClient interface {
 
 	// GetVenueBookingReadiness checks whether a venue can auto-book courts right now.
 	GetVenueBookingReadiness(ctx context.Context, venueID, groupID int64) (*BookingReadiness, error)
+
+	// GetPlayerByTelegramID fetches a player record by Telegram user ID.
+	GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
+
+	// Game results
+	SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error)
+	GetGameResult(ctx context.Context, id int64) (*GameResultDTO, error)
+	SetGameResultApprovalMessage(ctx context.Context, id, chatID int64, messageID int) error
+	ApproveGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
+	RejectGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
+	CancelGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
+	GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64, days int) ([]models.PlayerGame, error)
 }

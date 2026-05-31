@@ -156,6 +156,9 @@ func (r *stubGameRepoForDayAfter) GetNextGameForTelegramUser(_ context.Context, 
 func (r *stubGameRepoForDayAfter) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForDayAfter) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
+	return nil, nil
+}
 func (r *stubGameRepoForDayAfter) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }

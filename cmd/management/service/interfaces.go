@@ -35,12 +35,16 @@ type GameRepository interface {
 	GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
 	MarkNotifiedDayBefore(ctx context.Context, gameID int64) error
 	MarkCompleted(ctx context.Context, gameID int64) error
+	// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
+	// in a specific group within the last `days` days.
+	GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error)
 }
 
 // PlayerRepository is the data access interface for players.
 type PlayerRepository interface {
 	Upsert(ctx context.Context, player *models.Player) (*models.Player, error)
 	GetByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
+	GetByID(ctx context.Context, id int64) (*models.Player, error)
 }
 
 // ParticipationRepository is the data access interface for game participations.
@@ -143,6 +147,19 @@ type VenueCredentialRepository interface {
 	PrioritiesInUse(ctx context.Context, venueID int64) ([]int, error)
 	// SetLastErrorAt records the current timestamp as the last error time for a credential.
 	SetLastErrorAt(ctx context.Context, id int64) error
+}
+
+// GameResultRepository is the data access interface for game results.
+type GameResultRepository interface {
+	Create(ctx context.Context, r *models.GameResult) (int64, error)
+	GetByID(ctx context.Context, id int64) (*models.GameResult, error)
+	SetApprovalMessage(ctx context.Context, id, chatID int64, messageID int) error
+	// Decide transitions a pending result to approved/auto_approved/rejected/canceled.
+	// Returns ErrGameResultNotPending if the row is not currently pending.
+	Decide(ctx context.Context, id int64, status models.GameResultStatus, decidedAt time.Time) error
+	ListPendingOlderThan(ctx context.Context, cutoff time.Time) ([]*models.GameResult, error)
+	ListByGroupAndDate(ctx context.Context, groupID int64, gameDate time.Time) ([]*models.GameResult, error)
+	ListByGameID(ctx context.Context, gameID int64) ([]*models.GameResult, error)
 }
 
 // AuditEventRepository is the data access interface for audit events.

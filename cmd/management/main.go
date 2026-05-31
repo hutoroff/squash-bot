@@ -90,6 +90,7 @@ func main() {
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
 	auditEventRepo := storage.NewAuditEventRepo(pool)
+	gameResultRepo := storage.NewGameResultRepo(pool)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
@@ -127,12 +128,14 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
+	gameResultSvc := service.NewGameResultService(gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, gameService, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
-	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob)
+	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, gameResultRepo, playerRepo, auditSvc, logger)
+	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
@@ -154,7 +157,7 @@ func main() {
 	service.AnnounceChangelog(ctx, tgAPI, groupRepo, stateRepo, loc, logger, Version)
 
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
-	h := api.NewHandler(gameService, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version, cfg.CredentialErrorCooldown)
+	h := api.NewHandler(gameService, gameResultSvc, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version, cfg.CredentialErrorCooldown)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

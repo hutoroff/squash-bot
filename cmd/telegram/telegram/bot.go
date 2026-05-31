@@ -256,6 +256,7 @@ type Bot struct {
 	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
 	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
 	pendingVenueCredAdd           sync.Map      // map[chatID int64]*venueCredWizard
+	pendingResultWizard           sync.Map      // map[chatID int64]*resultWizard
 	editWorkers                   sync.Map      // map[gameID int64]*gameEditWorker
 	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
 	callbackRouter                map[string]callbackHandler

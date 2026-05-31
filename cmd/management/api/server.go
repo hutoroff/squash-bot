@@ -18,6 +18,7 @@ const defaultCredentialErrorCooldown = 24 * time.Hour
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
 	gameService      *service.GameService
+	gameResultSvc    *service.GameResultService
 	partService      *service.ParticipationService
 	venueService     *service.VenueService
 	venueCredService *service.VenueCredentialService
@@ -35,6 +36,7 @@ type Handler struct {
 
 func NewHandler(
 	gameService *service.GameService,
+	gameResultSvc *service.GameResultService,
 	partService *service.ParticipationService,
 	venueService *service.VenueService,
 	venueCredService *service.VenueCredentialService,
@@ -53,6 +55,7 @@ func NewHandler(
 	}
 	return &Handler{
 		gameService:             gameService,
+		gameResultSvc:           gameResultSvc,
 		partService:             partService,
 		venueService:            venueService,
 		venueCredService:        venueCredService,
@@ -91,10 +94,19 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/games/{id}/players/{telegramID}", h.kickPlayer)
 	mux.HandleFunc("DELETE /api/v1/games/{id}/guests/{guestID}", h.kickGuest)
 
+	// Game results
+	mux.HandleFunc("POST /api/v1/game-results", h.submitGameResult)
+	mux.HandleFunc("GET /api/v1/game-results/{id}", h.getGameResult)
+	mux.HandleFunc("POST /api/v1/game-results/{id}/approval-message", h.setGameResultApprovalMessage)
+	mux.HandleFunc("POST /api/v1/game-results/{id}/approve", h.approveGameResult)
+	mux.HandleFunc("POST /api/v1/game-results/{id}/reject", h.rejectGameResult)
+	mux.HandleFunc("POST /api/v1/game-results/{id}/cancel", h.cancelGameResult)
+
 	// Players
 	mux.HandleFunc("GET /api/v1/players/{telegramID}", h.getPlayerByTelegramID)
 	mux.HandleFunc("GET /api/v1/players/{telegramID}/next-game", h.getNextGame)
 	mux.HandleFunc("GET /api/v1/players/{playerID}/games", h.listPlayerGames)
+	mux.HandleFunc("GET /api/v1/players/{tgID}/recent-completed-games", h.getRecentCompletedGames)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)

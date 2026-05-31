@@ -39,6 +39,8 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandVenues(ctx, msg, lz)
 	case "/trigger":
 		b.handleCommandTrigger(ctx, msg, lz)
+	case "/result":
+		b.handleCommandResult(ctx, msg, lz)
 	default:
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgUnknownCommand))
 	}
@@ -51,6 +53,7 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 	var sb strings.Builder
 	sb.WriteString(lz.T(i18n.MsgAvailableCommands))
 	sb.WriteString(lz.T(i18n.MsgCmdMyGame))
+	sb.WriteString(lz.T(i18n.MsgCmdResult))
 	sb.WriteString(lz.T(i18n.MsgCmdHelp))
 
 	if isAdmin {
