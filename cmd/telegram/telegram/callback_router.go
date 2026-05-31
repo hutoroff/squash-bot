@@ -342,6 +342,11 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			b.handleVenueCredDelete(ctx, cb, credID, venueID, groupID)
 		},
 
+		// ── Leaderboard ───────────────────────────────────────────────────────────
+		"lb_group": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleLbGroup(ctx, cb, rawID)
+		},
+
 		// ── Game result wizard ────────────────────────────────────────────────────
 		"res_group": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			b.handleResultPickGroup(ctx, cb, rawID)

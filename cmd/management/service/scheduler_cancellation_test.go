@@ -1251,6 +1251,9 @@ func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { re
 func (r *stubGroupRepoPC) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGroupRepoPC) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
 
 type stubGameRepoPC struct{}
 

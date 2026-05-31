@@ -500,6 +500,22 @@ func (s *AuditService) RecordGameResultAutoApproved(ctx context.Context, resultI
 	})
 }
 
+func (s *AuditService) RecordRatingUpdated(ctx context.Context, resultID, groupID, authorID int64, authorDelta float64, opponentID int64, opponentDelta float64) {
+	s.record(ctx, &models.AuditEvent{
+		EventType:   models.AuditEventGameRatingUpdated,
+		Visibility:  models.AuditVisibilityPlayer,
+		ActorKind:   models.AuditActorSystem,
+		GroupID:     groupIDPtr(groupID),
+		SubjectType: models.AuditSubjectGameResult,
+		SubjectID:   fmt.Sprintf("%d", resultID),
+		Description: fmt.Sprintf("Ratings updated for game result %d", resultID),
+		Metadata: map[string]any{
+			"author_id": authorID, "author_delta": authorDelta,
+			"opponent_id": opponentID, "opponent_delta": opponentDelta,
+		},
+	})
+}
+
 func (s *AuditService) RecordCourtCanceled(ctx context.Context, venueID, groupID int64, venueName, courtLabel string, gameDate time.Time) {
 	s.record(ctx, &models.AuditEvent{
 		EventType:   models.AuditEventCourtCanceled,

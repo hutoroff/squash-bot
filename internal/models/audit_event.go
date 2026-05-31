@@ -46,6 +46,9 @@ const (
 	AuditEventGameResultAutoApproved AuditEventType = "game.result_auto_approved"
 	AuditEventGameResultCanceled     AuditEventType = "game.result_canceled"
 
+	// Rating events.
+	AuditEventGameRatingUpdated AuditEventType = "game.rating_updated"
+
 	// Subject types.
 	AuditSubjectGame        = "game"
 	AuditSubjectVenue       = "venue"

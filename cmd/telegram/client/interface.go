@@ -75,6 +75,10 @@ type ManagementClient interface {
 	// GetPlayerByTelegramID fetches a player record by Telegram user ID.
 	GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
 
+	// Leaderboard
+	GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error)
+	GetPlayerGroupsWithResults(ctx context.Context, tgID int64) ([]models.Group, error)
+
 	// Game results
 	SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error)
 	GetGameResult(ctx context.Context, id int64) (*GameResultDTO, error)

@@ -371,6 +371,15 @@ const (
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
+	// Leaderboard
+	MsgLeaderboardTitle     = "msg.leaderboard_title"
+	MsgLeaderboardEmpty     = "msg.leaderboard_empty"
+	MsgLeaderboardPickGroup = "msg.leaderboard_pick_group"
+	MsgLeaderboardRowFmt    = "msg.leaderboard_row_fmt"
+	MsgLeaderboardGamesShort = "msg.leaderboard_games_short"
+	MsgCmdLeaderboard       = "msg.cmd_leaderboard"
+	BtnLbGroup              = "btn.lb_group"
+
 	// Game result wizard
 	MsgResultStepPickGroup       = "msg.result_step_pick_group"
 	MsgResultStepPickGame        = "msg.result_step_pick_game"
@@ -759,6 +768,15 @@ var translations = map[Lang]map[string]string{
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Auto-booking succeeded for *%s* on %s at %s but the game record could not be created. Please create the game manually.",
 
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Leaderboard",
+		MsgLeaderboardEmpty:      "No leaderboard data yet for this group.",
+		MsgLeaderboardPickGroup:  "Which group's leaderboard do you want to see?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dg)%s\n",
+		MsgLeaderboardGamesShort: "g",
+		MsgCmdLeaderboard:        "/leaderboard — Show the group leaderboard\n",
+		BtnLbGroup:               "%s",
+
 		// Game result wizard
 		MsgResultStepPickGroup:       "Pick a group for the result:",
 		MsgResultStepPickGame:        "Pick the game you played:",
@@ -1104,6 +1122,15 @@ var translations = map[Lang]map[string]string{
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Automatische Buchung für *%s* am %s um %s erfolgreich, aber der Spieleintrag konnte nicht erstellt werden. Bitte Spiel manuell erstellen.",
 
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Rangliste",
+		MsgLeaderboardEmpty:      "Noch keine Rangliste für diese Gruppe.",
+		MsgLeaderboardPickGroup:  "Welche Gruppe's Rangliste möchtest du sehen?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dg)%s\n",
+		MsgLeaderboardGamesShort: "g",
+		MsgCmdLeaderboard:        "/leaderboard — Gruppenrangliste anzeigen\n",
+		BtnLbGroup:               "%s",
+
 		// Game result wizard
 		MsgResultStepPickGroup:       "Gruppe für das Ergebnis auswählen:",
 		MsgResultStepPickGame:        "Spiel auswählen:",
@@ -1448,6 +1475,15 @@ var translations = map[Lang]map[string]string{
 		MsgPublishAlreadyDone:            "Игра уже опубликована",
 		MsgUnpublishedMarker:             "📝",
 		SchedAutoBookingGameCreateFailed: "⚠️ Автобронирование для *%s* на %s в %s прошло успешно, но запись об игре не была создана. Пожалуйста, создайте игру вручную.",
+
+		// Leaderboard
+		MsgLeaderboardTitle:      "🏆 %s — Рейтинг",
+		MsgLeaderboardEmpty:      "Рейтинговых данных для этой группы пока нет.",
+		MsgLeaderboardPickGroup:  "Рейтинг какой группы ты хочешь посмотреть?",
+		MsgLeaderboardRowFmt:     "%d.  %-16s %4.0f (%dиг)%s\n",
+		MsgLeaderboardGamesShort: "иг",
+		MsgCmdLeaderboard:        "/leaderboard — Показать рейтинг группы\n",
+		BtnLbGroup:               "%s",
 
 		// Game result wizard
 		MsgResultStepPickGroup:       "Выберите группу для результата:",

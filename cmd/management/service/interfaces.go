@@ -75,6 +75,7 @@ type GroupRepository interface {
 	Exists(ctx context.Context, chatID int64) (bool, error)
 	GetByID(ctx context.Context, chatID int64) (*models.Group, error)
 	GetAll(ctx context.Context) ([]models.Group, error)
+	SetLastLeaderboardPostedFor(ctx context.Context, chatID int64, date time.Time) error
 }
 
 // ServiceStateRepository stores and retrieves arbitrary key-value state for the service.
@@ -161,6 +162,22 @@ type GameResultRepository interface {
 	ListByGroupAndDate(ctx context.Context, groupID int64, gameDate time.Time) ([]*models.GameResult, error)
 	ListByGameID(ctx context.Context, gameID int64) ([]*models.GameResult, error)
 }
+
+// PlayerRatingRepository is the data access interface for Glicko-2 player ratings.
+type PlayerRatingRepository interface {
+	GetOrInit(ctx context.Context, groupID, playerID int64) (*models.PlayerRating, error)
+	Upsert(ctx context.Context, r *models.PlayerRating) error
+	ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error)
+}
+
+// RatingChangeRepository is the data access interface for rating change history.
+type RatingChangeRepository interface {
+	Insert(ctx context.Context, change *models.RatingChange) error
+	ListByGroupAndDateRange(ctx context.Context, groupID int64, from, to time.Time) ([]*models.RatingChange, error)
+}
+
+// GroupRepository also needs SetLastLeaderboardPostedFor.
+// (This is an extension added in migration 027 — method added to existing GroupRepository interface below.)
 
 // AuditEventRepository is the data access interface for audit events.
 type AuditEventRepository interface {

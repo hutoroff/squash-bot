@@ -192,3 +192,6 @@ func (r *stubGroupRepoForDayAfter) Exists(_ context.Context, _ int64) (bool, err
 func (r *stubGroupRepoForDayAfter) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGroupRepoForDayAfter) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}

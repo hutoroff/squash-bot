@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -79,8 +80,8 @@ func (r *GroupRepo) Exists(ctx context.Context, chatID int64) (bool, error) {
 func (r *GroupRepo) GetByID(ctx context.Context, chatID int64) (*models.Group, error) {
 	var g models.Group
 	err := r.pool.QueryRow(ctx,
-		`SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, added_at FROM bot_groups WHERE chat_id = $1`, chatID,
-	).Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.AddedAt)
+		`SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups WHERE chat_id = $1`, chatID,
+	).Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func (r *GroupRepo) GetByID(ctx context.Context, chatID int64) (*models.Group, e
 
 // GetAll returns all groups the bot is currently a member of.
 func (r *GroupRepo) GetAll(ctx context.Context) ([]models.Group, error) {
-	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, added_at FROM bot_groups ORDER BY added_at DESC`)
+	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,12 +98,21 @@ func (r *GroupRepo) GetAll(ctx context.Context) ([]models.Group, error) {
 	var groups []models.Group
 	for rows.Next() {
 		var g models.Group
-		if err := rows.Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.AddedAt); err != nil {
+		if err := rows.Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
+}
+
+// SetLastLeaderboardPostedFor records the game date for which a group's leaderboard was last posted.
+func (r *GroupRepo) SetLastLeaderboardPostedFor(ctx context.Context, chatID int64, date time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bot_groups SET last_leaderboard_posted_for = $1::date WHERE chat_id = $2`,
+		date, chatID,
+	)
+	return err
 }
 
 // SetChangelogEnabled updates the changelog_enabled flag for a group.

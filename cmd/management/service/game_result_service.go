@@ -33,6 +33,7 @@ type GameResultService struct {
 	playerRepo        PlayerRepository
 	participationRepo ParticipationRepository
 	auditSvc          *AuditService
+	ratingSvc         *RatingService // nil if not configured
 }
 
 func NewGameResultService(
@@ -49,6 +50,12 @@ func NewGameResultService(
 		participationRepo: participationRepo,
 		auditSvc:          auditSvc,
 	}
+}
+
+// SetRatingService injects the optional rating service after construction
+// (avoids circular dependency at wiring time).
+func (s *GameResultService) SetRatingService(rs *RatingService) {
+	s.ratingSvc = rs
 }
 
 // Submit creates a new pending game result.
@@ -213,12 +220,26 @@ func (s *GameResultService) decide(
 	switch newStatus {
 	case models.GameResultApproved:
 		s.auditSvc.RecordGameResultApproved(ctx, id, res.GroupID, actorTgID, actorDisplay)
+		s.applyRating(res)
 	case models.GameResultRejected:
 		s.auditSvc.RecordGameResultRejected(ctx, id, res.GroupID, actorTgID, actorDisplay)
 	case models.GameResultCanceled:
 		s.auditSvc.RecordGameResultCanceled(ctx, id, res.GroupID, actorTgID, actorDisplay)
 	}
 	return res, nil
+}
+
+// applyRating triggers a background Glicko-2 update (async, non-blocking).
+func (s *GameResultService) applyRating(res *models.GameResult) {
+	if s.ratingSvc == nil {
+		return
+	}
+	resCopy := *res
+	go func() {
+		if err := s.ratingSvc.Apply(context.Background(), &resCopy); err != nil {
+			// Best-effort — log only.
+		}
+	}()
 }
 
 // validateScore checks that score is empty, or matches \d+:\d+, and if winnerID is

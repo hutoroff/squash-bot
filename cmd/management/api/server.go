@@ -19,6 +19,7 @@ const defaultCredentialErrorCooldown = 24 * time.Hour
 type Handler struct {
 	gameService      *service.GameService
 	gameResultSvc    *service.GameResultService
+	ratingService    *service.RatingService
 	partService      *service.ParticipationService
 	venueService     *service.VenueService
 	venueCredService *service.VenueCredentialService
@@ -37,6 +38,7 @@ type Handler struct {
 func NewHandler(
 	gameService *service.GameService,
 	gameResultSvc *service.GameResultService,
+	ratingService *service.RatingService,
 	partService *service.ParticipationService,
 	venueService *service.VenueService,
 	venueCredService *service.VenueCredentialService,
@@ -56,6 +58,7 @@ func NewHandler(
 	return &Handler{
 		gameService:             gameService,
 		gameResultSvc:           gameResultSvc,
+		ratingService:           ratingService,
 		partService:             partService,
 		venueService:            venueService,
 		venueCredService:        venueCredService,
@@ -131,6 +134,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/venues/{id}/credentials", h.listCredentials)
 	mux.HandleFunc("DELETE /api/v1/venues/{id}/credentials/{cid}", h.removeCredential)
 	mux.HandleFunc("GET /api/v1/venues/{id}/credentials/priorities", h.listCredentialPriorities)
+
+	// Leaderboard
+	mux.HandleFunc("GET /api/v1/groups/{chatID}/leaderboard", h.getGroupLeaderboard)
+	mux.HandleFunc("GET /api/v1/players/{tgID}/groups-with-results", h.getPlayerGroupsWithResults)
 
 	// Scheduler triggers
 	mux.HandleFunc("POST /api/v1/scheduler/trigger/{event}", h.triggerScheduler)

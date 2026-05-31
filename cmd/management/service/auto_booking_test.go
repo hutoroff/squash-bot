@@ -1330,6 +1330,9 @@ func (r *stubGroupRepoAutoBooking) SetChangelogEnabled(_ context.Context, _ int6
 func (r *stubGroupRepoAutoBooking) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGroupRepoAutoBooking) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
 func (r *stubGroupRepoAutoBooking) Remove(_ context.Context, _ int64) error          { return nil }
 func (r *stubGroupRepoAutoBooking) Exists(_ context.Context, _ int64) (bool, error) { return true, nil }
 

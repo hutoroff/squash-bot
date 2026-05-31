@@ -15,6 +15,7 @@ type AutoApproveResultsJob struct {
 	api        TelegramAPI
 	resultRepo GameResultRepository
 	playerRepo PlayerRepository
+	ratingSvc  *RatingService // optional
 	auditSvc   *AuditService
 	logger     *slog.Logger
 }
@@ -33,6 +34,11 @@ func NewAutoApproveResultsJob(
 		auditSvc:   auditSvc,
 		logger:     logger,
 	}
+}
+
+// SetRatingService injects the optional rating service.
+func (j *AutoApproveResultsJob) SetRatingService(rs *RatingService) {
+	j.ratingSvc = rs
 }
 
 func (j *AutoApproveResultsJob) name() string   { return "auto_approve_results" }
@@ -62,6 +68,16 @@ func (j *AutoApproveResultsJob) runAutoApprove() {
 		res.DecidedAt = &now
 
 		j.auditSvc.RecordGameResultAutoApproved(ctx, res.ID, res.GroupID)
+
+		// Trigger rating update asynchronously.
+		if j.ratingSvc != nil {
+			resCopy := *res
+			go func() {
+				if err := j.ratingSvc.Apply(context.Background(), &resCopy); err != nil {
+					j.logger.Warn("auto_approve_results: apply rating", "result_id", resCopy.ID, "err", err)
+				}
+			}()
+		}
 
 		// Edit the opponent DM card to remove the action buttons.
 		if res.ApprovalChatID != nil && res.ApprovalMessageID != nil {

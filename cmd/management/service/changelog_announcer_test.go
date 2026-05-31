@@ -168,6 +168,9 @@ func (r *stubGroupRepoAnnounce) Exists(_ context.Context, _ int64) (bool, error)
 func (r *stubGroupRepoAnnounce) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGroupRepoAnnounce) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
 
 // announceWithContent bypasses the changelogs.Read file lookup by directly
 // invoking the inner logic so we can test branch behaviour without real files.

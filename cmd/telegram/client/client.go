@@ -707,6 +707,36 @@ func parseErrorBody(resp *http.Response) error {
 	return &HTTPError{StatusCode: resp.StatusCode, Message: errBody.Error}
 }
 
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+
+// LeaderboardEntry is a single row in the leaderboard response.
+type LeaderboardEntry struct {
+	Rank        int            `json:"rank"`
+	Player      *models.Player `json:"player"`
+	Rating      float64        `json:"rating"`
+	RD          float64        `json:"rd"`
+	GamesPlayed int            `json:"games_played"`
+	DeltaToday  float64        `json:"delta_today"`
+}
+
+func (c *Client) GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error) {
+	path := fmt.Sprintf("/api/v1/groups/%d/leaderboard", groupID)
+	var entries []LeaderboardEntry
+	if err := c.do(ctx, http.MethodGet, path, nil, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (c *Client) GetPlayerGroupsWithResults(ctx context.Context, tgID int64) ([]models.Group, error) {
+	path := fmt.Sprintf("/api/v1/players/%d/groups-with-results", tgID)
+	var groups []models.Group
+	if err := c.do(ctx, http.MethodGet, path, nil, &groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
 // GetPlayerByTelegramID fetches a player by Telegram user ID.
 // Returns a nil *models.Player if not found (HTTP 404).
 func (c *Client) GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error) {
