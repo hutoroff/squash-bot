@@ -47,6 +47,11 @@ func (r *stubResultRepo) Decide(_ context.Context, _ int64, status models.GameRe
 	return r.decideErr
 }
 
+func (r *stubResultRepo) DecideInTx(_ context.Context, _ pgx.Tx, _ int64, status models.GameResultStatus, _ time.Time) error {
+	r.decideCalls = append(r.decideCalls, status)
+	return r.decideErr
+}
+
 func (r *stubResultRepo) ListPendingOlderThan(_ context.Context, _ time.Time) ([]*models.GameResult, error) {
 	return nil, nil
 }
@@ -126,6 +131,9 @@ func (r *stubGameRepoForResults) UpdateMessageID(_ context.Context, _, _ int64) 
 func (r *stubGameRepoForResults) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForResults) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
 func (r *stubGameRepoForResults) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }
@@ -162,7 +170,7 @@ func newResultSvc(
 	partRepo *grPartRepo,
 ) *GameResultService {
 	auditSvc, _ := newCaptureAuditSvc()
-	return NewGameResultService(resultRepo, gameRepo, playerRepo, partRepo, auditSvc)
+	return NewGameResultService(nil, resultRepo, gameRepo, playerRepo, partRepo, auditSvc)
 }
 
 // defaultFixture returns a ready-to-use set of stubs where author (tg=100, id=1)

@@ -81,12 +81,15 @@ func renderLeaderboard(entries []client.LeaderboardEntry, groupTitle string, lz 
 		return lz.T(i18n.MsgLeaderboardEmpty)
 	}
 	var sb strings.Builder
-	sb.WriteString(lz.Tf(i18n.MsgLeaderboardTitle, groupTitle))
+	// sendText / editText render with Markdown parse mode, so user-supplied
+	// strings interpolated below must be escaped — otherwise a stray _ or *
+	// in a group title or player name can cause Telegram to reject the message.
+	sb.WriteString(lz.Tf(i18n.MsgLeaderboardTitle, escapeMarkdown(groupTitle)))
 	sb.WriteString("\n\n")
 	for _, e := range entries {
 		name := ""
 		if e.Player != nil {
-			name = playerModelDisplayName(e.Player)
+			name = escapeMarkdown(playerModelDisplayName(e.Player))
 		}
 		delta := ""
 		if e.DeltaToday > 0.5 {

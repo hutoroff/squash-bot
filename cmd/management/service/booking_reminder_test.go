@@ -56,6 +56,9 @@ func (m *mockGameRepo) UpdateMessageID(_ context.Context, _, _ int64) error {
 func (m *mockGameRepo) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return m.existingGames, m.existingErr
 }
+func (m *mockGameRepo) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
 
 func (m *mockGameRepo) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil

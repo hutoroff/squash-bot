@@ -130,7 +130,7 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
-	gameResultSvc := service.NewGameResultService(gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc)
+	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc)
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
 	gameResultSvc.SetRatingService(ratingSvc)
 
@@ -138,7 +138,7 @@ func main() {
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, gameService, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
-	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, gameResultRepo, playerRepo, auditSvc, logger)
+	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, pool, gameResultRepo, playerRepo, auditSvc, logger)
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)
 	scheduler := service.NewScheduler(logger, cancellationJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob, postLeaderboardJob)

@@ -7,12 +7,14 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AutoApproveResultsJob auto-approves pending game results after 48 h.
 // Runs on every poll (no time gate) — the 48 h cutoff is enforced by the query.
 type AutoApproveResultsJob struct {
 	api        TelegramAPI
+	pool       *pgxpool.Pool // nil in unit tests; required for atomic Decide+Apply
 	resultRepo GameResultRepository
 	playerRepo PlayerRepository
 	ratingSvc  *RatingService // optional
@@ -22,6 +24,7 @@ type AutoApproveResultsJob struct {
 
 func NewAutoApproveResultsJob(
 	api TelegramAPI,
+	pool *pgxpool.Pool,
 	resultRepo GameResultRepository,
 	playerRepo PlayerRepository,
 	auditSvc *AuditService,
@@ -29,6 +32,7 @@ func NewAutoApproveResultsJob(
 ) *AutoApproveResultsJob {
 	return &AutoApproveResultsJob{
 		api:        api,
+		pool:       pool,
 		resultRepo: resultRepo,
 		playerRepo: playerRepo,
 		auditSvc:   auditSvc,
@@ -60,7 +64,7 @@ func (j *AutoApproveResultsJob) runAutoApprove() {
 
 	for _, res := range pending {
 		now := time.Now()
-		if err := j.resultRepo.Decide(ctx, res.ID, models.GameResultAutoApproved, now); err != nil {
+		if err := j.autoApproveOne(ctx, res, now); err != nil {
 			j.logger.Error("auto_approve_results: decide", "result_id", res.ID, "err", err)
 			continue
 		}
@@ -68,16 +72,6 @@ func (j *AutoApproveResultsJob) runAutoApprove() {
 		res.DecidedAt = &now
 
 		j.auditSvc.RecordGameResultAutoApproved(ctx, res.ID, res.GroupID)
-
-		// Trigger rating update asynchronously.
-		if j.ratingSvc != nil {
-			resCopy := *res
-			go func() {
-				if err := j.ratingSvc.Apply(context.Background(), &resCopy); err != nil {
-					j.logger.Warn("auto_approve_results: apply rating", "result_id", resCopy.ID, "err", err)
-				}
-			}()
-		}
 
 		// Edit the opponent DM card to remove the action buttons.
 		if res.ApprovalChatID != nil && res.ApprovalMessageID != nil {
@@ -90,6 +84,28 @@ func (j *AutoApproveResultsJob) runAutoApprove() {
 		// DM both author and opponent (best-effort).
 		j.dmAutoApproved(ctx, res)
 	}
+}
+
+// autoApproveOne flips status to auto_approved and applies the rating in one
+// transaction so the leaderboard never lags behind the decision. Falls back to
+// a plain Decide when rating or pool wiring is absent.
+func (j *AutoApproveResultsJob) autoApproveOne(ctx context.Context, res *models.GameResult, now time.Time) error {
+	if j.ratingSvc == nil || j.pool == nil {
+		return j.resultRepo.Decide(ctx, res.ID, models.GameResultAutoApproved, now)
+	}
+	tx, err := j.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := j.resultRepo.DecideInTx(ctx, tx, res.ID, models.GameResultAutoApproved, now); err != nil {
+		return err
+	}
+	if err := j.ratingSvc.ApplyInTx(ctx, tx, res); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (j *AutoApproveResultsJob) dmAutoApproved(ctx context.Context, res *models.GameResult) {

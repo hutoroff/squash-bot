@@ -65,12 +65,13 @@ func (j *PostLeaderboardJob) processGroup(ctx context.Context, g *models.Group, 
 		loc = j.loc
 	}
 
-	// Find candidate day D: most recent game_date with completed games that is ≥ 24 h ago.
-	now := time.Now().In(loc)
-	cutoff := now.Add(-24 * time.Hour)
-	candidateDate := cutoff.Truncate(24 * time.Hour)
+	// Candidate day is yesterday in the group's local timezone. Compute it from
+	// year/month/day so the day-boundary respects loc, not UTC.
+	nowLocal := time.Now().In(loc)
+	yesterday := nowLocal.AddDate(0, 0, -1)
+	candidateDate := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, loc)
+	candidateEnd := candidateDate.Add(24 * time.Hour)
 
-	// Check if we already posted for this day.
 	if !force && g.LastLeaderboardPostedFor != nil {
 		posted := g.LastLeaderboardPostedFor.In(loc)
 		if !posted.Before(candidateDate) {
@@ -78,14 +79,32 @@ func (j *PostLeaderboardJob) processGroup(ctx context.Context, g *models.Group, 
 		}
 	}
 
-	// Fetch approved results for the candidate day.
+	// Gate on "24 h after the day's last game start". If the last game on the
+	// candidate day started less than 24 h ago, retry on the next poll instead
+	// of marking the day done early.
+	completedGames, err := j.gameRepo.GetCompletedGamesByGroupAndDay(ctx, g.ChatID, candidateDate, candidateEnd)
+	if err != nil {
+		j.logger.Error("post_leaderboard: list completed games", "group_id", g.ChatID, "err", err)
+		return
+	}
+	if !force && len(completedGames) > 0 {
+		var lastStart time.Time
+		for _, cg := range completedGames {
+			if cg.GameDate.After(lastStart) {
+				lastStart = cg.GameDate
+			}
+		}
+		if time.Now().Before(lastStart.Add(24 * time.Hour)) {
+			return
+		}
+	}
+
 	results, err := j.resultRepo.ListByGroupAndDate(ctx, g.ChatID, candidateDate)
 	if err != nil {
 		j.logger.Error("post_leaderboard: list results", "group_id", g.ChatID, "err", err)
 		return
 	}
 
-	// Filter to approved/auto_approved.
 	var approved []*models.GameResult
 	for _, r := range results {
 		if r.Status == models.GameResultApproved || r.Status == models.GameResultAutoApproved {
@@ -93,16 +112,14 @@ func (j *PostLeaderboardJob) processGroup(ctx context.Context, g *models.Group, 
 		}
 	}
 
-	// Mark posted even if no results to avoid re-checking repeatedly.
-	if err := j.groupRepo.SetLastLeaderboardPostedFor(ctx, g.ChatID, candidateDate); err != nil {
-		j.logger.Warn("post_leaderboard: set last_leaderboard_posted_for", "group_id", g.ChatID, "err", err)
-	}
-
 	if len(approved) == 0 {
+		// Terminal no-op: mark the day done so we don't re-check forever.
+		if err := j.groupRepo.SetLastLeaderboardPostedFor(ctx, g.ChatID, candidateDate); err != nil {
+			j.logger.Warn("post_leaderboard: set last_leaderboard_posted_for", "group_id", g.ChatID, "err", err)
+		}
 		return
 	}
 
-	// Build and post the leaderboard.
 	entries, err := j.ratingSvc.GetLeaderboard(ctx, g.ChatID)
 	if err != nil {
 		j.logger.Error("post_leaderboard: get leaderboard", "group_id", g.ChatID, "err", err)
@@ -112,12 +129,20 @@ func (j *PostLeaderboardJob) processGroup(ctx context.Context, g *models.Group, 
 		return
 	}
 
+	// Plain text — names can contain Markdown control characters and the
+	// message has no markdown formatting that needs interpreting.
 	text := formatLeaderboard(entries, candidateDate, loc)
 	msg := tgbotapi.NewMessage(g.ChatID, text)
-	msg.ParseMode = "Markdown"
 	msg.DisableNotification = true
 	if _, err := j.api.Send(msg); err != nil {
 		j.logger.Warn("post_leaderboard: send message", "group_id", g.ChatID, "err", err)
+		return
+	}
+
+	// Only mark the day done after a successful send so transient failures
+	// (e.g. Telegram rate-limit) retry on the next poll.
+	if err := j.groupRepo.SetLastLeaderboardPostedFor(ctx, g.ChatID, candidateDate); err != nil {
+		j.logger.Warn("post_leaderboard: set last_leaderboard_posted_for", "group_id", g.ChatID, "err", err)
 	}
 }
 

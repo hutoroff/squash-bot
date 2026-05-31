@@ -12,6 +12,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -28,6 +29,7 @@ const autoApproveWindow = 48 * time.Hour
 
 // GameResultService handles submit/approve/reject/cancel of 1-v-1 game results.
 type GameResultService struct {
+	pool              *pgxpool.Pool // nil in unit tests; required for atomic Decide+Apply
 	resultRepo        GameResultRepository
 	gameRepo          GameRepository
 	playerRepo        PlayerRepository
@@ -37,6 +39,7 @@ type GameResultService struct {
 }
 
 func NewGameResultService(
+	pool *pgxpool.Pool,
 	resultRepo GameResultRepository,
 	gameRepo GameRepository,
 	playerRepo PlayerRepository,
@@ -44,6 +47,7 @@ func NewGameResultService(
 	auditSvc *AuditService,
 ) *GameResultService {
 	return &GameResultService{
+		pool:              pool,
 		resultRepo:        resultRepo,
 		gameRepo:          gameRepo,
 		playerRepo:        playerRepo,
@@ -224,7 +228,7 @@ func (s *GameResultService) decide(
 	}
 
 	now := time.Now()
-	if err := s.resultRepo.Decide(ctx, id, newStatus, now); err != nil {
+	if err := s.commitDecision(ctx, res, newStatus, now); err != nil {
 		if errors.Is(err, storage.ErrGameResultNotPending) {
 			return nil, storage.ErrGameResultNotPending
 		}
@@ -237,7 +241,6 @@ func (s *GameResultService) decide(
 	switch newStatus {
 	case models.GameResultApproved:
 		s.auditSvc.RecordGameResultApproved(ctx, id, res.GroupID, actorTgID, actorDisplay)
-		s.applyRating(res)
 	case models.GameResultRejected:
 		s.auditSvc.RecordGameResultRejected(ctx, id, res.GroupID, actorTgID, actorDisplay)
 	case models.GameResultCanceled:
@@ -246,17 +249,30 @@ func (s *GameResultService) decide(
 	return res, nil
 }
 
-// applyRating triggers a background Glicko-2 update (async, non-blocking).
-func (s *GameResultService) applyRating(res *models.GameResult) {
-	if s.ratingSvc == nil {
-		return
+// commitDecision flips the result status and, for approvals, applies the rating
+// update inside the same transaction so a successful HTTP response always
+// implies an updated leaderboard. Falls back to a plain (non-tx) Decide when
+// the rating service or pool is not wired up (unit tests, rating disabled).
+func (s *GameResultService) commitDecision(ctx context.Context, res *models.GameResult, newStatus models.GameResultStatus, now time.Time) error {
+	if newStatus != models.GameResultApproved || s.ratingSvc == nil || s.pool == nil {
+		return s.resultRepo.Decide(ctx, res.ID, newStatus, now)
 	}
-	resCopy := *res
-	go func() {
-		if err := s.ratingSvc.Apply(context.Background(), &resCopy); err != nil {
-			// Best-effort — log only.
-		}
-	}()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin decision tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := s.resultRepo.DecideInTx(ctx, tx, res.ID, newStatus, now); err != nil {
+		return err
+	}
+	if err := s.ratingSvc.ApplyInTx(ctx, tx, res); err != nil {
+		return fmt.Errorf("apply rating: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit decision tx: %w", err)
+	}
+	return nil
 }
 
 // validateScore checks that score is empty, or matches \d+:\d+, and if winnerID is

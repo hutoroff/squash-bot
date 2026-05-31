@@ -76,6 +76,21 @@ func (r *GameResultRepo) Decide(ctx context.Context, id int64, status models.Gam
 	return nil
 }
 
+func (r *GameResultRepo) DecideInTx(ctx context.Context, tx pgx.Tx, id int64, status models.GameResultStatus, decidedAt time.Time) error {
+	const q = `
+		UPDATE game_results
+		SET status = $1, decided_at = $2
+		WHERE id = $3 AND status = 'pending'`
+	tag, err := tx.Exec(ctx, q, status, decidedAt, id)
+	if err != nil {
+		return fmt.Errorf("game_result decide in tx: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrGameResultNotPending
+	}
+	return nil
+}
+
 func (r *GameResultRepo) ListPendingOlderThan(ctx context.Context, cutoff time.Time) ([]*models.GameResult, error) {
 	const q = `
 		SELECT id, game_id, group_id, author_id, opponent_id, winner_id, score,

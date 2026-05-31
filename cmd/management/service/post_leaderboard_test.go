@@ -2,20 +2,32 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
+
+var errSendBoom = errors.New("send boom")
 
 // ── mock TelegramAPI for leaderboard tests ───────────────────────────────────
 
 type mockTgAPIForLB struct {
 	sentCount int
+	lastMsg   tgbotapi.MessageConfig
+	sendErr   error
 }
 
 func (m *mockTgAPIForLB) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	if msg, ok := c.(tgbotapi.MessageConfig); ok {
+		m.lastMsg = msg
+	}
+	if m.sendErr != nil {
+		return tgbotapi.Message{}, m.sendErr
+	}
 	m.sentCount++
 	return tgbotapi.Message{}, nil
 }
@@ -98,6 +110,10 @@ func (r *stubResultRepoForLB) Decide(_ context.Context, _ int64, _ models.GameRe
 	return nil
 }
 
+func (r *stubResultRepoForLB) DecideInTx(_ context.Context, _ pgx.Tx, _ int64, _ models.GameResultStatus, _ time.Time) error {
+	return nil
+}
+
 func (r *stubResultRepoForLB) ListPendingOlderThan(_ context.Context, _ time.Time) ([]*models.GameResult, error) {
 	return nil, nil
 }
@@ -128,11 +144,19 @@ func (r *stubRatingRepoForLB) ListByGroup(_ context.Context, _ int64) ([]*models
 	return r.ratings, nil
 }
 
+func (r *stubRatingRepoForLB) ListGroupsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
+
 // ── stub RatingChangeRepository for leaderboard tests ────────────────────────
 
 type stubChangeRepoForLB struct{}
 
 func (r *stubChangeRepoForLB) Insert(_ context.Context, _ *models.RatingChange) error {
+	return nil
+}
+
+func (r *stubChangeRepoForLB) InsertInTx(_ context.Context, _ pgx.Tx, _ *models.RatingChange) error {
 	return nil
 }
 
@@ -142,7 +166,9 @@ func (r *stubChangeRepoForLB) ListByGroupAndDateRange(_ context.Context, _ int64
 
 // ── stub GameRepository for leaderboard tests ────────────────────────────────
 
-type stubGameRepoForLB struct{}
+type stubGameRepoForLB struct {
+	completedGames []*models.Game
+}
 
 func (r *stubGameRepoForLB) Create(_ context.Context, _ *models.Game) (*models.Game, error) {
 	return nil, nil
@@ -171,6 +197,9 @@ func (r *stubGameRepoForLB) GetUpcomingUnnotifiedGames(_ context.Context) ([]*mo
 }
 func (r *stubGameRepoForLB) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return nil, nil
+}
+func (r *stubGameRepoForLB) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return r.completedGames, nil
 }
 func (r *stubGameRepoForLB) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForLB) MarkCompleted(_ context.Context, _ int64) error         { return nil }
@@ -285,5 +314,133 @@ func TestPostLeaderboard_PostsWhenApprovedResultsExist(t *testing.T) {
 	}
 	if groupRepo.setLastLeaderboardCalls != 1 {
 		t.Errorf("expected SetLastLeaderboardPostedFor called once, got %d", groupRepo.setLastLeaderboardCalls)
+	}
+	// Names can contain Markdown control characters, and the message has no
+	// formatting that needs interpreting — the scheduled post must go out as
+	// plain text.
+	if api.lastMsg.ParseMode != "" {
+		t.Errorf("ParseMode: got %q, want empty", api.lastMsg.ParseMode)
+	}
+}
+
+// 24h-after-last-start gate: when the last completed game on the candidate
+// day started less than 24 h ago, the post must wait for a later poll.
+func TestPostLeaderboard_SkipsWhenLastGameLessThan24hOld(t *testing.T) {
+	api := &mockTgAPIForLB{}
+	firstName := "Alice"
+	groupRepo := &stubGroupRepoForLB{
+		group: models.Group{
+			ChatID:                   400,
+			Timezone:                 "UTC",
+			LastLeaderboardPostedFor: nil,
+		},
+	}
+	resultRepo := &stubResultRepoForLB{
+		results: []*models.GameResult{
+			{ID: 10, GroupID: 400, Status: models.GameResultApproved},
+		},
+	}
+	ratingRepo := &stubRatingRepoForLB{
+		ratings: []*models.PlayerRating{
+			{GroupID: 400, PlayerID: 1, Rating: 1600, GamesPlayed: 5,
+				Player: &models.Player{ID: 1, FirstName: &firstName}},
+		},
+	}
+	// Last game started 23h ago — gate must defer.
+	gameRepo := &stubGameRepoForLB{
+		completedGames: []*models.Game{
+			{ID: 1, ChatID: 400, GameDate: time.Now().Add(-23 * time.Hour)},
+		},
+	}
+
+	auditSvc, _ := newCaptureAuditSvc()
+	ratingSvc := NewRatingService(nil, ratingRepo, &stubChangeRepoForLB{}, groupRepo, auditSvc, noopLogger())
+
+	job := NewPostLeaderboardJob(api, groupRepo, gameRepo, resultRepo, ratingSvc, time.UTC, noopLogger())
+	job.run(false)
+
+	if api.sentCount != 0 {
+		t.Errorf("expected no message sent while gate is open, got %d", api.sentCount)
+	}
+	if groupRepo.setLastLeaderboardCalls != 0 {
+		t.Errorf("expected no marker update while gate is open, got %d", groupRepo.setLastLeaderboardCalls)
+	}
+}
+
+func TestPostLeaderboard_PostsWhenLastGameOlderThan24h(t *testing.T) {
+	api := &mockTgAPIForLB{}
+	firstName := "Alice"
+	groupRepo := &stubGroupRepoForLB{
+		group: models.Group{
+			ChatID:                   500,
+			Timezone:                 "UTC",
+			LastLeaderboardPostedFor: nil,
+		},
+	}
+	resultRepo := &stubResultRepoForLB{
+		results: []*models.GameResult{
+			{ID: 10, GroupID: 500, Status: models.GameResultApproved},
+		},
+	}
+	ratingRepo := &stubRatingRepoForLB{
+		ratings: []*models.PlayerRating{
+			{GroupID: 500, PlayerID: 1, Rating: 1600, GamesPlayed: 5,
+				Player: &models.Player{ID: 1, FirstName: &firstName}},
+		},
+	}
+	gameRepo := &stubGameRepoForLB{
+		completedGames: []*models.Game{
+			{ID: 1, ChatID: 500, GameDate: time.Now().Add(-25 * time.Hour)},
+		},
+	}
+
+	auditSvc, _ := newCaptureAuditSvc()
+	ratingSvc := NewRatingService(nil, ratingRepo, &stubChangeRepoForLB{}, groupRepo, auditSvc, noopLogger())
+
+	job := NewPostLeaderboardJob(api, groupRepo, gameRepo, resultRepo, ratingSvc, time.UTC, noopLogger())
+	job.run(false)
+
+	if api.sentCount != 1 {
+		t.Errorf("expected 1 message sent once gate is closed, got %d", api.sentCount)
+	}
+	if groupRepo.setLastLeaderboardCalls != 1 {
+		t.Errorf("expected marker set once after successful send, got %d", groupRepo.setLastLeaderboardCalls)
+	}
+}
+
+// If Send fails the marker must NOT advance — the next poll has to retry.
+func TestPostLeaderboard_DoesNotMarkOnSendFailure(t *testing.T) {
+	api := &mockTgAPIForLB{sendErr: errSendBoom}
+	firstName := "Alice"
+	groupRepo := &stubGroupRepoForLB{
+		group: models.Group{
+			ChatID:                   600,
+			Timezone:                 "UTC",
+			LastLeaderboardPostedFor: nil,
+		},
+	}
+	resultRepo := &stubResultRepoForLB{
+		results: []*models.GameResult{
+			{ID: 10, GroupID: 600, Status: models.GameResultApproved},
+		},
+	}
+	ratingRepo := &stubRatingRepoForLB{
+		ratings: []*models.PlayerRating{
+			{GroupID: 600, PlayerID: 1, Rating: 1600, GamesPlayed: 5,
+				Player: &models.Player{ID: 1, FirstName: &firstName}},
+		},
+	}
+
+	auditSvc, _ := newCaptureAuditSvc()
+	ratingSvc := NewRatingService(nil, ratingRepo, &stubChangeRepoForLB{}, groupRepo, auditSvc, noopLogger())
+
+	job := NewPostLeaderboardJob(api, groupRepo, &stubGameRepoForLB{}, resultRepo, ratingSvc, time.UTC, noopLogger())
+	job.run(false)
+
+	if api.sentCount != 0 {
+		t.Errorf("expected sentCount=0 because Send errored, got %d", api.sentCount)
+	}
+	if groupRepo.setLastLeaderboardCalls != 0 {
+		t.Errorf("expected no marker update after send failure, got %d", groupRepo.setLastLeaderboardCalls)
 	}
 }

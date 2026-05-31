@@ -6,6 +6,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // TelegramAPI is the subset of the Telegram Bot API used by service-layer types.
@@ -33,6 +34,10 @@ type GameRepository interface {
 	GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error)
 	GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Game, error)
 	GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
+	// GetCompletedGamesByGroupAndDay returns completed games for a group whose
+	// game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
+	// on "24 h after the day's last game start".
+	GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
 	MarkNotifiedDayBefore(ctx context.Context, gameID int64) error
 	MarkCompleted(ctx context.Context, gameID int64) error
 	// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
@@ -158,6 +163,9 @@ type GameResultRepository interface {
 	// Decide transitions a pending result to approved/auto_approved/rejected/canceled.
 	// Returns ErrGameResultNotPending if the row is not currently pending.
 	Decide(ctx context.Context, id int64, status models.GameResultStatus, decidedAt time.Time) error
+	// DecideInTx is the same as Decide but runs inside the caller-provided transaction,
+	// so the status flip can be made atomic with downstream rating updates.
+	DecideInTx(ctx context.Context, tx pgx.Tx, id int64, status models.GameResultStatus, decidedAt time.Time) error
 	ListPendingOlderThan(ctx context.Context, cutoff time.Time) ([]*models.GameResult, error)
 	ListByGroupAndDate(ctx context.Context, groupID int64, gameDate time.Time) ([]*models.GameResult, error)
 	ListByGameID(ctx context.Context, gameID int64) ([]*models.GameResult, error)
@@ -168,11 +176,18 @@ type PlayerRatingRepository interface {
 	GetOrInit(ctx context.Context, groupID, playerID int64) (*models.PlayerRating, error)
 	Upsert(ctx context.Context, r *models.PlayerRating) error
 	ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error)
+	// ListGroupsForPlayer returns the group IDs where the player has a rating
+	// with at least one game played. Used to populate the per-user leaderboard
+	// group picker so it reflects actual rated participation.
+	ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
 }
 
 // RatingChangeRepository is the data access interface for rating change history.
 type RatingChangeRepository interface {
 	Insert(ctx context.Context, change *models.RatingChange) error
+	// InsertInTx writes a rating change inside the caller-provided transaction
+	// so it lands atomically with the corresponding player_ratings update.
+	InsertInTx(ctx context.Context, tx pgx.Tx, change *models.RatingChange) error
 	ListByGroupAndDateRange(ctx context.Context, groupID int64, from, to time.Time) ([]*models.RatingChange, error)
 }
 

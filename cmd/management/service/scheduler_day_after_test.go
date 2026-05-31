@@ -141,6 +141,9 @@ func (r *stubGameRepoForDayAfter) UpdateMessageID(_ context.Context, _, _ int64)
 func (r *stubGameRepoForDayAfter) GetUncompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForDayAfter) GetCompletedGamesByGroupAndDay(_ context.Context, _ int64, _, _ time.Time) ([]*models.Game, error) {
+	return nil, nil
+}
 func (r *stubGameRepoForDayAfter) GetUpcomingGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }

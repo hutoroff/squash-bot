@@ -7,6 +7,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── mock GameResultRepository ────────────────────────────────────────────────
@@ -36,6 +37,11 @@ func (m *mockGameResultRepo) SetApprovalMessage(_ context.Context, _, _ int64, _
 }
 
 func (m *mockGameResultRepo) Decide(_ context.Context, id int64, status models.GameResultStatus, _ time.Time) error {
+	m.decideCalls = append(m.decideCalls, decideCall{ID: id, Status: status})
+	return m.decideErr
+}
+
+func (m *mockGameResultRepo) DecideInTx(_ context.Context, _ pgx.Tx, id int64, status models.GameResultStatus, _ time.Time) error {
 	m.decideCalls = append(m.decideCalls, decideCall{ID: id, Status: status})
 	return m.decideErr
 }
@@ -99,7 +105,7 @@ func TestAutoApproveJob_ApprovesPendingOlderThan48h(t *testing.T) {
 		},
 	}
 
-	job := NewAutoApproveResultsJob(api, resultRepo, playerRepo, auditSvc, noopLogger())
+	job := NewAutoApproveResultsJob(api, nil, resultRepo, playerRepo, auditSvc, noopLogger())
 	job.run(false)
 
 	// Verify Decide was called with auto_approved.
@@ -130,7 +136,7 @@ func TestAutoApproveJob_SkipsRecentPending(t *testing.T) {
 	auditSvc, _ := newCaptureAuditSvc()
 	api := &mockTelegramAPI{}
 
-	job := NewAutoApproveResultsJob(api, resultRepo, &mockPlayerRepo{}, auditSvc, noopLogger())
+	job := NewAutoApproveResultsJob(api, nil, resultRepo, &mockPlayerRepo{}, auditSvc, noopLogger())
 	job.run(false)
 
 	if len(resultRepo.decideCalls) != 0 {
@@ -148,7 +154,7 @@ func TestAutoApproveJob_NoPendingResults(t *testing.T) {
 	auditSvc, auditRepo := newCaptureAuditSvc()
 	api := &mockTelegramAPI{}
 
-	job := NewAutoApproveResultsJob(api, resultRepo, &mockPlayerRepo{}, auditSvc, noopLogger())
+	job := NewAutoApproveResultsJob(api, nil, resultRepo, &mockPlayerRepo{}, auditSvc, noopLogger())
 	job.run(false)
 
 	if len(resultRepo.decideCalls) != 0 {
@@ -192,7 +198,7 @@ func TestAutoApproveJob_EditsDMCard(t *testing.T) {
 		},
 	}
 
-	job := NewAutoApproveResultsJob(api, resultRepo, playerRepo, auditSvc, noopLogger())
+	job := NewAutoApproveResultsJob(api, nil, resultRepo, playerRepo, auditSvc, noopLogger())
 	job.run(false)
 
 	// Verify Request was called to edit the opponent DM card.

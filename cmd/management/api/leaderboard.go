@@ -1,9 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // getGroupLeaderboard handles GET /api/v1/groups/{chatID}/leaderboard
@@ -31,34 +34,44 @@ func (h *Handler) getGroupLeaderboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // getPlayerGroupsWithResults handles GET /api/v1/players/{tgID}/groups-with-results
-// Returns groups the player belongs to that have at least one approved game result.
+// Returns the groups in which the player has a rating with at least one game
+// played, i.e. the groups where they actually appear on the leaderboard.
 func (h *Handler) getPlayerGroupsWithResults(w http.ResponseWriter, r *http.Request) {
 	tgID, err := parseID(r.PathValue("tgID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid telegram_id")
 		return
 	}
+	if h.ratingService == nil {
+		writeJSON(w, http.StatusOK, []*models.Group{})
+		return
+	}
 
-	// Get all groups, then filter to ones where this player has approved results.
-	groups, err := h.groupRepo.GetAll(r.Context())
+	player, err := h.playerRepo.GetByTelegramID(r.Context(), tgID)
 	if err != nil {
-		h.logger.Error("getPlayerGroupsWithResults: get groups", "err", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusOK, []*models.Group{})
+			return
+		}
+		h.logger.Error("getPlayerGroupsWithResults: get player", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Filter to groups where the player participated.
-	// A quick check: get recent completed games for each group.
-	var result []any
-	for _, g := range groups {
-		games, err := h.gameService.GetRecentCompletedGamesForPlayer(r.Context(), tgID, g.ChatID, 90)
-		if err != nil || len(games) == 0 {
+	groupIDs, err := h.ratingService.ListGroupsForPlayer(r.Context(), player.ID)
+	if err != nil {
+		h.logger.Error("getPlayerGroupsWithResults: list groups", "err", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := make([]*models.Group, 0, len(groupIDs))
+	for _, gid := range groupIDs {
+		g, err := h.groupRepo.GetByID(r.Context(), gid)
+		if err != nil || g == nil {
 			continue
 		}
 		result = append(result, g)
-	}
-	if result == nil {
-		result = []any{}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

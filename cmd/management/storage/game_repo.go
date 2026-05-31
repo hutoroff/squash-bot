@@ -327,6 +327,37 @@ func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]mod
 	return games, rows.Err()
 }
 
+// GetCompletedGamesByGroupAndDay returns completed games for a group whose
+// game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
+// on "24 h after the day's last game start".
+func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error) {
+	const q = `
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		       notified_day_before, completed, created_at
+		FROM games
+		WHERE chat_id = $1
+		  AND game_date >= $2 AND game_date < $3
+		  AND completed = true`
+
+	slog.Debug("GameRepo.GetCompletedGamesByGroupAndDay", "chat_id", chatID, "from", from, "to", to)
+
+	rows, err := r.pool.Query(ctx, q, chatID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query completed group day games: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
 // GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
 // in a specific group within the last `days` days. Used by the /result wizard game picker.
 func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {

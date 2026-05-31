@@ -15,22 +15,22 @@ import (
 
 // LeaderboardEntry is a single row in the leaderboard response.
 type LeaderboardEntry struct {
-	Rank        int             `json:"rank"`
-	Player      *models.Player  `json:"player"`
-	Rating      float64         `json:"rating"`
-	RD          float64         `json:"rd"`
-	GamesPlayed int             `json:"games_played"`
-	DeltaToday  float64         `json:"delta_today"` // 0 if no change today
+	Rank        int            `json:"rank"`
+	Player      *models.Player `json:"player"`
+	Rating      float64        `json:"rating"`
+	RD          float64        `json:"rd"`
+	GamesPlayed int            `json:"games_played"`
+	DeltaToday  float64        `json:"delta_today"` // 0 if no change today
 }
 
 // RatingService applies Glicko-2 updates and builds leaderboards.
 type RatingService struct {
-	pool           *pgxpool.Pool
-	ratingRepo     PlayerRatingRepository
-	changeRepo     RatingChangeRepository
-	groupRepo      GroupRepository
-	auditSvc       *AuditService
-	logger         *slog.Logger
+	pool       *pgxpool.Pool
+	ratingRepo PlayerRatingRepository
+	changeRepo RatingChangeRepository
+	groupRepo  GroupRepository
+	auditSvc   *AuditService
+	logger     *slog.Logger
 }
 
 func NewRatingService(
@@ -51,8 +51,9 @@ func NewRatingService(
 	}
 }
 
-// Apply updates Glicko-2 ratings for both players in a game result.
-// Runs inside a transaction with SELECT FOR UPDATE to prevent concurrent updates.
+// Apply updates Glicko-2 ratings for both players in a game result. Opens its
+// own transaction; use ApplyInTx when the caller already holds one (e.g. when
+// the rating update must commit atomically with a game_results status flip).
 func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -60,6 +61,20 @@ func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) er
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	if err := s.ApplyInTx(ctx, tx, result); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rating tx: %w", err)
+	}
+	return nil
+}
+
+// ApplyInTx performs the Glicko-2 update inside the caller-provided transaction.
+// The caller is responsible for Begin/Commit/Rollback. Both player_ratings
+// upserts and both rating_changes inserts land in the same transaction so the
+// current rating and its delta-today history can never diverge.
+func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models.GameResult) error {
 	// Load both ratings inside the transaction (SELECT FOR UPDATE).
 	// Order by player_id ASC to prevent deadlocks.
 	playerIDs := []int64{result.AuthorID, result.OpponentID}
@@ -109,7 +124,6 @@ func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) er
 
 	now := time.Now()
 
-	// Build updated models and rating changes.
 	authorUpdated := &models.PlayerRating{
 		GroupID: result.GroupID, PlayerID: result.AuthorID,
 		Rating: authorNew.R, RD: authorNew.RD, Volatility: authorNew.Sigma,
@@ -121,7 +135,6 @@ func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) er
 		GamesPlayed: opponentRating.GamesPlayed + 1, UpdatedAt: now,
 	}
 
-	// Upsert inside transaction.
 	if err := s.upsertInTx(ctx, tx, authorUpdated); err != nil {
 		return fmt.Errorf("upsert author rating: %w", err)
 	}
@@ -129,29 +142,36 @@ func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) er
 		return fmt.Errorf("upsert opponent rating: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit rating tx: %w", err)
-	}
-
-	// Insert change records (outside tx — best effort, don't roll back on error).
-	_ = s.changeRepo.Insert(ctx, &models.RatingChange{
+	if err := s.changeRepo.InsertInTx(ctx, tx, &models.RatingChange{
 		GameResultID: result.ID, GroupID: result.GroupID, PlayerID: result.AuthorID,
 		OldRating: authorRating.Rating, NewRating: authorNew.R,
 		OldRD: authorRating.RD, NewRD: authorNew.RD,
 		Delta: authorNew.R - authorRating.Rating, AppliedAt: now,
-	})
-	_ = s.changeRepo.Insert(ctx, &models.RatingChange{
+	}); err != nil {
+		return fmt.Errorf("insert author rating change: %w", err)
+	}
+	if err := s.changeRepo.InsertInTx(ctx, tx, &models.RatingChange{
 		GameResultID: result.ID, GroupID: result.GroupID, PlayerID: result.OpponentID,
 		OldRating: opponentRating.Rating, NewRating: opponentNew.R,
 		OldRD: opponentRating.RD, NewRD: opponentNew.RD,
 		Delta: opponentNew.R - opponentRating.Rating, AppliedAt: now,
-	})
+	}); err != nil {
+		return fmt.Errorf("insert opponent rating change: %w", err)
+	}
 
+	// Audit record is best-effort and stays outside the rating commit; it logs
+	// internally on failure and must not block the rating update.
 	s.auditSvc.RecordRatingUpdated(ctx, result.ID, result.GroupID,
 		result.AuthorID, authorNew.R-authorRating.Rating,
 		result.OpponentID, opponentNew.R-opponentRating.Rating)
 
 	return nil
+}
+
+// ListGroupsForPlayer returns the group IDs where the player has a rating with
+// at least one game played. Thin pass-through used by the API layer.
+func (s *RatingService) ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
+	return s.ratingRepo.ListGroupsForPlayer(ctx, playerID)
 }
 
 // GetLeaderboard returns the rated players for a group ordered by rating DESC,

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── stub repos for rating tests ─────────────────────────────────────────────
@@ -24,11 +25,19 @@ func (r *stubPlayerRatingRepo) ListByGroup(_ context.Context, _ int64) ([]*model
 	return r.ratings, nil
 }
 
+func (r *stubPlayerRatingRepo) ListGroupsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
+
 type stubRatingChangeRepo struct {
 	changes []*models.RatingChange
 }
 
 func (r *stubRatingChangeRepo) Insert(_ context.Context, _ *models.RatingChange) error { return nil }
+
+func (r *stubRatingChangeRepo) InsertInTx(_ context.Context, _ pgx.Tx, _ *models.RatingChange) error {
+	return nil
+}
 
 func (r *stubRatingChangeRepo) ListByGroupAndDateRange(_ context.Context, _ int64, _, _ time.Time) ([]*models.RatingChange, error) {
 	return r.changes, nil
