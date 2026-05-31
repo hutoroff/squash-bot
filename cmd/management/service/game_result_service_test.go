@@ -268,6 +268,12 @@ func TestSubmit_ValidSubmission(t *testing.T) {
 	if res.OpponentID != 2 {
 		t.Errorf("OpponentID: got %d, want 2", res.OpponentID)
 	}
+	if res.Author == nil || res.Author.TelegramID != 100 {
+		t.Errorf("Author: got %v, want TelegramID=100", res.Author)
+	}
+	if res.Opponent == nil || res.Opponent.TelegramID != 200 {
+		t.Errorf("Opponent: got %v, want TelegramID=200", res.Opponent)
+	}
 	if len(rr.created) != 1 {
 		t.Fatalf("expected 1 Create call, got %d", len(rr.created))
 	}
@@ -369,6 +375,12 @@ func TestApprove_ByOpponent_Success(t *testing.T) {
 	if len(rr.decideCalls) != 1 || rr.decideCalls[0] != models.GameResultApproved {
 		t.Errorf("Decide calls: %v", rr.decideCalls)
 	}
+	if res.Author == nil || res.Author.TelegramID != 100 {
+		t.Errorf("Author after Approve: got %v, want TelegramID=100", res.Author)
+	}
+	if res.Opponent == nil || res.Opponent.TelegramID != 200 {
+		t.Errorf("Opponent after Approve: got %v, want TelegramID=200", res.Opponent)
+	}
 }
 
 func TestReject_ByOpponent_Success(t *testing.T) {
@@ -383,6 +395,12 @@ func TestReject_ByOpponent_Success(t *testing.T) {
 	if res.Status != models.GameResultRejected {
 		t.Errorf("Status: got %q, want %q", res.Status, models.GameResultRejected)
 	}
+	if res.Author == nil || res.Author.TelegramID != 100 {
+		t.Errorf("Author after Reject: got %v, want TelegramID=100", res.Author)
+	}
+	if res.Opponent == nil || res.Opponent.TelegramID != 200 {
+		t.Errorf("Opponent after Reject: got %v, want TelegramID=200", res.Opponent)
+	}
 }
 
 func TestCancelByAuthor_Success(t *testing.T) {
@@ -396,6 +414,29 @@ func TestCancelByAuthor_Success(t *testing.T) {
 	}
 	if res.Status != models.GameResultCanceled {
 		t.Errorf("Status: got %q, want %q", res.Status, models.GameResultCanceled)
+	}
+	if res.Author == nil || res.Author.TelegramID != 100 {
+		t.Errorf("Author after Cancel: got %v, want TelegramID=100", res.Author)
+	}
+	if res.Opponent == nil || res.Opponent.TelegramID != 200 {
+		t.Errorf("Opponent after Cancel: got %v, want TelegramID=200", res.Opponent)
+	}
+}
+
+func TestGet_EnrichesAuthorOpponent(t *testing.T) {
+	rr, gr, pr, pp := defaultFixture()
+	rr.getByIDResult = pendingResult()
+	svc := newResultSvc(rr, gr, pr, pp)
+
+	res, err := svc.Get(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Author == nil || res.Author.TelegramID != 100 {
+		t.Errorf("Author from Get: got %v, want TelegramID=100", res.Author)
+	}
+	if res.Opponent == nil || res.Opponent.TelegramID != 200 {
+		t.Errorf("Opponent from Get: got %v, want TelegramID=200", res.Opponent)
 	}
 }
 

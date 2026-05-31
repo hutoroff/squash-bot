@@ -546,9 +546,9 @@ var ErrAutoBookingNotAvailable = errors.New("auto-booking not available")
 
 // BookGameCourtsResult is the result of booking courts for a game on demand.
 type BookGameCourtsResult struct {
-	Requested    int                   `json:"requested"`
-	BookedCount  int                   `json:"booked_count"`
-	BookedLabels []string              `json:"booked_labels"`
+	Requested    int                    `json:"requested"`
+	BookedCount  int                    `json:"booked_count"`
+	BookedLabels []string               `json:"booked_labels"`
 	Failures     []BookingCourtsFailure `json:"failures"`
 }
 
@@ -751,19 +751,21 @@ func (c *Client) GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*
 
 // GameResultDTO is the client-side representation of a game result.
 type GameResultDTO struct {
-	ID                int64   `json:"id"`
-	GameID            int64   `json:"game_id"`
-	GroupID           int64   `json:"group_id"`
-	AuthorID          int64   `json:"author_id"`
-	OpponentID        int64   `json:"opponent_id"`
-	WinnerID          *int64  `json:"winner_id,omitempty"`
-	Score             string  `json:"score"`
-	Status            string  `json:"status"`
-	SubmittedAt       string  `json:"submitted_at"`
-	DecidedAt         *string `json:"decided_at,omitempty"`
-	ApprovalChatID    *int64  `json:"approval_chat_id,omitempty"`
-	ApprovalMessageID *int    `json:"approval_message_id,omitempty"`
-	AutoApproveAt     *string `json:"auto_approve_at,omitempty"`
+	ID                int64          `json:"id"`
+	GameID            int64          `json:"game_id"`
+	GroupID           int64          `json:"group_id"`
+	AuthorID          int64          `json:"author_id"`
+	OpponentID        int64          `json:"opponent_id"`
+	WinnerID          *int64         `json:"winner_id,omitempty"`
+	Score             string         `json:"score"`
+	Status            string         `json:"status"`
+	SubmittedAt       string         `json:"submitted_at"`
+	DecidedAt         *string        `json:"decided_at,omitempty"`
+	ApprovalChatID    *int64         `json:"approval_chat_id,omitempty"`
+	ApprovalMessageID *int           `json:"approval_message_id,omitempty"`
+	AutoApproveAt     *string        `json:"auto_approve_at,omitempty"`
+	Author            *models.Player `json:"author,omitempty"`
+	Opponent          *models.Player `json:"opponent,omitempty"`
 }
 
 // ErrGameResultNotPending is returned when trying to act on a non-pending result.

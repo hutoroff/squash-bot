@@ -27,4 +27,8 @@ type GameResult struct {
 	ApprovalMessageID *int             `json:"approval_message_id,omitempty"`
 	// AutoApproveAt is not persisted; computed as SubmittedAt + 48h and returned in POST response.
 	AutoApproveAt *time.Time `json:"auto_approve_at,omitempty"`
+	// Author and Opponent are not persisted; populated by the service layer for HTTP responses
+	// so clients can DM either player without a separate lookup.
+	Author   *Player `json:"author,omitempty"`
+	Opponent *Player `json:"opponent,omitempty"`
 }

@@ -33,12 +33,12 @@ type resultWizard struct {
 	step        resultWizardStep
 	groupID     int64
 	gameID      int64
-	gameLabel   string                // cached for preview
-	opponent    *models.Player         // cached for preview
-	winnerID    *int64                 // nil = draw
-	winnerLabel string                // "me" | "@user" for display
-	score       string                // "" if skipped
-	candGames   []models.PlayerGame   // memoized recent-games list
+	gameLabel   string                   // cached for preview
+	opponent    *models.Player           // cached for preview
+	winnerID    *int64                   // nil = draw
+	winnerLabel string                   // "me" | "@user" for display
+	score       string                   // "" if skipped
+	candGames   []models.PlayerGame      // memoized recent-games list
 	playerCache map[int64]*models.Player // playerID → Player (populated at opponent-pick step)
 }
 
@@ -469,7 +469,7 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 	oppDisplay := playerModelDisplayName(wiz.opponent)
 
 	// Try to DM the opponent.
-	approvalText := b.buildApprovalCardText(ctx, result, wiz, lz)
+	approvalText := b.buildApprovalCardText(ctx, result, wiz, actorDisplayFrom(cb.From), lz)
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnResultApprove), fmt.Sprintf("res_approve:%d", result.ID)),
@@ -482,18 +482,17 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 	oppMsg.ReplyMarkup = kb
 	sentMsg, dmErr := b.api.Send(oppMsg)
 
-	if dmErr != nil && isDMBlockedError(dmErr) {
-		// Opponent is unreachable — cancel the result.
+	if dmErr != nil {
+		// Any failure to deliver the approval DM cancels the result so it cannot silently auto-approve.
+		slog.Warn("handleResultSubmit: send approval DM", "err", dmErr)
 		_, _ = b.client.CancelGameResult(ctx, result.ID, cb.From.ID, actorDisplayFrom(cb.From))
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
 			lz.Tf(i18n.MsgResultDMUnreachable, oppDisplay), nil)
 		return
 	}
 
-	if dmErr == nil {
-		// Store the opponent DM info so the auto-approve job can edit it.
-		_ = b.client.SetGameResultApprovalMessage(ctx, result.ID, wiz.opponent.TelegramID, sentMsg.MessageID)
-	}
+	// Store the opponent DM info so the auto-approve job can edit it.
+	_ = b.client.SetGameResultApprovalMessage(ctx, result.ID, wiz.opponent.TelegramID, sentMsg.MessageID)
 
 	// Update the wizard message to show "submitted, waiting".
 	withdrawKB := tgbotapi.NewInlineKeyboardMarkup(
@@ -505,14 +504,15 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 		lz.Tf(i18n.MsgResultSubmitted, oppDisplay), &withdrawKB)
 }
 
-func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResultDTO, wiz *resultWizard, lz *i18n.Localizer) string {
+func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResultDTO, wiz *resultWizard, authorDisplay string, lz *i18n.Localizer) string {
 	var outcomeLabel string
 	if result.WinnerID == nil {
 		outcomeLabel = lz.T(i18n.MsgResultWinnerDraw)
 	} else if *result.WinnerID == wiz.opponent.ID {
 		outcomeLabel = lz.T(i18n.MsgResultWinnerMe) // from opponent's perspective
 	} else {
-		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, playerModelDisplayName(wiz.opponent))
+		// Author won — show the author's name from the opponent's perspective.
+		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, authorDisplay)
 	}
 
 	scoreDisplay := result.Score
@@ -528,7 +528,6 @@ func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResu
 		}
 	}
 
-	authorDisplay := "them" // fallback; we use actorDisplay but don't have it here
 	baseText := lz.Tf(i18n.MsgResultApprovalRequest,
 		authorDisplay, wiz.gameLabel, outcomeLabel, scoreDisplay)
 	if autoApproveStr != "" {
@@ -565,8 +564,13 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 		"✅ Approved on "+time.Now().Format("02 Jan 15:04"), nil)
 
 	// DM the author.
-	authorDisplay := actorDisplayFrom(cb.From)
-	_ = b.dmByPlayerID(ctx, result, lz.Tf(i18n.MsgResultApproved, authorDisplay), true)
+	deciderDisplay := actorDisplayFrom(cb.From)
+	if result.Author != nil && result.Author.TelegramID != 0 {
+		m := tgbotapi.NewMessage(result.Author.TelegramID, lz.Tf(i18n.MsgResultApproved, deciderDisplay))
+		if _, err := b.api.Send(m); err != nil {
+			slog.Warn("handleResultApprove: dm author", "err", err)
+		}
+	}
 }
 
 // handleResultReject handles the Reject callback from the opponent DM.
@@ -594,13 +598,19 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 		"❌ Rejected on "+time.Now().Format("02 Jan 15:04"), nil)
 
 	// DM the author with a resubmit button.
-	authorDisplay := actorDisplayFrom(cb.From)
-	resubmitKB := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnResultResubmit), fmt.Sprintf("res_resubmit:%d", result.ID)),
-		),
-	)
-	_ = b.dmByPlayerIDWithKB(ctx, result, lz.Tf(i18n.MsgResultRejected, authorDisplay), resubmitKB, true)
+	deciderDisplay := actorDisplayFrom(cb.From)
+	if result.Author != nil && result.Author.TelegramID != 0 {
+		resubmitKB := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnResultResubmit), fmt.Sprintf("res_resubmit:%d", result.ID)),
+			),
+		)
+		m := tgbotapi.NewMessage(result.Author.TelegramID, lz.Tf(i18n.MsgResultRejected, deciderDisplay))
+		m.ReplyMarkup = resubmitKB
+		if _, err := b.api.Send(m); err != nil {
+			slog.Warn("handleResultReject: dm author", "err", err)
+		}
+	}
 }
 
 // handleResultWithdraw handles the Withdraw button the author presses to cancel a pending result.
@@ -651,14 +661,24 @@ func (b *Bot) handleResultResubmit(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 
-	// Use a stub opponent with the stored ID — full player data not available without a DB-ID endpoint.
-	// Display name will be minimal but the wizard can still proceed.
-	opp := &models.Player{ID: result.OpponentID}
+	if result.Opponent == nil || result.Opponent.TelegramID == 0 {
+		slog.Error("handleResultResubmit: opponent player missing in result", "id", id)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	opp := result.Opponent
+
+	// Best-effort: fetch the game to build a human-readable label.
+	gameLabel := ""
+	if game, err := b.client.GetGameByID(ctx, result.GameID); err == nil {
+		gameLabel = game.GameDate.Format("Mon 02 Jan")
+	}
 
 	wiz := &resultWizard{
 		step:      resultStepPreview,
 		groupID:   result.GroupID,
 		gameID:    result.GameID,
+		gameLabel: gameLabel,
 		opponent:  opp,
 		score:     result.Score,
 		winnerID:  result.WinnerID,
@@ -693,17 +713,6 @@ func (b *Bot) resolvePlayer(ctx context.Context, tgID int64) (*models.Player, er
 	return p, nil
 }
 
-// dmByPlayerID sends a DM to the author of the result (best-effort).
-func (b *Bot) dmByPlayerID(ctx context.Context, result *client.GameResultDTO, text string, isAuthor bool) error {
-	// For now we can't look up TG IDs without a dedicated endpoint.
-	// This is a best-effort path; failures are non-fatal.
-	return nil
-}
-
-func (b *Bot) dmByPlayerIDWithKB(ctx context.Context, result *client.GameResultDTO, text string, kb tgbotapi.InlineKeyboardMarkup, isAuthor bool) error {
-	return nil
-}
-
 // participationDisplayName returns a display string for a game participation.
 func participationDisplayName(p *models.GameParticipation) string {
 	if p.Player == nil {
@@ -731,18 +740,6 @@ func playerModelDisplayName(p *models.Player) string {
 		return name
 	}
 	return fmt.Sprintf("player#%d", p.ID)
-}
-
-// isDMBlockedError checks if a Telegram API error means the bot is blocked or the chat not found.
-func isDMBlockedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "bot can't initiate") ||
-		strings.Contains(msg, "blocked") ||
-		strings.Contains(msg, "chat not found") ||
-		strings.Contains(msg, "user is deactivated")
 }
 
 // validateResultScore checks that the score is consistent with the winner.

@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	ErrGameResultNotFound    = errors.New("game result not found")
-	ErrGameResultForbidden   = errors.New("actor is not allowed to perform this action")
-	ErrGameResultBadScore    = errors.New("invalid score format: use N:M where winner's side ≥ loser's")
-	ErrGameResultNotInGame   = errors.New("author or opponent is not registered in this game")
-	ErrGameResultSamePlayer  = errors.New("author and opponent must be different players")
+	ErrGameResultNotFound   = errors.New("game result not found")
+	ErrGameResultForbidden  = errors.New("actor is not allowed to perform this action")
+	ErrGameResultBadScore   = errors.New("invalid score format: use N:M where winner's side ≥ loser's")
+	ErrGameResultNotInGame  = errors.New("author or opponent is not registered in this game")
+	ErrGameResultSamePlayer = errors.New("author and opponent must be different players")
 
 	scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 )
@@ -56,6 +56,16 @@ func NewGameResultService(
 // (avoids circular dependency at wiring time).
 func (s *GameResultService) SetRatingService(rs *RatingService) {
 	s.ratingSvc = rs
+}
+
+// enrich populates res.Author and res.Opponent from the player repo (best-effort; errors ignored).
+func (s *GameResultService) enrich(ctx context.Context, res *models.GameResult) {
+	if author, err := s.playerRepo.GetByID(ctx, res.AuthorID); err == nil {
+		res.Author = author
+	}
+	if opp, err := s.playerRepo.GetByID(ctx, res.OpponentID); err == nil {
+		res.Opponent = opp
+	}
 }
 
 // Submit creates a new pending game result.
@@ -137,6 +147,11 @@ func (s *GameResultService) Submit(
 	autoAt := now.Add(autoApproveWindow)
 	res.AutoApproveAt = &autoAt
 
+	res.Author = author
+	if opp, err := s.playerRepo.GetByID(ctx, opponentPlayerID); err == nil {
+		res.Opponent = opp
+	}
+
 	s.auditSvc.RecordGameResultSubmitted(ctx, id, game.ChatID, authorTgID, actorDisplay)
 	return res, nil
 }
@@ -150,6 +165,7 @@ func (s *GameResultService) Get(ctx context.Context, id int64) (*models.GameResu
 	if res == nil {
 		return nil, ErrGameResultNotFound
 	}
+	s.enrich(ctx, res)
 	return res, nil
 }
 
@@ -216,6 +232,7 @@ func (s *GameResultService) decide(
 	}
 	res.Status = newStatus
 	res.DecidedAt = &now
+	s.enrich(ctx, res)
 
 	switch newStatus {
 	case models.GameResultApproved:
