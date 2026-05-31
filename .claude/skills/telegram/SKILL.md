@@ -141,6 +141,10 @@ venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
 venue_delete, venue_delete_ok, venue_day_toggle, venue_day_confirm
 venue_wiz_ptime, venue_ptime_toggle, venue_ptime_confirm, venue_ptime_set
+res_group, res_game, res_opp, res_winner, res_score_skip,
+res_edit, res_submit, res_cancel,
+res_approve, res_reject, res_withdraw, res_resubmit
+lb_group
 ```
 
 ---
@@ -218,6 +222,30 @@ type manageCourtsCancelPromptState struct {
 ```
 
 Populated by `handleManageCourtsConfirm` when `ListActiveCourtBookings` returns active bookings for removed courts. Cleared by both confirm and abort handlers.
+
+### Result Wizard (`result_handlers.go`)
+State: `pendingResultWizard sync.Map` (chatID → `*resultWizard`)
+
+Driven by the `/result` private command. Steps:
+
+| Step | Constant | Picker fills |
+|------|----------|--------------|
+| 1 | `resultStepGroup` | group (skipped when the player has rated games in exactly one group) |
+| 2 | `resultStepGame` | completed game from the last 14 days in that group (`GET /api/v1/players/{tgID}/recent-completed-games?group_id=…&days=14`) |
+| 3 | `resultStepOpponent` | opponent — registered participants of the chosen game, minus the author |
+| 4 | `resultStepWinner` | "🏆 me" / "🏆 @opponent" / "🤝 draw" |
+| 5 | `resultStepScore` | optional `N:M` text input or "skip" button |
+| 6 | `resultStepPreview` | review card with edit buttons per field |
+
+Callbacks: `res_group`, `res_game`, `res_opp`, `res_winner`, `res_score_skip`, `res_edit:(game|opp|winner|score)`, `res_submit`, `res_cancel`.
+
+On submit, the wizard calls `POST /api/v1/game-results` and then DMs the opponent an **approval card** with two inline buttons (`res_approve:<resultID>`, `res_reject:<resultID>`). The card text contains the auto-approve deadline (`submitted_at + 48 h`) rendered in the user's locale. The bot stores the opponent DM `chat_id` + `message_id` via `POST /api/v1/game-results/{id}/approval-message` so `AutoApproveResultsJob` can edit the card on timeout.
+
+Author-side post-submit buttons:
+- `res_withdraw:<resultID>` → cancels their pending result while still pending.
+- `res_resubmit:<resultID>` → restarts the wizard pre-filling the cancelled/rejected fields.
+
+Any slash command in private chat clears `pendingResultWizard` (same convention as other wizards).
 
 ---
 
@@ -339,6 +367,23 @@ When admin confirms court removal (`manage_court_confirm`), the handler:
 - Players add guests (+1) linked to their own player record.
 - Players remove their own most-recently-added guest.
 - Admins remove any guest via the `/games` management menu (`manage_kick_guest` callback).
+
+### Leaderboard (`/leaderboard`, `leaderboard_handlers.go`)
+
+1. `handleCommandLeaderboard` calls `GET /api/v1/players/{tgID}/groups-with-results` to find the groups in which the caller has a `player_ratings` row with `games_played > 0`.
+2. **Zero** groups → DM the empty-state message (`MsgLeaderboardEmpty`).
+3. **One** group → immediately render the leaderboard for it.
+4. **Many** groups → show a `lb_group:<groupID>` picker; the chosen callback re-renders in place via `editText`.
+
+`renderLeaderboard` (same file) formats the title and each row. Because `sendText`/`editText` always set `ParseMode = Markdown`, the group title and player display names are wrapped with `escapeMarkdown` before interpolation — a raw `_` or `*` in a name would otherwise unbalance the markup and Telegram would reject the message. Rows render as `N.  name  rating (Ng) [delta]`; `delta` is shown only when `|DeltaToday| > 0.5`.
+
+There is no separate "results pending approval" inbox in the bot UI — players see pending requests as the original opponent DM approval card, which the auto-approve job edits in place once it expires.
+
+### Result Submission Flow (`/result`)
+
+Entry point for any participant to record completed games and feed the rating system. Handler: `handleCommandResult` in `result_handlers.go`; wizard state is described under "Result Wizard" above. The wizard requires that the caller be a `registered` participant of a completed game in the last 14 days — if no eligible games exist, the bot replies with `MsgResultErrNoCompletedGames` and exits.
+
+If the opponent has never DM'd the bot, the approval message can't be delivered; the wizard surfaces `MsgResultDMUnreachable` to the author. The result row is still created and the 48 h auto-approve cutoff still applies — only the inline approve/reject buttons are unavailable to the opponent.
 
 ---
 

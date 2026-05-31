@@ -184,6 +184,22 @@ GET    /api/v1/venues/{id}/credentials             — listCredentials (query: g
 DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id); 409 Conflict if credential has active court_bookings
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
 
+POST   /api/v1/game-results                        — submitGameResult
+GET    /api/v1/game-results/{id}                   — getGameResult
+POST   /api/v1/game-results/{id}/approval-message  — setGameResultApprovalMessage
+POST   /api/v1/game-results/{id}/approve           — approveGameResult; synchronously applies Glicko-2
+                                                     in the same tx as the status flip (DecideInTx + ApplyInTx).
+                                                     500 on rating-apply failure leaves the row pending.
+POST   /api/v1/game-results/{id}/reject            — rejectGameResult
+POST   /api/v1/game-results/{id}/cancel            — cancelGameResult (author only)
+GET    /api/v1/players/{tgID}/recent-completed-games — getRecentCompletedGames (query: group_id, days=14)
+
+GET /api/v1/groups/{chatID}/leaderboard            — getGroupLeaderboard
+GET /api/v1/players/{tgID}/groups-with-results     — getPlayerGroupsWithResults; returns groups where the
+                                                     player has a player_ratings row with games_played > 0
+                                                     (not "recent completed games" — that overrepresented
+                                                     unrated activity and missed rated players older than 90 d)
+
 POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
 
 GET  /api/v1/audit                                 — listAuditEvents
@@ -294,7 +310,7 @@ Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID
 - `RunScheduledTasks()` → calls `run(false)` on each of the 4 jobs in sequence
 - `ForceRun(event string)` → calls `run(true)` on the named job (bypasses time-window gates)
 - Each job is a struct implementing `scheduledJob` interface: `run(force bool)`, `name() string`
-- Job names (for `/trigger` endpoint): `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`
+- Job names (for `/trigger` endpoint): `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard`
 
 ### Scheduled jobs
 
@@ -304,6 +320,8 @@ Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID
 | BookingReminderJob | booking_reminder.go | [10:00, 10:05) group local time | `last_booking_reminder_at` per venue (date-scoped) |
 | AutoBookingJob | auto_booking.go | [00:00, 00:05) group local time | `last_auto_booking_at` per venue (date-scoped) |
 | DayAfterCleanupJob | day_after_cleanup.go | [03:00, 03:05) group local time | `completed` flag on game |
+| AutoApproveResultsJob | auto_approve_results.go | every poll (48 h cutoff in SQL) | `status = 'pending'` flips to `auto_approved` |
+| PostLeaderboardJob | post_leaderboard.go | every poll; gated on 24 h after candidate day's last game start | `bot_groups.last_leaderboard_posted_for` |
 
 **Critical:** All time-window checks use `group.Timezone` (IANA string from `bot_groups`), resolved via `group_resolver.go`. Invalid timezone strings fall back to the service default (`TIMEZONE` env var).
 
@@ -359,6 +377,16 @@ Admin notification types: `notifyNoCredentials` (sound, no usable creds), `notif
 
 **DayAfterCleanupJob**: Fires in the `[03:00, 03:05)` window. Fetches yesterday's uncompleted games per group (includes unpublished games — no `message_id IS NOT NULL` filter). For games with `message_id != nil`: unpins message and removes keyboard. For games with `message_id == nil` (never announced): skips all Telegram ops, logs silently. Always calls `gameRepo.MarkCompleted` and, if the game has a `venue_id`, `courtBookingRepo.MarkCanceledByVenueAndDate` to bulk-close orphaned active `court_bookings` rows.
 
+**AutoApproveResultsJob**: Runs on every poll. Calls `resultRepo.ListPendingOlderThan(now - 48h)` to find game results that should be auto-approved. For each, opens a single transaction that flips status via `DecideInTx` and applies the Glicko-2 update via `RatingService.ApplyInTx` — so `player_ratings` and `rating_changes` either both land or both roll back with the status flip. Audit + opponent-DM edit + author/opponent DMs run after the commit, best-effort. When `pool == nil` or `ratingSvc == nil` (test wiring / rating disabled), falls back to a plain `Decide` with no rating apply.
+
+**PostLeaderboardJob**: Runs on every poll. Candidate day is yesterday in the group's local timezone (computed from year/month/day, not `time.Truncate`, so the boundary respects `loc`). Three gates before posting:
+
+1. **Already posted**: `bot_groups.last_leaderboard_posted_for >= candidateDate` → skip.
+2. **Last game finished ≥ 24 h ago**: queries `gameRepo.GetCompletedGamesByGroupAndDay(chatID, candidateDate, candidateDate+24h)`. If any completed games exist and `time.Now() < max(game_date) + 24h`, return **without marking** so the next poll retries. (The previous version posted as soon as the scheduler ran after local midnight, which was much earlier than 24 h for evening games.)
+3. **Any approved results**: filters `gameResultRepo.ListByGroupAndDate` for `approved` / `auto_approved`. If none, mark the day done (terminal no-op) and return.
+
+When all gates pass, builds the leaderboard via `RatingService.GetLeaderboard`, sends a plain-text message (`ParseMode = ""` — player names can contain Markdown control characters and the message has no formatting that needs interpreting), and only then advances `last_leaderboard_posted_for`. A Send failure leaves the marker untouched so the next poll retries.
+
 ### Localisation in scheduler jobs
 
 Scheduler jobs resolve language via `groupLang(ctx, groupRepo, chatID)` (calls `GetByID` directly — no HTTP, works without a live Telegram service). Exception: `BookingReminderJob` admin DMs use the admin's Telegram `LanguageCode` via `userLocalizer` since those are personal messages.
@@ -366,6 +394,36 @@ Scheduler jobs resolve language via `groupLang(ctx, groupRepo, chatID)` (calls `
 ### GameNotifier (`service/game_notifier.go`)
 
 Implements `Notifier`. Called asynchronously by `ParticipationService`. Fetches game + participants + guests, formats message and keyboard via `internal/gameformat`, then calls `TelegramAPI.Request(EditMessageTextConfig{})`. Timezone resolved via `resolveGroupTimezone`.
+
+### GameResultService (`service/game_result_service.go`)
+
+Owns the 1-v-1 game-result submission and approval lifecycle. Constructor takes a `*pgxpool.Pool` so it can wrap `Decide` + rating apply in a single transaction; `SetRatingService` is called after construction to break the circular dependency between this service and `RatingService`. Auto-approve cutoff is `autoApproveWindow = 48 * time.Hour` (also reused by `AutoApproveResultsJob`).
+
+| Method | Purpose |
+|--------|---------|
+| `Submit(ctx, gameID, authorTgID, opponentPlayerID, winnerPlayerID *int64, score, actorDisplay)` | Resolves author from Telegram ID, validates author ≠ opponent, validates both are `registered` in the game, validates score format (`^\d+:\d+$`, winner's side ≥ loser's). Creates a `pending` row; returns it with `AutoApproveAt = SubmittedAt + 48h` populated. Errors: `ErrGameResultNotInGame`, `ErrGameResultBadScore`, `ErrGameResultSamePlayer`, `ErrGameNotFound`. |
+| `Get(ctx, id)` | Fetches by ID and populates `Author` / `Opponent` from `playerRepo` (best-effort enrichment, errors ignored). |
+| `SetApprovalMessage(ctx, id, chatID, messageID)` | Stores the opponent DM `chat_id` + `message_id` so `AutoApproveResultsJob` can edit the card on timeout. |
+| `Approve(ctx, id, opponentTgID, actorDisplay)` | Verifies caller is the opponent. Calls `commitDecision`: when `pool` and `ratingSvc` are wired, opens a tx and runs `resultRepo.DecideInTx` + `ratingSvc.ApplyInTx` together. On any failure the whole tx rolls back and the row stays pending. Records `RecordGameResultApproved` on success (best-effort, outside tx). |
+| `Reject(ctx, id, opponentTgID, actorDisplay)` | Verifies caller is the opponent. Plain `Decide` (no rating change). Records `RecordGameResultRejected`. |
+| `CancelByAuthor(ctx, id, authorTgID, actorDisplay)` | Verifies caller is the author. Plain `Decide` (no rating change). Records `RecordGameResultCanceled`. |
+
+`commitDecision` falls back to a non-tx `Decide` when `newStatus != Approved`, or when `pool == nil` / `ratingSvc == nil` — used by unit tests and by environments where rating is intentionally disabled.
+
+`storage.ErrGameResultNotPending` is returned (and propagated up as HTTP 409) when the target row was already decided.
+
+### RatingService (`service/rating_service.go`)
+
+Owns Glicko-2 updates and leaderboard queries. Constructor takes the same pool so `Apply` can manage its own transaction. Uses `service/rating/glicko2.go` for the math (`DefaultRating = 1500`, `DefaultRD = 350`, `DefaultVolatility = 0.06`, `Tau = 0.5`, RD clamped to `[30, 350]`).
+
+| Method | Purpose |
+|--------|---------|
+| `Apply(ctx, result)` | Opens a transaction and delegates to `ApplyInTx`. Used by callers that don't already hold a tx. |
+| `ApplyInTx(ctx, tx, result)` | The critical-section update. Locks both `player_ratings` rows `FOR UPDATE` ordered by `player_id ASC` (deadlock prevention). Initialises missing rows with default rating/RD/volatility via `getOrInitForUpdate`. Computes scores `{1, 0.5, 0}` from `WinnerID` (nil → draw). Upserts both ratings and inserts both `rating_changes` rows **inside the caller's tx** — so the leaderboard's current rating and DeltaToday history can never diverge. Audit (`RecordRatingUpdated`) runs after the rating mutation but outside the commit (best-effort). |
+| `GetLeaderboard(ctx, groupID)` | Returns `[]LeaderboardEntry{Rank, Player, Rating, RD, GamesPlayed, DeltaToday}` ordered by rating DESC, hiding players with `games_played == 0` and re-numbering ranks after the filter. `DeltaToday` is the sum of `rating_changes.delta` rows in the group's local-tz day `[00:00, 24:00)`. |
+| `ListGroupsForPlayer(ctx, playerID)` | Returns group IDs where the player has a `player_ratings` row with `games_played > 0`. Backs `GET /api/v1/players/{tgID}/groups-with-results`. |
+
+`Apply` is now called synchronously from `GameResultService.commitDecision` and `AutoApproveResultsJob.autoApproveOne`; the older async-goroutine path was removed because a crash or DB blip between Decide and Apply could permanently desync the leaderboard.
 
 ---
 
@@ -388,7 +446,8 @@ players:            id, telegram_id UNIQUE, username, first_name, last_name
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id
 bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC',
-                    changelog_enabled BOOLEAN DEFAULT TRUE, auto_booking_allowed BOOLEAN DEFAULT TRUE
+                    changelog_enabled BOOLEAN DEFAULT TRUE, auto_booking_allowed BOOLEAN DEFAULT TRUE,
+                    last_leaderboard_posted_for DATE NULL (dedup for PostLeaderboardJob; set to candidate date after a successful send or a confirmed no-results day)
 service_state:      key TEXT PK, value TEXT NOT NULL  — generic KV store; used to track `last_changelog_version`
 venues:             id, group_id FK→bot_groups, name, courts, time_slots, address,
                     grace_period_hours DEFAULT 24, game_days, booking_opens_days DEFAULT 14,
@@ -412,6 +471,27 @@ auto_booking_results: id, venue_id FK→venues ON DELETE CASCADE, game_date DATE
                     courts (comma-sep court numbers), courts_count INT,
                     game_id BIGINT FK→games ON DELETE SET NULL (NULL = game not yet created by BookingReminderJob),
                     created_at, UNIQUE(venue_id, game_date, game_time)
+game_results:       id BIGSERIAL PK, game_id BIGINT FK→games ON DELETE CASCADE,
+                    group_id BIGINT, author_id BIGINT FK→players, opponent_id BIGINT FK→players,
+                    winner_id BIGINT NULL FK→players (CHECK: IS NULL OR IN (author_id, opponent_id); NULL = draw),
+                    score TEXT DEFAULT '' (format "N:M" or empty),
+                    status TEXT CHECK IN ('pending','approved','auto_approved','rejected','canceled'),
+                    submitted_at TIMESTAMPTZ DEFAULT NOW(), decided_at TIMESTAMPTZ NULL,
+                    approval_chat_id BIGINT NULL, approval_message_id INT NULL (opponent's DM card — set after Submit so the auto-approve job can edit it)
+                    CHECK author_id ≠ opponent_id
+                    INDEX: (game_id), (group_id, status, decided_at DESC),
+                           (status, submitted_at) WHERE status='pending'  — drives ListPendingOlderThan
+player_ratings:     PRIMARY KEY (group_id, player_id),
+                    rating DOUBLE PRECISION DEFAULT 1500, rd DOUBLE PRECISION DEFAULT 350,
+                    volatility DOUBLE PRECISION DEFAULT 0.06, games_played INT DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                    (one row per (group, player); created lazily on first Apply via getOrInitForUpdate)
+rating_changes:     id BIGSERIAL PK, game_result_id BIGINT FK→game_results ON DELETE CASCADE,
+                    group_id BIGINT, player_id BIGINT,
+                    old_rating, new_rating, old_rd, new_rd, delta DOUBLE PRECISION,
+                    applied_at TIMESTAMPTZ DEFAULT NOW()
+                    INDEX: (group_id, player_id, applied_at DESC), (group_id, applied_at DESC)
+                    (one row per player per applied result; powers DeltaToday in GetLeaderboard)
 audit_events:       id BIGSERIAL PK, occurred_at TIMESTAMPTZ DEFAULT NOW(),
                     event_type TEXT, visibility TEXT ('player'|'group_admin'|'server_owner'),
                     actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable),
