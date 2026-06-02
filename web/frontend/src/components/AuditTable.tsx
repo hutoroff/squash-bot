@@ -1,26 +1,5 @@
-import type { AuditEvent, AuditEventType } from '../types'
-
-const EVENT_LABELS: Record<AuditEventType, string> = {
-  'game.created': 'Game created',
-  'game.courts_reserved': 'Courts reserved',
-  'participation.joined': 'Player joined',
-  'participation.skipped': 'Player skipped',
-  'participation.guest_added': 'Guest added',
-  'participation.guest_removed': 'Guest removed',
-  'participation.player_kicked': 'Player kicked',
-  'participation.guest_kicked': 'Guest kicked',
-  'credential.added': 'Credential added',
-  'credential.removed': 'Credential removed',
-  'venue.created': 'Venue created',
-  'venue.updated': 'Venue updated',
-  'venue.deleted': 'Venue deleted',
-  'group.bot_added': 'Bot added',
-  'group.bot_removed': 'Bot removed',
-  'group.settings_changed': 'Settings changed',
-  'court.booked': 'Court booked',
-  'court.canceled': 'Court canceled',
-  'group.auto_booking_allowed_toggled': 'Auto-booking toggled',
-}
+import type { AuditEvent } from '../types'
+import { EVENT_LABELS } from '../auditEvents'
 
 const dtFmt = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'short',

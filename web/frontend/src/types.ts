@@ -13,6 +13,14 @@ export type AuditActorKind = 'user' | 'system'
 export type AuditEventType =
   | 'game.created'
   | 'game.courts_reserved'
+  | 'game.published'
+  | 'game.courts_auto_booked'
+  | 'game.result_submitted'
+  | 'game.result_approved'
+  | 'game.result_rejected'
+  | 'game.result_auto_approved'
+  | 'game.result_canceled'
+  | 'game.rating_updated'
   | 'participation.joined'
   | 'participation.skipped'
   | 'participation.guest_added'
@@ -27,9 +35,10 @@ export type AuditEventType =
   | 'group.bot_added'
   | 'group.bot_removed'
   | 'group.settings_changed'
+  | 'group.changelog_toggled'
+  | 'group.auto_booking_allowed_toggled'
   | 'court.booked'
   | 'court.canceled'
-  | 'group.auto_booking_allowed_toggled'
 
 export interface AuditEvent {
   id: number

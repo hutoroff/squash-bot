@@ -1,27 +1,6 @@
 import { useState } from 'react'
 import type { AuditEventType, AuditFilters } from '../types'
-
-const EVENT_TYPES: { value: AuditEventType; label: string }[] = [
-  { value: 'game.created', label: 'Game created' },
-  { value: 'game.courts_reserved', label: 'Courts reserved' },
-  { value: 'participation.joined', label: 'Player joined' },
-  { value: 'participation.skipped', label: 'Player skipped' },
-  { value: 'participation.guest_added', label: 'Guest added' },
-  { value: 'participation.guest_removed', label: 'Guest removed' },
-  { value: 'participation.player_kicked', label: 'Player kicked' },
-  { value: 'participation.guest_kicked', label: 'Guest kicked' },
-  { value: 'credential.added', label: 'Credential added' },
-  { value: 'credential.removed', label: 'Credential removed' },
-  { value: 'venue.created', label: 'Venue created' },
-  { value: 'venue.updated', label: 'Venue updated' },
-  { value: 'venue.deleted', label: 'Venue deleted' },
-  { value: 'group.bot_added', label: 'Bot added to group' },
-  { value: 'group.bot_removed', label: 'Bot removed from group' },
-  { value: 'group.settings_changed', label: 'Group settings changed' },
-  { value: 'court.booked', label: 'Court booked' },
-  { value: 'court.canceled', label: 'Court canceled' },
-  { value: 'group.auto_booking_allowed_toggled', label: 'Auto-booking toggled' },
-]
+import { EVENT_TYPE_OPTIONS } from '../auditEvents'
 
 interface AuditFiltersProps {
   isServerOwner: boolean
@@ -39,7 +18,7 @@ export default function AuditFiltersForm({ isServerOwner, onApply }: AuditFilter
     const filters: AuditFilters = {}
     if (eventType) filters.event_type = eventType
     if (from) filters.from = new Date(from).toISOString()
-    if (to) { const d = new Date(to); d.setDate(d.getDate() + 1); filters.to = d.toISOString() }
+    if (to) { const [y, m, d] = to.split('-').map(Number); filters.to = new Date(Date.UTC(y, m - 1, d + 1)).toISOString() }
     if (isServerOwner && groupId) filters.group_id = parseInt(groupId, 10)
     if (isServerOwner && actorTgId) filters.actor_tg_id = parseInt(actorTgId, 10)
     onApply(filters)
@@ -56,7 +35,7 @@ export default function AuditFiltersForm({ isServerOwner, onApply }: AuditFilter
             onChange={e => setEventType(e.target.value as AuditEventType | '')}
           >
             <option value="">Any</option>
-            {EVENT_TYPES.map(t => (
+            {EVENT_TYPE_OPTIONS.map(t => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
