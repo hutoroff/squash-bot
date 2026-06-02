@@ -231,7 +231,7 @@ Driven by the `/result` private command. Steps:
 | Step | Constant | Picker fills |
 |------|----------|--------------|
 | 1 | `resultStepGroup` | group (skipped when the player has rated games in exactly one group) |
-| 2 | `resultStepGame` | completed game from the last 14 days in that group (`GET /api/v1/players/{tgID}/recent-completed-games?group_id=…&days=14`) |
+| 2 | `resultStepGame` | past game within the result window in that group (`GET /api/v1/players/{tgID}/recent-completed-games?group_id=…`). Eligibility = game's local day (group tz) is today or up to `RESULT_WINDOW_DAYS` (default 14) ago; the `completed` flag is not considered. The window is management-side config — no `days` query param. |
 | 3 | `resultStepOpponent` | opponent — registered participants of the chosen game, minus the author |
 | 4 | `resultStepWinner` | "🏆 me" / "🏆 @opponent" / "🤝 draw" |
 | 5 | `resultStepScore` | optional `N:M` text input or "skip" button |
@@ -381,9 +381,9 @@ There is no separate "results pending approval" inbox in the bot UI — players 
 
 ### Result Submission Flow (`/result`)
 
-Entry point for any participant to record completed games and feed the rating system. Handler: `handleCommandResult` in `result_handlers.go`; wizard state is described under "Result Wizard" above. The wizard requires that the caller be a `registered` participant of a completed game in the last 14 days — if no eligible games exist, the bot replies with `MsgResultErrNoCompletedGames` and exits.
+Entry point for any participant to record completed games and feed the rating system. Handler: `handleCommandResult` in `result_handlers.go`; wizard state is described under "Result Wizard" above. The wizard requires that the caller be a `registered` participant of a past game within the result window (`RESULT_WINDOW_DAYS`, default 14 days; eligibility ignores the `completed` flag) — if no eligible games exist, the bot replies with `MsgResultErrNoCompletedGames` and exits.
 
-If the opponent has never DM'd the bot, the approval message can't be delivered; the wizard surfaces `MsgResultDMUnreachable` to the author. The result row is still created and the 48 h auto-approve cutoff still applies — only the inline approve/reject buttons are unavailable to the opponent.
+If the opponent has never DM'd the bot, the approval message can't be delivered; the wizard surfaces `MsgResultDMUnreachable` to the author and immediately cancels the just-created result via `CancelGameResult` — no pending row remains and the 48 h auto-approve window never starts.
 
 ---
 

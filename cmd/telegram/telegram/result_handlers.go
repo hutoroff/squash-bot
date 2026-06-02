@@ -59,7 +59,7 @@ func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz
 	// Filter to groups where the player has participated.
 	var playerGroups []models.Group
 	for _, g := range groups {
-		games, err := b.client.GetRecentCompletedGames(ctx, msg.From.ID, g.ChatID, 14)
+		games, err := b.client.GetRecentCompletedGames(ctx, msg.From.ID, g.ChatID)
 		if err != nil {
 			continue
 		}
@@ -121,7 +121,7 @@ func (b *Bot) handleResultPickGroup(ctx context.Context, cb *tgbotapi.CallbackQu
 }
 
 func (b *Bot) sendResultGamePicker(ctx context.Context, chatID, tgID int64, wiz *resultWizard, lz *i18n.Localizer, editMsgID int) {
-	games, err := b.client.GetRecentCompletedGames(ctx, tgID, wiz.groupID, 14)
+	games, err := b.client.GetRecentCompletedGames(ctx, tgID, wiz.groupID)
 	if err != nil {
 		slog.Error("sendResultGamePicker: get games", "err", err)
 		b.sendText(chatID, lz.T(i18n.MsgSomethingWentWrong), nil)

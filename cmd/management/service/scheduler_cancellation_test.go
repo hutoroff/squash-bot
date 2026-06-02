@@ -1280,6 +1280,9 @@ func (r *stubGameRepoPC) GetGamesForPlayer(_ context.Context, _ int64) ([]models
 func (r *stubGameRepoPC) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (r *stubGameRepoPC) GameInResultWindow(_ context.Context, _ int64, _ int) (bool, error) {
+	return true, nil
+}
 func (r *stubGameRepoPC) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }

@@ -192,7 +192,9 @@ POST   /api/v1/game-results/{id}/approve           — approveGameResult; synchr
                                                      500 on rating-apply failure leaves the row pending.
 POST   /api/v1/game-results/{id}/reject            — rejectGameResult
 POST   /api/v1/game-results/{id}/cancel            — cancelGameResult (author only)
-GET    /api/v1/players/{tgID}/recent-completed-games — getRecentCompletedGames (query: group_id, days=14)
+GET    /api/v1/players/{tgID}/recent-completed-games — getRecentCompletedGames (query: group_id). Returns past
+                                                     games within the result window (RESULT_WINDOW_DAYS, default 14,
+                                                     per-group-tz calendar days); ignores the completed flag. No days param.
 
 GET /api/v1/groups/{chatID}/leaderboard            — getGroupLeaderboard
 GET /api/v1/players/{tgID}/groups-with-results     — getPlayerGroupsWithResults; returns groups where the
@@ -522,6 +524,7 @@ CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before ret
 SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs treated as server owners;
                               grants /trigger access and full audit event visibility (server_owner tier)
 AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily retention cron deletes older rows)
+RESULT_WINDOW_DAYS=14         optional; how far back a past game stays eligible for result submission (per-group-tz calendar days; ignores completed flag)
 ```
 
 ---

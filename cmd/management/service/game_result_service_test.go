@@ -117,8 +117,9 @@ func (r *grPartRepo) GetRegisteredCount(_ context.Context, _ int64) (int, error)
 // ── mock GameRepository (lightweight, only GetByID needed) ───────────────────
 
 type stubGameRepoForResults struct {
-	game *models.Game
-	err  error
+	game        *models.Game
+	err         error
+	notInWindow bool // when true, GameInResultWindow reports the game is outside the window
 }
 
 func (r *stubGameRepoForResults) Create(_ context.Context, g *models.Game) (*models.Game, error) {
@@ -152,6 +153,9 @@ func (r *stubGameRepoForResults) GetGamesForPlayer(_ context.Context, _ int64) (
 func (r *stubGameRepoForResults) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForResults) GameInResultWindow(_ context.Context, _ int64, _ int) (bool, error) {
+	return !r.notInWindow, nil
+}
 func (r *stubGameRepoForResults) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }
@@ -170,7 +174,7 @@ func newResultSvc(
 	partRepo *grPartRepo,
 ) *GameResultService {
 	auditSvc, _ := newCaptureAuditSvc()
-	return NewGameResultService(nil, resultRepo, gameRepo, playerRepo, partRepo, auditSvc)
+	return NewGameResultService(nil, resultRepo, gameRepo, playerRepo, partRepo, auditSvc, 14)
 }
 
 // defaultFixture returns a ready-to-use set of stubs where author (tg=100, id=1)
@@ -298,6 +302,20 @@ func TestSubmit_OpponentNotRegistered(t *testing.T) {
 	_, err := svc.Submit(context.Background(), 10, 100, 3, nil, "", "@alice")
 	if !errors.Is(err, ErrGameResultNotInGame) {
 		t.Errorf("got %v, want ErrGameResultNotInGame", err)
+	}
+}
+
+func TestSubmit_OutsideWindow(t *testing.T) {
+	rr, gr, pr, pp := defaultFixture()
+	gr.notInWindow = true // game is too old / in the future
+	svc := newResultSvc(rr, gr, pr, pp)
+
+	_, err := svc.Submit(context.Background(), 10, 100, 2, int64Ptr(1), "3:1", "@alice")
+	if !errors.Is(err, ErrGameResultWindowClosed) {
+		t.Errorf("got %v, want ErrGameResultWindowClosed", err)
+	}
+	if len(rr.created) != 0 {
+		t.Errorf("no result should be created when outside the window, got %d", len(rr.created))
 	}
 }
 

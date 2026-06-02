@@ -47,6 +47,10 @@ type ManagementConfig struct {
 	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 	// AuditRetentionDays controls how long audit events are kept. Defaults to 365 days (1 year).
 	AuditRetentionDays int `env:"AUDIT_RETENTION_DAYS" envDefault:"365"`
+	// ResultWindowDays bounds how far back a past game may be for results to be
+	// submitted against it: eligible when the game's local day (group timezone)
+	// is today or up to this many days ago. Defaults to 14 (two weeks).
+	ResultWindowDays int `env:"RESULT_WINDOW_DAYS" envDefault:"14"`
 }
 
 func LoadTelegram() (*TelegramConfig, error) {

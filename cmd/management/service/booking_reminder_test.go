@@ -79,6 +79,9 @@ func (m *mockGameRepo) GetGamesForPlayer(_ context.Context, _ int64) ([]models.P
 func (m *mockGameRepo) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (m *mockGameRepo) GameInResultWindow(_ context.Context, _ int64, _ int) (bool, error) {
+	return true, nil
+}
 func (m *mockGameRepo) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.Game, error) {
 	return nil, nil
 }

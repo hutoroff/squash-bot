@@ -516,6 +516,85 @@ func TestGameRepo_GetGamesForPlayer_UsesGroupMetadata(t *testing.T) {
 	}
 }
 
+// --- result-submission window ---
+
+func TestGameRepo_GetRecentCompletedGamesForPlayer_Window(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	const chatID = int64(-993001)
+	const windowDays = 14
+
+	// Anchor 5 minutes in the past so "just played" is unambiguously past,
+	// regardless of what time of day the test runs.
+	now := time.Now().UTC()
+	justPast := now.Add(-5 * time.Minute)
+
+	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 930001})
+
+	// eligible: played 5 minutes ago (same calendar day, clearly past)
+	justPlayed, _ := gameRepo.Create(ctx, newGame(chatID, justPast, "1,2"))
+	// eligible: played 5 days ago
+	midWindow, _ := gameRepo.Create(ctx, newGame(chatID, justPast.AddDate(0, 0, -5), "1,2"))
+	// ineligible: too old (beyond window)
+	tooOld, _ := gameRepo.Create(ctx, newGame(chatID, justPast.AddDate(0, 0, -(windowDays+1)), "1,2"))
+	// ineligible: later today — same calendar date but start time is in the future
+	laterToday, _ := gameRepo.Create(ctx, newGame(chatID, now.Add(2*time.Hour), "1,2"))
+	// ineligible: tomorrow
+	tomorrow, _ := gameRepo.Create(ctx, newGame(chatID, justPast.AddDate(0, 0, 1), "1,2"))
+
+	for _, g := range []*models.Game{justPlayed, midWindow, tooOld, laterToday, tomorrow} {
+		_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
+	}
+
+	games, err := gameRepo.GetRecentCompletedGamesForPlayer(ctx, p.TelegramID, chatID, windowDays)
+	if err != nil {
+		t.Fatalf("GetRecentCompletedGamesForPlayer: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, g := range games {
+		got[g.ID] = true
+	}
+	if !got[justPlayed.ID] {
+		t.Error("game played 5 minutes ago should be eligible")
+	}
+	if !got[midWindow.ID] {
+		t.Error("game 5 days ago should be eligible")
+	}
+	if got[tooOld.ID] {
+		t.Error("game older than the window must be excluded")
+	}
+	if got[laterToday.ID] {
+		t.Error("game later today (same calendar day, future start) must be excluded")
+	}
+	if got[tomorrow.ID] {
+		t.Error("tomorrow's game must be excluded")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		gameID int64
+		want   bool
+	}{
+		{"justPlayed", justPlayed.ID, true},
+		{"midWindow", midWindow.ID, true},
+		{"tooOld", tooOld.ID, false},
+		{"laterToday", laterToday.ID, false},
+		{"tomorrow", tomorrow.ID, false},
+	} {
+		ok, err := gameRepo.GameInResultWindow(ctx, tc.gameID, windowDays)
+		if err != nil {
+			t.Fatalf("GameInResultWindow(%s): %v", tc.name, err)
+		}
+		if ok != tc.want {
+			t.Errorf("GameInResultWindow(%s): got %v, want %v", tc.name, ok, tc.want)
+		}
+	}
+}
+
 // --- UpdateCourts ---
 
 func TestGameRepo_UpdateCourts(t *testing.T) {

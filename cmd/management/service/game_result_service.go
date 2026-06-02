@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	ErrGameResultNotFound   = errors.New("game result not found")
-	ErrGameResultForbidden  = errors.New("actor is not allowed to perform this action")
-	ErrGameResultBadScore   = errors.New("invalid score format: use N:M where winner's side ≥ loser's")
-	ErrGameResultNotInGame  = errors.New("author or opponent is not registered in this game")
-	ErrGameResultSamePlayer = errors.New("author and opponent must be different players")
+	ErrGameResultNotFound     = errors.New("game result not found")
+	ErrGameResultForbidden    = errors.New("actor is not allowed to perform this action")
+	ErrGameResultBadScore     = errors.New("invalid score format: use N:M where winner's side ≥ loser's")
+	ErrGameResultNotInGame    = errors.New("author or opponent is not registered in this game")
+	ErrGameResultSamePlayer   = errors.New("author and opponent must be different players")
+	ErrGameResultWindowClosed = errors.New("game is outside the result submission window")
 
 	scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 )
@@ -36,6 +37,7 @@ type GameResultService struct {
 	participationRepo ParticipationRepository
 	auditSvc          *AuditService
 	ratingSvc         *RatingService // nil if not configured
+	resultWindowDays  int
 }
 
 func NewGameResultService(
@@ -45,6 +47,7 @@ func NewGameResultService(
 	playerRepo PlayerRepository,
 	participationRepo ParticipationRepository,
 	auditSvc *AuditService,
+	resultWindowDays int,
 ) *GameResultService {
 	return &GameResultService{
 		pool:              pool,
@@ -53,6 +56,7 @@ func NewGameResultService(
 		playerRepo:        playerRepo,
 		participationRepo: participationRepo,
 		auditSvc:          auditSvc,
+		resultWindowDays:  resultWindowDays,
 	}
 }
 
@@ -103,6 +107,19 @@ func (s *GameResultService) Submit(
 			return nil, ErrGameNotFound
 		}
 		return nil, fmt.Errorf("get game: %w", err)
+	}
+
+	// Reject games outside the submission window (future, or older than the
+	// configured number of days, evaluated in the group's local timezone).
+	inWindow, err := s.gameRepo.GameInResultWindow(ctx, gameID, s.resultWindowDays)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrGameNotFound
+		}
+		return nil, fmt.Errorf("check result window: %w", err)
+	}
+	if !inWindow {
+		return nil, ErrGameResultWindowClosed
 	}
 
 	// Validate both players are registered in the game.

@@ -840,9 +840,9 @@ func (c *Client) resultDecision(ctx context.Context, id, actorTgID int64, actorD
 	return &result, nil
 }
 
-func (c *Client) GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64, days int) ([]models.PlayerGame, error) {
-	path := fmt.Sprintf("/api/v1/players/%d/recent-completed-games?group_id=%d&days=%d",
-		playerTgID, groupID, days)
+func (c *Client) GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64) ([]models.PlayerGame, error) {
+	path := fmt.Sprintf("/api/v1/players/%d/recent-completed-games?group_id=%d",
+		playerTgID, groupID)
 	var games []models.PlayerGame
 	if err := c.do(ctx, http.MethodGet, path, nil, &games); err != nil {
 		return nil, err

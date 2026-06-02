@@ -381,6 +381,7 @@ Guest spots count toward capacity.
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
 | `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants three privileges: (1) use of the `/trigger` command in the telegram bot, (2) server-owner visibility tier in the audit log (can see all events for all groups, filter by `group_id`/`actor_tg_id`), and (3) server-owner flag in the web SPA (unlocks group/actor filters on the audit page). Must be set consistently on the management, telegram, and web services. |
 | `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
+| `RESULT_WINDOW_DAYS`         | No | `14`             | How far back (days) a past game stays eligible for result submission. A game is eligible when its local day (group timezone) is today or up to this many days ago; the `completed` flag is not considered. |
 
 ### telegram
 

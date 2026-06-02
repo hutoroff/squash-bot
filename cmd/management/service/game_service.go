@@ -9,15 +9,15 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 var (
-	ErrGameNotFound              = errors.New("game not found")
-	ErrGameAlreadyPublished      = errors.New("game already published")
-	ErrAutoBookingNotAvailable   = errors.New("auto-booking not available for this game")
+	ErrGameNotFound            = errors.New("game not found")
+	ErrGameAlreadyPublished    = errors.New("game already published")
+	ErrAutoBookingNotAvailable = errors.New("auto-booking not available for this game")
 )
 
 // BookGameCourtsResult is returned by BookGameCourts.
@@ -57,10 +57,11 @@ type GameService struct {
 	defaultLoc        *time.Location
 	logger            *slog.Logger
 	// Optional booking deps — nil when booking infrastructure is not configured.
-	courtBookingRepo    CourtBookingRepository
-	bookingClient       BookingServiceClient
-	credService         *VenueCredentialService
+	courtBookingRepo      CourtBookingRepository
+	bookingClient         BookingServiceClient
+	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
+	resultWindowDays      int
 }
 
 func NewGameService(
@@ -77,6 +78,7 @@ func NewGameService(
 	bookingClient BookingServiceClient,
 	credService *VenueCredentialService,
 	autoBookingResultRepo AutoBookingResultRepository,
+	resultWindowDays int,
 ) *GameService {
 	return &GameService{
 		gameRepo:              gameRepo,
@@ -92,6 +94,7 @@ func NewGameService(
 		bookingClient:         bookingClient,
 		credService:           credService,
 		autoBookingResultRepo: autoBookingResultRepo,
+		resultWindowDays:      resultWindowDays,
 	}
 }
 
@@ -152,10 +155,11 @@ func (s *GameService) GetGamesForPlayer(ctx context.Context, playerID int64) ([]
 	return s.gameRepo.GetGamesForPlayer(ctx, playerID)
 }
 
-// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
-// in a specific group within the last `days` days. Used by the /result wizard game picker.
-func (s *GameService) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {
-	return s.gameRepo.GetRecentCompletedGamesForPlayer(ctx, tgID, groupID, days)
+// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
+// in a specific group within the configured result-submission window. Used by the
+// /result wizard game picker.
+func (s *GameService) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64) ([]models.PlayerGame, error) {
+	return s.gameRepo.GetRecentCompletedGamesForPlayer(ctx, tgID, groupID, s.resultWindowDays)
 }
 
 // PublishGame sends the game announcement to the group, pins it silently, sets message_id, and records audit.
