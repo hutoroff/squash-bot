@@ -372,13 +372,13 @@ const (
 	GameVenueLine = "game.venue_line"
 
 	// Leaderboard
-	MsgLeaderboardTitle     = "msg.leaderboard_title"
-	MsgLeaderboardEmpty     = "msg.leaderboard_empty"
-	MsgLeaderboardPickGroup = "msg.leaderboard_pick_group"
-	MsgLeaderboardRowFmt    = "msg.leaderboard_row_fmt"
+	MsgLeaderboardTitle      = "msg.leaderboard_title"
+	MsgLeaderboardEmpty      = "msg.leaderboard_empty"
+	MsgLeaderboardPickGroup  = "msg.leaderboard_pick_group"
+	MsgLeaderboardRowFmt     = "msg.leaderboard_row_fmt"
 	MsgLeaderboardGamesShort = "msg.leaderboard_games_short"
-	MsgCmdLeaderboard       = "msg.cmd_leaderboard"
-	BtnLbGroup              = "btn.lb_group"
+	MsgCmdLeaderboard        = "msg.cmd_leaderboard"
+	BtnLbGroup               = "btn.lb_group"
 
 	// Game result wizard
 	MsgResultStepPickGroup       = "msg.result_step_pick_group"
@@ -391,6 +391,7 @@ const (
 	MsgResultApprovalRequest     = "msg.result_approval_request"
 	MsgResultDeadlineLine        = "msg.result_deadline_line"
 	MsgResultApproved            = "msg.result_approved"
+	MsgResultApprovedCard        = "msg.result_approved_card"
 	MsgResultRejected            = "msg.result_rejected"
 	MsgResultWithdrawn           = "msg.result_withdrawn"
 	MsgResultAutoApproved        = "msg.result_auto_approved"
@@ -788,6 +789,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultApprovalRequest:     "%s says they played you on %s.\nOutcome: %s\nScore: %s\n",
 		MsgResultDeadlineLine:        "⏱ Auto-approves %s. No response = approval.",
 		MsgResultApproved:            "✅ %s approved your result.",
+		MsgResultApprovedCard:        "✅ Approved\n%s played you on %s.\nOutcome: %s\nScore: %s",
 		MsgResultRejected:            "❌ %s rejected your result.",
 		MsgResultWithdrawn:           "Withdrawn by author.",
 		MsgResultAutoApproved:        "⌛ Your game result was auto-approved (no response within 48 h).",
@@ -1142,6 +1144,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultApprovalRequest:     "%s sagt, sie haben am %s gespielt.\nErgebnis: %s\nScore: %s\n",
 		MsgResultDeadlineLine:        "⏱ Automatische Bestätigung am %s. Keine Antwort = Bestätigung.",
 		MsgResultApproved:            "✅ %s hat dein Ergebnis bestätigt.",
+		MsgResultApprovedCard:        "✅ Bestätigt\n%s hat am %s gegen dich gespielt.\nErgebnis: %s\nScore: %s",
 		MsgResultRejected:            "❌ %s hat dein Ergebnis abgelehnt.",
 		MsgResultWithdrawn:           "Vom Autor zurückgezogen.",
 		MsgResultAutoApproved:        "⌛ Dein Spielergebnis wurde automatisch bestätigt (keine Antwort innerhalb 48 h).",
@@ -1496,6 +1499,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultApprovalRequest:     "%s говорит, что вы сыграли %s.\nРезультат: %s\nСчёт: %s\n",
 		MsgResultDeadlineLine:        "⏱ Автоподтверждение %s. Нет ответа = подтверждение.",
 		MsgResultApproved:            "✅ %s подтвердил(-а) твой результат.",
+		MsgResultApprovedCard:        "✅ Подтверждено\n%s сыграл(-а) с тобой %s.\nРезультат: %s\nСчёт: %s",
 		MsgResultRejected:            "❌ %s отклонил(-а) твой результат.",
 		MsgResultWithdrawn:           "Отозвано автором.",
 		MsgResultAutoApproved:        "⌛ Результат игры автоматически подтверждён (нет ответа в течение 48 ч).",
