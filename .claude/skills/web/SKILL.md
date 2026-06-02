@@ -213,3 +213,4 @@ TIMEZONE=UTC
 - `GET /api/auth/me` must remain cheap — it's called on every page load; avoid adding slow operations to it
 - Version in `cmd/web/VERSION`, injected via `-ldflags "-X main.Version=<ver>"`
 - CI verifies both `build-and-test` AND `frontend-test` jobs before the web release workflow proceeds
+- **Audit event types:** backend constants live in `internal/models/audit_event.go`; the frontend mirror is `web/frontend/src/auditEvents.ts` (`EVENT_LABELS` + derived `EVENT_TYPE_OPTIONS`) and the `AuditEventType` union in `types.ts`. `auditEvents.test.ts` reads the Go file at test time and fails if the two sides diverge — run `npm test` to verify after adding or renaming backend constants.
