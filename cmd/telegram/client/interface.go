@@ -86,5 +86,5 @@ type ManagementClient interface {
 	ApproveGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
 	RejectGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
 	CancelGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error)
-	GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64, days int) ([]models.PlayerGame, error)
+	GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64) ([]models.PlayerGame, error)
 }

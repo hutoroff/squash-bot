@@ -37,6 +37,8 @@ func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "game not found")
 		case errors.Is(err, service.ErrGameResultNotInGame):
 			writeError(w, http.StatusBadRequest, "not_in_game")
+		case errors.Is(err, service.ErrGameResultWindowClosed):
+			writeError(w, http.StatusBadRequest, "window_closed")
 		case errors.Is(err, service.ErrGameResultBadScore):
 			writeError(w, http.StatusBadRequest, "bad_score")
 		case errors.Is(err, service.ErrGameResultSamePlayer):
@@ -177,14 +179,8 @@ func (h *Handler) getRecentCompletedGames(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "group_id is required")
 		return
 	}
-	days := 14
-	if raw := r.URL.Query().Get("days"); raw != "" {
-		if d, err := parseID(raw); err == nil && d > 0 {
-			days = int(d)
-		}
-	}
 
-	games, err := h.gameService.GetRecentCompletedGamesForPlayer(r.Context(), tgID, groupID, days)
+	games, err := h.gameService.GetRecentCompletedGamesForPlayer(r.Context(), tgID, groupID)
 	if err != nil {
 		h.logger.Error("getRecentCompletedGames", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())

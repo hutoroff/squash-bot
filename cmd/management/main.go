@@ -125,12 +125,12 @@ func main() {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
 
-	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo)
+	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo, cfg.ResultWindowDays)
 
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
-	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc)
+	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays)
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
 	gameResultSvc.SetRatingService(ratingSvc)
 

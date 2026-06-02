@@ -28,7 +28,7 @@ func setupParticipationTest(t *testing.T, ctx context.Context) (
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
 
-	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil)
+	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
 	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
 
 	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
@@ -396,7 +396,7 @@ func TestParticipationService_AddGuest_AtCapacity(t *testing.T) {
 	partRepo := storage.NewParticipationRepo(testPool)
 	guestRepo := storage.NewGuestRepo(testPool)
 	partSvc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
-	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil)
+	gameSvc := service.NewGameService(gameRepo, storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
 
 	// 1 court → capacity 2.
 	game, err := gameSvc.CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1", nil)
@@ -577,8 +577,8 @@ func TestParticipationService_KickGuestByID_WrongGame(t *testing.T) {
 	svc := service.NewParticipationService(playerRepo, partRepo, guestRepo, nil)
 
 	venueRepo := storage.NewVenueRepo(testPool)
-	gA, _ := service.NewGameService(gameRepo, venueRepo, nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
-	gB, _ := service.NewGameService(gameRepo, venueRepo, nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4", nil)
+	gA, _ := service.NewGameService(gameRepo, venueRepo, nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14).CreateGame(ctx, -1001, time.Now().Add(48*time.Hour), "1,2", nil)
+	gB, _ := service.NewGameService(gameRepo, venueRepo, nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14).CreateGame(ctx, -1001, time.Now().Add(96*time.Hour), "3,4", nil)
 
 	_, _, _, _ = svc.AddGuest(ctx, gA.ID, 40011, "eve", "", "") // guest belongs to game A
 	guestsA, _ := svc.GetGuests(ctx, gA.ID)

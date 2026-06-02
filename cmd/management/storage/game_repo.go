@@ -358,8 +358,12 @@ func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID in
 	return games, rows.Err()
 }
 
-// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
-// in a specific group within the last `days` days. Used by the /result wizard game picker.
+// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
+// in a specific group that fall within the result-submission window. A game is
+// eligible when game_date <= NOW() (start time has passed) AND its local calendar
+// day (group timezone) is today or up to `days` days ago. The `completed` flag is
+// intentionally NOT considered. Used by the /result wizard game picker. Mirrors the
+// window predicate in GameInResultWindow.
 func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {
 	const q = `
 		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
@@ -378,8 +382,10 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, g
 		LEFT JOIN venues v ON v.id = g.venue_id
 		LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
 		WHERE g.chat_id = $2
-		  AND g.completed = true
-		  AND g.game_date >= NOW() - ($3 || ' days')::interval
+		  AND g.game_date <= NOW()
+		  AND (NOW() AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		      - (g.game_date AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		      BETWEEN 0 AND $3
 		ORDER BY g.game_date DESC`
 
 	slog.Debug("GameRepo.GetRecentCompletedGamesForPlayer", "tg_id", tgID, "group_id", groupID, "days", days)
@@ -404,6 +410,30 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, g
 		games = append(games, pg)
 	}
 	return games, rows.Err()
+}
+
+// GameInResultWindow reports whether a result may still be submitted for the game:
+// its local day (in the group's timezone) must be today or up to `days` days ago.
+// Future games and games older than the window return false. Single source of truth
+// for the result-submission window predicate, mirrored by GetRecentCompletedGamesForPlayer.
+func (r *GameRepo) GameInResultWindow(ctx context.Context, gameID int64, days int) (bool, error) {
+	const q = `
+		SELECT g.game_date <= NOW()
+		   AND (NOW() AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		       - (g.game_date AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		       BETWEEN 0 AND $2
+		FROM games g
+		LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
+		WHERE g.id = $1`
+
+	var inWindow bool
+	if err := r.pool.QueryRow(ctx, q, gameID, days).Scan(&inWindow); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, pgx.ErrNoRows
+		}
+		return false, fmt.Errorf("query game result window: %w", err)
+	}
+	return inWindow, nil
 }
 
 // UpdateCourts updates the courts and courts_count for a game.

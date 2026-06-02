@@ -206,6 +206,9 @@ func (r *stubGameRepoForLB) MarkCompleted(_ context.Context, _ int64) error     
 func (r *stubGameRepoForLB) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForLB) GameInResultWindow(_ context.Context, _ int64, _ int) (bool, error) {
+	return true, nil
+}
 
 // ── tests ────────────────────────────────────────────────────────────────────
 

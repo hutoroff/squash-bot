@@ -40,9 +40,13 @@ type GameRepository interface {
 	GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
 	MarkNotifiedDayBefore(ctx context.Context, gameID int64) error
 	MarkCompleted(ctx context.Context, gameID int64) error
-	// GetRecentCompletedGamesForPlayer returns completed games for a player (by Telegram ID)
-	// in a specific group within the last `days` days.
+	// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
+	// in a specific group within the result-submission window (`days`), ignoring the
+	// completed flag.
 	GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error)
+	// GameInResultWindow reports whether a result may still be submitted for the game,
+	// i.e. its local day (group timezone) is today or up to `days` days ago.
+	GameInResultWindow(ctx context.Context, gameID int64, days int) (bool, error)
 }
 
 // PlayerRepository is the data access interface for players.
