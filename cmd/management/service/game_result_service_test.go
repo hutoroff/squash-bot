@@ -161,6 +161,9 @@ func (r *stubGameRepoForResults) GetUpcomingUnnotifiedGames(_ context.Context) (
 }
 func (r *stubGameRepoForResults) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForResults) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (r *stubGameRepoForResults) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

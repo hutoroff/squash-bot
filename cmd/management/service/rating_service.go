@@ -168,12 +168,6 @@ func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models
 	return nil
 }
 
-// ListGroupsForPlayer returns the group IDs where the player has a rating with
-// at least one game played. Thin pass-through used by the API layer.
-func (s *RatingService) ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
-	return s.ratingRepo.ListGroupsForPlayer(ctx, playerID)
-}
-
 // GetLeaderboard returns the rated players for a group ordered by rating DESC,
 // with today's delta (in the group's local timezone) included.
 func (s *RatingService) GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error) {

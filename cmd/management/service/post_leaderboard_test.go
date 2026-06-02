@@ -144,10 +144,6 @@ func (r *stubRatingRepoForLB) ListByGroup(_ context.Context, _ int64) ([]*models
 	return r.ratings, nil
 }
 
-func (r *stubRatingRepoForLB) ListGroupsForPlayer(_ context.Context, _ int64) ([]int64, error) {
-	return nil, nil
-}
-
 // ── stub RatingChangeRepository for leaderboard tests ────────────────────────
 
 type stubChangeRepoForLB struct{}
@@ -203,6 +199,9 @@ func (r *stubGameRepoForLB) GetCompletedGamesByGroupAndDay(_ context.Context, _ 
 }
 func (r *stubGameRepoForLB) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForLB) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (r *stubGameRepoForLB) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 func (r *stubGameRepoForLB) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }
