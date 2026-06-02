@@ -87,6 +87,9 @@ func (m *mockGameRepo) GetUpcomingUnnotifiedGames(_ context.Context) ([]*models.
 }
 func (m *mockGameRepo) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (m *mockGameRepo) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (m *mockGameRepo) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 // ── mockVenueRepo ─────────────────────────────────────────────────────────────
 
@@ -313,6 +316,10 @@ type captureCreateRepo struct {
 func (c *captureCreateRepo) Create(ctx context.Context, game *models.Game) (*models.Game, error) {
 	*c.captured = game
 	return c.mockGameRepo.Create(ctx, game)
+}
+
+func (c *captureCreateRepo) ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
+	return c.mockGameRepo.ListGroupIDsForPlayer(ctx, playerID)
 }
 
 // ── handleAutoBookingReminder multi-result tests ──────────────────────────────

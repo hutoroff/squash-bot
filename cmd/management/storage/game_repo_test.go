@@ -616,3 +616,48 @@ func TestGameRepo_UpdateCourts(t *testing.T) {
 		t.Errorf("CourtsCount: got %d, want 3", updated.CourtsCount)
 	}
 }
+
+func TestGameRepo_ListGroupIDsForPlayer(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	const chatID int64 = -9001
+	player, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555001, Username: strPtr("lb_test")})
+	if err != nil {
+		t.Fatalf("upsert player: %v", err)
+	}
+
+	// Player with a participation but no rating row should be returned.
+	g, err := gameRepo.Create(ctx, newGame(chatID, time.Now().Add(24*time.Hour), "1"))
+	if err != nil {
+		t.Fatalf("create game: %v", err)
+	}
+	if err := partRepo.Upsert(ctx, g.ID, player.ID, models.StatusRegistered); err != nil {
+		t.Fatalf("upsert participation: %v", err)
+	}
+
+	ids, err := gameRepo.ListGroupIDsForPlayer(ctx, player.ID)
+	if err != nil {
+		t.Fatalf("ListGroupIDsForPlayer: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != chatID {
+		t.Errorf("got %v, want [%d]", ids, chatID)
+	}
+
+	// Player with no participations returns empty.
+	other, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555002, Username: strPtr("lb_nopart")})
+	if err != nil {
+		t.Fatalf("upsert other player: %v", err)
+	}
+	ids2, err := gameRepo.ListGroupIDsForPlayer(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("ListGroupIDsForPlayer no-part: %v", err)
+	}
+	if len(ids2) != 0 {
+		t.Errorf("expected empty for player with no participations, got %v", ids2)
+	}
+}

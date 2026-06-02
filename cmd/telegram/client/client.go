@@ -728,7 +728,7 @@ func (c *Client) GetLeaderboard(ctx context.Context, groupID int64) ([]Leaderboa
 	return entries, nil
 }
 
-func (c *Client) GetPlayerGroupsWithResults(ctx context.Context, tgID int64) ([]models.Group, error) {
+func (c *Client) GetPlayerGroups(ctx context.Context, tgID int64) ([]models.Group, error) {
 	path := fmt.Sprintf("/api/v1/players/%d/groups-with-results", tgID)
 	var groups []models.Group
 	if err := c.do(ctx, http.MethodGet, path, nil, &groups); err != nil {

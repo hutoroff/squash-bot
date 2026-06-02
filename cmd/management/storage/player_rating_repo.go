@@ -68,30 +68,6 @@ func (r *PlayerRatingRepo) Upsert(ctx context.Context, pr *models.PlayerRating) 
 	return err
 }
 
-// ListGroupsForPlayer returns group IDs where the player has a rating row with
-// at least one game played. Used by the leaderboard group picker.
-func (r *PlayerRatingRepo) ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
-	const q = `
-		SELECT group_id
-		FROM player_ratings
-		WHERE player_id = $1 AND games_played > 0
-		ORDER BY group_id`
-	rows, err := r.pool.Query(ctx, q, playerID)
-	if err != nil {
-		return nil, fmt.Errorf("list groups for player: %w", err)
-	}
-	defer rows.Close()
-	var groupIDs []int64
-	for rows.Next() {
-		var gid int64
-		if err := rows.Scan(&gid); err != nil {
-			return nil, fmt.Errorf("scan group_id: %w", err)
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	return groupIDs, rows.Err()
-}
-
 // ListByGroup returns all rated players for a group, ordered by rating DESC.
 // Player records are JOINed in.
 func (r *PlayerRatingRepo) ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error) {

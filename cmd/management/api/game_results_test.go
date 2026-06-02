@@ -177,6 +177,9 @@ func (r *apiStubGameRepo) GetUpcomingUnnotifiedGames(_ context.Context) ([]*mode
 }
 func (r *apiStubGameRepo) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *apiStubGameRepo) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (r *apiStubGameRepo) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 type apiStubPartRepo struct{}
 

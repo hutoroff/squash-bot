@@ -327,6 +327,33 @@ func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]mod
 	return games, rows.Err()
 }
 
+// ListGroupIDsForPlayer returns the distinct chat_ids of all groups in which
+// the player has at least one participation record.
+func (r *GameRepo) ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
+	const q = `
+		SELECT DISTINCT g.chat_id
+		FROM game_participations gp
+		JOIN games g ON g.id = gp.game_id
+		WHERE gp.player_id = $1
+		ORDER BY g.chat_id`
+
+	rows, err := r.pool.Query(ctx, q, playerID)
+	if err != nil {
+		return nil, fmt.Errorf("list group ids for player: %w", err)
+	}
+	defer rows.Close()
+
+	var groupIDs []int64
+	for rows.Next() {
+		var gid int64
+		if err := rows.Scan(&gid); err != nil {
+			return nil, fmt.Errorf("scan group_id: %w", err)
+		}
+		groupIDs = append(groupIDs, gid)
+	}
+	return groupIDs, rows.Err()
+}
+
 // GetCompletedGamesByGroupAndDay returns completed games for a group whose
 // game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
 // on "24 h after the day's last game start".

@@ -77,7 +77,7 @@ type ManagementClient interface {
 
 	// Leaderboard
 	GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error)
-	GetPlayerGroupsWithResults(ctx context.Context, tgID int64) ([]models.Group, error)
+	GetPlayerGroups(ctx context.Context, tgID int64) ([]models.Group, error)
 
 	// Game results
 	SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error)

@@ -1294,6 +1294,9 @@ func (r *stubGameRepoPC) GetCompletedGamesByGroupAndDay(_ context.Context, _ int
 }
 func (r *stubGameRepoPC) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (r *stubGameRepoPC) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
 

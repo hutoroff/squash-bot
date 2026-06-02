@@ -47,6 +47,9 @@ type GameRepository interface {
 	// GameInResultWindow reports whether a result may still be submitted for the game,
 	// i.e. its local day (group timezone) is today or up to `days` days ago.
 	GameInResultWindow(ctx context.Context, gameID int64, days int) (bool, error)
+	// ListGroupIDsForPlayer returns the distinct chat_ids of groups where the player
+	// has at least one participation record. Used by the leaderboard group picker.
+	ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
 }
 
 // PlayerRepository is the data access interface for players.
@@ -180,10 +183,6 @@ type PlayerRatingRepository interface {
 	GetOrInit(ctx context.Context, groupID, playerID int64) (*models.PlayerRating, error)
 	Upsert(ctx context.Context, r *models.PlayerRating) error
 	ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error)
-	// ListGroupsForPlayer returns the group IDs where the player has a rating
-	// with at least one game played. Used to populate the per-user leaderboard
-	// group picker so it reflects actual rated participation.
-	ListGroupsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
 }
 
 // RatingChangeRepository is the data access interface for rating change history.

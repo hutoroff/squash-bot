@@ -170,6 +170,9 @@ func (r *stubGameRepoForDayAfter) GetUpcomingUnnotifiedGames(_ context.Context) 
 }
 func (r *stubGameRepoForDayAfter) MarkNotifiedDayBefore(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForDayAfter) MarkCompleted(_ context.Context, _ int64) error         { return nil }
+func (r *stubGameRepoForDayAfter) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 type stubGroupRepoForDayAfter struct{}
 

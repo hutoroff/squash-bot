@@ -155,6 +155,10 @@ func (s *GameService) GetGamesForPlayer(ctx context.Context, playerID int64) ([]
 	return s.gameRepo.GetGamesForPlayer(ctx, playerID)
 }
 
+func (s *GameService) ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error) {
+	return s.gameRepo.ListGroupIDsForPlayer(ctx, playerID)
+}
+
 // GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
 // in a specific group within the configured result-submission window. Used by the
 // /result wizard game picker.

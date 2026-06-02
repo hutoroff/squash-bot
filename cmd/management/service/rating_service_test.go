@@ -25,10 +25,6 @@ func (r *stubPlayerRatingRepo) ListByGroup(_ context.Context, _ int64) ([]*model
 	return r.ratings, nil
 }
 
-func (r *stubPlayerRatingRepo) ListGroupsForPlayer(_ context.Context, _ int64) ([]int64, error) {
-	return nil, nil
-}
-
 type stubRatingChangeRepo struct {
 	changes []*models.RatingChange
 }
