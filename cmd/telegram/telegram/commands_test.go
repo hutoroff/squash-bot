@@ -89,7 +89,9 @@ func TestEscapeMarkdown_Mixed(t *testing.T) {
 // sample input that resembles the old /new_game command format.
 func TestParseAdminCommand_NewGamePrefix(t *testing.T) {
 	loc := time.UTC
-	raw := "/new_game\n2026-06-01 18:00\ncourts: 2,3,4"
+	future := time.Now().UTC().AddDate(0, 0, 7)
+	dateStr := future.Format("2006-01-02")
+	raw := "/new_game\n" + dateStr + " 18:00\ncourts: 2,3,4"
 	lines := strings.SplitN(strings.TrimSpace(raw), "\n", 2)
 	if len(lines) < 2 {
 		t.Fatal("expected 2 lines after split")
@@ -103,8 +105,8 @@ func TestParseAdminCommand_NewGamePrefix(t *testing.T) {
 	if courts != "2,3,4" {
 		t.Errorf("courts: got %q, want %q", courts, "2,3,4")
 	}
-	if gameDate.Year() != 2026 || gameDate.Month() != 6 || gameDate.Day() != 1 {
-		t.Errorf("gameDate: got %v, want 2026-06-01", gameDate)
+	if gameDate.Year() != future.Year() || gameDate.Month() != future.Month() || gameDate.Day() != future.Day() {
+		t.Errorf("gameDate: got %v, want %v", gameDate, dateStr)
 	}
 }
 
