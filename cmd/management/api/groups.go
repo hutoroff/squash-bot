@@ -172,6 +172,11 @@ func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if !h.serverOwnerIDs[req.ActorTelegramID] {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
 	group, err := h.groupRepo.GetByID(r.Context(), chatID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
