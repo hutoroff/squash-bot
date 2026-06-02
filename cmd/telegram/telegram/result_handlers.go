@@ -536,6 +536,39 @@ func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResu
 	return baseText
 }
 
+// buildApprovedCardText builds the card text shown to the opponent after they approve a result.
+// Unlike buildApprovalCardText it derives all fields from the DTO (no wizard available on the approver side).
+func (b *Bot) buildApprovedCardText(ctx context.Context, result *client.GameResultDTO, lz *i18n.Localizer) string {
+	authorDisplay := fmt.Sprintf("player#%d", result.AuthorID)
+	if result.Author != nil {
+		authorDisplay = playerModelDisplayName(result.Author)
+	}
+
+	gameLabel := fmt.Sprintf("game #%d", result.GameID)
+	if game, err := b.client.GetGameByID(ctx, result.GameID); err == nil {
+		gameLabel = game.GameDate.Format("Mon 02 Jan")
+	} else {
+		slog.Warn("buildApprovedCardText: fetch game", "gameID", result.GameID, "err", err)
+	}
+
+	escapedAuthor := escapeMarkdown(authorDisplay)
+	var outcomeLabel string
+	if result.WinnerID == nil {
+		outcomeLabel = lz.T(i18n.MsgResultWinnerDraw)
+	} else if *result.WinnerID == result.OpponentID {
+		outcomeLabel = lz.T(i18n.MsgResultWinnerMe)
+	} else {
+		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, escapedAuthor)
+	}
+
+	scoreDisplay := result.Score
+	if scoreDisplay == "" {
+		scoreDisplay = "—"
+	}
+
+	return lz.Tf(i18n.MsgResultApprovedCard, escapedAuthor, escapeMarkdown(gameLabel), outcomeLabel, scoreDisplay)
+}
+
 // handleResultApprove handles the Approve callback from the opponent DM.
 func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 	lz := b.userLocalizer(cb.From.LanguageCode)
@@ -559,9 +592,9 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 
 	b.answerCallback(cb.ID, "")
 
-	// Edit the opponent DM card.
+	// Edit the opponent DM card with the match details.
 	b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
-		"✅ Approved on "+time.Now().Format("02 Jan 15:04"), nil)
+		b.buildApprovedCardText(ctx, result, lz), nil)
 
 	// DM the author.
 	deciderDisplay := actorDisplayFrom(cb.From)
