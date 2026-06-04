@@ -235,16 +235,28 @@ func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, 
 
 // handleCommandSettings shows the per-user DM settings menu (private chat only).
 func (b *Bot) handleCommandSettings(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSettingsLanguage), "settings_lang:_"),
-		),
-	)
+	keyboard := b.buildSettingsKeyboard(ctx, msg.From.ID, lz)
 	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSettingsTitle))
 	out.ReplyMarkup = keyboard
 	if _, err := b.api.Send(out); err != nil {
 		slog.Error("handleCommandSettings: send", "err", err)
 	}
+}
+
+// buildSettingsKeyboard builds the /settings inline keyboard, fetching current opt-out state.
+func (b *Bot) buildSettingsKeyboard(ctx context.Context, tgID int64, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+	optOutBtnKey := i18n.BtnSettingsResultsOptOutOn
+	if optOut, err := b.client.GetUserResultsOptOut(ctx, tgID); err == nil && optOut {
+		optOutBtnKey = i18n.BtnSettingsResultsOptOutOff
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSettingsLanguage), "settings_lang:_"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(optOutBtnKey), "settings_results_optout:_"),
+		),
+	)
 }
 
 func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {

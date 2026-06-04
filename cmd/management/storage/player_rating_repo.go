@@ -69,6 +69,7 @@ func (r *PlayerRatingRepo) Upsert(ctx context.Context, pr *models.PlayerRating) 
 }
 
 // ListByGroup returns all rated players for a group, ordered by rating DESC.
+// Players who have opted out of results are excluded.
 // Player records are JOINed in.
 func (r *PlayerRatingRepo) ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error) {
 	const q = `
@@ -76,7 +77,9 @@ func (r *PlayerRatingRepo) ListByGroup(ctx context.Context, groupID int64) ([]*m
 		       p.id, p.telegram_id, p.username, p.first_name, p.last_name, p.created_at
 		FROM player_ratings pr
 		JOIN players p ON p.id = pr.player_id
+		LEFT JOIN user_preferences up ON up.telegram_id = p.telegram_id
 		WHERE pr.group_id = $1
+		  AND COALESCE(up.results_opt_out, FALSE) = FALSE
 		ORDER BY pr.rating DESC`
 	rows, err := r.pool.Query(ctx, q, groupID)
 	if err != nil {

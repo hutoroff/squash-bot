@@ -117,6 +117,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// User preferences
 	mux.HandleFunc("GET /api/v1/users/{telegramID}/preferences", h.getUserPreferences)
 	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/dm-language", h.setUserDMLanguage)
+	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/results-opt-out", h.setUserResultsOptOut)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)

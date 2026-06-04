@@ -197,6 +197,11 @@ type RatingChangeRepository interface {
 // GroupRepository also needs SetLastLeaderboardPostedFor.
 // (This is an extension added in migration 027 — method added to existing GroupRepository interface below.)
 
+// UserPreferencesReader is the subset of UserPreferencesRepo used by GameResultService.
+type UserPreferencesReader interface {
+	GetByTelegramID(ctx context.Context, telegramID int64) (*models.UserPreferences, error)
+}
+
 // AuditEventRepository is the data access interface for audit events.
 type AuditEventRepository interface {
 	Insert(ctx context.Context, evt *models.AuditEvent) error

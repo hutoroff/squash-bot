@@ -143,6 +143,9 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"settings_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
 			b.handleSettingsLang(ctx, cb)
 		},
+		"settings_results_optout": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
+			b.handleToggleResultsOptOut(ctx, cb)
+		},
 		"set_user_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			b.handleSetUserLang(ctx, cb, rawID)
 		},

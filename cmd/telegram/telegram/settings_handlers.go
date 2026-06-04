@@ -11,6 +11,47 @@ import (
 
 // ── Per-user language settings ────────────────────────────────────────────────
 
+// handleToggleResultsOptOut flips the results/leaderboard opt-out for the user.
+func (b *Bot) handleToggleResultsOptOut(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+	lz := b.userLocalizer(ctx, cb.From)
+
+	current, err := b.client.GetUserResultsOptOut(ctx, cb.From.ID)
+	if err != nil {
+		slog.Error("handleToggleResultsOptOut: get opt-out", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	newOptOut := !current
+	if err := b.client.SetUserResultsOptOut(ctx, cb.From.ID, newOptOut); err != nil {
+		slog.Error("handleToggleResultsOptOut: set opt-out", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	if newOptOut {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgResultsOptOutEnabled))
+	} else {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgResultsOptOutDisabled))
+	}
+
+	// Build the keyboard directly from the known new state to avoid a round-trip.
+	optOutBtnKey := i18n.BtnSettingsResultsOptOutOn
+	if newOptOut {
+		optOutBtnKey = i18n.BtnSettingsResultsOptOutOff
+	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSettingsLanguage), "settings_lang:_"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(optOutBtnKey), "settings_results_optout:_"),
+		),
+	)
+	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, keyboard)
+	b.api.Send(edit) //nolint:errcheck
+}
+
 // handleSettingsLang shows the DM language picker for the user.
 func (b *Bot) handleSettingsLang(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	lz := b.userLocalizer(ctx, cb.From)

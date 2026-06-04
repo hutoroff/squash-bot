@@ -19,11 +19,11 @@ func NewUserPreferencesRepo(pool *pgxpool.Pool) *UserPreferencesRepo {
 // Returns pgx.ErrNoRows if no row exists.
 func (r *UserPreferencesRepo) GetByTelegramID(ctx context.Context, telegramID int64) (*models.UserPreferences, error) {
 	const q = `
-		SELECT telegram_id, dm_language, created_at, updated_at
+		SELECT telegram_id, dm_language, results_opt_out, created_at, updated_at
 		FROM user_preferences WHERE telegram_id = $1`
 	row := r.pool.QueryRow(ctx, q, telegramID)
 	var p models.UserPreferences
-	if err := row.Scan(&p.TelegramID, &p.DMLanguage, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.TelegramID, &p.DMLanguage, &p.ResultsOptOut, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -38,5 +38,17 @@ func (r *UserPreferencesRepo) SetDMLanguage(ctx context.Context, telegramID int6
 		    SET dm_language = EXCLUDED.dm_language,
 		        updated_at  = NOW()`
 	_, err := r.pool.Exec(ctx, q, telegramID, language)
+	return err
+}
+
+// SetResultsOptOut upserts the results_opt_out flag for the given user.
+func (r *UserPreferencesRepo) SetResultsOptOut(ctx context.Context, telegramID int64, optOut bool) error {
+	const q = `
+		INSERT INTO user_preferences (telegram_id, dm_language, results_opt_out)
+		VALUES ($1, '', $2)
+		ON CONFLICT (telegram_id) DO UPDATE
+		    SET results_opt_out = EXCLUDED.results_opt_out,
+		        updated_at      = NOW()`
+	_, err := r.pool.Exec(ctx, q, telegramID, optOut)
 	return err
 }

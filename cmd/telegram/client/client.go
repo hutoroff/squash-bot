@@ -804,6 +804,9 @@ type GameResultDTO struct {
 // ErrGameResultNotPending is returned when trying to act on a non-pending result.
 var ErrGameResultNotPending = errors.New("game result is not pending")
 
+// ErrResultOpponentOptedOut is returned by SubmitGameResult when the opponent has opted out.
+var ErrResultOpponentOptedOut = errors.New("opponent has opted out of game results")
+
 func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
 	body := map[string]any{
 		"game_id":            gameID,
@@ -813,9 +816,29 @@ func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorTgID, oppon
 		"score":              score,
 		"actor_display":      actorDisplay,
 	}
-	var result GameResultDTO
-	if err := c.do(ctx, http.MethodPost, "/api/v1/game-results", body, &result); err != nil {
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/game-results", body)
+	if err != nil {
 		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST /api/v1/game-results: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		parsedErr := parseErrorBody(resp)
+		httpErr, _ := parsedErr.(*HTTPError)
+		if httpErr != nil && httpErr.Message == "opponent_opted_out" {
+			return nil, ErrResultOpponentOptedOut
+		}
+		return nil, parsedErr
+	}
+	if resp.StatusCode >= 400 {
+		return nil, parseErrorBody(resp)
+	}
+	var result GameResultDTO
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode game-results response: %w", err)
 	}
 	return &result, nil
 }
@@ -881,4 +904,38 @@ func (c *Client) GetRecentCompletedGames(ctx context.Context, playerTgID, groupI
 		return nil, err
 	}
 	return games, nil
+}
+
+// GetUserResultsOptOut returns true when the user has opted out of the results/leaderboard system.
+// Returns false (no error) when no preference row exists yet.
+func (c *Client) GetUserResultsOptOut(ctx context.Context, telegramID int64) (bool, error) {
+	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/preferences"
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, parseErrorBody(resp)
+	}
+	var prefs struct {
+		ResultsOptOut bool `json:"results_opt_out"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&prefs); err != nil {
+		return false, fmt.Errorf("decode user preferences: %w", err)
+	}
+	return prefs.ResultsOptOut, nil
+}
+
+// SetUserResultsOptOut persists the results opt-out flag for the user.
+func (c *Client) SetUserResultsOptOut(ctx context.Context, telegramID int64, optOut bool) error {
+	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/results-opt-out"
+	return c.do(ctx, http.MethodPatch, path, map[string]bool{"opt_out": optOut}, nil)
 }
