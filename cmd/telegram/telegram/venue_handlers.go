@@ -108,7 +108,7 @@ func (b *Bot) sendVenueList(ctx context.Context, chatID int64, messageID int, gr
 // ── Venue list callback ───────────────────────────────────────────────────────
 
 func (b *Bot) handleVenueList(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -123,7 +123,7 @@ func (b *Bot) handleVenueList(ctx context.Context, cb *tgbotapi.CallbackQuery, g
 // ── Add venue wizard ──────────────────────────────────────────────────────────
 
 func (b *Bot) handleVenueAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -151,7 +151,7 @@ func (b *Bot) handleVenueAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gr
 
 // processVenueWizard handles text input during venue creation.
 func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz *venueWizard) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	text := strings.TrimSpace(msg.Text)
 
 	switch wiz.step {
@@ -303,7 +303,7 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 // ── Edit venue ────────────────────────────────────────────────────────────────
 
 func (b *Bot) handleVenueEditMenu(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	venue, err := b.client.GetVenueByID(ctx, venueID)
 	if err != nil {
@@ -427,7 +427,7 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 }
 
 func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64, field venueEditField) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -511,7 +511,7 @@ func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQue
 
 // processVenueEdit handles text input during a single-field venue edit.
 func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state *venueEditState) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	text := strings.TrimSpace(msg.Text)
 
 	// Fetch current venue to apply partial update.
@@ -647,7 +647,7 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 // ── Delete venue ──────────────────────────────────────────────────────────────
 
 func (b *Bot) handleVenueDeleteConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	venue, err := b.client.GetVenueByID(ctx, venueID)
 	if err != nil {
@@ -681,7 +681,7 @@ func (b *Bot) handleVenueDeleteConfirm(ctx context.Context, cb *tgbotapi.Callbac
 }
 
 func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -710,7 +710,7 @@ func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery,
 // handleVenueDayToggle handles venue_day_toggle:<day> callbacks.
 // Works for both the venue wizard (venueStepGameDays) and the edit game-days flow.
 func (b *Bot) handleVenueDayToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawDay string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	day, err := strconv.Atoi(rawDay)
 	if err != nil || day < 0 || day > 6 {
@@ -743,7 +743,7 @@ func (b *Bot) handleVenueDayToggle(ctx context.Context, cb *tgbotapi.CallbackQue
 
 // handleVenueDayConfirm handles venue_day_confirm:_ callbacks.
 func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	b.answerCallback(cb.ID, "")
 
 	// Check wizard first.
@@ -840,7 +840,7 @@ func renderPreferredTimeEditKeyboard(venueID int64, slots []string, selected map
 // Special values: "_confirm" advances to next step, "_skip" clears selection and advances.
 // Any other value toggles the slot in the selection.
 func (b *Bot) handleVenueWizPreferredTimePick(ctx context.Context, cb *tgbotapi.CallbackQuery, slot string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -883,7 +883,7 @@ func (b *Bot) handleVenueWizPreferredTimePick(ctx context.Context, cb *tgbotapi.
 
 // handleVenuePtimeSet handles venue_ptime_set:<venueID>:<slot> callbacks for existing venue editing.
 func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, slot string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingVenuePreferredTimeEdit.LoadAndDelete(cb.Message.Chat.ID)
 	if !ok {
@@ -929,7 +929,7 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 // handleVenuePtimeToggle handles venue_ptime_toggle:<venueID>:<slot> callbacks.
 // Toggles the given time slot in the pending edit state and re-renders the keyboard.
 func (b *Bot) handleVenuePtimeToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, slot string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingVenuePreferredTimeEdit.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -960,7 +960,7 @@ func (b *Bot) handleVenuePtimeToggle(ctx context.Context, cb *tgbotapi.CallbackQ
 // handleVenuePtimeConfirm handles venue_ptime_confirm:<venueID> and venue_ptime_confirm:<venueID>:_clear callbacks.
 // Saves the selected preferred times and re-renders the edit menu.
 func (b *Bot) handleVenuePtimeConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID int64, clearAll bool) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingVenuePreferredTimeEdit.LoadAndDelete(cb.Message.Chat.ID)
 	if !ok {
@@ -1155,7 +1155,7 @@ func renderAutoBookingEnabledKeyboard(lz *i18n.Localizer) tgbotapi.InlineKeyboar
 
 // handleVenueWizAutoBookingPick handles venue_wiz_autobooking:<enable|disable> callbacks.
 func (b *Bot) handleVenueWizAutoBookingPick(ctx context.Context, cb *tgbotapi.CallbackQuery, choice string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -1197,7 +1197,7 @@ func (b *Bot) handleVenueWizAutoBookingPick(ctx context.Context, cb *tgbotapi.Ca
 // handleVenueToggleAutoBooking handles venue_toggle_autobooking:<venueID>:<groupID> callbacks.
 // It flips auto_booking_enabled on the venue and re-renders the edit menu.
 func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -1269,7 +1269,7 @@ func maskLogin(login string) string {
 // handleVenueCredsList shows the credentials list for a venue.
 // Callback: venue_creds:<venueID>:<groupID>
 func (b *Bot) handleVenueCredsList(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -1328,7 +1328,7 @@ func (b *Bot) renderVenueCredsList(ctx context.Context, chatID int64, messageID 
 // handleVenueCredAdd starts the add-credential wizard.
 // Callback: venue_cred_add:<venueID>:<groupID>
 func (b *Bot) handleVenueCredAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -1351,7 +1351,7 @@ func (b *Bot) handleVenueCredAdd(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // processVenueCredWizard handles free-text input for the credential wizard.
 func (b *Bot) processVenueCredWizard(ctx context.Context, msg *tgbotapi.Message, wiz *venueCredWizard) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	text := strings.TrimSpace(msg.Text)
 
 	switch wiz.step {
@@ -1494,7 +1494,7 @@ func (b *Bot) sendVenueCredsList(ctx context.Context, chatID int64, venue *model
 // handleVenueCredDelConfirm shows delete confirmation.
 // Callback: venue_cred_del:<credID>:<venueID>:<groupID>
 func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, credID, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -1535,7 +1535,7 @@ func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.Callba
 // handleVenueCredDelete executes credential deletion.
 // Callback: venue_cred_del_ok:<credID>:<venueID>:<groupID>
 func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQuery, credID, venueID, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {

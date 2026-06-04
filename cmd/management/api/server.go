@@ -25,6 +25,7 @@ type Handler struct {
 	venueCredService *service.VenueCredentialService
 	groupRepo        *storage.GroupRepo
 	playerRepo       *storage.PlayerRepo
+	userPrefsRepo    *storage.UserPreferencesRepo
 	scheduler        *service.Scheduler
 	auditSvc         *service.AuditService
 	adminResolver    adminGroupsResolver
@@ -44,6 +45,7 @@ func NewHandler(
 	venueCredService *service.VenueCredentialService,
 	groupRepo *storage.GroupRepo,
 	playerRepo *storage.PlayerRepo,
+	userPrefsRepo *storage.UserPreferencesRepo,
 	scheduler *service.Scheduler,
 	auditSvc *service.AuditService,
 	adminResolver adminGroupsResolver,
@@ -64,6 +66,7 @@ func NewHandler(
 		venueCredService:        venueCredService,
 		groupRepo:               groupRepo,
 		playerRepo:              playerRepo,
+		userPrefsRepo:           userPrefsRepo,
 		scheduler:               scheduler,
 		auditSvc:                auditSvc,
 		adminResolver:           adminResolver,
@@ -110,6 +113,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/players/{telegramID}/next-game", h.getNextGame)
 	mux.HandleFunc("GET /api/v1/players/{playerID}/games", h.listPlayerGames)
 	mux.HandleFunc("GET /api/v1/players/{tgID}/recent-completed-games", h.getRecentCompletedGames)
+
+	// User preferences
+	mux.HandleFunc("GET /api/v1/users/{telegramID}/preferences", h.getUserPreferences)
+	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/dm-language", h.setUserDMLanguage)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)

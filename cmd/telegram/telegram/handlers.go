@@ -73,7 +73,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	// Group @mention: only /help and /start are served; everything else
 	// is redirected to private chat.
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	text := stripBotMention(msg.Text, b.api.Self.UserName, msg.Entities)
 	text = strings.TrimSpace(text)
 

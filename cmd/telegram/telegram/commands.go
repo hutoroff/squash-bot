@@ -22,7 +22,7 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 	}
 	cmd := strings.ToLower(raw)
 
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 
 	switch cmd {
 	case "/start", "/help":
@@ -43,6 +43,8 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandResult(ctx, msg, lz)
 	case "/leaderboard":
 		b.handleCommandLeaderboard(ctx, msg, lz)
+	case "/settings":
+		b.handleCommandSettings(ctx, msg, lz)
 	default:
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgUnknownCommand))
 	}
@@ -57,6 +59,7 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 	sb.WriteString(lz.T(i18n.MsgCmdMyGame))
 	sb.WriteString(lz.T(i18n.MsgCmdResult))
 	sb.WriteString(lz.T(i18n.MsgCmdLeaderboard))
+	sb.WriteString(lz.T(i18n.MsgCmdSettings))
 	sb.WriteString(lz.T(i18n.MsgCmdHelp))
 
 	if isAdmin {
@@ -227,6 +230,20 @@ func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, 
 	out.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(out); err != nil {
 		slog.Error("handleCommandLanguage: send", "err", err)
+	}
+}
+
+// handleCommandSettings shows the per-user DM settings menu (private chat only).
+func (b *Bot) handleCommandSettings(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSettingsLanguage), "settings_lang:_"),
+		),
+	)
+	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSettingsTitle))
+	out.ReplyMarkup = keyboard
+	if _, err := b.api.Send(out); err != nil {
+		slog.Error("handleCommandSettings: send", "err", err)
 	}
 }
 

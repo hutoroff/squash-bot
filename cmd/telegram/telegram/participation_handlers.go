@@ -27,7 +27,7 @@ func actorDisplayFrom(u *tgbotapi.User) string {
 }
 
 func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	_, err := b.client.Join(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("join game", "err", err, "game_id", gameID)
@@ -39,7 +39,7 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 }
 
 func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	_, skipped, err := b.client.Skip(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("skip game", "err", err, "game_id", gameID)
@@ -55,7 +55,7 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 }
 
 func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	u := cb.From
 	// Capacity enforcement is done atomically inside AddGuest (DB advisory lock +
 	// transaction), so there is no TOCTOU race even under concurrent clicks.
@@ -74,7 +74,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 }
 
 func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	removed, _, _, err := b.client.RemoveGuest(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
 	if err != nil {
 		slog.Error("remove guest", "err", err, "game_id", gameID)

@@ -100,7 +100,7 @@ func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz
 // ── Step handlers (callbacks) ─────────────────────────────────────────────────
 
 func (b *Bot) handleResultPickGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	groupID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -155,7 +155,7 @@ func (b *Bot) sendResultGamePicker(ctx context.Context, chatID, tgID int64, wiz 
 }
 
 func (b *Bot) handleResultPickGame(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	gameID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -237,7 +237,7 @@ func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID, tgID int64, 
 }
 
 func (b *Bot) handleResultPickOpponent(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	opponentID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -278,7 +278,7 @@ func (b *Bot) renderWinnerPicker(chatID int64, msgID int, wiz *resultWizard, lz 
 }
 
 func (b *Bot) handleResultPickWinner(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingResultWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -324,7 +324,7 @@ func (b *Bot) renderScoreStep(chatID int64, msgID int, wiz *resultWizard, lz *i1
 }
 
 func (b *Bot) handleResultScoreSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingResultWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -341,7 +341,7 @@ func (b *Bot) handleResultScoreSkip(ctx context.Context, cb *tgbotapi.CallbackQu
 
 // processResultWizard handles free-text input at the score step.
 func (b *Bot) processResultWizard(ctx context.Context, msg *tgbotapi.Message, wiz *resultWizard) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 
 	if wiz.step != resultStepScore {
 		return
@@ -410,7 +410,7 @@ func buildResultPreviewKeyboard(lz *i18n.Localizer) *tgbotapi.InlineKeyboardMark
 }
 
 func (b *Bot) handleResultEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, field string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingResultWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -437,14 +437,14 @@ func (b *Bot) handleResultEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 }
 
 func (b *Bot) handleResultCancel(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	b.pendingResultWizard.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.BtnResultCancel)+" ✓", nil)
 }
 
 func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingResultWizard.LoadAndDelete(cb.Message.Chat.ID)
 	if !ok {
@@ -574,7 +574,7 @@ func (b *Bot) buildApprovedCardText(ctx context.Context, result *client.GameResu
 
 // handleResultApprove handles the Approve callback from the opponent DM.
 func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	id, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -584,8 +584,8 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 	result, err := b.client.ApproveGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
-			b.answerCallback(cb.ID, "Already decided")
-			b.editText(cb.Message.Chat.ID, cb.Message.MessageID, "Already decided.", nil)
+			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
+			b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgResultAlreadyDecided)+".", nil)
 			return
 		}
 		slog.Error("handleResultApprove", "err", err, "id", id)
@@ -611,7 +611,7 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 
 // handleResultReject handles the Reject callback from the opponent DM.
 func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	id, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -621,7 +621,7 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 	result, err := b.client.RejectGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
-			b.answerCallback(cb.ID, "Already decided")
+			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
 			return
 		}
 		slog.Error("handleResultReject", "err", err, "id", id)
@@ -631,7 +631,7 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 	b.answerCallback(cb.ID, "")
 	b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
-		"❌ Rejected on "+time.Now().Format("02 Jan 15:04"), nil)
+		lz.Tf(i18n.MsgResultRejectedOn, lz.FormatUpdatedAt(time.Now())), nil)
 
 	// DM the author with a resubmit button.
 	deciderDisplay := actorDisplayFrom(cb.From)
@@ -651,7 +651,7 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // handleResultWithdraw handles the Withdraw button the author presses to cancel a pending result.
 func (b *Bot) handleResultWithdraw(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	id, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -661,7 +661,7 @@ func (b *Bot) handleResultWithdraw(ctx context.Context, cb *tgbotapi.CallbackQue
 	result, err := b.client.CancelGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
-			b.answerCallback(cb.ID, "Already decided")
+			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
 			return
 		}
 		slog.Error("handleResultWithdraw", "err", err, "id", id)
@@ -683,7 +683,7 @@ func (b *Bot) handleResultWithdraw(ctx context.Context, cb *tgbotapi.CallbackQue
 
 // handleResultResubmit pre-loads the wizard from a rejected result.
 func (b *Bot) handleResultResubmit(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	id, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))

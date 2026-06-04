@@ -415,6 +415,17 @@ const (
 	BtnResultWithdraw            = "btn.result_withdraw"
 	BtnResultResubmit            = "btn.result_resubmit"
 	MsgCmdResult                 = "msg.cmd_result"
+	// MsgResultAlreadyDecided: toast + card text when the result was already decided.
+	MsgResultAlreadyDecided = "msg.result_already_decided"
+	// MsgResultRejectedOn: card text shown after reject. Args: %s = locale-formatted date+time.
+	MsgResultRejectedOn = "msg.result_rejected_on"
+
+	// User DM settings
+	MsgSettingsTitle    = "msg.settings_title"
+	BtnSettingsLanguage = "btn.settings_language"
+	MsgSelectDMLanguage = "msg.select_dm_language"
+	MsgDMLanguageSet    = "msg.dm_language_set"
+	MsgCmdSettings      = "msg.cmd_settings"
 
 	// Calendar — weekday names
 	WeekdaySunday    = "weekday.sunday"
@@ -813,6 +824,15 @@ var translations = map[Lang]map[string]string{
 		BtnResultWithdraw:            "Withdraw",
 		BtnResultResubmit:            "✏️ Edit and resubmit",
 		MsgCmdResult:                 "/result — Submit a game result\n",
+		MsgResultAlreadyDecided:      "Already decided",
+		MsgResultRejectedOn:          "❌ Rejected on %s",
+
+		// User DM settings
+		MsgSettingsTitle:    "⚙️ Settings",
+		BtnSettingsLanguage: "🌐 Language",
+		MsgSelectDMLanguage: "Choose your preferred language for bot messages:",
+		MsgDMLanguageSet:    "Language updated ✓",
+		MsgCmdSettings:      "/settings — Set your personal bot preferences\n",
 	},
 
 	De: {
@@ -1168,6 +1188,15 @@ var translations = map[Lang]map[string]string{
 		BtnResultWithdraw:            "Zurückziehen",
 		BtnResultResubmit:            "✏️ Bearbeiten und erneut einreichen",
 		MsgCmdResult:                 "/result — Spielergebnis einreichen\n",
+		MsgResultAlreadyDecided:      "Bereits entschieden",
+		MsgResultRejectedOn:          "❌ Abgelehnt am %s",
+
+		// User DM settings
+		MsgSettingsTitle:    "⚙️ Einstellungen",
+		BtnSettingsLanguage: "🌐 Sprache",
+		MsgSelectDMLanguage: "Bevorzugte Sprache für Bot-Nachrichten wählen:",
+		MsgDMLanguageSet:    "Sprache aktualisiert ✓",
+		MsgCmdSettings:      "/settings — Persönliche Bot-Einstellungen ändern\n",
 	},
 
 	Ru: {
@@ -1523,6 +1552,15 @@ var translations = map[Lang]map[string]string{
 		BtnResultWithdraw:            "Отозвать",
 		BtnResultResubmit:            "✏️ Изменить и отправить снова",
 		MsgCmdResult:                 "/result — Записать результат игры\n",
+		MsgResultAlreadyDecided:      "Уже принято решение",
+		MsgResultRejectedOn:          "❌ Отклонено %s",
+
+		// User DM settings
+		MsgSettingsTitle:    "⚙️ Настройки",
+		BtnSettingsLanguage: "🌐 Язык",
+		MsgSelectDMLanguage: "Выберите предпочитаемый язык для сообщений бота:",
+		MsgDMLanguageSet:    "Язык обновлён ✓",
+		MsgCmdSettings:      "/settings — Личные настройки бота\n",
 	},
 }
 

@@ -747,6 +747,39 @@ func (c *Client) GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*
 	return &p, nil
 }
 
+// GetUserDMLanguage returns the stored DM language for the user, or "" when no preference exists.
+func (c *Client) GetUserDMLanguage(ctx context.Context, telegramID int64) (string, error) {
+	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/preferences"
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", parseErrorBody(resp)
+	}
+	var prefs struct {
+		DMLanguage string `json:"dm_language"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&prefs); err != nil {
+		return "", fmt.Errorf("decode user preferences: %w", err)
+	}
+	return prefs.DMLanguage, nil
+}
+
+// SetUserDMLanguage saves the DM language override for the user.
+func (c *Client) SetUserDMLanguage(ctx context.Context, telegramID int64, language string) error {
+	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/dm-language"
+	return c.do(ctx, http.MethodPatch, path, map[string]string{"language": language}, nil)
+}
+
 // ── Game Results ──────────────────────────────────────────────────────────────
 
 // GameResultDTO is the client-side representation of a game result.
