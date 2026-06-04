@@ -75,6 +75,11 @@ type ManagementClient interface {
 	// GetPlayerByTelegramID fetches a player record by Telegram user ID.
 	GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
 
+	// GetUserDMLanguage returns the saved DM language for the user, or "" when none is set.
+	GetUserDMLanguage(ctx context.Context, telegramID int64) (string, error)
+	// SetUserDMLanguage persists the DM language override for the user.
+	SetUserDMLanguage(ctx context.Context, telegramID int64, language string) error
+
 	// Leaderboard
 	GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error)
 	GetPlayerGroups(ctx context.Context, tgID int64) ([]models.Group, error)

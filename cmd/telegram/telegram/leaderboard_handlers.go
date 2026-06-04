@@ -39,7 +39,7 @@ func (b *Bot) handleCommandLeaderboard(ctx context.Context, msg *tgbotapi.Messag
 }
 
 func (b *Bot) handleLbGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	groupID := int64(0)
 	if _, err := fmt.Sscanf(rawID, "%d", &groupID); err != nil || groupID == 0 {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))

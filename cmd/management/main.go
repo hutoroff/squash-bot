@@ -93,6 +93,7 @@ func main() {
 	gameResultRepo := storage.NewGameResultRepo(pool)
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
 	ratingChangeRepo := storage.NewRatingChangeRepo(pool)
+	userPrefsRepo := storage.NewUserPreferencesRepo(pool)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
@@ -163,7 +164,7 @@ func main() {
 	service.AnnounceChangelog(ctx, tgAPI, groupRepo, stateRepo, loc, logger, Version)
 
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
-	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version, cfg.CredentialErrorCooldown)
+	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userPrefsRepo, scheduler, auditSvc, adminResolver, serverOwnerIDs, logger, Version, cfg.CredentialErrorCooldown)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

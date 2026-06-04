@@ -9,9 +9,77 @@ import (
 	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
+// ── Per-user language settings ────────────────────────────────────────────────
+
+// handleSettingsLang shows the DM language picker for the user.
+func (b *Bot) handleSettingsLang(ctx context.Context, cb *tgbotapi.CallbackQuery) {
+	lz := b.userLocalizer(ctx, cb.From)
+	b.answerCallback(cb.ID, "")
+	b.renderUserLanguageKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, cb.From, lz)
+}
+
+// handleSetUserLang applies the chosen language as the user's DM preference.
+func (b *Bot) handleSetUserLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lang string) {
+	lz := b.userLocalizer(ctx, cb.From)
+	switch lang {
+	case "en", "de", "ru":
+		// valid
+	default:
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	if err := b.client.SetUserDMLanguage(ctx, cb.From.ID, lang); err != nil {
+		slog.Error("handleSetUserLang: set language", "err", err, "user_id", cb.From.ID, "lang", lang)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	// Update cache immediately so subsequent messages reflect the new language.
+	b.userLangCache.Store(cb.From.ID, userLangPref{lang: i18n.Lang(lang), hasOverride: true})
+
+	newLz := i18n.New(i18n.Lang(lang))
+	b.answerCallback(cb.ID, newLz.T(i18n.MsgDMLanguageSet))
+	b.renderUserLanguageKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, cb.From, newLz)
+}
+
+// renderUserLanguageKeyboard edits (or sends) the DM language picker with the current language marked ✓.
+func (b *Bot) renderUserLanguageKeyboard(ctx context.Context, chatID int64, messageID int, u *tgbotapi.User, lz *i18n.Localizer) {
+	current := b.resolveUserLang(ctx, u)
+
+	markCurrent := func(langCode i18n.Lang, label string) string {
+		if current == langCode {
+			return label + " ✓"
+		}
+		return label
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(markCurrent(i18n.En, lz.T(i18n.BtnLangEn)), "set_user_lang:en"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(markCurrent(i18n.De, lz.T(i18n.BtnLangDe)), "set_user_lang:de"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(markCurrent(i18n.Ru, lz.T(i18n.BtnLangRu)), "set_user_lang:ru"),
+		),
+	)
+
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgSelectDMLanguage))
+		edit.ReplyMarkup = &keyboard
+		b.api.Send(edit) //nolint:errcheck
+	} else {
+		msg := tgbotapi.NewMessage(chatID, lz.T(i18n.MsgSelectDMLanguage))
+		msg.ReplyMarkup = keyboard
+		b.api.Send(msg) //nolint:errcheck
+	}
+}
+
 // handleSetLangGroup shows the language selection keyboard for a specific group.
 func (b *Bot) handleSetLangGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -25,7 +93,7 @@ func (b *Bot) handleSetLangGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // handleSetLang applies the chosen language to the group.
 func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lang string, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -86,7 +154,7 @@ func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageI
 
 // handleToggleChangelog toggles the changelog_enabled setting for the group.
 func (b *Bot) handleToggleChangelog(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -123,7 +191,7 @@ func (b *Bot) handleToggleChangelog(ctx context.Context, cb *tgbotapi.CallbackQu
 
 // handleSetTzPick shows the timezone selection keyboard for a specific group.
 func (b *Bot) handleSetTzPick(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -137,7 +205,7 @@ func (b *Bot) handleSetTzPick(ctx context.Context, cb *tgbotapi.CallbackQuery, g
 
 // handleSetTz applies the chosen timezone to the group.
 func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz string, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
 	if err != nil || !isAdmin {
@@ -203,7 +271,7 @@ func (b *Bot) renderTimezoneKeyboard(chatID int64, messageID int, groupID int64,
 // handleTrigger calls the management service to run a scheduled event on demand.
 // Only users listed in serviceAdminIDs are allowed.
 func (b *Bot) handleTrigger(ctx context.Context, cb *tgbotapi.CallbackQuery, event string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	if !b.serviceAdminIDs[cb.From.ID] {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgNotAuthorized))

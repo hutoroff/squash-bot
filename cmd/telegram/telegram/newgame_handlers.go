@@ -13,7 +13,7 @@ import (
 )
 
 func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, key pendingGameKey, groupID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	// Verify the callback originates from the same chat that created the request.
 	// A mismatch would indicate tampered callback data; drop it silently.
@@ -95,7 +95,7 @@ func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQue
 // It is used by multi-group admins who have already selected a group and are
 // now choosing a venue from that group's venue list.
 func (b *Bot) handleNewGameGroupVenue(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingGroupVenuePick.LoadAndDelete(cb.Message.Chat.ID)
 	if !ok {
@@ -210,7 +210,7 @@ func (b *Bot) buildDateSelectionKeyboard(lz *i18n.Localizer, loc *time.Location)
 // handleNewGameDate handles the ng_date:<YYYY-MM-DD> callback from the date picker.
 // It stores the selected date in the wizard state and prompts for time or venue.
 func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery, dateStr string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	// Re-verify admin eligibility at callback time.
 	adminGroupIDs := b.adminGroups(cb.From.ID)
@@ -326,7 +326,7 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 // It is used by multi-group admins who have selected a date and are now picking
 // which group the game should be posted in.
 func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -421,7 +421,7 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // processNewGameWizard routes an incoming private message to the correct wizard step.
 func (b *Bot) processNewGameWizard(ctx context.Context, msg *tgbotapi.Message, wizard *newGameWizard) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	switch wizard.step {
 	case wizardStepTime:
 		b.processNewGameWizardTime(ctx, msg, wizard, lz)
@@ -563,7 +563,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 
 // handleNewGameVenue handles ng_venue:<venueID> or ng_venue:none callbacks.
 func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -642,7 +642,7 @@ func (b *Bot) renderCourtPickKeyboard(chatID int64, messageID int, wizard *newGa
 // handleNewGameCourtToggle toggles a court in the new-game wizard court picker.
 // rawID is "<venueID>:<court>".
 func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	subparts := strings.SplitN(rawID, ":", 2)
 	if len(subparts) != 2 {
@@ -688,7 +688,7 @@ func (b *Bot) handleNewGameCourtToggle(ctx context.Context, cb *tgbotapi.Callbac
 // handleNewGameCourtConfirm confirms the court selection in the new-game wizard.
 // rawID is "<venueID>" — validated against the current wizard session.
 func (b *Bot) handleNewGameCourtConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	venueID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
@@ -767,7 +767,7 @@ func (b *Bot) renderTimeSlotKeyboard(chatID int64, messageID int, wizard *newGam
 }
 
 func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQuery, timeSlot string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -852,7 +852,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 }
 
 func (b *Bot) handleNewGameTimeCustom(ctx context.Context, cb *tgbotapi.CallbackQuery) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
 	if !ok {

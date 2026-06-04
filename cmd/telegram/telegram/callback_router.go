@@ -139,7 +139,13 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"ng_gvenue": b.handleNewGameGroupVenue,
 
 		// ── Settings ──────────────────────────────────────────────────────────────
-		"trigger":          b.handleTrigger,
+		"trigger": b.handleTrigger,
+		"settings_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
+			b.handleSettingsLang(ctx, cb)
+		},
+		"set_user_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleSetUserLang(ctx, cb, rawID)
+		},
 		"set_lang_group":   int64H(b.handleSetLangGroup),
 		"toggle_changelog": int64H(b.handleToggleChangelog),
 		"set_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
