@@ -22,6 +22,8 @@ var (
 	ErrGameResultNotInGame    = errors.New("author or opponent is not registered in this game")
 	ErrGameResultSamePlayer   = errors.New("author and opponent must be different players")
 	ErrGameResultWindowClosed = errors.New("game is outside the result submission window")
+	ErrOpponentOptedOut       = errors.New("opponent has opted out of game results")
+	ErrAuthorOptedOut         = errors.New("author has opted out of game results")
 
 	scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 )
@@ -36,7 +38,8 @@ type GameResultService struct {
 	playerRepo        PlayerRepository
 	participationRepo ParticipationRepository
 	auditSvc          *AuditService
-	ratingSvc         *RatingService // nil if not configured
+	ratingSvc         *RatingService        // nil if not configured
+	userPrefs         UserPreferencesReader // nil disables opt-out check (unit tests)
 	resultWindowDays  int
 }
 
@@ -48,6 +51,7 @@ func NewGameResultService(
 	participationRepo ParticipationRepository,
 	auditSvc *AuditService,
 	resultWindowDays int,
+	userPrefs UserPreferencesReader,
 ) *GameResultService {
 	return &GameResultService{
 		pool:              pool,
@@ -56,6 +60,7 @@ func NewGameResultService(
 		playerRepo:        playerRepo,
 		participationRepo: participationRepo,
 		auditSvc:          auditSvc,
+		userPrefs:         userPrefs,
 		resultWindowDays:  resultWindowDays,
 	}
 }
@@ -95,6 +100,17 @@ func (s *GameResultService) Submit(
 			return nil, ErrGameResultNotInGame
 		}
 		return nil, fmt.Errorf("get author: %w", err)
+	}
+
+	// Check if the author has opted out of results.
+	if s.userPrefs != nil {
+		authorPrefs, err := s.userPrefs.GetByTelegramID(ctx, authorTgID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("get author preferences: %w", err)
+		}
+		if authorPrefs != nil && authorPrefs.ResultsOptOut {
+			return nil, ErrAuthorOptedOut
+		}
 	}
 
 	if author.ID == opponentPlayerID {
@@ -143,6 +159,25 @@ func (s *GameResultService) Submit(
 		return nil, ErrGameResultNotInGame
 	}
 
+	oppPlayer, err := s.playerRepo.GetByID(ctx, opponentPlayerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrGameResultNotInGame
+		}
+		return nil, fmt.Errorf("get opponent: %w", err)
+	}
+
+	// Check if the opponent has opted out of results.
+	if s.userPrefs != nil {
+		oppPrefs, err := s.userPrefs.GetByTelegramID(ctx, oppPlayer.TelegramID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("get opponent preferences: %w", err)
+		}
+		if oppPrefs != nil && oppPrefs.ResultsOptOut {
+			return nil, ErrOpponentOptedOut
+		}
+	}
+
 	if err := validateScore(score, author.ID, opponentPlayerID, winnerPlayerID); err != nil {
 		return nil, err
 	}
@@ -169,9 +204,7 @@ func (s *GameResultService) Submit(
 	res.AutoApproveAt = &autoAt
 
 	res.Author = author
-	if opp, err := s.playerRepo.GetByID(ctx, opponentPlayerID); err == nil {
-		res.Opponent = opp
-	}
+	res.Opponent = oppPlayer
 
 	s.auditSvc.RecordGameResultSubmitted(ctx, id, game.ChatID, authorTgID, actorDisplay)
 	return res, nil

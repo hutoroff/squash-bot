@@ -43,6 +43,10 @@ func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "bad_score")
 		case errors.Is(err, service.ErrGameResultSamePlayer):
 			writeError(w, http.StatusBadRequest, "same_player")
+		case errors.Is(err, service.ErrOpponentOptedOut):
+			writeError(w, http.StatusConflict, "opponent_opted_out")
+		case errors.Is(err, service.ErrAuthorOptedOut):
+			writeError(w, http.StatusConflict, "author_opted_out")
 		default:
 			h.logger.Error("submitGameResult", "err", err)
 			writeError(w, http.StatusInternalServerError, err.Error())

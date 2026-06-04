@@ -80,6 +80,11 @@ type ManagementClient interface {
 	// SetUserDMLanguage persists the DM language override for the user.
 	SetUserDMLanguage(ctx context.Context, telegramID int64, language string) error
 
+	// GetUserResultsOptOut returns true when the user has opted out of the results/leaderboard system.
+	GetUserResultsOptOut(ctx context.Context, telegramID int64) (bool, error)
+	// SetUserResultsOptOut persists the results opt-out flag for the user.
+	SetUserResultsOptOut(ctx context.Context, telegramID int64, optOut bool) error
+
 	// Leaderboard
 	GetLeaderboard(ctx context.Context, groupID int64) ([]LeaderboardEntry, error)
 	GetPlayerGroups(ctx context.Context, tgID int64) ([]models.Group, error)

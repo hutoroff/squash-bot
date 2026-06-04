@@ -93,6 +93,7 @@ func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 		&apiStubPartRepo{},
 		auditSvc,
 		14,
+		nil,
 	)
 
 	body := `{"game_id":7,"author_telegram_id":42,"opponent_player_id":2}`

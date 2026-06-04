@@ -61,3 +61,32 @@ func (h *Handler) setUserDMLanguage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// setUserResultsOptOut handles PATCH /api/v1/users/{telegramID}/results-opt-out.
+// Body: {"opt_out": bool}. Returns 204 on success.
+func (h *Handler) setUserResultsOptOut(w http.ResponseWriter, r *http.Request) {
+	telegramID, err := strconv.ParseInt(r.PathValue("telegramID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid telegram ID")
+		return
+	}
+
+	var req struct {
+		OptOut *bool `json:"opt_out"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OptOut == nil {
+		writeError(w, http.StatusBadRequest, "opt_out field is required")
+		return
+	}
+
+	if err := h.userPrefsRepo.SetResultsOptOut(r.Context(), telegramID, *req.OptOut); err != nil {
+		h.logger.Error("setUserResultsOptOut", "telegram_id", telegramID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

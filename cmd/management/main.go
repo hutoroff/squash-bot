@@ -131,7 +131,7 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
-	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays)
+	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays, userPrefsRepo)
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
 	gameResultSvc.SetRatingService(ratingSvc)
 

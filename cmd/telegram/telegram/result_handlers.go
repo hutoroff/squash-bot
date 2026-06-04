@@ -47,6 +47,12 @@ var scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 // ── /result command ───────────────────────────────────────────────────────────
 
 func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
+	// Block opted-out authors before starting the wizard.
+	if optOut, err := b.client.GetUserResultsOptOut(ctx, msg.From.ID); err == nil && optOut {
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgResultSelfOptedOut), nil)
+		return
+	}
+
 	// Only works in private chat.
 	// Look up the groups the user belongs to (has any participation).
 	groups, err := b.client.GetGroups(ctx)
@@ -257,6 +263,15 @@ func (b *Bot) handleResultPickOpponent(ctx context.Context, cb *tgbotapi.Callbac
 		// Fallback: create a minimal stub so the wizard can continue.
 		opp = &models.Player{ID: opponentID}
 	}
+
+	// Check if the selected opponent has opted out.
+	if opp.TelegramID != 0 {
+		if optOut, err := b.client.GetUserResultsOptOut(ctx, opp.TelegramID); err == nil && optOut {
+			b.answerCallback(cb.ID, lz.Tf(i18n.MsgResultOpponentOptedOut, playerModelDisplayName(opp)))
+			return
+		}
+	}
+
 	wiz.opponent = opp
 	wiz.step = resultStepWinner
 
@@ -458,6 +473,13 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 		wiz.winnerID, wiz.score, actorDisplayFrom(cb.From),
 	)
 	if err != nil {
+		if errors.Is(err, client.ErrResultOpponentOptedOut) {
+			oppDisplay := playerModelDisplayName(wiz.opponent)
+			b.answerCallback(cb.ID, lz.Tf(i18n.MsgResultOpponentOptedOut, oppDisplay))
+			b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
+				lz.Tf(i18n.MsgResultOpponentOptedOut, oppDisplay), nil)
+			return
+		}
 		slog.Error("handleResultSubmit: submit", "err", err)
 		b.answerCallback(cb.ID, "")
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgSomethingWentWrong), nil)

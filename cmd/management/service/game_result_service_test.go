@@ -177,7 +177,7 @@ func newResultSvc(
 	partRepo *grPartRepo,
 ) *GameResultService {
 	auditSvc, _ := newCaptureAuditSvc()
-	return NewGameResultService(nil, resultRepo, gameRepo, playerRepo, partRepo, auditSvc, 14)
+	return NewGameResultService(nil, resultRepo, gameRepo, playerRepo, partRepo, auditSvc, 14, nil)
 }
 
 // defaultFixture returns a ready-to-use set of stubs where author (tg=100, id=1)

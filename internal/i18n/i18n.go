@@ -427,6 +427,17 @@ const (
 	MsgDMLanguageSet    = "msg.dm_language_set"
 	MsgCmdSettings      = "msg.cmd_settings"
 
+	// Results opt-out toggle (shown in /settings)
+	BtnSettingsResultsOptOutOn  = "btn.settings_results_optout_on"
+	BtnSettingsResultsOptOutOff = "btn.settings_results_optout_off"
+	// Toast shown after toggling
+	MsgResultsOptOutEnabled  = "msg.results_optout_enabled"
+	MsgResultsOptOutDisabled = "msg.results_optout_disabled"
+	// Shown when the opponent tapped in the picker has opted out. Args: %s = display name.
+	MsgResultOpponentOptedOut = "msg.result_opponent_opted_out"
+	// Shown when the /result author themselves has opted out.
+	MsgResultSelfOptedOut = "msg.result_self_opted_out"
+
 	// Calendar — weekday names
 	WeekdaySunday    = "weekday.sunday"
 	WeekdayMonday    = "weekday.monday"
@@ -833,6 +844,14 @@ var translations = map[Lang]map[string]string{
 		MsgSelectDMLanguage: "Choose your preferred language for bot messages:",
 		MsgDMLanguageSet:    "Language updated ✓",
 		MsgCmdSettings:      "/settings — Set your personal bot preferences\n",
+
+		// Results opt-out
+		BtnSettingsResultsOptOutOn:  "📊 Results & leaderboard: ON",
+		BtnSettingsResultsOptOutOff: "📊 Results & leaderboard: OFF",
+		MsgResultsOptOutEnabled:     "You will no longer appear in leaderboards or receive result requests.",
+		MsgResultsOptOutDisabled:    "Results & leaderboard re-enabled ✓",
+		MsgResultOpponentOptedOut:   "%s has opted out of the results system and cannot be selected.",
+		MsgResultSelfOptedOut:       "You have opted out of the results system. Go to /settings to re-enable it.",
 	},
 
 	De: {
@@ -1197,6 +1216,14 @@ var translations = map[Lang]map[string]string{
 		MsgSelectDMLanguage: "Bevorzugte Sprache für Bot-Nachrichten wählen:",
 		MsgDMLanguageSet:    "Sprache aktualisiert ✓",
 		MsgCmdSettings:      "/settings — Persönliche Bot-Einstellungen ändern\n",
+
+		// Results opt-out
+		BtnSettingsResultsOptOutOn:  "📊 Ergebnisse & Rangliste: AN",
+		BtnSettingsResultsOptOutOff: "📊 Ergebnisse & Rangliste: AUS",
+		MsgResultsOptOutEnabled:     "Du wirst nicht mehr in der Rangliste erscheinen und keine Ergebnisanfragen erhalten.",
+		MsgResultsOptOutDisabled:    "Ergebnisse & Rangliste wieder aktiviert ✓",
+		MsgResultOpponentOptedOut:   "%s hat sich vom Ergebnissystem abgemeldet und kann nicht ausgewählt werden.",
+		MsgResultSelfOptedOut:       "Du hast dich vom Ergebnissystem abgemeldet. Gehe zu /settings, um es wieder zu aktivieren.",
 	},
 
 	Ru: {
@@ -1561,6 +1588,14 @@ var translations = map[Lang]map[string]string{
 		MsgSelectDMLanguage: "Выберите предпочитаемый язык для сообщений бота:",
 		MsgDMLanguageSet:    "Язык обновлён ✓",
 		MsgCmdSettings:      "/settings — Личные настройки бота\n",
+
+		// Results opt-out
+		BtnSettingsResultsOptOutOn:  "📊 Результаты и рейтинг: ВКЛ",
+		BtnSettingsResultsOptOutOff: "📊 Результаты и рейтинг: ВЫКЛ",
+		MsgResultsOptOutEnabled:     "Вы больше не будете появляться в рейтинге и получать запросы на результаты.",
+		MsgResultsOptOutDisabled:    "Результаты и рейтинг снова включены ✓",
+		MsgResultOpponentOptedOut:   "%s отказался от системы результатов и не может быть выбран.",
+		MsgResultSelfOptedOut:       "Вы отказались от системы результатов. Перейдите в /settings, чтобы снова включить её.",
 	},
 }
 
