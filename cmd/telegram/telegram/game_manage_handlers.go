@@ -42,7 +42,7 @@ func (b *Bot) checkManageAdmin(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 
 // handleManage shows the management keyboard for a specific game.
 func (b *Bot) handleManage(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
@@ -105,7 +105,7 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 // handleManageShowPlayers lists registered players as kick buttons.
 func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
 		return
 	}
@@ -150,7 +150,7 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 
 // handleManageKickPlayer removes a player from the game and updates the group message.
 func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, telegramID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
@@ -176,7 +176,7 @@ func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQ
 
 // handleManageShowGuests lists guests as kick buttons.
 func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	if _, ok := b.checkManageAdmin(ctx, cb, gameID, lz); !ok {
 		return
 	}
@@ -214,7 +214,7 @@ func (b *Bot) handleManageShowGuests(ctx context.Context, cb *tgbotapi.CallbackQ
 
 // handleManageKickGuest removes a specific guest and updates the group message.
 func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, guestID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
@@ -241,7 +241,7 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 // handleManageClose restores the games-list view in the callback message so the
 // admin can continue managing other games without re-running /games.
 func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	b.answerCallback(cb.ID, "")
 
 	// Shared fallback: remove the keyboard and leave the message text as-is.
@@ -290,7 +290,7 @@ func (b *Bot) handleManageClose(ctx context.Context, cb *tgbotapi.CallbackQuery)
 // game's venue has auto-booking ready, shows the inline court-toggle keyboard for a
 // venue with courts, or falls back to free-text input when there is no venue.
 func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
@@ -370,7 +370,7 @@ func (b *Bot) renderCourtsModePicker(chatID int64, messageID int, gameID int64, 
 // handleManageCourtsMode handles the manage_courts_mode:<gameID>:<mode> callback.
 // mode is "auto" or "manual".
 func (b *Bot) handleManageCourtsMode(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	sub := strings.SplitN(rawID, ":", 2)
 	if len(sub) != 2 {
 		b.answerCallback(cb.ID, "")
@@ -453,7 +453,7 @@ func (b *Bot) renderBookCountKeyboard(chatID int64, messageID int, state *manage
 
 // handleManageBook handles manage_book:<gameID>:<count> — triggers auto-booking.
 func (b *Bot) handleManageBook(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	sub := strings.SplitN(rawID, ":", 2)
 	if len(sub) != 2 {
 		b.answerCallback(cb.ID, "")
@@ -517,7 +517,7 @@ func (b *Bot) handleManageBook(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 
 // handleManageBookCancel cancels the count-picker and returns to the manage screen.
 func (b *Bot) handleManageBookCancel(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	b.pendingManageBookCount.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgBookCanceled))
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
@@ -568,7 +568,7 @@ func manageCourtsSelectedString(state *manageCourtsToggleState) string {
 // handleManageCourtsToggle toggles a court in the manage-courts inline picker.
 // rawID is "<gameID>:<court>".
 func (b *Bot) handleManageCourtsToggle(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	subparts := strings.SplitN(rawID, ":", 2)
 	if len(subparts) != 2 {
@@ -610,7 +610,7 @@ func (b *Bot) handleManageCourtsToggle(ctx context.Context, cb *tgbotapi.Callbac
 // handleManageCourtsConfirm confirms the court selection and updates the game.
 // When courts being removed have active Eversports bookings, shows a cancel-or-back prompt first.
 func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingManageCourtsToggle.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -738,7 +738,7 @@ func (b *Bot) renderCourtCancelPrompt(chatID int64, messageID int, state *manage
 
 // handleManageCourtsCancelConfirm cancels active bookings for removed courts then updates courts.
 func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingManageCourtsCancelPrompt.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -791,7 +791,7 @@ func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.
 
 // handleManageCourtsCancelAbort discards the cancellation prompt and returns to the court-toggle picker.
 func (b *Bot) handleManageCourtsCancelAbort(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 
 	raw, ok := b.pendingManageCourtsCancelPrompt.Load(cb.Message.Chat.ID)
 	if !ok {
@@ -823,7 +823,7 @@ func (b *Bot) handleManageCourtsCancelAbort(ctx context.Context, cb *tgbotapi.Ca
 
 // handleManagePublish publishes an unpublished game from the manage menu.
 func (b *Bot) handleManagePublish(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
-	lz := b.userLocalizer(cb.From.LanguageCode)
+	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
@@ -854,7 +854,7 @@ func (b *Bot) handleManagePublish(ctx context.Context, cb *tgbotapi.CallbackQuer
 
 // processCourtsEdit handles the admin's text response after clicking "Edit Courts".
 func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, gameID int64) {
-	lz := b.userLocalizer(msg.From.LanguageCode)
+	lz := b.userLocalizer(ctx, msg.From)
 	courts := strings.TrimSpace(msg.Text)
 	if courts == "" {
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))

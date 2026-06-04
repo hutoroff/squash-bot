@@ -238,28 +238,35 @@ type venueCredWizard struct {
 // the DB or network is slow.
 const maxConcurrentHandlers = 50
 
+// userLangPref caches the resolved DM language override for a user.
+type userLangPref struct {
+	lang        i18n.Lang
+	hasOverride bool
+}
+
 type Bot struct {
-	api                           *tgbotapi.BotAPI
-	client                        client.ManagementClient
-	serviceAdminIDs               map[int64]bool
-	loc                           *time.Location
-	logger                        *slog.Logger
-	pendingGames                  sync.Map      // map[pendingGameKey]*pendingGame
-	pendingCourtsEdit             sync.Map      // map[chatID int64]gameID int64
-	pendingManageCourtsToggle        sync.Map      // map[chatID int64]*manageCourtsToggleState
-	pendingManageCourtsCancelPrompt  sync.Map      // map[chatID int64]*manageCourtsCancelPromptState
-	pendingManageBookCount           sync.Map      // map[chatID int64]*manageBookCountState
-	pendingNewGameWizard          sync.Map      // map[chatID int64]*newGameWizard
-	pendingVenueWizard            sync.Map      // map[chatID int64]*venueWizard
-	pendingVenueEdit              sync.Map      // map[chatID int64]*venueEditState
-	pendingVenueGameDaysEdit      sync.Map      // map[chatID int64]*venueGameDaysEditState
-	pendingVenuePreferredTimeEdit sync.Map      // map[chatID int64]*venuePreferredTimeEditState
-	pendingGroupVenuePick         sync.Map      // map[chatID int64]*groupVenuePickState
-	pendingVenueCredAdd           sync.Map      // map[chatID int64]*venueCredWizard
-	pendingResultWizard           sync.Map      // map[chatID int64]*resultWizard
-	editWorkers                   sync.Map      // map[gameID int64]*gameEditWorker
-	handlerSem                    chan struct{} // semaphore limiting concurrent update handlers
-	callbackRouter                map[string]callbackHandler
+	api                             *tgbotapi.BotAPI
+	client                          client.ManagementClient
+	serviceAdminIDs                 map[int64]bool
+	loc                             *time.Location
+	logger                          *slog.Logger
+	userLangCache                   sync.Map      // map[int64]userLangPref
+	pendingGames                    sync.Map      // map[pendingGameKey]*pendingGame
+	pendingCourtsEdit               sync.Map      // map[chatID int64]gameID int64
+	pendingManageCourtsToggle       sync.Map      // map[chatID int64]*manageCourtsToggleState
+	pendingManageCourtsCancelPrompt sync.Map      // map[chatID int64]*manageCourtsCancelPromptState
+	pendingManageBookCount          sync.Map      // map[chatID int64]*manageBookCountState
+	pendingNewGameWizard            sync.Map      // map[chatID int64]*newGameWizard
+	pendingVenueWizard              sync.Map      // map[chatID int64]*venueWizard
+	pendingVenueEdit                sync.Map      // map[chatID int64]*venueEditState
+	pendingVenueGameDaysEdit        sync.Map      // map[chatID int64]*venueGameDaysEditState
+	pendingVenuePreferredTimeEdit   sync.Map      // map[chatID int64]*venuePreferredTimeEditState
+	pendingGroupVenuePick           sync.Map      // map[chatID int64]*groupVenuePickState
+	pendingVenueCredAdd             sync.Map      // map[chatID int64]*venueCredWizard
+	pendingResultWizard             sync.Map      // map[chatID int64]*resultWizard
+	editWorkers                     sync.Map      // map[gameID int64]*gameEditWorker
+	handlerSem                      chan struct{} // semaphore limiting concurrent update handlers
+	callbackRouter                  map[string]callbackHandler
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, serviceAdminIDs string, logger *slog.Logger) *Bot {
@@ -360,7 +367,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 	oldStatus := update.OldChatMember.Status
 
 	// Use the language of the person who triggered the membership change.
-	lz := b.userLocalizer(update.From.LanguageCode)
+	lz := b.userLocalizer(ctx, &update.From)
 
 	switch newStatus {
 	case "left", "kicked":
@@ -448,9 +455,42 @@ func membershipNotifyText(oldStatus, newStatus, chatTitle string, lz *i18n.Local
 
 // ── Language resolution ───────────────────────────────────────────────────────
 
-// userLocalizer returns a Localizer based on a Telegram user's LanguageCode.
-func (b *Bot) userLocalizer(langCode string) *i18n.Localizer {
-	return i18n.New(i18n.Normalize(langCode))
+// resolveUserLang returns the effective DM language for a user.
+// It consults userLangCache first; on a cache miss it calls the management API.
+// On API error the fallback (Normalize(langCode)) is used without caching.
+func (b *Bot) resolveUserLang(ctx context.Context, u *tgbotapi.User) i18n.Lang {
+	fallback := i18n.Normalize(u.LanguageCode)
+	if cached, ok := b.userLangCache.Load(u.ID); ok {
+		pref := cached.(userLangPref)
+		if pref.hasOverride {
+			return pref.lang
+		}
+		return fallback
+	}
+	if b.client == nil {
+		return fallback
+	}
+	// Cap the preference lookup so a slow management service never stalls interactive handlers.
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	lang, err := b.client.GetUserDMLanguage(lookupCtx, u.ID)
+	if err != nil {
+		b.logger.Debug("resolveUserLang: API error, using fallback", "user_id", u.ID, "err", err)
+		return fallback
+	}
+	if lang == "" {
+		b.userLangCache.Store(u.ID, userLangPref{lang: fallback, hasOverride: false})
+		return fallback
+	}
+	resolved := i18n.Lang(lang)
+	b.userLangCache.Store(u.ID, userLangPref{lang: resolved, hasOverride: true})
+	return resolved
+}
+
+// userLocalizer returns a Localizer for the given Telegram user, honoring any
+// stored DM language preference. ctx is used for the lazy management API call.
+func (b *Bot) userLocalizer(ctx context.Context, u *tgbotapi.User) *i18n.Localizer {
+	return i18n.New(b.resolveUserLang(ctx, u))
 }
 
 // groupLocalizer fetches the stored language for a group and returns a Localizer.
