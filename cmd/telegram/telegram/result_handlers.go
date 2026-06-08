@@ -376,7 +376,7 @@ func (b *Bot) renderResultPreview(chatID int64, msgID int, wiz *resultWizard, lz
 		scoreDisplay = "—"
 	}
 
-	text := lz.Tf(i18n.MsgResultPreview, wiz.gameLabel, oppDisplay, wiz.winnerLabel, scoreDisplay)
+	text := lz.Tf(i18n.MsgResultPreview, escapeMarkdown(wiz.gameLabel), escapeMarkdown(oppDisplay), escapeMarkdown(wiz.winnerLabel), scoreDisplay)
 	kb := buildResultPreviewKeyboard(lz)
 	b.editText(chatID, msgID, text, kb)
 }
@@ -388,7 +388,7 @@ func (b *Bot) renderResultPreviewNew(chatID int64, wiz *resultWizard, lz *i18n.L
 		scoreDisplay = "—"
 	}
 
-	text := lz.Tf(i18n.MsgResultPreview, wiz.gameLabel, oppDisplay, wiz.winnerLabel, scoreDisplay)
+	text := lz.Tf(i18n.MsgResultPreview, escapeMarkdown(wiz.gameLabel), escapeMarkdown(oppDisplay), escapeMarkdown(wiz.winnerLabel), scoreDisplay)
 	kb := buildResultPreviewKeyboard(lz)
 	b.sendText(chatID, text, kb)
 }
@@ -487,7 +487,7 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 		slog.Warn("handleResultSubmit: send approval DM", "err", dmErr)
 		_, _ = b.client.CancelGameResult(ctx, result.ID, cb.From.ID, actorDisplayFrom(cb.From))
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
-			lz.Tf(i18n.MsgResultDMUnreachable, oppDisplay), nil)
+			lz.Tf(i18n.MsgResultDMUnreachable, escapeMarkdown(oppDisplay)), nil)
 		return
 	}
 
@@ -501,10 +501,13 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 		),
 	)
 	b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
-		lz.Tf(i18n.MsgResultSubmitted, oppDisplay), &withdrawKB)
+		lz.Tf(i18n.MsgResultSubmitted, escapeMarkdown(oppDisplay)), &withdrawKB)
 }
 
 func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResultDTO, wiz *resultWizard, authorDisplay string, lz *i18n.Localizer) string {
+	escapedAuthor := escapeMarkdown(authorDisplay)
+	escapedGameLabel := escapeMarkdown(wiz.gameLabel)
+
 	var outcomeLabel string
 	if result.WinnerID == nil {
 		outcomeLabel = lz.T(i18n.MsgResultWinnerDraw)
@@ -512,7 +515,7 @@ func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResu
 		outcomeLabel = lz.T(i18n.MsgResultWinnerMe) // from opponent's perspective
 	} else {
 		// Author won — show the author's name from the opponent's perspective.
-		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, authorDisplay)
+		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, escapedAuthor)
 	}
 
 	scoreDisplay := result.Score
@@ -529,7 +532,7 @@ func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResu
 	}
 
 	baseText := lz.Tf(i18n.MsgResultApprovalRequest,
-		authorDisplay, wiz.gameLabel, outcomeLabel, scoreDisplay)
+		escapedAuthor, escapedGameLabel, outcomeLabel, scoreDisplay)
 	if autoApproveStr != "" {
 		baseText += lz.Tf(i18n.MsgResultDeadlineLine, autoApproveStr)
 	}

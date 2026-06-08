@@ -88,3 +88,20 @@ func TestBuildApprovalCardText_AuthorDisplayInRequestLine(t *testing.T) {
 		t.Errorf("approval request line must contain author display '@charlie', got: %q", text)
 	}
 }
+
+func TestBuildApprovalCardText_EscapesAuthorMarkdown(t *testing.T) {
+	b := buildApprovalCardBot()
+	lz := i18n.New(i18n.En)
+	authorID := int64(1)
+	result := &client.GameResultDTO{Score: "3:1", WinnerID: &authorID}
+	wiz := &resultWizard{opponent: oppPlayer(), gameLabel: "Mon 02 Jan"}
+
+	text := b.buildApprovalCardText(context.Background(), result, wiz, "@john_doe", lz)
+
+	if !strings.Contains(text, "@john\\_doe") {
+		t.Errorf("author name with underscore must be escaped to '@john\\_doe', got: %q", text)
+	}
+	if strings.Contains(text, "@john_doe") {
+		t.Errorf("unescaped author name '@john_doe' must not appear, got: %q", text)
+	}
+}
