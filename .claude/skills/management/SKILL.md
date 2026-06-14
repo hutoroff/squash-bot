@@ -25,8 +25,7 @@ cmd/management/
 │   ├── participations.go — participation HTTP handlers; kick endpoints accept audit query params
 │   ├── groups.go      — group HTTP handlers; upsertGroup/removeGroup accept actor audit params
 │   ├── venues.go      — venue HTTP handlers
-│   ├── audit.go       — GET /api/v1/audit (listAuditEvents); enforces visibility per caller
-│   └── scheduler.go   — POST /api/v1/scheduler/trigger/{event}
+│   └── audit.go       — GET /api/v1/audit (listAuditEvents); enforces visibility per caller
 └── service/
 │   ├── interfaces.go           — ALL repository + Telegram interfaces (source of truth)
 │   ├── game_service.go         — GameService: Create, GetByID, UpdateCourts, …
@@ -37,7 +36,7 @@ cmd/management/
 │   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
 │   │                              a caller administers (satisfies api.adminGroupsResolver interface)
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
-│   ├── scheduler.go            — Scheduler: RunScheduledTasks, ForceRun, registers 4 jobs
+│   ├── scheduler.go            — Scheduler: RunScheduledTasks, registers jobs
 │   ├── cancellation_reminder.go — CancellationReminderJob
 │   ├── booking_reminder.go     — BookingReminderJob
 │   ├── auto_booking.go         — AutoBookingJob
@@ -203,8 +202,6 @@ GET /api/v1/players/{tgID}/groups-with-results     — getPlayerGroupsWithResult
                                                      (not "recent completed games" — that overrepresented
                                                      unrated activity and missed rated players older than 90 d)
 
-POST /api/v1/scheduler/trigger/{event}             — triggerScheduler
-
 GET  /api/v1/audit                                 — listAuditEvents
      required header: X-Caller-Tg-Id (caller's Telegram ID, injected by web service)
      query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339, exclusive upper bound)
@@ -249,7 +246,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `court.canceled` | group_admin | Scheduler cancels a court |
 | `game.published` | group_admin | Game announcement sent to group (by scheduler or admin) |
 
-**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS`) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
+**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS` on management/web) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
 
 **Retention:** `RunRetention(ctx, days)` deletes rows older than `days` days. Called daily by a cron entry in `main.go` (controlled by `AUDIT_RETENTION_DAYS`, default 365).
 
@@ -310,10 +307,9 @@ Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID
 ### Scheduler (`service/scheduler.go`)
 
 - Runs a single 5-minute cron poll via `robfig/cron/v3`
-- `RunScheduledTasks()` → calls `run(false)` on each of the 4 jobs in sequence
-- `ForceRun(event string)` → calls `run(true)` on the named job (bypasses time-window gates)
+- `RunScheduledTasks()` → calls `run(false)` on each job in sequence
 - Each job is a struct implementing `scheduledJob` interface: `run(force bool)`, `name() string`
-- Job names (for `/trigger` endpoint): `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard`
+- Job names: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard`
 
 ### Scheduled jobs
 
@@ -523,7 +519,7 @@ SPORTS_BOOKING_SERVICE_URL=   optional; enables auto court cancellation + auto b
 CREDENTIALS_ENCRYPTION_KEY=   optional; 64 hex chars (AES-256-GCM) for venue booking credentials at rest; 503 when unset
 CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before retry
 SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs treated as server owners;
-                              grants /trigger access and full audit event visibility (server_owner tier)
+                              grants full audit event visibility (server_owner tier) and server-owner flag in web SPA
 AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily retention cron deletes older rows)
 RESULT_WINDOW_DAYS=14         optional; how far back a past game stays eligible for result submission (per-group-tz calendar days; ignores completed flag)
 ```

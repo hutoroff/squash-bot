@@ -95,15 +95,6 @@ const (
 	BtnBack        = "btn.back"
 	BtnViewInGroup = "btn.view_in_group"
 
-	// Trigger buttons
-	BtnDayBefore            = "btn.day_before"      // kept for compat
-	BtnDayAfter             = "btn.day_after"       // kept for compat
-	BtnWeeklyReminder       = "btn.weekly_reminder" // kept for compat
-	BtnCancellationReminder = "btn.cancellation_reminder"
-	BtnDayAfterCleanup      = "btn.day_after_cleanup"
-	BtnBookingReminder      = "btn.booking_reminder"
-	BtnAutoBooking          = "btn.auto_booking"
-
 	// Language selection buttons
 	BtnLangEn = "btn.lang_en"
 	BtnLangDe = "btn.lang_de"
@@ -119,10 +110,6 @@ const (
 	MsgNoGuestsToKick            = "msg.no_guests_to_kick"
 	MsgSelectGuestToKick         = "msg.select_guest_to_kick"
 	MsgGuestKicked               = "msg.guest_kicked"
-	MsgNotAuthorized             = "msg.not_authorized"
-	MsgUnknownEvent              = "msg.unknown_event"
-	MsgFailedTrigger             = "msg.failed_trigger"
-	MsgTriggered                 = "msg.triggered"
 	MsgManageGameHeader          = "msg.manage_game_header"
 	MsgSendGameDetails           = "msg.send_game_details"
 	MsgManagementPrivateOnly     = "msg.management_private_only"
@@ -155,8 +142,6 @@ const (
 	MsgCmdNewGame                    = "msg.cmd_new_game"
 	MsgCmdGames                      = "msg.cmd_games"
 	MsgCmdVenues                     = "msg.cmd_venues"
-	MsgServiceAdminCommands          = "msg.service_admin_commands"
-	MsgCmdTrigger                    = "msg.cmd_trigger"
 	MsgFailedFetchGame               = "msg.failed_fetch_game"
 	MsgNoUpcomingRegistered          = "msg.no_upcoming_registered"
 	MsgFailedFetchDetails            = "msg.failed_fetch_details"
@@ -175,8 +160,6 @@ const (
 	MsgGameNotFoundPeriod            = "msg.game_not_found_period"
 	MsgFailedVerifyPermissionsPeriod = "msg.failed_verify_permissions_period"
 	MsgLostAdminAccessPeriod         = "msg.lost_admin_access_period"
-	MsgNotAuthorizedCmd              = "msg.not_authorized_cmd"
-	MsgSelectTriggerEvent            = "msg.select_trigger_event"
 	MsgUpcomingGames                 = "msg.upcoming_games"
 	MsgGameCourtsCapacity            = "msg.game_courts_capacity"
 	MsgGroupLabel                    = "msg.group_label"
@@ -528,14 +511,6 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Back",
 		BtnViewInGroup: "View in group →",
 
-		BtnDayBefore:            "Day Before Check",
-		BtnDayAfter:             "Day After Cleanup",
-		BtnWeeklyReminder:       "Weekly Reminder",
-		BtnCancellationReminder: "Cancellation Reminder",
-		BtnDayAfterCleanup:      "Day After Cleanup",
-		BtnBookingReminder:      "Booking Reminder",
-		BtnAutoBooking:          "Auto Booking",
-
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
 		BtnLangRu: "🇷🇺 Русский",
@@ -550,10 +525,6 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "No guests to kick",
 		MsgSelectGuestToKick:         "Select a guest to kick:",
 		MsgGuestKicked:               "Guest kicked ✓",
-		MsgNotAuthorized:             "Not authorized",
-		MsgUnknownEvent:              "Unknown event",
-		MsgFailedTrigger:             "Failed to trigger — check service health",
-		MsgTriggered:                 "Triggered ✓",
 		MsgManageGameHeader:          "*Manage game:*\n📅 %s · %s\n🎾 Courts: %s\nPlayers: %d/%d, Guests: %d",
 		MsgSendGameDetails:           "Send game details after the command:\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Management commands work in private messages. Start a chat with me and use /help.",
@@ -586,8 +557,6 @@ var translations = map[Lang]map[string]string{
 		MsgCmdNewGame:                    "/newgame — Create a new game\n",
 		MsgCmdGames:                      "/games — Show and manage upcoming games\n",
 		MsgCmdVenues:                     "/venues — Manage venues for your group\n",
-		MsgServiceAdminCommands:          "\nService admin commands:\n",
-		MsgCmdTrigger:                    "/trigger — Manually trigger a scheduled event\n",
 		MsgFailedFetchGame:               "Failed to fetch your next game. Please try again.",
 		MsgNoUpcomingRegistered:          "You have no upcoming registered games.",
 		MsgFailedFetchDetails:            "Failed to fetch game details. Please try again.",
@@ -606,8 +575,6 @@ var translations = map[Lang]map[string]string{
 		MsgGameNotFoundPeriod:            "Game not found.",
 		MsgFailedVerifyPermissionsPeriod: "Failed to verify permissions.",
 		MsgLostAdminAccessPeriod:         "You no longer have admin access to this group.",
-		MsgNotAuthorizedCmd:              "You are not authorized to use this command.",
-		MsgSelectTriggerEvent:            "Select a scheduled event to trigger manually:",
 		MsgUpcomingGames:                 "*Upcoming games:*\n\n",
 		MsgGameCourtsCapacity:            "🎾 Courts: %s — capacity %d\n",
 		MsgGroupLabel:                    "Group: %s\n\n",
@@ -917,14 +884,6 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Zurück",
 		BtnViewInGroup: "In Gruppe ansehen →",
 
-		BtnDayBefore:            "Tag-Vorher-Prüfung",
-		BtnDayAfter:             "Tag-Danach-Bereinigung",
-		BtnWeeklyReminder:       "Wöchentliche Erinnerung",
-		BtnCancellationReminder: "Absage-Erinnerung",
-		BtnDayAfterCleanup:      "Tag-Danach-Bereinigung",
-		BtnBookingReminder:      "Buchungserinnerung",
-		BtnAutoBooking:          "Automatische Buchung",
-
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
 		BtnLangRu: "🇷🇺 Русский",
@@ -939,10 +898,6 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "Keine Gäste zum Entfernen",
 		MsgSelectGuestToKick:         "Gast zum Entfernen auswählen:",
 		MsgGuestKicked:               "Gast entfernt ✓",
-		MsgNotAuthorized:             "Nicht autorisiert",
-		MsgUnknownEvent:              "Unbekanntes Ereignis",
-		MsgFailedTrigger:             "Auslösung fehlgeschlagen — Servicestatus prüfen",
-		MsgTriggered:                 "Ausgelöst ✓",
 		MsgManageGameHeader:          "*Spiel verwalten:*\n📅 %s · %s\n🎾 Plätze: %s\nSpieler: %d/%d, Gäste: %d",
 		MsgSendGameDetails:           "Spieldetails nach dem Befehl senden:\n/new\\_game\nJJJJ-MM-TT HH:MM\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Verwaltungsbefehle funktionieren in privaten Nachrichten. Starte einen Chat mit mir und verwende /help.",
@@ -975,8 +930,6 @@ var translations = map[Lang]map[string]string{
 		MsgCmdNewGame:                    "/newgame — Ein neues Spiel erstellen\n",
 		MsgCmdGames:                      "/games — Bevorstehende Spiele anzeigen und verwalten\n",
 		MsgCmdVenues:                     "/venues — Orte für deine Gruppe verwalten\n",
-		MsgServiceAdminCommands:          "\nService-Admin-Befehle:\n",
-		MsgCmdTrigger:                    "/trigger — Geplantes Ereignis manuell auslösen\n",
 		MsgFailedFetchGame:               "Dein nächstes Spiel konnte nicht abgerufen werden. Bitte versuche es erneut.",
 		MsgNoUpcomingRegistered:          "Du hast keine bevorstehenden angemeldeten Spiele.",
 		MsgFailedFetchDetails:            "Spieldetails konnten nicht abgerufen werden. Bitte versuche es erneut.",
@@ -995,8 +948,6 @@ var translations = map[Lang]map[string]string{
 		MsgGameNotFoundPeriod:            "Spiel nicht gefunden.",
 		MsgFailedVerifyPermissionsPeriod: "Berechtigungen konnten nicht überprüft werden.",
 		MsgLostAdminAccessPeriod:         "Du hast keinen Admin-Zugriff mehr auf diese Gruppe.",
-		MsgNotAuthorizedCmd:              "Du bist nicht berechtigt, diesen Befehl zu verwenden.",
-		MsgSelectTriggerEvent:            "Geplantes Ereignis zum manuellen Auslösen auswählen:",
 		MsgUpcomingGames:                 "*Bevorstehende Spiele:*\n\n",
 		MsgGameCourtsCapacity:            "🎾 Plätze: %s — Kapazität %d\n",
 		MsgGroupLabel:                    "Gruppe: %s\n\n",
@@ -1302,14 +1253,6 @@ var translations = map[Lang]map[string]string{
 		BtnBack:        "← Назад",
 		BtnViewInGroup: "Открыть в группе →",
 
-		BtnDayBefore:            "Проверка за день",
-		BtnDayAfter:             "Очистка после игры",
-		BtnWeeklyReminder:       "Еженедельное напоминание",
-		BtnCancellationReminder: "Напоминание об отмене",
-		BtnDayAfterCleanup:      "Очистка после игры",
-		BtnBookingReminder:      "Напоминание о бронировании",
-		BtnAutoBooking:          "Автобронирование",
-
 		BtnLangEn: "🇬🇧 English",
 		BtnLangDe: "🇩🇪 Deutsch",
 		BtnLangRu: "🇷🇺 Русский",
@@ -1324,10 +1267,6 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "Нет гостей для удаления",
 		MsgSelectGuestToKick:         "Выбери гостя для удаления:",
 		MsgGuestKicked:               "Гость удалён ✓",
-		MsgNotAuthorized:             "Нет прав доступа",
-		MsgUnknownEvent:              "Неизвестное событие",
-		MsgFailedTrigger:             "Не удалось запустить — проверьте состояние сервиса",
-		MsgTriggered:                 "Запущено ✓",
 		MsgManageGameHeader:          "*Управление игрой:*\n📅 %s · %s\n🎾 Корты: %s\nИгроки: %d/%d, Гостей: %d",
 		MsgSendGameDetails:           "Отправь детали игры после команды:\n/new\\_game\nГГГГ-ММ-ДД ЧЧ:ММ\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Команды управления работают в личных сообщениях. Напиши мне в личку и используй /help.",
@@ -1360,8 +1299,6 @@ var translations = map[Lang]map[string]string{
 		MsgCmdNewGame:                    "/newgame — Создать новую игру\n",
 		MsgCmdGames:                      "/games — Показать и управлять предстоящими играми\n",
 		MsgCmdVenues:                     "/venues — Управлять площадками для твоей группы\n",
-		MsgServiceAdminCommands:          "\nКоманды сервисного администратора:\n",
-		MsgCmdTrigger:                    "/trigger — Вручную запустить запланированное событие\n",
 		MsgFailedFetchGame:               "Не удалось получить твою следующую игру. Попробуй ещё раз.",
 		MsgNoUpcomingRegistered:          "У тебя нет предстоящих зарегистрированных игр.",
 		MsgFailedFetchDetails:            "Не удалось получить детали игры. Попробуй ещё раз.",
@@ -1380,8 +1317,6 @@ var translations = map[Lang]map[string]string{
 		MsgGameNotFoundPeriod:            "Игра не найдена.",
 		MsgFailedVerifyPermissionsPeriod: "Не удалось проверить права.",
 		MsgLostAdminAccessPeriod:         "У тебя больше нет прав администратора в этой группе.",
-		MsgNotAuthorizedCmd:              "У тебя нет прав для использования этой команды.",
-		MsgSelectTriggerEvent:            "Выбери запланированное событие для ручного запуска:",
 		MsgUpcomingGames:                 "*Предстоящие игры:*\n\n",
 		MsgGameCourtsCapacity:            "🎾 Корты: %s — вместимость %d\n",
 		MsgGroupLabel:                    "Группа: %s\n\n",

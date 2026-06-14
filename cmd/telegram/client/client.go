@@ -480,14 +480,6 @@ func (c *Client) GetVersion(ctx context.Context) (string, error) {
 	return v.Version, nil
 }
 
-// ── Scheduler ─────────────────────────────────────────────────────────────────
-
-// TriggerScheduledEvent fires the named event (day_before, day_after, weekly_reminder)
-// on the management service. The job runs asynchronously on the server side.
-func (c *Client) TriggerScheduledEvent(ctx context.Context, event string) error {
-	return c.do(ctx, http.MethodPost, "/api/v1/scheduler/trigger/"+event, nil, nil)
-}
-
 // CourtBookingInfo is a slim DTO for an active court booking returned by ListActiveCourtBookings.
 type CourtBookingInfo struct {
 	CourtLabel string `json:"court_label"`

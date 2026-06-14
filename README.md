@@ -345,7 +345,6 @@ crontab -e
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
-| `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard` |
 
 ## Localisation
 
@@ -379,7 +378,7 @@ Guest spots count toward capacity.
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
-| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants three privileges: (1) use of the `/trigger` command in the telegram bot, (2) server-owner visibility tier in the audit log (can see all events for all groups, filter by `group_id`/`actor_tg_id`), and (3) server-owner flag in the web SPA (unlocks group/actor filters on the audit page). Must be set consistently on the management, telegram, and web services. |
+| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants two privileges: (1) server-owner visibility tier in the audit log (can see all events for all groups, filter by `group_id`/`actor_tg_id`), and (2) server-owner flag in the web SPA (unlocks group/actor filters on the audit page). Must be set consistently on the management and web services. |
 | `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
 | `RESULT_WINDOW_DAYS`         | No | `14`             | How far back (days) a past game stays eligible for result submission. A game is eligible when its local day (group timezone) is today or up to this many days ago; the `completed` flag is not considered. |
 
@@ -393,7 +392,6 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
-| `SERVICE_ADMIN_IDS`      | No       | _(empty)_         | Comma-separated Telegram user IDs allowed to use `/trigger`. Must match the value set on the management service. |
 
 ### booking
 
@@ -427,7 +425,7 @@ A single 5-minute poll (configured via `CRON_POLL`) runs the following tasks, ea
 | Auto-approve results       | every poll              | Approves pending game-result submissions older than 48 h and applies the Glicko-2 update atomically. |
 | Leaderboard post           | every poll, gated by 24 h | Posts yesterday's leaderboard to the group once the last game has been over for ≥ 24 h. |
 
-`/trigger <event>` bypasses the cron time-window gate for the chosen task. Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`, `last_leaderboard_posted_for`) and `game_days` validation still apply.
+Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`, `last_leaderboard_posted_for`) and `game_days` validation apply to all scheduled tasks.
 
 **Auto-booking**: fires at midnight in each group's timezone on configured game days. Skips groups where the server owner has disabled auto-booking (`auto_booking_allowed = false` on the group). For remaining groups, processes venues with `auto_booking_enabled = true`, `preferred_game_times`, and `auto_booking_courts` set. Skipped for any venue where `auto_booking_games_count = 0`. Requires `SPORTS_BOOKING_SERVICE_URL`. Iterates up to `auto_booking_games_count` time slots from `preferred_game_times` independently — per-slot dedup prevents double-booking if the job re-runs. For each fresh slot: queries available (unbooked) courts at that time for the date `today + booking_opens_days`, books up to `len(auto_booking_courts)` courts in the configured priority order, saves one `auto_booking_result` row per slot (carrying the slot's `game_time`), and **immediately creates an unpublished game** (`message_id = NULL`) linked to that result. The game is visible to admins in `/games` (marked `📝`) but not yet announced to the group. The venue-level `last_auto_booking_at` is updated after any successful slot. On full success, sends a silent DM to all group admins. On partial or full failure, silently DMs all group admins.
 

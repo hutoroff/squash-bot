@@ -37,8 +37,6 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandGroups(ctx, msg, lz)
 	case "/venues":
 		b.handleCommandVenues(ctx, msg, lz)
-	case "/trigger":
-		b.handleCommandTrigger(ctx, msg, lz)
 	case "/result":
 		b.handleCommandResult(ctx, msg, lz)
 	case "/leaderboard":
@@ -68,11 +66,6 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 		sb.WriteString(lz.T(i18n.MsgCmdGames))
 		sb.WriteString(lz.T(i18n.MsgCmdVenues))
 		sb.WriteString(lz.T(i18n.MsgCmdGroups))
-	}
-
-	if b.serviceAdminIDs[msg.From.ID] {
-		sb.WriteString(lz.T(i18n.MsgServiceAdminCommands))
-		sb.WriteString(lz.T(i18n.MsgCmdTrigger))
 	}
 
 	out := tgbotapi.NewMessage(msg.Chat.ID, sb.String())
@@ -256,34 +249,6 @@ func (b *Bot) buildSettingsKeyboard(ctx context.Context, tgID int64, lz *i18n.Lo
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(optOutBtnKey), "settings_results_optout:_"),
 		),
 	)
-}
-
-func (b *Bot) handleCommandTrigger(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
-	if !b.serviceAdminIDs[msg.From.ID] {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgNotAuthorizedCmd))
-		return
-	}
-
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnCancellationReminder), "trigger:cancellation_reminder"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnDayAfterCleanup), "trigger:day_after_cleanup"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBookingReminder), "trigger:booking_reminder"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnAutoBooking), "trigger:auto_booking"),
-		),
-	)
-
-	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectTriggerEvent))
-	out.ReplyMarkup = keyboard
-	if _, err := b.api.Send(out); err != nil {
-		slog.Error("handleCommandTrigger: send", "err", err)
-	}
 }
 
 // superGroupMessageLink returns a t.me deep link for a supergroup message.

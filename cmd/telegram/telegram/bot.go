@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -247,7 +245,6 @@ type userLangPref struct {
 type Bot struct {
 	api                             *tgbotapi.BotAPI
 	client                          client.ManagementClient
-	serviceAdminIDs                 map[int64]bool
 	loc                             *time.Location
 	logger                          *slog.Logger
 	userLangCache                   sync.Map      // map[int64]userLangPref
@@ -269,36 +266,16 @@ type Bot struct {
 	callbackRouter                  map[string]callbackHandler
 }
 
-func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, serviceAdminIDs string, logger *slog.Logger) *Bot {
+func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, logger *slog.Logger) *Bot {
 	b := &Bot{
-		api:             api,
-		client:          mgmtClient,
-		serviceAdminIDs: parseServiceAdminIDs(serviceAdminIDs),
-		loc:             loc,
-		logger:          logger,
-		handlerSem:      make(chan struct{}, maxConcurrentHandlers),
+		api:        api,
+		client:     mgmtClient,
+		loc:        loc,
+		logger:     logger,
+		handlerSem: make(chan struct{}, maxConcurrentHandlers),
 	}
 	b.callbackRouter = b.buildCallbackRouter()
 	return b
-}
-
-// parseServiceAdminIDs converts a comma-separated string of Telegram user IDs
-// into a set for O(1) lookup. Invalid entries are logged and skipped.
-func parseServiceAdminIDs(s string) map[int64]bool {
-	ids := make(map[int64]bool)
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		id, err := strconv.ParseInt(part, 10, 64)
-		if err != nil {
-			slog.Warn("SERVICE_ADMIN_IDS: ignoring invalid entry", "value", part)
-			continue
-		}
-		ids[id] = true
-	}
-	return ids
 }
 
 // Start runs the long-polling update loop until ctx is cancelled.

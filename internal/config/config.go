@@ -16,9 +16,6 @@ type TelegramConfig struct {
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	LogLevel          string `env:"LOG_LEVEL"  envDefault:"INFO"`
 	Timezone          string `env:"TIMEZONE"   envDefault:"UTC"`
-	// ServiceAdminIDs is a comma-separated list of Telegram user IDs allowed to
-	// manually trigger scheduled events via /trigger.
-	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 }
 
 // ManagementConfig holds configuration for the management service.

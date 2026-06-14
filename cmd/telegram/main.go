@@ -74,7 +74,7 @@ func main() {
 	}
 	slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 
-	bot := telegram.New(tgAPI, loc, mgmtClient, cfg.ServiceAdminIDs, logger)
+	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
 
 	slog.Info("telegram starting", "version", Version)
 	bot.Start(ctx)
