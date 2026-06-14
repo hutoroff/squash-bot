@@ -217,6 +217,10 @@ func (r *stubGameRepoForLB) MarkCompleted(_ context.Context, _ int64) error     
 func (r *stubGameRepoForLB) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForLB) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForLB) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForLB) GetRecentCompletedGamesForPlayer(_ context.Context, _, _ int64, _ int) ([]models.PlayerGame, error) {
 	return nil, nil
 }

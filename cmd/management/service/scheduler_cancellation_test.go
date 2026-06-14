@@ -1300,6 +1300,10 @@ func (r *stubGameRepoPC) MarkCompleted(_ context.Context, _ int64) error        
 func (r *stubGameRepoPC) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGameRepoPC) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoPC) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
 
 type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
 

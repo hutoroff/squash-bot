@@ -192,14 +192,20 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 	}
 }
 
-// notifyCancellationError DMs all group admins when automatic court cancellation fails.
-// Messages are sent silently to avoid double-notifying (the group already gets the even_no_cancel message).
+// notifyCancellationError is a thin wrapper around notifyAdminsCancellationFailure
+// for CancellationReminderJob.
 func (j *CancellationReminderJob) notifyCancellationError(ctx context.Context, chatID int64, gameDateTime string, cancelErr error, lz *i18n.Localizer) {
-	admins, err := j.api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+	notifyAdminsCancellationFailure(ctx, j.api, j.logger, "cancellation reminder", chatID, gameDateTime, cancelErr, lz)
+}
+
+// notifyAdminsCancellationFailure DMs all group admins when automatic court cancellation fails.
+// Messages are sent silently to avoid double-notifying (the group already gets a notification).
+func notifyAdminsCancellationFailure(ctx context.Context, api TelegramAPI, logger *slog.Logger, jobName string, chatID int64, gameDateTime string, cancelErr error, lz *i18n.Localizer) {
+	admins, err := api.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
 		ChatConfig: tgbotapi.ChatConfig{ChatID: chatID},
 	})
 	if err != nil {
-		j.logger.Error("cancellation reminder: get chat administrators for error DM", "chat_id", chatID, "err", err)
+		logger.Error(jobName+": get chat administrators for error DM", "chat_id", chatID, "err", err)
 		return
 	}
 	text := lz.Tf(i18n.SchedCancellationFailDM, gameDateTime, cancelErr.Error())
@@ -211,8 +217,8 @@ func (j *CancellationReminderJob) notifyCancellationError(ctx context.Context, c
 		seen[admin.User.ID] = true
 		msg := tgbotapi.NewMessage(admin.User.ID, text)
 		msg.DisableNotification = true
-		if _, err := j.api.Send(msg); err != nil {
-			j.logger.Error("cancellation reminder: send cancellation error DM",
+		if _, err := api.Send(msg); err != nil {
+			logger.Error(jobName+": send cancellation error DM",
 				"user_id", admin.User.ID, "chat_id", chatID, "err", err)
 		}
 	}

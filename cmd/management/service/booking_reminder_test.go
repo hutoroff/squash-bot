@@ -90,6 +90,10 @@ func (m *mockGameRepo) MarkCompleted(_ context.Context, _ int64) error         {
 func (m *mockGameRepo) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (m *mockGameRepo) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (m *mockGameRepo) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
 
 // ── mockVenueRepo ─────────────────────────────────────────────────────────────
 
