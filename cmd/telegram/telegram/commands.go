@@ -33,8 +33,8 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		b.handleCommandGames(ctx, msg, lz)
 	case "/newgame":
 		b.handleCommandNewGame(ctx, msg, lz)
-	case "/language":
-		b.handleCommandLanguage(ctx, msg, lz)
+	case "/groups":
+		b.handleCommandGroups(ctx, msg, lz)
 	case "/venues":
 		b.handleCommandVenues(ctx, msg, lz)
 	case "/trigger":
@@ -67,7 +67,7 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 		sb.WriteString(lz.T(i18n.MsgCmdNewGame))
 		sb.WriteString(lz.T(i18n.MsgCmdGames))
 		sb.WriteString(lz.T(i18n.MsgCmdVenues))
-		sb.WriteString(lz.T(i18n.MsgCmdLanguage))
+		sb.WriteString(lz.T(i18n.MsgCmdGroups))
 	}
 
 	if b.serviceAdminIDs[msg.From.ID] {
@@ -198,21 +198,20 @@ func (b *Bot) handleCommandNewGame(ctx context.Context, msg *tgbotapi.Message, l
 	}
 }
 
-// handleCommandLanguage lets a group admin set the language for one of their groups.
-func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
+// handleCommandGroups lets a group admin configure settings for one of their groups.
+func (b *Bot) handleCommandGroups(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
 	adminGroupIDs := b.adminGroups(msg.From.ID)
 	if len(adminGroupIDs) == 0 {
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCanUse))
 		return
 	}
 
 	if len(adminGroupIDs) == 1 {
-		// Show language selection directly.
-		b.renderLanguageKeyboard(ctx, msg.Chat.ID, 0, adminGroupIDs[0], lz)
+		b.renderGroupConfigKeyboard(ctx, msg.Chat.ID, 0, adminGroupIDs[0], lz)
 		return
 	}
 
-	// Multiple groups — first pick the group.
+	// Multiple groups — show group picker.
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, gid := range adminGroupIDs {
 		title := fmt.Sprintf("Group %d", gid)
@@ -223,13 +222,13 @@ func (b *Bot) handleCommandLanguage(ctx context.Context, msg *tgbotapi.Message, 
 			title = chatInfo.Title
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("set_lang_group:%d", gid)),
+			tgbotapi.NewInlineKeyboardButtonData(title, fmt.Sprintf("group_cfg:%d", gid)),
 		))
 	}
-	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectGroupForLanguage))
+	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSelectGroupToConfigure))
 	out.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(out); err != nil {
-		slog.Error("handleCommandLanguage: send", "err", err)
+		slog.Error("handleCommandGroups: send", "err", err)
 	}
 }
 

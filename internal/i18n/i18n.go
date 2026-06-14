@@ -150,7 +150,7 @@ const (
 	MsgAvailableCommands             = "msg.available_commands"
 	MsgCmdMyGame                     = "msg.cmd_my_game"
 	MsgCmdHelp                       = "msg.cmd_help"
-	MsgCmdLanguage                   = "msg.cmd_language"
+	MsgCmdGroups                     = "msg.cmd_groups"
 	MsgAdminCommands                 = "msg.admin_commands"
 	MsgCmdNewGame                    = "msg.cmd_new_game"
 	MsgCmdGames                      = "msg.cmd_games"
@@ -186,8 +186,15 @@ const (
 	MsgAddedNoAdmin = "msg.added_no_admin"
 	MsgLostAdmin    = "msg.lost_admin"
 
+	// Groups command
+	MsgSelectGroupToConfigure = "msg.select_group_to_configure"
+	MsgGroupConfigTitle       = "msg.group_config_title"
+	MsgChangelogConfigTitle   = "msg.changelog_config_title"
+	BtnGroupLanguage          = "btn.group_language"
+	BtnGroupTimezone          = "btn.group_timezone"
+	BtnGroupChangelog         = "btn.group_changelog"
+
 	// Language command
-	MsgSelectGroupForLanguage = "msg.select_group_for_language"
 	MsgSelectGroupForVenues   = "msg.select_group_for_venues"
 	MsgSelectLanguage         = "msg.select_language"
 	MsgLanguageSet            = "msg.language_set"
@@ -568,7 +575,7 @@ var translations = map[Lang]map[string]string{
 		MsgAvailableCommands:             "Available commands:\n",
 		MsgCmdMyGame:                     "/mygame — Show your next upcoming game\n",
 		MsgCmdHelp:                       "/help — Show this help message\n",
-		MsgCmdLanguage:                   "/language — Set the bot language for your group\n",
+		MsgCmdGroups:                     "/groups — Configure your group's settings\n",
 		MsgAdminCommands:                 "\nAdmin commands:\n",
 		MsgCmdNewGame:                    "/newgame — Create a new game\n",
 		MsgCmdGames:                      "/games — Show and manage upcoming games\n",
@@ -604,8 +611,15 @@ var translations = map[Lang]map[string]string{
 		MsgAddedNoAdmin: "I've been added to \"%s\" but I don't have administrator permissions.\n\nTo pin game announcements, please grant me admin rights in that group.",
 		MsgLostAdmin:    "I've lost administrator permissions in \"%s\".\n\nWithout admin rights I can no longer pin game announcements.",
 
+		// Groups command
+		MsgSelectGroupToConfigure: "Which group do you want to configure?",
+		MsgGroupConfigTitle:       "⚙️ Group settings",
+		MsgChangelogConfigTitle:   "Changelog notifications:",
+		BtnGroupLanguage:          "🌐 Language",
+		BtnGroupTimezone:          "🕐 Timezone",
+		BtnGroupChangelog:         "📋 Changelog",
+
 		// Language command
-		MsgSelectGroupForLanguage: "Which group's language do you want to change?",
 		MsgSelectGroupForVenues:   "Which group's venues do you want to manage?",
 		MsgSelectLanguage:         "Select a language for your group:",
 		MsgLanguageSet:            "Language updated ✓",
@@ -944,7 +958,7 @@ var translations = map[Lang]map[string]string{
 		MsgAvailableCommands:             "Verfügbare Befehle:\n",
 		MsgCmdMyGame:                     "/mygame — Dein nächstes Spiel anzeigen\n",
 		MsgCmdHelp:                       "/help — Diese Hilfe anzeigen\n",
-		MsgCmdLanguage:                   "/language — Botsprache für deine Gruppe festlegen\n",
+		MsgCmdGroups:                     "/groups — Gruppeneinstellungen konfigurieren\n",
 		MsgAdminCommands:                 "\nAdmin-Befehle:\n",
 		MsgCmdNewGame:                    "/newgame — Ein neues Spiel erstellen\n",
 		MsgCmdGames:                      "/games — Bevorstehende Spiele anzeigen und verwalten\n",
@@ -980,8 +994,15 @@ var translations = map[Lang]map[string]string{
 		MsgAddedNoAdmin: "Ich wurde zu \"%s\" hinzugefügt, habe aber keine Administrator-Rechte.\n\nUm Spielankündigungen anzuheften, gewähre mir bitte Admin-Rechte in dieser Gruppe.",
 		MsgLostAdmin:    "Ich habe die Administrator-Rechte in \"%s\" verloren.\n\nOhne Admin-Rechte kann ich keine Spielankündigungen mehr anheften.",
 
+		// Groups command
+		MsgSelectGroupToConfigure: "Welche Gruppe möchtest du konfigurieren?",
+		MsgGroupConfigTitle:       "⚙️ Gruppeneinstellungen",
+		MsgChangelogConfigTitle:   "Changelog-Benachrichtigungen:",
+		BtnGroupLanguage:          "🌐 Sprache",
+		BtnGroupTimezone:          "🕐 Zeitzone",
+		BtnGroupChangelog:         "📋 Changelog",
+
 		// Language command
-		MsgSelectGroupForLanguage: "Für welche Gruppe möchtest du die Sprache ändern?",
 		MsgSelectGroupForVenues:   "Für welche Gruppe möchtest du die Veranstaltungsorte verwalten?",
 		MsgSelectLanguage:         "Sprache für deine Gruppe auswählen:",
 		MsgLanguageSet:            "Sprache aktualisiert ✓",
@@ -1316,7 +1337,7 @@ var translations = map[Lang]map[string]string{
 		MsgAvailableCommands:             "Доступные команды:\n",
 		MsgCmdMyGame:                     "/mygame — Показать твою следующую игру\n",
 		MsgCmdHelp:                       "/help — Показать эту справку\n",
-		MsgCmdLanguage:                   "/language — Установить язык бота для твоей группы\n",
+		MsgCmdGroups:                     "/groups — Настройки твоей группы\n",
 		MsgAdminCommands:                 "\nКоманды администратора:\n",
 		MsgCmdNewGame:                    "/newgame — Создать новую игру\n",
 		MsgCmdGames:                      "/games — Показать и управлять предстоящими играми\n",
@@ -1352,8 +1373,15 @@ var translations = map[Lang]map[string]string{
 		MsgAddedNoAdmin: "Я был добавлен в \"%s\", но не имею прав администратора.\n\nЧтобы закрепить объявления об играх, пожалуйста, предоставьте мне права администратора в этой группе.",
 		MsgLostAdmin:    "Я потерял права администратора в \"%s\".\n\nБез прав администратора я больше не могу закреплять объявления об играх.",
 
+		// Groups command
+		MsgSelectGroupToConfigure: "Какую группу ты хочешь настроить?",
+		MsgGroupConfigTitle:       "⚙️ Настройки группы",
+		MsgChangelogConfigTitle:   "Уведомления об обновлениях:",
+		BtnGroupLanguage:          "🌐 Язык",
+		BtnGroupTimezone:          "🕐 Часовой пояс",
+		BtnGroupChangelog:         "📋 Список изменений",
+
 		// Language command
-		MsgSelectGroupForLanguage: "Для какой группы изменить язык?",
 		MsgSelectGroupForVenues:   "Для какой группы управлять площадками?",
 		MsgSelectLanguage:         "Выбери язык для своей группы:",
 		MsgLanguageSet:            "Язык обновлён ✓",
