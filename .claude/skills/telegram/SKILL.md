@@ -9,7 +9,7 @@ user-invocable: true
 The telegram bot handles all user-facing Telegram interactions. It has no database access — all data operations go through HTTP calls to the management service via `client.ManagementClient`. All wizard state is in-memory using `sync.Map`.
 
 **Entry point:** `cmd/telegram/main.go`  
-**Transport:** Telegram long-polling (no HTTP server port)  
+**Transport:** Webhook (preferred) or long-polling fallback. When `TELEGRAM_WEBHOOK_URL` is set, `StartWebhook` registers the webhook, binds a plain-HTTP listener on `SERVER_PORT` (default 8083) behind a TLS-terminating reverse proxy, and feeds updates into `runUpdateLoop`. When the URL is unset or webhook setup fails, `Start` falls back to long-polling (no port bound).  
 **Module path:** `github.com/hutoroff/squash-bot/cmd/telegram`
 
 ---
@@ -18,9 +18,10 @@ The telegram bot handles all user-facing Telegram interactions. It has no databa
 
 ```
 cmd/telegram/
-├── main.go                  — wiring: BotAPI, ManagementClient, Bot construction
+├── main.go                  — wiring: BotAPI, ManagementClient, Bot construction; branches on TELEGRAM_WEBHOOK_URL
 ├── telegram/
-│   ├── bot.go               — Bot struct definition, New(), Start(), processUpdate()
+│   ├── bot.go               — Bot struct definition, New(), Start(), runUpdateLoop(), processUpdate()
+│   ├── webhook.go           — WebhookOptions, StartWebhook(), registerWebhook(), webhookHandler()
 │   ├── handlers.go          — handleMessage, handleCallback dispatcher, reply/answerCallback helpers,
 │   │                          normalizeCourts, parseAdminCommand, isBotMentioned, isKnownGroupMention
 │   ├── callback_router.go   — buildCallbackRouter(): map[string]callbackHandler (35+ entries)
@@ -87,10 +88,18 @@ type Bot struct {
 
 ---
 
+## Update transport
+
+Both transports share the same `runUpdateLoop(ctx, updates tgbotapi.UpdatesChannel)` in `bot.go`. The loop drains the channel, applies `handlerSem` backpressure, and spawns `processUpdate` goroutines.
+
+- **Webhook** (`StartWebhook` in `webhook.go`): requires `TELEGRAM_WEBHOOK_URL` (must be `https`). Registers via manual `MakeRequest("setWebhook", …)` to pass `secret_token` (absent from the typed API in v5.5.1). Binds a plain-HTTP `*http.Server` on `SERVER_PORT` (default 8083). `webhookHandler` validates `X-Telegram-Bot-Api-Secret-Token` with `subtle.ConstantTimeCompare` before decoding. Does **not** delete the webhook on graceful shutdown (Telegram redelivers across restarts).
+- **Polling** (`Start` in `bot.go`): calls `DeleteWebhookConfig{}` first (prevents 409 if a webhook was previously registered), then uses `GetUpdatesChan`.
+- **Fallback**: `main.go` tries `StartWebhook` when `TELEGRAM_WEBHOOK_URL` is set; on error (and only if `ctx.Err() == nil`) logs `"webhook mode unavailable, falling back to long-polling"` and calls `Start`.
+
 ## Update processing flow
 
 ```
-Start() long-poll loop
+StartWebhook() / Start() → runUpdateLoop()
   → processUpdate()
       message → handleMessage()
           private + slash command → clear all pending state, handleCommand()
@@ -450,6 +459,9 @@ INTERNAL_API_SECRET=          required (must match management service value)
 LOG_LEVEL=INFO
 LOG_DIR=                      optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
+TELEGRAM_WEBHOOK_URL=         optional; full public HTTPS URL — enables webhook mode
+TELEGRAM_WEBHOOK_SECRET=      optional; secret_token sent by Telegram and validated per request; generate with openssl rand -hex 32
+SERVER_PORT=8083              local plain-HTTP port the webhook listener binds to (webhook mode only)
 ```
 
 ---

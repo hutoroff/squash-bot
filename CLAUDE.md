@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`): `management` (API + scheduler, port 8080), `telegram` (bot, no DB), `booking` (Eversports wrapper, port 8081), `web` (SPA + JWT auth, port 8082).
+Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`): `management` (API + scheduler, port 8080), `telegram` (bot, transport configurable — webhook preferred, polling fallback, webhook listener on `SERVER_PORT` default 8083), `booking` (Eversports wrapper, port 8081), `web` (SPA + JWT auth, port 8082).
 
 **API compatibility**: services are compatible within the same major version. The telegram bot calls `GET /version` on the management service at startup and exits if major versions differ.
 

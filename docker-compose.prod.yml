@@ -75,6 +75,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/telegram
+      # Webhook mode (optional). The reverse proxy terminates TLS and forwards to the container
+      # on the internal network — do NOT add a public port mapping here (that would bypass TLS).
+      # Configure the proxy to forward TELEGRAM_WEBHOOK_URL traffic to telegram:8083 (internal).
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SERVER_PORT: ${TELEGRAM_SERVER_PORT:-8083}
     volumes:
       - logs:/logs
     depends_on:

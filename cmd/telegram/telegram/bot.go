@@ -278,27 +278,28 @@ func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementC
 	return b
 }
 
-// Start runs the long-polling update loop until ctx is cancelled.
-func (b *Bot) Start(ctx context.Context) {
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	u.AllowedUpdates = []string{"message", "callback_query", "my_chat_member"}
+// allowedUpdates lists the Telegram update types the bot subscribes to.
+// Used by both the polling and webhook transports so the set stays consistent.
+var allowedUpdates = []string{"message", "callback_query", "my_chat_member"}
 
-	updates := b.api.GetUpdatesChan(u)
-
+// runUpdateLoop drains updates from ch until either ch is closed or ctx is cancelled.
+// It is transport-agnostic: both the long-polling path (Start) and the webhook path
+// (webhook.go:StartWebhook) feed the same channel into this loop.
+func (b *Bot) runUpdateLoop(ctx context.Context, updates tgbotapi.UpdatesChannel) {
 	for {
 		select {
 		case <-ctx.Done():
-			b.api.StopReceivingUpdates()
 			return
-		case update := <-updates:
+		case update, ok := <-updates:
+			if !ok {
+				return
+			}
 			// Block until a handler slot is free, but still honour context cancellation.
 			// This provides backpressure rather than silently dropping updates; Telegram
 			// will buffer additional updates server-side while we are busy.
 			select {
 			case b.handlerSem <- struct{}{}:
 			case <-ctx.Done():
-				b.api.StopReceivingUpdates()
 				return
 			}
 			go func() {
@@ -307,6 +308,22 @@ func (b *Bot) Start(ctx context.Context) {
 			}()
 		}
 	}
+}
+
+// Start runs the long-polling update loop until ctx is cancelled.
+// It deletes any registered webhook first so that getUpdates does not return 409.
+func (b *Bot) Start(ctx context.Context) {
+	if _, err := b.api.Request(tgbotapi.DeleteWebhookConfig{}); err != nil {
+		b.logger.Warn("deleteWebhook before polling", "err", err)
+	}
+
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	u.AllowedUpdates = allowedUpdates
+
+	updates := b.api.GetUpdatesChan(u)
+	b.runUpdateLoop(ctx, updates)
+	b.api.StopReceivingUpdates()
 }
 
 func (b *Bot) processUpdate(ctx context.Context, update tgbotapi.Update) {

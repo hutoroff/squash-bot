@@ -43,7 +43,7 @@ web       →  HTTP API  →  management
 Four independently deployable binaries in one Go module:
 
 - **management** — REST API (port 8080), business logic, SQL repositories, cron scheduler; sends Telegram messages for scheduled notifications
-- **telegram** — long-polling bot loop, message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
+- **telegram** — webhook or long-polling bot (prefers webhooks, falls back to polling), message/callback handlers, slash commands; all data operations go through HTTP calls to the management service
 - **booking** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
 - **web** — web UI (port 8082); Go backend serving an embedded React SPA
 
@@ -392,6 +392,11 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
+| `TELEGRAM_WEBHOOK_URL`   | No       | _(empty)_         | Full public HTTPS URL Telegram should POST updates to (e.g. `https://example.com/telegram/webhook`). When set, the bot uses webhook mode instead of long-polling. |
+| `TELEGRAM_WEBHOOK_SECRET`| No       | _(empty)_         | Secret sent as `X-Telegram-Bot-Api-Secret-Token` and validated on every incoming webhook request. Generate with `openssl rand -hex 32`. |
+| `SERVER_PORT`            | No       | `8083`            | Local plain-HTTP port the webhook listener binds to (webhook mode only). A TLS-terminating reverse proxy should forward `TELEGRAM_WEBHOOK_URL` traffic to `telegram:<SERVER_PORT>` on the internal network. |
+
+> **Webhook mode:** set `TELEGRAM_WEBHOOK_URL` to a public `https://…` URL and point your reverse proxy to `telegram:<SERVER_PORT>` (no public port mapping needed — the proxy terminates TLS). Generate the secret with `openssl rand -hex 32`. Leave `TELEGRAM_WEBHOOK_URL` empty to fall back to long-polling.
 
 ### booking
 

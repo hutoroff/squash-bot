@@ -42,6 +42,11 @@ services:
     env_file: .env
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
+      # Webhook mode (optional). Local webhook testing needs a tunnel (e.g. cloudflared/ngrok → 8083).
+      # Leave unset to use long-polling (the default for local development).
+      # TELEGRAM_WEBHOOK_URL: https://<your-tunnel>.trycloudflare.com/telegram/webhook
+      # TELEGRAM_WEBHOOK_SECRET: <openssl rand -hex 32>
+      # SERVER_PORT: "8083"
     depends_on:
       management:
         condition: service_healthy
