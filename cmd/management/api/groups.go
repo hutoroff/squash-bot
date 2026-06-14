@@ -155,6 +155,37 @@ func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// setGroupLeaderboardNotifications handles PATCH /api/v1/groups/{chatID}/leaderboard-notifications
+func (h *Handler) setGroupLeaderboardNotifications(w http.ResponseWriter, r *http.Request) {
+	chatID, err := parseID(r.PathValue("chatID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chat_id")
+		return
+	}
+	var req struct {
+		Enabled         bool   `json:"leaderboard_notifications_enabled"`
+		ActorTelegramID int64  `json:"actor_telegram_id"`
+		ActorDisplay    string `json:"actor_display"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.groupRepo.SetLeaderboardNotificationsEnabled(r.Context(), chatID, req.Enabled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "group not found")
+		} else {
+			h.logger.Error("setGroupLeaderboardNotifications", "err", err, "chat_id", chatID)
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if req.ActorTelegramID != 0 {
+		h.auditSvc.RecordGroupLeaderboardNotificationsToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.Enabled)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // setGroupAutoBookingAllowed handles PATCH /api/v1/groups/{chatID}/auto-booking-allowed
 func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Request) {
 	chatID, err := parseID(r.PathValue("chatID"))

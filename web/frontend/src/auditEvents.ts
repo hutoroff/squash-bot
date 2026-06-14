@@ -26,6 +26,7 @@ export const EVENT_LABELS: Record<AuditEventType, string> = {
   'group.bot_removed': 'Bot removed',
   'group.settings_changed': 'Settings changed',
   'group.changelog_toggled': 'Changelog toggled',
+  'group.leaderboard_notifications_toggled': 'Leaderboard notifications toggled',
   'group.auto_booking_allowed_toggled': 'Auto-booking toggled',
   'court.booked': 'Court booked',
   'court.canceled': 'Court canceled',

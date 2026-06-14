@@ -160,8 +160,9 @@ GET /api/v1/players/{playerID}/games               — listPlayerGames
 PUT    /api/v1/groups/{chatID}                     — upsertGroup
 PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
 PATCH  /api/v1/groups/{chatID}/timezone            — setGroupTimezone
-PATCH  /api/v1/groups/{chatID}/changelog           — setGroupChangelog (body: changelog_enabled bool, actor fields)
-PATCH  /api/v1/groups/{chatID}/auto-booking-allowed — setGroupAutoBookingAllowed (body: enabled bool, actor fields);
+PATCH  /api/v1/groups/{chatID}/changelog                 — setGroupChangelog (body: changelog_enabled bool, actor fields)
+PATCH  /api/v1/groups/{chatID}/leaderboard-notifications — setGroupLeaderboardNotifications (body: leaderboard_notifications_enabled bool, actor fields)
+PATCH  /api/v1/groups/{chatID}/auto-booking-allowed      — setGroupAutoBookingAllowed (body: enabled bool, actor fields);
                                                      no-op 204 if value unchanged; on disable: cascades
                                                      auto_booking_enabled→false on all group venues (transactional)
 DELETE /api/v1/groups/{chatID}                     — removeGroup
@@ -532,10 +533,11 @@ RESULT_WINDOW_DAYS=14         optional; how far back a past game stays eligible 
 ## Constraints and conventions
 
 - **Audit any action that meaningfully changes state.** Every new endpoint or service method that creates, updates, or deletes a meaningful entity must call the appropriate `AuditService.Record*` method. Use the table in the AuditService section to pick visibility. Steps:
-  1. Add an `AuditEventType` constant in `internal/models/audit.go`.
+  1. Add an `AuditEventType` constant in `internal/models/audit_event.go`.
   2. Add a `Record<Action>` method on `AuditService` in `audit_service.go` following the best-effort pattern (call `s.record`, never return error). Set `Visibility` to the lowest tier that should see the event: `player` for self-service actions, `group_admin` for admin-gated actions, `server_owner` for global/infra events.
   3. Call the method from the API handler (after the state-changing operation succeeds) or from the scheduler job. Propagate actor info via the **actor propagation pattern** (body fields for POST/PATCH/PUT; query params `actor_tg_id`, `actor_display`, `group_id` for DELETE). Skip the call when `actorTgID == 0`.
-  4. Update the event-type table in this SKILL.md.
+  4. **Mirror the new type in the frontend** — add the string literal to the `AuditEventType` union in `web/frontend/src/types.ts` AND add a human-readable label in `web/frontend/src/auditEvents.ts` (`EVENT_LABELS`). The test `src/auditEvents.test.ts` reads `internal/models/audit_event.go` at test time and fails CI if the two sides diverge — run `npm test` in `web/frontend/` to verify.
+  5. Update the event-type table in this SKILL.md.
 - New business rules go in `service/`, not `api/`
 - HTTP handlers in `api/` only validate input, call service methods, and write responses
 - New scheduled logic requires a new job struct in `service/` registered in `scheduler.go`

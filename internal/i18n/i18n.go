@@ -187,12 +187,18 @@ const (
 	MsgLostAdmin    = "msg.lost_admin"
 
 	// Groups command
-	MsgSelectGroupToConfigure = "msg.select_group_to_configure"
-	MsgGroupConfigTitle       = "msg.group_config_title"
-	MsgChangelogConfigTitle   = "msg.changelog_config_title"
-	BtnGroupLanguage          = "btn.group_language"
-	BtnGroupTimezone          = "btn.group_timezone"
-	BtnGroupChangelog         = "btn.group_changelog"
+	MsgSelectGroupToConfigure    = "msg.select_group_to_configure"
+	MsgGroupConfigTitle          = "msg.group_config_title"
+	MsgChangelogConfigTitle      = "msg.changelog_config_title"
+	MsgLeaderboardConfigTitle    = "msg.leaderboard_config_title"
+	BtnGroupLanguage             = "btn.group_language"
+	BtnGroupTimezone             = "btn.group_timezone"
+	BtnGroupChangelog            = "btn.group_changelog"
+	BtnGroupLeaderboard          = "btn.group_leaderboard"
+	BtnLeaderboardNotifyOn       = "btn.leaderboard_notify_on"
+	BtnLeaderboardNotifyOff      = "btn.leaderboard_notify_off"
+	MsgLeaderboardNotifyEnabled  = "msg.leaderboard_notify_enabled"
+	MsgLeaderboardNotifyDisabled = "msg.leaderboard_notify_disabled"
 
 	// Language command
 	MsgSelectGroupForVenues   = "msg.select_group_for_venues"
@@ -612,12 +618,18 @@ var translations = map[Lang]map[string]string{
 		MsgLostAdmin:    "I've lost administrator permissions in \"%s\".\n\nWithout admin rights I can no longer pin game announcements.",
 
 		// Groups command
-		MsgSelectGroupToConfigure: "Which group do you want to configure?",
-		MsgGroupConfigTitle:       "⚙️ Group settings",
-		MsgChangelogConfigTitle:   "Changelog notifications:",
-		BtnGroupLanguage:          "🌐 Language",
-		BtnGroupTimezone:          "🕐 Timezone",
-		BtnGroupChangelog:         "📋 Changelog",
+		MsgSelectGroupToConfigure:    "Which group do you want to configure?",
+		MsgGroupConfigTitle:          "⚙️ Group settings",
+		MsgChangelogConfigTitle:      "Changelog notifications:",
+		MsgLeaderboardConfigTitle:    "Leaderboard notifications:",
+		BtnGroupLanguage:             "🌐 Language",
+		BtnGroupTimezone:             "🕐 Timezone",
+		BtnGroupChangelog:            "📋 Changelog",
+		BtnGroupLeaderboard:          "🏆 Leaderboard",
+		BtnLeaderboardNotifyOn:       "🏆 Leaderboard: ON",
+		BtnLeaderboardNotifyOff:      "🏆 Leaderboard: OFF",
+		MsgLeaderboardNotifyEnabled:  "Leaderboard notifications enabled ✓",
+		MsgLeaderboardNotifyDisabled: "Leaderboard notifications disabled",
 
 		// Language command
 		MsgSelectGroupForVenues:   "Which group's venues do you want to manage?",
@@ -995,12 +1007,18 @@ var translations = map[Lang]map[string]string{
 		MsgLostAdmin:    "Ich habe die Administrator-Rechte in \"%s\" verloren.\n\nOhne Admin-Rechte kann ich keine Spielankündigungen mehr anheften.",
 
 		// Groups command
-		MsgSelectGroupToConfigure: "Welche Gruppe möchtest du konfigurieren?",
-		MsgGroupConfigTitle:       "⚙️ Gruppeneinstellungen",
-		MsgChangelogConfigTitle:   "Changelog-Benachrichtigungen:",
-		BtnGroupLanguage:          "🌐 Sprache",
-		BtnGroupTimezone:          "🕐 Zeitzone",
-		BtnGroupChangelog:         "📋 Changelog",
+		MsgSelectGroupToConfigure:    "Welche Gruppe möchtest du konfigurieren?",
+		MsgGroupConfigTitle:          "⚙️ Gruppeneinstellungen",
+		MsgChangelogConfigTitle:      "Changelog-Benachrichtigungen:",
+		MsgLeaderboardConfigTitle:    "Bestenlisten-Benachrichtigungen:",
+		BtnGroupLanguage:             "🌐 Sprache",
+		BtnGroupTimezone:             "🕐 Zeitzone",
+		BtnGroupChangelog:            "📋 Changelog",
+		BtnGroupLeaderboard:          "🏆 Bestenliste",
+		BtnLeaderboardNotifyOn:       "🏆 Bestenliste: AN",
+		BtnLeaderboardNotifyOff:      "🏆 Bestenliste: AUS",
+		MsgLeaderboardNotifyEnabled:  "Bestenlisten-Benachrichtigungen aktiviert ✓",
+		MsgLeaderboardNotifyDisabled: "Bestenlisten-Benachrichtigungen deaktiviert",
 
 		// Language command
 		MsgSelectGroupForVenues:   "Für welche Gruppe möchtest du die Veranstaltungsorte verwalten?",
@@ -1374,12 +1392,18 @@ var translations = map[Lang]map[string]string{
 		MsgLostAdmin:    "Я потерял права администратора в \"%s\".\n\nБез прав администратора я больше не могу закреплять объявления об играх.",
 
 		// Groups command
-		MsgSelectGroupToConfigure: "Какую группу ты хочешь настроить?",
-		MsgGroupConfigTitle:       "⚙️ Настройки группы",
-		MsgChangelogConfigTitle:   "Уведомления об обновлениях:",
-		BtnGroupLanguage:          "🌐 Язык",
-		BtnGroupTimezone:          "🕐 Часовой пояс",
-		BtnGroupChangelog:         "📋 Список изменений",
+		MsgSelectGroupToConfigure:    "Какую группу ты хочешь настроить?",
+		MsgGroupConfigTitle:          "⚙️ Настройки группы",
+		MsgChangelogConfigTitle:      "Уведомления об обновлениях:",
+		MsgLeaderboardConfigTitle:    "Уведомления о таблице лидеров:",
+		BtnGroupLanguage:             "🌐 Язык",
+		BtnGroupTimezone:             "🕐 Часовой пояс",
+		BtnGroupChangelog:            "📋 Список изменений",
+		BtnGroupLeaderboard:          "🏆 Таблица лидеров",
+		BtnLeaderboardNotifyOn:       "🏆 Таблица лидеров: ВКЛ",
+		BtnLeaderboardNotifyOff:      "🏆 Таблица лидеров: ВЫКЛ",
+		MsgLeaderboardNotifyEnabled:  "Уведомления о таблице лидеров включены ✓",
+		MsgLeaderboardNotifyDisabled: "Уведомления о таблице лидеров отключены",
 
 		// Language command
 		MsgSelectGroupForVenues:   "Для какой группы управлять площадками?",

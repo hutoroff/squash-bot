@@ -80,8 +80,8 @@ func (r *GroupRepo) Exists(ctx context.Context, chatID int64) (bool, error) {
 func (r *GroupRepo) GetByID(ctx context.Context, chatID int64) (*models.Group, error) {
 	var g models.Group
 	err := r.pool.QueryRow(ctx,
-		`SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups WHERE chat_id = $1`, chatID,
-	).Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt)
+		`SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, leaderboard_notifications_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups WHERE chat_id = $1`, chatID,
+	).Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.LeaderboardNotificationsEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (r *GroupRepo) GetByID(ctx context.Context, chatID int64) (*models.Group, e
 
 // GetAll returns all groups the bot is currently a member of.
 func (r *GroupRepo) GetAll(ctx context.Context) ([]models.Group, error) {
-	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups ORDER BY added_at DESC`)
+	rows, err := r.pool.Query(ctx, `SELECT chat_id, title, bot_is_admin, language, timezone, changelog_enabled, leaderboard_notifications_enabled, auto_booking_allowed, last_leaderboard_posted_for, added_at FROM bot_groups ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (r *GroupRepo) GetAll(ctx context.Context) ([]models.Group, error) {
 	var groups []models.Group
 	for rows.Next() {
 		var g models.Group
-		if err := rows.Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt); err != nil {
+		if err := rows.Scan(&g.ChatID, &g.Title, &g.BotIsAdmin, &g.Language, &g.Timezone, &g.ChangelogEnabled, &g.LeaderboardNotificationsEnabled, &g.AutoBookingAllowed, &g.LastLeaderboardPostedFor, &g.AddedAt); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)
@@ -113,6 +113,22 @@ func (r *GroupRepo) SetLastLeaderboardPostedFor(ctx context.Context, chatID int6
 		date, chatID,
 	)
 	return err
+}
+
+// SetLeaderboardNotificationsEnabled updates the leaderboard_notifications_enabled flag for a group.
+// Returns pgx.ErrNoRows if no group with that chat ID exists.
+func (r *GroupRepo) SetLeaderboardNotificationsEnabled(ctx context.Context, chatID int64, enabled bool) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE bot_groups SET leaderboard_notifications_enabled = $1 WHERE chat_id = $2`,
+		enabled, chatID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // SetChangelogEnabled updates the changelog_enabled flag for a group.
