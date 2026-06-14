@@ -19,4 +19,7 @@ WORKDIR /app
 
 COPY --from=builder /telegram .
 
+# Webhook listener port (webhook mode only; a reverse proxy terminates TLS externally).
+EXPOSE 8083
+
 CMD ["./telegram"]

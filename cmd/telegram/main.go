@@ -77,7 +77,19 @@ func main() {
 	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
 
 	slog.Info("telegram starting", "version", Version)
-	bot.Start(ctx)
+	if cfg.WebhookURL != "" {
+		opts := telegram.WebhookOptions{
+			PublicURL:  cfg.WebhookURL,
+			ListenPort: cfg.ServerPort,
+			Secret:     cfg.WebhookSecret,
+		}
+		if err := bot.StartWebhook(ctx, opts); err != nil && ctx.Err() == nil {
+			slog.Warn("webhook mode unavailable, falling back to long-polling", "err", err)
+			bot.Start(ctx)
+		}
+	} else {
+		bot.Start(ctx)
+	}
 	slog.Info("telegram stopped")
 }
 

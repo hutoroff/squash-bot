@@ -16,6 +16,15 @@ type TelegramConfig struct {
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	LogLevel          string `env:"LOG_LEVEL"  envDefault:"INFO"`
 	Timezone          string `env:"TIMEZONE"   envDefault:"UTC"`
+	// WebhookURL is the full public HTTPS URL Telegram should POST updates to.
+	// When empty, the bot uses long-polling instead.
+	WebhookURL string `env:"TELEGRAM_WEBHOOK_URL"`
+	// WebhookSecret is sent as the X-Telegram-Bot-Api-Secret-Token header value.
+	// Validated on every incoming webhook request.
+	WebhookSecret string `env:"TELEGRAM_WEBHOOK_SECRET"`
+	// ServerPort is the local plain-HTTP port the webhook listener binds to.
+	// A TLS-terminating reverse proxy should forward to this port.
+	ServerPort string `env:"SERVER_PORT" envDefault:"8083"`
 }
 
 // ManagementConfig holds configuration for the management service.
