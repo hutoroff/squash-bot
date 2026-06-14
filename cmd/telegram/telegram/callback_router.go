@@ -149,6 +149,8 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"set_user_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			b.handleSetUserLang(ctx, cb, rawID)
 		},
+		"group_cfg":        int64H(b.handleGroupConfig),
+		"changelog_cfg":    int64H(b.handleChangelogConfig),
 		"set_lang_group":   int64H(b.handleSetLangGroup),
 		"toggle_changelog": int64H(b.handleToggleChangelog),
 		"set_lang": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {

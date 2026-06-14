@@ -16,7 +16,7 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - After playing, any participant can submit a result via `/result` (private chat): pick the game, opponent, winner (or draw), and optional score; the opponent receives a DM with **Approve / Reject** buttons. Approved results immediately update a per-group **Glicko-2 leaderboard** (default rating 1500, RD 350); results left unanswered for 48 hours are auto-approved. Players see standings via `/leaderboard`; once a day, 24 h after that day's last game start, the bot also posts the leaderboard to the group automatically.
 - **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand. Server owners can manage groups on the Groups page, including toggling auto-booking per group.
-- On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/language` settings, default ON)
+- On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/groups` → 📋 Changelog, default ON)
 
 ## Tech Stack
 
@@ -344,7 +344,7 @@ crontab -e
 | `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
-| `/language` | Group admins    | Set the bot language for a group (en/de/ru)      |
+| `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications |
 | `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard` |
 
 ## Localisation
@@ -354,7 +354,7 @@ The bot supports three languages: **English** (default), **German**, and **Russi
 - **Group messages** (game announcements, capacity notifications, weekly reminders) use the language configured for that group.
 - **Private messages** use the language from the user's Telegram client (`LanguageCode`), falling back to English if the language is unsupported.
 
-Group admins set the language with `/language`. If the admin manages multiple groups, the bot first asks which group to configure, then shows the language picker. The setting is stored per group and survives bot restarts.
+Group admins set the language via `/groups` → 🌐 Language. If the admin manages multiple groups, the bot first asks which group to configure, then shows the config menu. The setting is stored per group and survives bot restarts.
 
 ## Guest Management
 
@@ -439,7 +439,7 @@ A single 5-minute poll (configured via `CRON_POLL`) runs the following tasks, ea
 
 **Leaderboard post**: runs on every poll. Computes the candidate day as yesterday in the group's local timezone, then waits until **24 h after that day's last game start** before posting — so an evening game on Saturday isn't tallied at 00:01 Sunday. If no approved results exist for the day, marks the day done and exits silently. Otherwise renders the leaderboard, sends it as a plain-text message to the group, and only then advances `last_leaderboard_posted_for`; a Telegram send failure leaves the marker untouched so the next poll retries.
 
-**Timezone**: set per group via `/language` → "🕐 Set Timezone" → select from curated list of 18 IANA timezones. Default is UTC.
+**Timezone**: set per group via `/groups` → 🕐 Timezone → select from curated list of 18 IANA timezones. Default is UTC.
 
 Capacity per game = `courts_count × 2`.
 

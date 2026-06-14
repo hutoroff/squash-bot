@@ -24,7 +24,7 @@ cmd/telegram/
 │   ├── handlers.go          — handleMessage, handleCallback dispatcher, reply/answerCallback helpers,
 │   │                          normalizeCourts, parseAdminCommand, isBotMentioned, isKnownGroupMention
 │   ├── callback_router.go   — buildCallbackRouter(): map[string]callbackHandler (35+ entries)
-│   ├── commands.go          — handleCommand switch, /newGame, /language, /trigger, /games, /myGame
+│   ├── commands.go          — handleCommand switch, /newGame, /groups, /trigger, /games, /myGame
 │   ├── formatter.go         — formatGamesListMessage, superGroupMessageLink
 │   ├── participation_handlers.go — handleJoin, handleSkip, handleGuestAdd, handleGuestRemove
 │   ├── game_manage_handlers.go  — handleManage, handleManageShowPlayers/Guests, handleManageEditCourts,
@@ -39,10 +39,12 @@ cmd/telegram/
 │   ├── newgame_handlers.go  — /newGame wizard: handleNewGameDate/Group/Venue/CourtToggle/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
 │   │                          buildDateSelectionKeyboard, renderCourtPickKeyboard, renderTimeSlotKeyboard
-│   ├── settings_handlers.go — handleTrigger, handleSetLangGroup, handleSetLang,
-│   │                          handleSetTzPick, handleSetTz, handleToggleChangelog,
-│   │                          handleNewGameGroupVenue, handleGroupSelection
-│   │                          renderLanguageKeyboard(ctx, groupID) — fetches group to show changelog toggle label
+│   ├── settings_handlers.go — handleTrigger, handleGroupConfig, handleSetLangGroup, handleSetLang,
+│   │                          handleSetTzPick, handleSetTz, handleChangelogConfig, handleToggleChangelog,
+│   │                          handleNewGameGroupVenue, handleGroupSelection,
+│   │                          renderGroupConfigKeyboard (3-button config menu: Language/Timezone/Changelog),
+│   │                          renderLanguageKeyboard / renderTimezoneKeyboard / renderChangelogKeyboard
+│   │                          (each a sub-screen with ⬅️ Back → group_cfg:<groupID>)
 │   └── venue_handlers.go    — handleVenueList/Add/EditMenu/StartEdit/Delete/DeleteConfirm,
 │                              handleVenueDayToggle/Confirm, handleVenueWizPreferredTimePick,
 │                              handleVenuePtimeToggle, handleVenuePtimeConfirm, handleVenuePtimeSet,
@@ -135,7 +137,7 @@ publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publis
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
-trigger, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog
+trigger, group_cfg, changelog_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog
 venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
@@ -251,18 +253,24 @@ Any slash command in private chat clears `pendingResultWizard` (same convention 
 
 ## Business logic flows
 
-### Language & Timezone Selection (`/language`)
+### Group Configuration (`/groups`)
 
-1. Admin sends `/language` in private chat.
-2. If admin in exactly one group → show language picker for that group immediately.
-3. If admin in multiple groups → show group picker first (`set_lang_group:<groupID>` callbacks), then language picker.
-4. Language picker: 3 language buttons + "🕐 Set Timezone" button + changelog toggle button.
-5. Language button → `set_lang:<lang>:<groupID>` → `PATCH /api/v1/groups/{chatID}/language`.
-6. "Set Timezone" → `set_tz_pick:<groupID>` → curated timezone picker (18 IANA timezones, 2 per row).
-7. Timezone button → `set_tz:<groupID>:<tz>` → `PATCH /api/v1/groups/{chatID}/timezone`.
-8. Changelog toggle → `toggle_changelog:<groupID>` → `SetGroupChangelog` → `PATCH /api/v1/groups/{chatID}/changelog`.
-   Button label shows current state ("📢 Changelog: ON" / "📢 Changelog: OFF"); `renderLanguageKeyboard` fetches group to determine label.
-9. Management returns 400 for invalid IANA strings, 404 if group not found.
+Admin-only, private chat. Entry point: `handleCommandGroups`.
+
+1. Admin sends `/groups`. Non-admins (no admin groups) get `MsgOnlyAdminCanUse`.
+2. If admin in exactly one group → open that group's config menu immediately (`renderGroupConfigKeyboard`).
+3. If admin in multiple groups → group picker first (rows route to `group_cfg:<groupID>`), then config menu.
+4. **Group config menu** (`group_cfg:<groupID>`, backs both the picker and every Back button): 3 buttons —
+   🌐 Language → `set_lang_group:<groupID>`, 🕐 Timezone → `set_tz_pick:<groupID>`, 📋 Changelog → `changelog_cfg:<groupID>`.
+5. **Language sub-screen** (`renderLanguageKeyboard`): 3 language buttons + ⬅️ Back. Pick → `set_lang:<lang>:<groupID>` →
+   `PATCH /api/v1/groups/{chatID}/language`, toast, then re-render config menu.
+6. **Timezone sub-screen** (`renderTimezoneKeyboard`): 18 curated IANA timezones (2 per row) + ⬅️ Back. Pick →
+   `set_tz:<groupID>:<tz>` → `PATCH /api/v1/groups/{chatID}/timezone`, toast, then re-render config menu.
+7. **Changelog sub-screen** (`renderChangelogKeyboard`): ON/OFF toggle (label reflects current state via `GetGroupByID`) +
+   ⬅️ Back. Toggle → `toggle_changelog:<groupID>` → `SetGroupChangelog` → `PATCH /api/v1/groups/{chatID}/changelog`,
+   then re-render the same sub-screen.
+8. Every Back button routes through `group_cfg:<groupID>` back to the config menu. Each callback re-checks admin rights
+   via `isAdminInGroup`. Management returns 400 for invalid IANA strings, 404 if group not found.
 
 ### Venue Management (`/venues`)
 

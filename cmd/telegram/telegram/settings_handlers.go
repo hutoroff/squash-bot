@@ -150,20 +150,11 @@ func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lan
 
 	slog.Info("Group language updated", "group_id", groupID, "lang", lang, "by_user", cb.From.ID)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgLanguageSet))
-
-	// Remove the keyboard from the language-selection message.
-	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
-	b.api.Send(edit) //nolint:errcheck
+	b.renderGroupConfigKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // renderLanguageKeyboard edits (or sends) a message with language selection buttons for groupID.
 func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
-	changelogBtnKey := i18n.BtnChangelogOff
-	if group, err := b.client.GetGroupByID(ctx, groupID); err == nil && group != nil && group.ChangelogEnabled {
-		changelogBtnKey = i18n.BtnChangelogOn
-	}
-
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangEn), fmt.Sprintf("set_lang:en:%d", groupID)),
@@ -175,10 +166,7 @@ func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageI
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnLangRu), fmt.Sprintf("set_lang:ru:%d", groupID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnSetTimezone), fmt.Sprintf("set_tz_pick:%d", groupID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(changelogBtnKey), fmt.Sprintf("toggle_changelog:%d", groupID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("group_cfg:%d", groupID)),
 		),
 	)
 
@@ -191,6 +179,45 @@ func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageI
 		msg.ReplyMarkup = keyboard
 		b.api.Send(msg) //nolint:errcheck
 	}
+}
+
+// renderGroupConfigKeyboard edits (or sends) the 3-button group config menu.
+func (b *Bot) renderGroupConfigKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnGroupLanguage), fmt.Sprintf("set_lang_group:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnGroupTimezone), fmt.Sprintf("set_tz_pick:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnGroupChangelog), fmt.Sprintf("changelog_cfg:%d", groupID)),
+		),
+	)
+
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgGroupConfigTitle))
+		edit.ReplyMarkup = &keyboard
+		b.api.Send(edit) //nolint:errcheck
+	} else {
+		msg := tgbotapi.NewMessage(chatID, lz.T(i18n.MsgGroupConfigTitle))
+		msg.ReplyMarkup = keyboard
+		b.api.Send(msg) //nolint:errcheck
+	}
+}
+
+// handleGroupConfig shows the group config menu for the given group.
+func (b *Bot) handleGroupConfig(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(ctx, cb.From)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderGroupConfigKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleToggleChangelog toggles the changelog_enabled setting for the group.
@@ -227,7 +254,7 @@ func (b *Bot) handleToggleChangelog(ctx context.Context, cb *tgbotapi.CallbackQu
 	} else {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgChangelogDisabled))
 	}
-	b.renderLanguageKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+	b.renderChangelogKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleSetTzPick shows the timezone selection keyboard for a specific group.
@@ -262,11 +289,7 @@ func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz st
 
 	slog.Info("Group timezone updated", "group_id", groupID, "tz", tz, "by_user", cb.From.ID)
 	b.answerCallback(cb.ID, lz.T(i18n.MsgTimezoneSet))
-
-	// Remove the keyboard from the timezone-selection message.
-	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
-	edit := tgbotapi.NewEditMessageReplyMarkup(cb.Message.Chat.ID, cb.Message.MessageID, emptyKeyboard)
-	b.api.Send(edit) //nolint:errcheck
+	b.renderGroupConfigKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // renderTimezoneKeyboard edits a message with a curated timezone selection keyboard.
@@ -303,10 +326,54 @@ func (b *Bot) renderTimezoneKeyboard(chatID int64, messageID int, groupID int64,
 		}
 		rows = append(rows, row)
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("group_cfg:%d", groupID)),
+	))
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgSelectTimezone))
 	edit.ReplyMarkup = &keyboard
 	b.api.Send(edit) //nolint:errcheck
+}
+
+// renderChangelogKeyboard edits (or sends) the changelog ON/OFF sub-screen.
+func (b *Bot) renderChangelogKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	changelogBtnKey := i18n.BtnChangelogOff
+	if group, err := b.client.GetGroupByID(ctx, groupID); err == nil && group != nil && group.ChangelogEnabled {
+		changelogBtnKey = i18n.BtnChangelogOn
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(changelogBtnKey), fmt.Sprintf("toggle_changelog:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("group_cfg:%d", groupID)),
+		),
+	)
+
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgChangelogConfigTitle))
+		edit.ReplyMarkup = &keyboard
+		b.api.Send(edit) //nolint:errcheck
+	} else {
+		msg := tgbotapi.NewMessage(chatID, lz.T(i18n.MsgChangelogConfigTitle))
+		msg.ReplyMarkup = keyboard
+		b.api.Send(msg) //nolint:errcheck
+	}
+}
+
+// handleChangelogConfig shows the changelog sub-screen for the given group.
+func (b *Bot) handleChangelogConfig(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(ctx, cb.From)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderChangelogKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleTrigger calls the management service to run a scheduled event on demand.
