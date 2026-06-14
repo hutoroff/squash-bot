@@ -40,6 +40,11 @@ type GameRepository interface {
 	GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
 	MarkNotifiedDayBefore(ctx context.Context, gameID int64) error
 	MarkCompleted(ctx context.Context, gameID int64) error
+	// GetUpcomingGamesForFinalCheck returns future uncompleted games where
+	// final_court_check_done is false, with venue data joined.
+	GetUpcomingGamesForFinalCheck(ctx context.Context) ([]*models.Game, error)
+	// MarkFinalCourtCheckDone sets final_court_check_done = true for the given game.
+	MarkFinalCourtCheckDone(ctx context.Context, gameID int64) error
 	// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
 	// in a specific group within the result-submission window (`days`), ignoring the
 	// completed flag.

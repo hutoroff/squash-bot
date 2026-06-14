@@ -181,6 +181,10 @@ func (r *apiStubGameRepo) MarkCompleted(_ context.Context, _ int64) error       
 func (r *apiStubGameRepo) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (r *apiStubGameRepo) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *apiStubGameRepo) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
 
 type apiStubPartRepo struct{}
 

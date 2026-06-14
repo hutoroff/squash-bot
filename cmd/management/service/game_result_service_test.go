@@ -164,6 +164,12 @@ func (r *stubGameRepoForResults) MarkCompleted(_ context.Context, _ int64) error
 func (r *stubGameRepoForResults) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForResults) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForResults) MarkFinalCourtCheckDone(_ context.Context, _ int64) error {
+	return nil
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

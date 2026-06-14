@@ -173,6 +173,12 @@ func (r *stubGameRepoForDayAfter) MarkCompleted(_ context.Context, _ int64) erro
 func (r *stubGameRepoForDayAfter) ListGroupIDsForPlayer(_ context.Context, _ int64) ([]int64, error) {
 	return nil, nil
 }
+func (r *stubGameRepoForDayAfter) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForDayAfter) MarkFinalCourtCheckDone(_ context.Context, _ int64) error {
+	return nil
+}
 
 type stubGroupRepoForDayAfter struct{}
 

@@ -81,6 +81,17 @@ const (
 	// Args: %s = game date+time, %d = player count, %d = capacity, %d = courts count
 	SchedReminderEvenNoCancel = "sched.reminder_even_no_cancel"
 
+	// Final court check — sent 15 min before grace-period deadline when courts are released.
+	// Scenario: all courts released and game will not happen.
+	// Args: %s = canceled courts (comma-sep), %s = game date+time
+	SchedFinalCheckAllCanceled = "sched.final_check_all_canceled"
+	// Scenario: courts canceled and player count now equals new capacity (balanced).
+	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = new capacity, %d = new courts count
+	SchedFinalCheckCanceled = "sched.final_check_canceled"
+	// Scenario: courts canceled but odd player count remains (1 free spot).
+	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = new capacity, %d = new courts count
+	SchedFinalCheckOddCanceled = "sched.final_check_odd_canceled"
+
 	// Game keyboard buttons
 	BtnImIn     = "btn.im_in"
 	BtnIllSkip  = "btn.ill_skip"
@@ -498,6 +509,10 @@ var translations = map[Lang]map[string]string{
 		SchedReminderAllCanceled:  "❌ All courts (%s) canceled for the game on %s. The game will not happen.",
 		SchedReminderEvenNoCancel: "⚠️ Upcoming game on %s — %d/%d players, %d courts are booked. Please cancel unused courts.",
 
+		SchedFinalCheckAllCanceled: "⏰ Last-minute check: all courts (%s) released for game on %s. The game will not happen.",
+		SchedFinalCheckCanceled:    "⏰ Last-minute check: courts #%s released. Game on %s is set! %d/%d players, %d courts remain.",
+		SchedFinalCheckOddCanceled: "⏰ Last-minute check: courts #%s released. 1 free spot for game on %s. %d/%d players, %d courts remain.",
+
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
 		BtnIllSkip:  "I'll skip",
@@ -871,6 +886,10 @@ var translations = map[Lang]map[string]string{
 		SchedReminderAllCanceled:  "❌ Alle Plätze (%s) für das Spiel am %s storniert. Das Spiel findet nicht statt.",
 		SchedReminderEvenNoCancel: "⚠️ Spiel am %s — %d/%d Spieler, %d Plätze sind reserviert. Bitte ungenutzte Plätze stornieren.",
 
+		SchedFinalCheckAllCanceled: "⏰ Letzter Check: alle Plätze (%s) für das Spiel am %s freigegeben. Das Spiel findet nicht statt.",
+		SchedFinalCheckCanceled:    "⏰ Letzter Check: Plätze #%s freigegeben. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze verbleiben.",
+		SchedFinalCheckOddCanceled: "⏰ Letzter Check: Plätze #%s freigegeben. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze verbleiben.",
+
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
 		BtnIllSkip:  "Ich passe",
@@ -1239,6 +1258,10 @@ var translations = map[Lang]map[string]string{
 		SchedReminderOddCanceled:  "⚠️ Корт(ы) #%s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) забронировано.",
 		SchedReminderAllCanceled:  "❌ Все корты (%s) отменены для игры %s. Игра не состоится.",
 		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, %d корт(а) забронировано. Отмените незаполненные корты.",
+
+		SchedFinalCheckAllCanceled: "⏰ Финальная проверка: все корты (%s) освобождены для игры %s. Игра не состоится.",
+		SchedFinalCheckCanceled:    "⏰ Финальная проверка: корт(ы) #%s освобождены. Игра %s — всё готово! %d/%d игроков, %d корт(а) остались.",
+		SchedFinalCheckOddCanceled: "⏰ Финальная проверка: корт(ы) #%s освобождены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) остались.",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",

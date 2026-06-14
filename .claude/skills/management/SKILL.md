@@ -316,6 +316,7 @@ Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID
 | Job | File | Window | Dedup guard |
 |-----|------|--------|-------------|
 | CancellationReminderJob | cancellation_reminder.go | ±2m30s of `game_date - (gracePeriod+6)h` | `notified_day_before` flag |
+| FinalCourtCheckJob | final_court_check.go | ±2m30s of `game_date - gracePeriod·h - 15m` | `final_court_check_done` flag |
 | BookingReminderJob | booking_reminder.go | [10:00, 10:05) group local time | `last_booking_reminder_at` per venue (date-scoped) |
 | AutoBookingJob | auto_booking.go | [00:00, 00:05) group local time | `last_auto_booking_at` per venue (date-scoped) |
 | DayAfterCleanupJob | day_after_cleanup.go | [03:00, 03:05) group local time | `completed` flag on game |
