@@ -10,6 +10,10 @@ Four independent binaries in one Go module (`github.com/hutoroff/squash-bot`): `
 
 **Versioning**: each service has `cmd/<service>/VERSION` (format `MAJOR.MINOR.BUILD`), injected at build time via `-ldflags "-X main.Version=<ver>"`. Release workflow is in README.
 
+> [!IMPORTANT]
+> - **Never bump a service `VERSION` file as an agent.** Versions are incremented only by CI/CD on GitHub. Leave `cmd/<service>/VERSION` untouched.
+> - **Do not write changelogs unless the user explicitly requests one.** Don't create or edit files under `changelogs/` as a side effect of another task.
+
 ## Cross-cutting conventions
 
 - **i18n**: Three languages: `en` (default), `de`, `ru`. `i18n.Normalize()` maps any Telegram locale string to one of these. Keys and translations live in `internal/i18n/i18n.go`. Date formatting is locale-aware: English "Sunday, March 22", German "Sonntag, 22. März", Russian "Воскресенье, 22 марта".
