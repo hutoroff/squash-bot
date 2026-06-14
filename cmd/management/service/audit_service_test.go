@@ -213,6 +213,37 @@ func TestRecordGroupChangelogToggled_Disabled(t *testing.T) {
 	}
 }
 
+// ── group leaderboard notifications toggle ────────────────────────────────────
+
+func TestRecordGroupLeaderboardNotificationsToggled_Enabled(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGroupLeaderboardNotificationsToggled(context.Background(), 500, 11, "@admin", true)
+
+	if len(repo.inserted) != 1 {
+		t.Fatalf("want 1 event, got %d", len(repo.inserted))
+	}
+	evt := repo.inserted[0]
+	assertEventBase(t, evt, models.AuditEventGroupLeaderboardNotificationsToggled, models.AuditVisibilityServerOwner, models.AuditSubjectGroup)
+	assertUserActor(t, evt, 11, "@admin")
+	if evt.GroupID == nil || *evt.GroupID != 500 {
+		t.Errorf("GroupID: got %v, want 500", evt.GroupID)
+	}
+	if evt.Metadata["enabled"] != true {
+		t.Errorf("Metadata[enabled]: got %v, want true", evt.Metadata["enabled"])
+	}
+}
+
+func TestRecordGroupLeaderboardNotificationsToggled_Disabled(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGroupLeaderboardNotificationsToggled(context.Background(), 600, 22, "@user", false)
+
+	evt := repo.inserted[0]
+	assertEventBase(t, evt, models.AuditEventGroupLeaderboardNotificationsToggled, models.AuditVisibilityServerOwner, models.AuditSubjectGroup)
+	if evt.Metadata["enabled"] != false {
+		t.Errorf("Metadata[enabled]: got %v, want false", evt.Metadata["enabled"])
+	}
+}
+
 // ── system actor events ───────────────────────────────────────────────────────
 
 func TestRecordCourtBooked_SystemActor(t *testing.T) {

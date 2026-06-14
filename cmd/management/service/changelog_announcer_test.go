@@ -161,6 +161,9 @@ func (r *stubGroupRepoAnnounce) SetTimezone(_ context.Context, _ int64, _ string
 func (r *stubGroupRepoAnnounce) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error {
 	return nil
 }
+func (r *stubGroupRepoAnnounce) SetLeaderboardNotificationsEnabled(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
 func (r *stubGroupRepoAnnounce) Remove(_ context.Context, _ int64) error { return nil }
 func (r *stubGroupRepoAnnounce) Exists(_ context.Context, _ int64) (bool, error) {
 	return false, nil

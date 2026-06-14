@@ -333,6 +333,16 @@ func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bo
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/changelog", body, nil)
 }
 
+// SetGroupLeaderboardNotifications sets the leaderboard_notifications_enabled flag for a group.
+func (c *Client) SetGroupLeaderboardNotifications(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error {
+	body := map[string]any{
+		"leaderboard_notifications_enabled": enabled,
+		"actor_telegram_id":                 actorTgID,
+		"actor_display":                     actorDisplay,
+	}
+	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/leaderboard-notifications", body, nil)
+}
+
 func (c *Client) SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorTgID int64, actorDisplay string) error {
 	body := map[string]any{
 		"enabled":           allowed,

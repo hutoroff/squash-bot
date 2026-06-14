@@ -69,6 +69,10 @@ func (j *PostLeaderboardJob) runPostLeaderboard(force bool) {
 }
 
 func (j *PostLeaderboardJob) processGroup(ctx context.Context, g *models.Group, force bool) {
+	if !g.LeaderboardNotificationsEnabled {
+		return
+	}
+
 	loc, err := time.LoadLocation(g.Timezone)
 	if err != nil {
 		loc = j.loc

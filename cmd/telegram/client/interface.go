@@ -37,6 +37,7 @@ type ManagementClient interface {
 	SetGroupLanguage(ctx context.Context, chatID int64, language string, actorTgID int64, actorDisplay string) error
 	SetGroupTimezone(ctx context.Context, chatID int64, timezone string, actorTgID int64, actorDisplay string) error
 	SetGroupChangelog(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error
+	SetGroupLeaderboardNotifications(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error
 	SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorTgID int64, actorDisplay string) error
 
 	// Venues

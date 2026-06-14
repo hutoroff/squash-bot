@@ -137,7 +137,7 @@ publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publis
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
-trigger, group_cfg, changelog_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog
+trigger, group_cfg, changelog_cfg, leaderboard_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog, toggle_leaderboard_notify
 venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
@@ -260,8 +260,9 @@ Admin-only, private chat. Entry point: `handleCommandGroups`.
 1. Admin sends `/groups`. Non-admins (no admin groups) get `MsgOnlyAdminCanUse`.
 2. If admin in exactly one group → open that group's config menu immediately (`renderGroupConfigKeyboard`).
 3. If admin in multiple groups → group picker first (rows route to `group_cfg:<groupID>`), then config menu.
-4. **Group config menu** (`group_cfg:<groupID>`, backs both the picker and every Back button): 3 buttons —
-   🌐 Language → `set_lang_group:<groupID>`, 🕐 Timezone → `set_tz_pick:<groupID>`, 📋 Changelog → `changelog_cfg:<groupID>`.
+4. **Group config menu** (`group_cfg:<groupID>`, backs both the picker and every Back button): 4 buttons —
+   🌐 Language → `set_lang_group:<groupID>`, 🕐 Timezone → `set_tz_pick:<groupID>`, 📋 Changelog → `changelog_cfg:<groupID>`,
+   🏆 Leaderboard → `leaderboard_cfg:<groupID>`.
 5. **Language sub-screen** (`renderLanguageKeyboard`): 3 language buttons + ⬅️ Back. Pick → `set_lang:<lang>:<groupID>` →
    `PATCH /api/v1/groups/{chatID}/language`, toast, then re-render config menu.
 6. **Timezone sub-screen** (`renderTimezoneKeyboard`): 18 curated IANA timezones (2 per row) + ⬅️ Back. Pick →
@@ -269,7 +270,11 @@ Admin-only, private chat. Entry point: `handleCommandGroups`.
 7. **Changelog sub-screen** (`renderChangelogKeyboard`): ON/OFF toggle (label reflects current state via `GetGroupByID`) +
    ⬅️ Back. Toggle → `toggle_changelog:<groupID>` → `SetGroupChangelog` → `PATCH /api/v1/groups/{chatID}/changelog`,
    then re-render the same sub-screen.
-8. Every Back button routes through `group_cfg:<groupID>` back to the config menu. Each callback re-checks admin rights
+8. **Leaderboard notifications sub-screen** (`renderLeaderboardKeyboard`): ON/OFF toggle (label reflects `Group.LeaderboardNotificationsEnabled`) +
+   ⬅️ Back. Toggle → `toggle_leaderboard_notify:<groupID>` → `SetGroupLeaderboardNotifications` →
+   `PATCH /api/v1/groups/{chatID}/leaderboard-notifications`, then re-render the same sub-screen.
+   When OFF, the `PostLeaderboardJob` skips this group entirely — even on a manual `/trigger post_leaderboard`.
+9. Every Back button routes through `group_cfg:<groupID>` back to the config menu. Each callback re-checks admin rights
    via `isAdminInGroup`. Management returns 400 for invalid IANA strings, 404 if group not found.
 
 ### Venue Management (`/venues`)

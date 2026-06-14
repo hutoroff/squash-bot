@@ -36,6 +36,7 @@ export type AuditEventType =
   | 'group.bot_removed'
   | 'group.settings_changed'
   | 'group.changelog_toggled'
+  | 'group.leaderboard_notifications_toggled'
   | 'group.auto_booking_allowed_toggled'
   | 'court.booked'
   | 'court.canceled'

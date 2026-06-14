@@ -343,6 +343,28 @@ func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID,
 	})
 }
 
+// RecordGroupLeaderboardNotificationsToggled records when a group admin enables or disables post-game leaderboard notifications.
+// Visibility is server_owner — group admins cannot inspect this in the audit log.
+func (s *AuditService) RecordGroupLeaderboardNotificationsToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool) {
+	tgID, display := userActor(actorTgID, actorDisplay)
+	newVal := "false"
+	if enabled {
+		newVal = "true"
+	}
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGroupLeaderboardNotificationsToggled,
+		Visibility:   models.AuditVisibilityServerOwner,
+		ActorKind:    models.AuditActorUser,
+		ActorTgID:    tgID,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGroup,
+		SubjectID:    fmt.Sprintf("%d", groupID),
+		Description:  fmt.Sprintf("Leaderboard notifications set to %s for group %d", newVal, groupID),
+		Metadata:     map[string]any{"enabled": enabled},
+	})
+}
+
 // RecordGroupAutoBookingAllowedToggled records when a server owner enables or disables auto-booking for a group.
 func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool, cascadedVenueIDs []int64) {
 	tgID, display := userActor(actorTgID, actorDisplay)

@@ -181,7 +181,7 @@ func (b *Bot) renderLanguageKeyboard(ctx context.Context, chatID int64, messageI
 	}
 }
 
-// renderGroupConfigKeyboard edits (or sends) the 3-button group config menu.
+// renderGroupConfigKeyboard edits (or sends) the 4-button group config menu.
 func (b *Bot) renderGroupConfigKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -192,6 +192,9 @@ func (b *Bot) renderGroupConfigKeyboard(ctx context.Context, chatID int64, messa
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnGroupChangelog), fmt.Sprintf("changelog_cfg:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnGroupLeaderboard), fmt.Sprintf("leaderboard_cfg:%d", groupID)),
 		),
 	)
 
@@ -374,6 +377,84 @@ func (b *Bot) handleChangelogConfig(ctx context.Context, cb *tgbotapi.CallbackQu
 
 	b.answerCallback(cb.ID, "")
 	b.renderChangelogKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+}
+
+// renderLeaderboardKeyboard edits (or sends) the leaderboard notifications ON/OFF sub-screen.
+func (b *Bot) renderLeaderboardKeyboard(ctx context.Context, chatID int64, messageID int, groupID int64, lz *i18n.Localizer) {
+	btnKey := i18n.BtnLeaderboardNotifyOff
+	if group, err := b.client.GetGroupByID(ctx, groupID); err == nil && group != nil && group.LeaderboardNotificationsEnabled {
+		btnKey = i18n.BtnLeaderboardNotifyOn
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(btnKey), fmt.Sprintf("toggle_leaderboard_notify:%d", groupID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("group_cfg:%d", groupID)),
+		),
+	)
+
+	if messageID != 0 {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, lz.T(i18n.MsgLeaderboardConfigTitle))
+		edit.ReplyMarkup = &keyboard
+		b.api.Send(edit) //nolint:errcheck
+	} else {
+		msg := tgbotapi.NewMessage(chatID, lz.T(i18n.MsgLeaderboardConfigTitle))
+		msg.ReplyMarkup = keyboard
+		b.api.Send(msg) //nolint:errcheck
+	}
+}
+
+// handleLeaderboardConfig shows the leaderboard notifications sub-screen.
+func (b *Bot) handleLeaderboardConfig(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(ctx, cb.From)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	b.answerCallback(cb.ID, "")
+	b.renderLeaderboardKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
+}
+
+// handleToggleLeaderboardNotify flips the leaderboard_notifications_enabled flag for the group.
+func (b *Bot) handleToggleLeaderboardNotify(ctx context.Context, cb *tgbotapi.CallbackQuery, groupID int64) {
+	lz := b.userLocalizer(ctx, cb.From)
+
+	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
+	if err != nil || !isAdmin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminSetLanguage))
+		return
+	}
+
+	group, err := b.client.GetGroupByID(ctx, groupID)
+	if err != nil {
+		slog.Error("handleToggleLeaderboardNotify: get group", "err", err, "group_id", groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if group == nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	newEnabled := !group.LeaderboardNotificationsEnabled
+	if err := b.client.SetGroupLeaderboardNotifications(ctx, groupID, newEnabled, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+		slog.Error("handleToggleLeaderboardNotify: set", "err", err, "group_id", groupID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	slog.Info("Group leaderboard notifications toggle", "group_id", groupID, "enabled", newEnabled, "by_user", cb.From.ID)
+	if newEnabled {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgLeaderboardNotifyEnabled))
+	} else {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgLeaderboardNotifyDisabled))
+	}
+	b.renderLeaderboardKeyboard(ctx, cb.Message.Chat.ID, cb.Message.MessageID, groupID, lz)
 }
 
 // handleTrigger calls the management service to run a scheduled event on demand.

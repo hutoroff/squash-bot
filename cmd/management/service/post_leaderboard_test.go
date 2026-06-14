@@ -75,6 +75,9 @@ func (r *stubGroupRepoForLB) SetTimezone(_ context.Context, _ int64, _ string) e
 func (r *stubGroupRepoForLB) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error {
 	return nil
 }
+func (r *stubGroupRepoForLB) SetLeaderboardNotificationsEnabled(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
 
 func (r *stubGroupRepoForLB) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
@@ -255,9 +258,10 @@ func TestPostLeaderboard_SkipsAlreadyPostedDay(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   100,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &candidateDate, // already posted yesterday
+			ChatID:                          100,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &candidateDate, // already posted yesterday
 		},
 	}
 	resultRepo := &stubResultRepoForLB{}
@@ -284,9 +288,10 @@ func TestPostLeaderboard_PendingResultDoesNotMarkDayDone(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   200,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo, // scoped to yesterday only
+			ChatID:                          200,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo, // scoped to yesterday only
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -314,9 +319,10 @@ func TestPostLeaderboard_PostsWhenApprovedResultsExist(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   300,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          300,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -352,9 +358,10 @@ func TestPostLeaderboard_SkipsWhenLastGameLessThan24hOld(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   400,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          400,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -388,9 +395,10 @@ func TestPostLeaderboard_PostsWhenLastGameOlderThan24h(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   500,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          500,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -424,9 +432,10 @@ func TestPostLeaderboard_DoesNotMarkOnSendFailure(t *testing.T) {
 	api := &mockTgAPIForLB{sendErr: errSendBoom}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   600,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          600,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -456,9 +465,10 @@ func TestPostLeaderboard_PostsWithApprovedDespitePending(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   700,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          700,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -494,9 +504,10 @@ func TestPostLeaderboard_StalePendingDoesNotBlockForever(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   800,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          800,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -532,9 +543,10 @@ func TestPostLeaderboard_SettledRejectedOnlyAdvancesSilently(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   900,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &twoDaysAgo,
+			ChatID:                          900,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &twoDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -573,9 +585,10 @@ func TestPostLeaderboard_LateApprovalPostsOnLaterDay(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   1000,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &threeDaysAgo,
+			ChatID:                          1000,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &threeDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -613,9 +626,10 @@ func TestPostLeaderboard_MultiDayCatchUpPostsOnePerDay(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   1100,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &fourDaysAgo,
+			ChatID:                          1100,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &fourDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -664,9 +678,10 @@ func TestPostLeaderboard_StopsAtFirstUnsettledDay(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   1200,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &fourDaysAgo,
+			ChatID:                          1200,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &fourDaysAgo,
 		},
 	}
 	resultRepo := &stubResultRepoForLB{
@@ -704,9 +719,10 @@ func TestPostLeaderboard_ForceRespectsMarker(t *testing.T) {
 	api := &mockTgAPIForLB{}
 	groupRepo := &stubGroupRepoForLB{
 		group: models.Group{
-			ChatID:                   1300,
-			Timezone:                 "UTC",
-			LastLeaderboardPostedFor: &yesterday, // everything through yesterday already posted
+			ChatID:                          1300,
+			LeaderboardNotificationsEnabled: true,
+			Timezone:                        "UTC",
+			LastLeaderboardPostedFor:        &yesterday, // everything through yesterday already posted
 		},
 	}
 	// Approved results across the whole window — none should be re-posted because
@@ -728,6 +744,54 @@ func TestPostLeaderboard_ForceRespectsMarker(t *testing.T) {
 	}
 	if groupRepo.setLastLeaderboardCalls != 0 {
 		t.Errorf("expected no marker update, got %d", groupRepo.setLastLeaderboardCalls)
+	}
+}
+
+// TestPostLeaderboard_SkipsGroupWithNotificationsDisabled verifies that a group
+// with LeaderboardNotificationsEnabled == false is silently skipped — no message
+// is sent and the marker is not updated, even when force == true.
+func TestPostLeaderboard_SkipsGroupWithNotificationsDisabled(t *testing.T) {
+	api := &mockTgAPIForLB{}
+	groupRepo := &stubGroupRepoForLB{
+		group: models.Group{
+			ChatID:                          100,
+			Timezone:                        "UTC",
+			LeaderboardNotificationsEnabled: false,
+		},
+	}
+
+	auditSvc, _ := newCaptureAuditSvc()
+	ratingSvc := NewRatingService(nil, &stubRatingRepoForLB{}, &stubChangeRepoForLB{}, groupRepo, auditSvc, noopLogger())
+
+	job := NewPostLeaderboardJob(api, groupRepo, &stubGameRepoForLB{}, &stubResultRepoForLB{}, ratingSvc, time.UTC, noopLogger())
+	job.run(false)
+
+	if api.sentCount != 0 {
+		t.Errorf("expected no messages sent for disabled group, got %d", api.sentCount)
+	}
+	if groupRepo.setLastLeaderboardCalls != 0 {
+		t.Errorf("expected no marker update for disabled group, got %d", groupRepo.setLastLeaderboardCalls)
+	}
+}
+
+func TestPostLeaderboard_SkipsGroupWithNotificationsDisabled_Force(t *testing.T) {
+	api := &mockTgAPIForLB{}
+	groupRepo := &stubGroupRepoForLB{
+		group: models.Group{
+			ChatID:                          100,
+			Timezone:                        "UTC",
+			LeaderboardNotificationsEnabled: false,
+		},
+	}
+
+	auditSvc, _ := newCaptureAuditSvc()
+	ratingSvc := NewRatingService(nil, &stubRatingRepoForLB{}, &stubChangeRepoForLB{}, groupRepo, auditSvc, noopLogger())
+
+	job := NewPostLeaderboardJob(api, groupRepo, &stubGameRepoForLB{}, &stubResultRepoForLB{}, ratingSvc, time.UTC, noopLogger())
+	job.run(true) // force=true still respects the toggle
+
+	if api.sentCount != 0 {
+		t.Errorf("expected no messages sent for disabled group (force), got %d", api.sentCount)
 	}
 }
 

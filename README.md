@@ -344,7 +344,7 @@ crontab -e
 | `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
-| `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications |
+| `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
 | `/trigger`  | Service admins  | Manually fire a scheduled event (private chat only); requires `SERVICE_ADMIN_IDS`. Bypasses the time-window gate for the chosen task (same-day dedup guards still apply). Events: `cancellation_reminder`, `booking_reminder`, `auto_booking`, `day_after_cleanup`, `auto_approve_results`, `post_leaderboard` |
 
 ## Localisation

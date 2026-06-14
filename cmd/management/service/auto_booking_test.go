@@ -1301,7 +1301,7 @@ func (r *spyVenueRepo) GetByGroupID(_ context.Context, _ int64) ([]*models.Venue
 func (r *spyVenueRepo) Update(_ context.Context, _ *models.Venue) (*models.Venue, error) {
 	return nil, nil
 }
-func (r *spyVenueRepo) Delete(_ context.Context, _, _ int64) error             { return nil }
+func (r *spyVenueRepo) Delete(_ context.Context, _, _ int64) error                { return nil }
 func (r *spyVenueRepo) SetLastBookingReminderAt(_ context.Context, _ int64) error { return nil }
 func (r *spyVenueRepo) SetLastAutoBookingAt(_ context.Context, _ int64) error     { return nil }
 
@@ -1327,13 +1327,16 @@ func (r *stubGroupRepoAutoBooking) SetTimezone(_ context.Context, _ int64, _ str
 func (r *stubGroupRepoAutoBooking) SetChangelogEnabled(_ context.Context, _ int64, _ bool) error {
 	return nil
 }
+func (r *stubGroupRepoAutoBooking) SetLeaderboardNotificationsEnabled(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
 func (r *stubGroupRepoAutoBooking) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {
 	return nil, nil
 }
 func (r *stubGroupRepoAutoBooking) SetLastLeaderboardPostedFor(_ context.Context, _ int64, _ time.Time) error {
 	return nil
 }
-func (r *stubGroupRepoAutoBooking) Remove(_ context.Context, _ int64) error          { return nil }
+func (r *stubGroupRepoAutoBooking) Remove(_ context.Context, _ int64) error         { return nil }
 func (r *stubGroupRepoAutoBooking) Exists(_ context.Context, _ int64) (bool, error) { return true, nil }
 
 func TestRunAutoBooking_SkipsGroupWithAutoBookingAllowedFalse(t *testing.T) {
