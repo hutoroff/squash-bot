@@ -26,25 +26,3 @@ func (s *Scheduler) RunScheduledTasks() {
 		j.run(false)
 	}
 }
-
-// ForceRun runs the named job bypassing its time-window scheduling gate.
-// It is a no-op (with an error log) if the event name is not recognised.
-func (s *Scheduler) ForceRun(event string) {
-	for _, j := range s.jobs {
-		if j.name() == event {
-			j.run(true)
-			return
-		}
-	}
-	s.logger.Error("ForceRun: unknown event", "event", event)
-}
-
-// HasJob reports whether the given event name is handled by a registered job.
-func (s *Scheduler) HasJob(event string) bool {
-	for _, j := range s.jobs {
-		if j.name() == event {
-			return true
-		}
-	}
-	return false
-}

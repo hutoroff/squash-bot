@@ -26,7 +26,6 @@ type Handler struct {
 	groupRepo        *storage.GroupRepo
 	playerRepo       *storage.PlayerRepo
 	userPrefsRepo    *storage.UserPreferencesRepo
-	scheduler        *service.Scheduler
 	auditSvc         *service.AuditService
 	adminResolver    adminGroupsResolver
 	serverOwnerIDs   map[int64]bool
@@ -46,7 +45,6 @@ func NewHandler(
 	groupRepo *storage.GroupRepo,
 	playerRepo *storage.PlayerRepo,
 	userPrefsRepo *storage.UserPreferencesRepo,
-	scheduler *service.Scheduler,
 	auditSvc *service.AuditService,
 	adminResolver adminGroupsResolver,
 	serverOwnerIDs map[int64]bool,
@@ -67,7 +65,6 @@ func NewHandler(
 		groupRepo:               groupRepo,
 		playerRepo:              playerRepo,
 		userPrefsRepo:           userPrefsRepo,
-		scheduler:               scheduler,
 		auditSvc:                auditSvc,
 		adminResolver:           adminResolver,
 		serverOwnerIDs:          serverOwnerIDs,
@@ -147,9 +144,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Leaderboard
 	mux.HandleFunc("GET /api/v1/groups/{chatID}/leaderboard", h.getGroupLeaderboard)
 	mux.HandleFunc("GET /api/v1/players/{tgID}/groups-with-results", h.getPlayerGroupsWithResults)
-
-	// Scheduler triggers
-	mux.HandleFunc("POST /api/v1/scheduler/trigger/{event}", h.triggerScheduler)
 
 	// Audit
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditEvents)

@@ -24,7 +24,7 @@ cmd/telegram/
 │   ├── handlers.go          — handleMessage, handleCallback dispatcher, reply/answerCallback helpers,
 │   │                          normalizeCourts, parseAdminCommand, isBotMentioned, isKnownGroupMention
 │   ├── callback_router.go   — buildCallbackRouter(): map[string]callbackHandler (35+ entries)
-│   ├── commands.go          — handleCommand switch, /newGame, /groups, /trigger, /games, /myGame
+│   ├── commands.go          — handleCommand switch, /newGame, /groups, /games, /myGame
 │   ├── formatter.go         — formatGamesListMessage, superGroupMessageLink
 │   ├── participation_handlers.go — handleJoin, handleSkip, handleGuestAdd, handleGuestRemove
 │   ├── game_manage_handlers.go  — handleManage, handleManageShowPlayers/Guests, handleManageEditCourts,
@@ -39,7 +39,7 @@ cmd/telegram/
 │   ├── newgame_handlers.go  — /newGame wizard: handleNewGameDate/Group/Venue/CourtToggle/
 │   │                          CourtConfirm/TimeSlot/TimeCustom, processNewGameWizard,
 │   │                          buildDateSelectionKeyboard, renderCourtPickKeyboard, renderTimeSlotKeyboard
-│   ├── settings_handlers.go — handleTrigger, handleGroupConfig, handleSetLangGroup, handleSetLang,
+│   ├── settings_handlers.go — handleGroupConfig, handleSetLangGroup, handleSetLang,
 │   │                          handleSetTzPick, handleSetTz, handleChangelogConfig, handleToggleChangelog,
 │   │                          handleNewGameGroupVenue, handleGroupSelection,
 │   │                          renderGroupConfigKeyboard (3-button config menu: Language/Timezone/Changelog),
@@ -61,10 +61,9 @@ cmd/telegram/
 
 ```go
 type Bot struct {
-    api                           *tgbotapi.BotAPI
-    client                        client.ManagementClient   // interface, not *client.Client
-    serviceAdminIDs               map[int64]bool
-    loc                           *time.Location
+    api    *tgbotapi.BotAPI
+    client client.ManagementClient   // interface, not *client.Client
+    loc    *time.Location
     logger                        *slog.Logger
     // In-memory wizard state — all sync.Map, keyed by private chatID int64
     pendingGames                  sync.Map  // pendingGameKey → *pendingGame
@@ -84,7 +83,7 @@ type Bot struct {
 }
 ```
 
-`New()` signature: `New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, serviceAdminIDs string, logger *slog.Logger) *Bot`
+`New()` signature: `New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, logger *slog.Logger) *Bot`
 
 ---
 
@@ -137,7 +136,7 @@ publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publis
 select_group (3-part: originChatID:originMsgID:groupID)
 ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
-trigger, group_cfg, changelog_cfg, leaderboard_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog, toggle_leaderboard_notify
+group_cfg, changelog_cfg, leaderboard_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog, toggle_leaderboard_notify
 venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
@@ -273,7 +272,7 @@ Admin-only, private chat. Entry point: `handleCommandGroups`.
 8. **Leaderboard notifications sub-screen** (`renderLeaderboardKeyboard`): ON/OFF toggle (label reflects `Group.LeaderboardNotificationsEnabled`) +
    ⬅️ Back. Toggle → `toggle_leaderboard_notify:<groupID>` → `SetGroupLeaderboardNotifications` →
    `PATCH /api/v1/groups/{chatID}/leaderboard-notifications`, then re-render the same sub-screen.
-   When OFF, the `PostLeaderboardJob` skips this group entirely — even on a manual `/trigger post_leaderboard`.
+   When OFF, the `PostLeaderboardJob` skips this group entirely.
 9. Every Back button routes through `group_cfg:<groupID>` back to the config menu. Each callback re-checks admin rights
    via `isAdminInGroup`. Management returns 400 for invalid IANA strings, 404 if group not found.
 
@@ -372,7 +371,6 @@ When admin confirms court removal (`manage_court_confirm`), the handler:
 ### Admin & Group Management
 
 - **Group admin rights**: verified per-action via `GetChatAdministrators` — no hardcoded IDs. Controls game creation, player/guest management, all `/games` actions.
-- **Service admins** (`SERVICE_ADMIN_IDS`): Telegram user IDs with `/trigger` access only. Completely independent of group membership or Telegram admin status.
 - `my_chat_member` events: bot added without admin rights → DM the adder; added with rights / promoted / demoted / removed → `UpsertGroup` or `RemoveGroup`.
 
 ### Guest Management
@@ -419,7 +417,6 @@ Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, Delete
                 GetVenueBookingReadiness(ctx, venueID, groupID int64) (*BookingReadiness, error)
 VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
-Scheduler:      TriggerScheduledEvent
 ```
 
 **Client-side types** (defined in `client.go`, used by handlers):
@@ -453,7 +450,6 @@ INTERNAL_API_SECRET=          required (must match management service value)
 LOG_LEVEL=INFO
 LOG_DIR=                      optional; writes $LOG_DIR/app.log (10 MB / 5 backups, gzip) + stdout
 TIMEZONE=UTC
-SERVICE_ADMIN_IDS=            optional; comma-sep Telegram user IDs allowed to use /trigger
 ```
 
 ---
@@ -466,5 +462,5 @@ SERVICE_ADMIN_IDS=            optional; comma-sep Telegram user IDs allowed to u
 - `b.client` field is `client.ManagementClient` (interface), never `*client.Client` — this enables test doubles
 - `/games` admin list prefixes unpublished games (those with `game.MessageID == nil`) with `📝` via `formatGamesListMessage` in `commands.go`; the Manage screen for such games shows a "📢 Publish" button as the first row via `renderManageScreen` in `game_manage_handlers.go`
 - **Always `escapeMarkdown` user-controlled strings before interpolating into message text.** `sendText`/`editText` force `ParseMode = Markdown` and swallow send errors (`//nolint:errcheck`, no logging), so a raw Markdown metachar (`_ * [ `` ` ``) in a name/label/venue makes Telegram reject the whole message with `can't parse entities` and the wizard silently appears frozen. Escape display names, game labels, and winner labels at every render site (see `escapeMarkdown` in `commands.go`). Escape **only message text, not inline-button labels** (button text is not Markdown-parsed; escaping shows literal backslashes). Regex-constrained fields like a `\d+:\d+` score need no escaping.
-- `serviceAdminIDs` (env `SERVICE_ADMIN_IDS`) controls `/trigger` only — group admin rights are verified via `GetChatAdministrators` at runtime
+- Group admin rights are verified via `GetChatAdministrators` at runtime — never hardcoded
 - Updates can arrive concurrently for the same user — wizard state in `sync.Map` is safe, but individual wizard steps within a single chat are processed sequentially because only one update per user tends to be in flight
