@@ -207,6 +207,30 @@ func (h *Handler) listActiveCourtBookings(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, infos)
 }
 
+// checkGameAccess handles GET /api/v1/games/{id}/access?telegram_id=<id>.
+// Used by the web service to authorize its per-game endpoints before acting
+// on a caller-supplied game id (IDOR guard) — reports whether telegram_id is
+// associated with the game's group.
+func (h *Handler) checkGameAccess(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid game id")
+		return
+	}
+	telegramID, err := parseID(r.URL.Query().Get("telegram_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid or missing telegram_id")
+		return
+	}
+	allowed, err := h.gameService.PlayerCanAccessGame(r.Context(), telegramID, id)
+	if err != nil {
+		h.logger.Error("checkGameAccess", "err", err, "id", id, "telegram_id", telegramID)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"allowed": allowed})
+}
+
 // getNextGame handles GET /api/v1/players/{telegramID}/next-game
 func (h *Handler) getNextGame(w http.ResponseWriter, r *http.Request) {
 	telegramID, err := parseID(r.PathValue("telegramID"))

@@ -1,10 +1,18 @@
+# Local development only — do NOT use this file or its defaults in production.
+# - The Postgres password below is a weak, fixed default (acceptable for a
+#   throwaway local DB reachable only from localhost).
+# - postgres/management/booking/web ports are published to the host for
+#   convenience; docker-compose.prod.yml keeps everything except `web` on the
+#   internal Docker network only.
+# See docker-compose.prod.yml and the "Trust model" section of README.md for
+# the production security posture.
 services:
   postgres:
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: squash_bot
       POSTGRES_USER: squash_bot
-      POSTGRES_PASSWORD: squash_bot
+      POSTGRES_PASSWORD: squash_bot # dev-only weak password — never reuse in production
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,6 +28,8 @@ services:
       context: .
       dockerfile: Dockerfile.management
     environment:
+      # sslmode=disable is fine here — traffic stays on the internal Docker
+      # network between two containers on localhost, never leaves the host.
       DATABASE_URL: postgres://squash_bot:squash_bot@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
     env_file: .env

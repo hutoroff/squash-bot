@@ -179,6 +179,9 @@ func (r *stubGameRepoForDayAfter) GetUpcomingGamesForFinalCheck(_ context.Contex
 func (r *stubGameRepoForDayAfter) MarkFinalCourtCheckDone(_ context.Context, _ int64) error {
 	return nil
 }
+func (r *stubGameRepoForDayAfter) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
 
 type stubGroupRepoForDayAfter struct{}
 

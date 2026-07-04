@@ -47,6 +47,16 @@ Four independently deployable binaries in one Go module:
 - **booking** — REST API (port 8081) that wraps the Eversports website; auto-authenticates and supports listing, creating, and cancelling court bookings
 - **web** — web UI (port 8082); Go backend serving an embedded React SPA
 
+### Trust model
+
+Authorization is enforced at the edges, not in `management`:
+
+- `telegram` checks live Telegram group-admin rights before allowing privileged actions.
+- `web` gates on a signed JWT session, plus `SERVICE_ADMIN_IDS` for server-owner-only routes.
+- `management` trusts the caller-supplied actor identity (`actor_telegram_id` / `X-Caller-Tg-Id`) as-is and performs no authorization of its own.
+
+This is safe only because `management` and `booking` are never exposed to the internet — in `docker-compose.prod.yml` only `web` publishes a port; `management`, `booking`, and `postgres` are reachable exclusively over the internal Docker network. The single shared `INTERNAL_API_SECRET` is therefore the entire security boundary protecting those two services; treat it with the same care as a database password.
+
 ## Quick Start
 
 ### Prerequisites
@@ -276,7 +286,7 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=20
 ```
 
-The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`).
+The web service listens on port **8082**. Put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of it to terminate TLS and serve it on port 443. The `Secure` flag on the session cookie is set automatically when the request arrives over HTTPS (detected via `X-Forwarded-Proto: https`). Your proxy must **set** (overwrite) this header itself rather than forwarding whatever the client sent — otherwise a client could set it directly on a plain HTTP request to the origin and influence how the cookie flag is derived. Every reverse-proxy config in common use (nginx `proxy_set_header`, Caddy, Traefik) does this by default; just don't disable that behavior.
 
 > **BotFather domain setup (required for web login):** After the server is reachable at a public hostname, register it once with Telegram: `/mybots` → select bot → **Bot Settings → Domain** → enter the hostname only (no `https://`). The Telegram Login Widget will not work until this step is done.
 

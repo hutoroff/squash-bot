@@ -109,6 +109,27 @@ func TestWebhookHandler_NonPOST(t *testing.T) {
 	}
 }
 
+func TestWebhookHandler_BodyTooLarge(t *testing.T) {
+	ch := make(chan tgbotapi.Update, 1)
+	h := webhookHandler("", ch)
+
+	// A valid Update JSON padded past the limit with a bogus field Telegram
+	// would never send — decoding must fail before consuming the whole body.
+	oversized := append([]byte(`{"padding":"`), bytes.Repeat([]byte("a"), maxWebhookBodyBytes+1)...)
+	oversized = append(oversized, []byte(`"}`)...)
+	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(oversized))
+	rr := httptest.NewRecorder()
+
+	h(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rr.Code)
+	}
+	if len(ch) != 0 {
+		t.Error("update should not be enqueued when the body exceeds the size limit")
+	}
+}
+
 func TestWebhookHandler_BadBody(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
 	h := webhookHandler("", ch)

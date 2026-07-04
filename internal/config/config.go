@@ -1,12 +1,23 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/caarlos0/env/v10"
 	"github.com/joho/godotenv"
 )
+
+// minSecretLength is the minimum acceptable length for shared bearer/signing
+// secrets (INTERNAL_API_SECRET, JWT_SECRET). Short secrets are practical to
+// brute-force and undermine the constant-time comparisons that rely on them.
+const minSecretLength = 32
+
+// minWebhookSecretLength is the minimum acceptable length for
+// TELEGRAM_WEBHOOK_SECRET. Lower than minSecretLength because it only guards
+// a single header check, not a full bearer/signing secret.
+const minWebhookSecretLength = 16
 
 // TelegramConfig holds configuration for the telegram service.
 type TelegramConfig struct {
@@ -25,6 +36,20 @@ type TelegramConfig struct {
 	// ServerPort is the local plain-HTTP port the webhook listener binds to.
 	// A TLS-terminating reverse proxy should forward to this port.
 	ServerPort string `env:"SERVER_PORT" envDefault:"8083"`
+}
+
+// Validate checks invariants that the env parser cannot express: secret
+// strength, and that webhook mode is never enabled without a secret token
+// (an empty secret would let anyone with the webhook URL forge Updates,
+// including impersonating group admins).
+func (c *TelegramConfig) Validate() error {
+	if len(c.InternalAPISecret) < minSecretLength {
+		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if c.WebhookURL != "" && len(c.WebhookSecret) < minWebhookSecretLength {
+		return fmt.Errorf("TELEGRAM_WEBHOOK_SECRET must be set (at least %d characters) when TELEGRAM_WEBHOOK_URL is set", minWebhookSecretLength)
+	}
+	return nil
 }
 
 // ManagementConfig holds configuration for the management service.
@@ -59,10 +84,21 @@ type ManagementConfig struct {
 	ResultWindowDays int `env:"RESULT_WINDOW_DAYS" envDefault:"14"`
 }
 
+// Validate checks that the shared secret is strong enough to resist brute-forcing.
+func (c *ManagementConfig) Validate() error {
+	if len(c.InternalAPISecret) < minSecretLength {
+		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	return nil
+}
+
 func LoadTelegram() (*TelegramConfig, error) {
 	cfg := &TelegramConfig{}
 	loadDotenv()
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -72,6 +108,9 @@ func LoadManagement() (*ManagementConfig, error) {
 	cfg := &ManagementConfig{}
 	loadDotenv()
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -98,10 +137,21 @@ type BookingConfig struct {
 	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
 }
 
+// Validate checks that the shared secret is strong enough to resist brute-forcing.
+func (c *BookingConfig) Validate() error {
+	if len(c.InternalAPISecret) < minSecretLength {
+		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	return nil
+}
+
 func LoadBooking() (*BookingConfig, error) {
 	cfg := &BookingConfig{}
 	loadDotenv()
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -128,10 +178,25 @@ type WebConfig struct {
 	ServiceAdminIDs string `env:"SERVICE_ADMIN_IDS"`
 }
 
+// Validate checks that both shared secrets are strong enough to resist brute-forcing.
+// A weak JWT_SECRET would let an attacker forge session tokens and take over accounts.
+func (c *WebConfig) Validate() error {
+	if len(c.InternalAPISecret) < minSecretLength {
+		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if len(c.JWTSecret) < minSecretLength {
+		return fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLength)
+	}
+	return nil
+}
+
 func LoadWeb() (*WebConfig, error) {
 	cfg := &WebConfig{}
 	loadDotenv()
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil

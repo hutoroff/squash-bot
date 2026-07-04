@@ -94,6 +94,9 @@ func (m *mockGameRepo) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*mode
 	return nil, nil
 }
 func (m *mockGameRepo) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
+func (m *mockGameRepo) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
 
 // ── mockVenueRepo ─────────────────────────────────────────────────────────────
 

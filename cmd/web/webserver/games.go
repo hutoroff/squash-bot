@@ -132,6 +132,56 @@ func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(games) //nolint:errcheck
 }
 
+// checkGameAccess asks the management service whether telegramID is associated
+// with gameID's group (GET /api/v1/games/{id}/access).
+func (g *GamesHandler) checkGameAccess(ctx context.Context, telegramID int64, gameID string) (bool, error) {
+	url := fmt.Sprintf("%s/api/v1/games/%s/access?telegram_id=%d", g.mgmtURL, gameID, telegramID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		return false, fmt.Errorf("management returned %d for access check", resp.StatusCode)
+	}
+
+	var decision struct {
+		Allowed bool `json:"allowed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decision); err != nil {
+		return false, err
+	}
+	return decision.Allowed, nil
+}
+
+// authorizeGameAccess enforces that the caller is associated with gameID's group
+// before a handler acts on a caller-supplied game id — this is the guard against
+// IDOR: without it, any authenticated user could read or mutate any group's game
+// by simply changing the id in the URL. On denial or upstream failure it writes
+// the response itself (403 or 502) and returns false, so the caller should
+// return immediately.
+func (g *GamesHandler) authorizeGameAccess(w http.ResponseWriter, r *http.Request, telegramID int64, gameID string) bool {
+	allowed, err := g.checkGameAccess(r.Context(), telegramID, gameID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return false
+	}
+	if !allowed {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"forbidden"}`)) //nolint:errcheck
+		return false
+	}
+	return true
+}
+
 // fetchParticipantsData fetches participations and guests for a game from the management service.
 func (g *GamesHandler) fetchParticipantsData(ctx context.Context, gameID string) ([]mgmtParticipation, []mgmtGuest, error) {
 	partsReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -201,12 +251,17 @@ func (g *GamesHandler) writeParticipantsResponse(w http.ResponseWriter, r *http.
 // handleGetParticipants handles GET /api/games/{id}/participants.
 func (g *GamesHandler) handleGetParticipants(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := g.auth.claimsFromRequest(r); err != nil {
+	claims, err := g.auth.claimsFromRequest(r)
+	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
 		return
 	}
-	g.writeParticipantsResponse(w, r, r.PathValue("id"))
+	id := r.PathValue("id")
+	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+		return
+	}
+	g.writeParticipantsResponse(w, r, id)
 }
 
 // handleJoinGame handles POST /api/games/{id}/join.
@@ -219,6 +274,9 @@ func (g *GamesHandler) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+		return
+	}
 	body, _ := json.Marshal(map[string]any{
 		"telegram_id": claims.TelegramID,
 		"username":    claims.Username,
@@ -260,6 +318,9 @@ func (g *GamesHandler) handleSkipGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+		return
+	}
 	body, _ := json.Marshal(map[string]any{
 		"telegram_id": claims.TelegramID,
 		"username":    claims.Username,
@@ -301,6 +362,9 @@ func (g *GamesHandler) handleAddGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+		return
+	}
 	body, _ := json.Marshal(map[string]any{
 		"telegram_id": claims.TelegramID,
 		"username":    claims.Username,
@@ -342,6 +406,9 @@ func (g *GamesHandler) handleRemoveGuest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
+	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+		return
+	}
 	body, _ := json.Marshal(map[string]any{
 		"telegram_id": claims.TelegramID,
 	})

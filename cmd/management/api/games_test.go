@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hutoroff/squash-bot/cmd/management/service"
 )
 
 // ── bookCourts validation ─────────────────────────────────────────────────────
@@ -66,7 +70,7 @@ func TestBookingReadiness_NoCredService(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h := &Handler{
-		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		venueCredService: nil, // no credentials service configured
 	}
 	h.bookingReadiness(w, req)
@@ -94,5 +98,94 @@ func TestBookingReadiness_InvalidVenueID(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid venue id: want 400, got %d", w.Code)
+	}
+}
+
+// ── checkGameAccess (F1/IDOR guard) ──────────────────────────────────────────
+
+// newTestGameService builds a *service.GameService backed by gameRepo, with
+// every other dependency nil. Safe because PlayerCanAccessGame only touches gameRepo.
+func newTestGameService(gameRepo service.GameRepository) *service.GameService {
+	return service.NewGameService(
+		gameRepo, nil, nil, nil, nil, nil, nil, time.UTC,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil, nil, nil, nil, 14,
+	)
+}
+
+func TestCheckGameAccess_InvalidGameID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/abc/access?telegram_id=1", nil)
+	req.SetPathValue("id", "abc")
+	w := httptest.NewRecorder()
+
+	h := &Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h.checkGameAccess(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid game id: want 400, got %d", w.Code)
+	}
+}
+
+func TestCheckGameAccess_MissingTelegramID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h := &Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h.checkGameAccess(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("missing telegram_id: want 400, got %d", w.Code)
+	}
+}
+
+func TestCheckGameAccess_Allowed(t *testing.T) {
+	svc := newTestGameService(&apiStubGameRepo{canAccess: true})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h := &Handler{gameService: svc, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h.checkGameAccess(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"allowed":true`) {
+		t.Errorf("want allowed:true, got: %s", w.Body.String())
+	}
+}
+
+func TestCheckGameAccess_Denied(t *testing.T) {
+	svc := newTestGameService(&apiStubGameRepo{canAccess: false})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h := &Handler{gameService: svc, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h.checkGameAccess(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"allowed":false`) {
+		t.Errorf("want allowed:false, got: %s", w.Body.String())
+	}
+}
+
+func TestCheckGameAccess_RepoError(t *testing.T) {
+	svc := newTestGameService(&apiStubGameRepo{canAccessErr: context.DeadlineExceeded})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h := &Handler{gameService: svc, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h.checkGameAccess(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("repo error: want 500, got %d", w.Code)
 	}
 }

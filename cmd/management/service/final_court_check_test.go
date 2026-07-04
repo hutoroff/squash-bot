@@ -67,6 +67,9 @@ func (r *stubGameRepoFCC) MarkFinalCourtCheckDone(_ context.Context, gameID int6
 	r.markedIDs = append(r.markedIDs, gameID)
 	return r.markErr
 }
+func (r *stubGameRepoFCC) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
 
 // ── mockCanceler ──────────────────────────────────────────────────────────────
 

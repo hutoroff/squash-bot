@@ -396,6 +396,29 @@ func (r *GameRepo) ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([
 	return groupIDs, rows.Err()
 }
 
+// PlayerCanAccessGame reports whether the Telegram user has any participation
+// record (registered or skipped) in any game within the same chat as gameID's
+// game. Returns false (not an error) when gameID does not exist.
+func (r *GameRepo) PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error) {
+	const q = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM games target
+			JOIN games g ON g.chat_id = target.chat_id
+			JOIN game_participations gp ON gp.game_id = g.id
+			JOIN players p ON p.id = gp.player_id
+			WHERE target.id = $1 AND p.telegram_id = $2
+		)`
+
+	slog.Debug("GameRepo.PlayerCanAccessGame", "telegram_id", telegramID, "game_id", gameID)
+
+	var allowed bool
+	if err := r.pool.QueryRow(ctx, q, gameID, telegramID).Scan(&allowed); err != nil {
+		return false, fmt.Errorf("player can access game: %w", err)
+	}
+	return allowed, nil
+}
+
 // GetCompletedGamesByGroupAndDay returns completed games for a group whose
 // game_date falls in [from, to). Used by PostLeaderboardJob to gate posting
 // on "24 h after the day's last game start".

@@ -661,3 +661,66 @@ func TestGameRepo_ListGroupIDsForPlayer(t *testing.T) {
 		t.Errorf("expected empty for player with no participations, got %v", ids2)
 	}
 }
+
+func TestGameRepo_PlayerCanAccessGame(t *testing.T) {
+	ctx := context.Background()
+	mustTruncate(t)
+
+	gameRepo := storage.NewGameRepo(testPool)
+	playerRepo := storage.NewPlayerRepo(testPool)
+	partRepo := storage.NewParticipationRepo(testPool)
+
+	const groupAChatID int64 = -9101
+	const groupBChatID int64 = -9102
+
+	player, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555101, Username: strPtr("access_test")})
+	if err != nil {
+		t.Fatalf("upsert player: %v", err)
+	}
+
+	// Player registers for one game in group A.
+	gameA1, err := gameRepo.Create(ctx, newGame(groupAChatID, time.Now().Add(24*time.Hour), "1"))
+	if err != nil {
+		t.Fatalf("create game A1: %v", err)
+	}
+	if err := partRepo.Upsert(ctx, gameA1.ID, player.ID, models.StatusRegistered); err != nil {
+		t.Fatalf("upsert participation: %v", err)
+	}
+
+	// A second, unrelated game also lives in group A — the player never joined
+	// it, but should still be able to access it because it is the same group.
+	gameA2, err := gameRepo.Create(ctx, newGame(groupAChatID, time.Now().Add(48*time.Hour), "2"))
+	if err != nil {
+		t.Fatalf("create game A2: %v", err)
+	}
+
+	// A game in a different group the player has never touched.
+	gameB, err := gameRepo.Create(ctx, newGame(groupBChatID, time.Now().Add(24*time.Hour), "1"))
+	if err != nil {
+		t.Fatalf("create game B: %v", err)
+	}
+
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameA1.ID); err != nil {
+		t.Fatalf("PlayerCanAccessGame (own game): %v", err)
+	} else if !allowed {
+		t.Error("expected access to the game the player is registered in")
+	}
+
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameA2.ID); err != nil {
+		t.Fatalf("PlayerCanAccessGame (same group): %v", err)
+	} else if !allowed {
+		t.Error("expected access to another game in the same group")
+	}
+
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameB.ID); err != nil {
+		t.Fatalf("PlayerCanAccessGame (other group): %v", err)
+	} else if allowed {
+		t.Error("expected no access to a game in a different group")
+	}
+
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, 999999999); err != nil {
+		t.Fatalf("PlayerCanAccessGame (nonexistent game): %v", err)
+	} else if allowed {
+		t.Error("expected no access to a nonexistent game")
+	}
+}

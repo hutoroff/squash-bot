@@ -159,6 +159,13 @@ func (s *GameService) ListGroupIDsForPlayer(ctx context.Context, playerID int64)
 	return s.gameRepo.ListGroupIDsForPlayer(ctx, playerID)
 }
 
+// PlayerCanAccessGame reports whether the given Telegram user is associated with
+// gameID's group — i.e. has a participation record in some game within that
+// group. Used to authorize the web service's per-game endpoints (IDOR guard).
+func (s *GameService) PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error) {
+	return s.gameRepo.PlayerCanAccessGame(ctx, telegramID, gameID)
+}
+
 // GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
 // in a specific group within the configured result-submission window. Used by the
 // /result wizard game picker.

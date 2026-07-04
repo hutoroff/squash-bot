@@ -127,6 +127,11 @@ func (b *Bot) registerWebhook(publicURL, secret string) error {
 	return nil
 }
 
+// maxWebhookBodyBytes bounds the Update body to guard against memory/CPU
+// exhaustion from oversized payloads. 1 MiB is far larger than any real
+// Telegram Update.
+const maxWebhookBodyBytes = 1 << 20
+
 // webhookHandler returns an http.HandlerFunc that validates the Telegram secret
 // header, decodes the Update body, and enqueues it on ch.
 // Factored out of StartWebhook so it can be tested without a live BotAPI.
@@ -146,6 +151,7 @@ func webhookHandler(secret string, ch chan<- tgbotapi.Update) http.HandlerFunc {
 			}
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
 		var update tgbotapi.Update
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)

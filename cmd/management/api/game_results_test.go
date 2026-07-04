@@ -135,8 +135,10 @@ func (r *apiStubPlayerRepo) GetByID(_ context.Context, _ int64) (*models.Player,
 }
 
 type apiStubGameRepo struct {
-	game        *models.Game
-	notInWindow bool
+	game         *models.Game
+	notInWindow  bool
+	canAccess    bool
+	canAccessErr error
 }
 
 func (r *apiStubGameRepo) Create(_ context.Context, g *models.Game) (*models.Game, error) {
@@ -185,6 +187,9 @@ func (r *apiStubGameRepo) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*m
 	return nil, nil
 }
 func (r *apiStubGameRepo) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
+func (r *apiStubGameRepo) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return r.canAccess, r.canAccessErr
+}
 
 type apiStubPartRepo struct{}
 

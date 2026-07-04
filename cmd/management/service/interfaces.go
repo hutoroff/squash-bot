@@ -55,6 +55,11 @@ type GameRepository interface {
 	// ListGroupIDsForPlayer returns the distinct chat_ids of groups where the player
 	// has at least one participation record. Used by the leaderboard group picker.
 	ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
+	// PlayerCanAccessGame reports whether the Telegram user has any participation
+	// record (registered or skipped) in any game within the same chat as gameID's
+	// game — i.e. whether the caller is associated with that game's group. Used
+	// to authorize the web service's per-game endpoints (IDOR guard).
+	PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error)
 }
 
 // PlayerRepository is the data access interface for players.

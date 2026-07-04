@@ -1304,6 +1304,9 @@ func (r *stubGameRepoPC) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*mo
 	return nil, nil
 }
 func (r *stubGameRepoPC) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
+func (r *stubGameRepoPC) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
 
 type captureSendAPI struct{ msgs []tgbotapi.MessageConfig }
 

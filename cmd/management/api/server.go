@@ -15,6 +15,11 @@ import (
 // defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
 const defaultCredentialErrorCooldown = 24 * time.Hour
 
+// maxRequestBodyBytes bounds request bodies to guard against memory/CPU
+// exhaustion from oversized payloads. 1 MiB is far larger than any real
+// request this API handles.
+const maxRequestBodyBytes = 1 << 20
+
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
 	gameService      *service.GameService
@@ -82,6 +87,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/games", h.createGame)
 	mux.HandleFunc("GET /api/v1/games", h.listGames)
 	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)
+	mux.HandleFunc("GET /api/v1/games/{id}/access", h.checkGameAccess)
 	mux.HandleFunc("PATCH /api/v1/games/{id}/message-id", h.updateMessageID)
 	mux.HandleFunc("PATCH /api/v1/games/{id}/courts", h.updateCourts)
 	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
@@ -156,11 +162,21 @@ func NewServer(addr string, h *Handler, secret string) *http.Server {
 	h.RegisterRoutes(mux)
 	return &http.Server{
 		Addr:         addr,
-		Handler:      requireBearer(secret, mux),
+		Handler:      limitRequestBody(requireBearer(secret, mux)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// limitRequestBody caps every request body at maxRequestBodyBytes, returning
+// an error from the body reader (surfaced as 400 by the JSON decoders) once
+// the limit is exceeded, instead of buffering an unbounded payload.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requireBearer is middleware that validates the Authorization: Bearer <secret> header.

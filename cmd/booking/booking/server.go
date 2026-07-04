@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// maxRequestBodyBytes bounds request bodies to guard against memory/CPU
+// exhaustion from oversized payloads. 1 MiB is far larger than any real
+// request this API handles.
+const maxRequestBodyBytes = 1 << 20
+
 // NewServer builds an http.Server with the handler's routes registered.
 // secret is the shared bearer token; all routes except /health and /version require it.
 func NewServer(addr string, h *Handler, secret string) *http.Server {
@@ -16,11 +21,21 @@ func NewServer(addr string, h *Handler, secret string) *http.Server {
 	h.RegisterRoutes(mux)
 	return &http.Server{
 		Addr:         addr,
-		Handler:      requireBearer(secret, mux),
+		Handler:      limitRequestBody(requireBearer(secret, mux)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// limitRequestBody caps every request body at maxRequestBodyBytes, returning
+// an error from the body reader (surfaced as 400 by the JSON decoders) once
+// the limit is exceeded, instead of buffering an unbounded payload.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requireBearer validates the Authorization: Bearer <secret> header.

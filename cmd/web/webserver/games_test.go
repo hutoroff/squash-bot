@@ -45,15 +45,18 @@ func routeAndServe(pattern string, fn http.HandlerFunc, req *http.Request) *http
 	return w
 }
 
-// participationsServer returns a test server that responds to the three endpoints
-// that game action handlers call (action + /participations + /guests).
-// The action endpoint responds with actionStatus; the list endpoints return their JSON.
+// participationsServer returns a test server that responds to the endpoints
+// that game action handlers call (access check + action + /participations + /guests).
+// The access check always grants access; the action endpoint responds with
+// actionStatus; the list endpoints return their JSON.
 func participationsServer(t *testing.T, actionStatus int, partsJSON, guestsJSON string) (*httptest.Server, *[]byte) {
 	t.Helper()
 	var capturedBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/access"):
+			fmt.Fprint(w, `{"allowed":true}`)
 		case strings.HasSuffix(r.URL.Path, "/participations"):
 			fmt.Fprint(w, partsJSON)
 		case strings.HasSuffix(r.URL.Path, "/guests"):
@@ -68,6 +71,22 @@ func participationsServer(t *testing.T, actionStatus int, partsJSON, guestsJSON 
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &capturedBody
+}
+
+// accessGrantingServer returns a test server that grants access on GET .../access
+// and otherwise delegates to fn, so tests can focus on behavior past the access check.
+func accessGrantingServer(t *testing.T, fn http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/access") {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"allowed":true}`)
+			return
+		}
+		fn(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // ── auth enforcement ──────────────────────────────────────────────────────────
@@ -107,21 +126,69 @@ func TestGamesRoutes_RequireAuth(t *testing.T) {
 	}
 }
 
+// TestGamesRoutes_AccessDenied is the core F1/IDOR regression test: when the
+// management service reports that the caller is not associated with the
+// game's group, every one of the five per-game handlers must reject the
+// request with 403 and must NOT call the underlying action/data endpoint.
+func TestGamesRoutes_AccessDenied(t *testing.T) {
+	var actionCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/access") {
+			fmt.Fprint(w, `{"allowed":false}`)
+			return
+		}
+		actionCalled = true
+		fmt.Fprint(w, "[]")
+	}))
+	t.Cleanup(srv.Close)
+
+	auth := testAuthHandler(t, nil)
+	g := NewGamesHandler(auth, srv.URL, "mgmt-secret")
+
+	routes := []struct {
+		method  string
+		pattern string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"GET", "GET /api/games/{id}/participants", "/api/games/999/participants", g.handleGetParticipants},
+		{"POST", "POST /api/games/{id}/join", "/api/games/999/join", g.handleJoinGame},
+		{"POST", "POST /api/games/{id}/skip", "/api/games/999/skip", g.handleSkipGame},
+		{"POST", "POST /api/games/{id}/guest", "/api/games/999/guest", g.handleAddGuest},
+		{"DELETE", "DELETE /api/games/{id}/guest", "/api/games/999/guest", g.handleRemoveGuest},
+	}
+
+	for _, tc := range routes {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			actionCalled = false
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
+			w := routeAndServe(tc.pattern, tc.handler, req)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("want 403 when access is denied, got %d (body: %s)", w.Code, w.Body.String())
+			}
+			if actionCalled {
+				t.Error("management action/data endpoint must not be called when access is denied")
+			}
+		})
+	}
+}
+
 // ── handleGetParticipants ─────────────────────────────────────────────────────
 
 func TestHandleGetParticipants_HappyPath(t *testing.T) {
 	const partsJSON = `[{"id":1,"player":{"telegram_id":42,"username":"alice"},"status":"registered"}]`
 	const guestsJSON = `[{"id":1,"invited_by":{"telegram_id":42}}]`
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := accessGrantingServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/participations") {
 			fmt.Fprint(w, partsJSON)
 			return
 		}
 		fmt.Fprint(w, guestsJSON)
-	}))
-	t.Cleanup(srv.Close)
+	})
 
 	g, auth := testGamesHandler(t, srv)
 

@@ -170,6 +170,9 @@ func (r *stubGameRepoForResults) GetUpcomingGamesForFinalCheck(_ context.Context
 func (r *stubGameRepoForResults) MarkFinalCourtCheckDone(_ context.Context, _ int64) error {
 	return nil
 }
+func (r *stubGameRepoForResults) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
+	return false, nil
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
