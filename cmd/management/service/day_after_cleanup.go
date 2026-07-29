@@ -52,7 +52,7 @@ func (j *DayAfterCleanupJob) name() string   { return "day_after_cleanup" }
 func (j *DayAfterCleanupJob) run(force bool) { j.runDayAfterCleanup(force) }
 
 func (j *DayAfterCleanupJob) runDayAfterCleanup(force bool) {
-	j.logger.Info("day-after cleanup check started")
+	j.logger.Debug("day-after cleanup check started")
 	ctx := context.Background()
 	now := time.Now()
 
@@ -88,7 +88,7 @@ func (j *DayAfterCleanupJob) runDayAfterCleanup(force bool) {
 			processed++
 		}
 	}
-	j.logger.Info("day-after cleanup done", "games_processed", processed)
+	j.logger.Debug("day-after cleanup done", "games_processed", processed)
 }
 
 func (j *DayAfterCleanupJob) processDayAfter(ctx context.Context, game *models.Game, groupTZ *time.Location) {
