@@ -72,7 +72,7 @@ func (j *AutoBookingJob) runAutoBooking(force bool) {
 	if j.bookingClient == nil {
 		return
 	}
-	j.logger.Info("auto-booking check started")
+	j.logger.Debug("auto-booking check started")
 	ctx := context.Background()
 	now := time.Now()
 
@@ -117,7 +117,7 @@ func (j *AutoBookingJob) runAutoBooking(force bool) {
 			}
 		}
 	}
-	j.logger.Info("auto-booking done", "venues_booked", booked)
+	j.logger.Debug("auto-booking done", "venues_booked", booked)
 }
 
 // processAutoBookingForVenue attempts to book courts for each configured time slot of a venue.

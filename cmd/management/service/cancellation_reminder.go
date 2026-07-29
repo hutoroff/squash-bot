@@ -68,7 +68,7 @@ func (j *CancellationReminderJob) name() string   { return "cancellation_reminde
 func (j *CancellationReminderJob) run(force bool) { j.runCancellationReminders(force) }
 
 func (j *CancellationReminderJob) runCancellationReminders(force bool) {
-	j.logger.Info("cancellation reminder check started")
+	j.logger.Debug("cancellation reminder check started")
 	ctx := context.Background()
 	now := time.Now()
 
@@ -77,7 +77,7 @@ func (j *CancellationReminderJob) runCancellationReminders(force bool) {
 		j.logger.Error("cancellation reminder: query games", "err", err)
 		return
 	}
-	j.logger.Info("upcoming unnotified games", "count", len(games))
+	j.logger.Debug("upcoming unnotified games", "count", len(games))
 
 	for _, game := range games {
 		gracePeriodHours := 24

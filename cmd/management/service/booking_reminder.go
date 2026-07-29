@@ -54,7 +54,7 @@ func (j *BookingReminderJob) name() string   { return "booking_reminder" }
 func (j *BookingReminderJob) run(force bool) { j.runBookingReminders(force) }
 
 func (j *BookingReminderJob) runBookingReminders(force bool) {
-	j.logger.Info("booking reminder check started")
+	j.logger.Debug("booking reminder check started")
 	ctx := context.Background()
 	now := time.Now()
 
@@ -115,7 +115,7 @@ func (j *BookingReminderJob) runBookingReminders(force bool) {
 			}
 		}
 	}
-	j.logger.Info("booking reminder done", "venues_notified", notified)
+	j.logger.Debug("booking reminder done", "venues_notified", notified)
 }
 
 // handleAutoBookingReminder processes the booking reminder for a venue with auto_booking_enabled.

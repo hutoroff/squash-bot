@@ -66,7 +66,7 @@ func (j *FinalCourtCheckJob) name() string   { return "final_court_check" }
 func (j *FinalCourtCheckJob) run(force bool) { j.runFinalCourtCheck(force) }
 
 func (j *FinalCourtCheckJob) runFinalCourtCheck(force bool) {
-	j.logger.Info("final court check started")
+	j.logger.Debug("final court check started")
 	ctx := context.Background()
 	now := time.Now()
 
@@ -75,7 +75,7 @@ func (j *FinalCourtCheckJob) runFinalCourtCheck(force bool) {
 		j.logger.Error("final court check: query games", "err", err)
 		return
 	}
-	j.logger.Info("upcoming games for final check", "count", len(games))
+	j.logger.Debug("upcoming games for final check", "count", len(games))
 
 	for _, game := range games {
 		gracePeriodHours := 24
