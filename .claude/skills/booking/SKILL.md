@@ -25,7 +25,9 @@ cmd/booking/
 │                              RegisterRoutes, all 6 HTTP handlers + helpers
 └── eversports/
     ├── client.go            — Client struct, New, Login, EnsureLoggedIn, invalidateSession,
-    │                          doAuthed, hasCookie, setBrowserHeaders, withAuth generic helper
+    │                          doAuthed, hasCookie, setBrowserHeaders, withAuth generic helper,
+    │                          response inspection: bodySnippet, isAuthErrorMessage,
+    │                          gqlTopLevelError, isHTMLResponse, htmlAuthError
     ├── matches.go           — GetMatchByID, CancelMatch + wire types
     ├── slots.go             — GetCourts, GetSlots, parseCalendarHTML + wire types
     ├── checkout.go          — CreateBooking, createMatchFromBooking, reportMPFee,
@@ -43,6 +45,7 @@ cmd/booking/
 ```go
 type Client struct {
     http      *http.Client       // has CookieJar holding the 'et' session cookie
+    baseURL   string             // defaultBaseURL in prod; tests override with httptest.Server URL
     email     string
     password  string
     loginMu   sync.Mutex         // serialises Login calls
@@ -55,6 +58,18 @@ type Client struct {
 
 Auth is cookie-based: Eversports sets an `et` cookie (UUID, 30-day, httpOnly, SameSite=None) on successful login. The `http.Client`'s `CookieJar` stores it automatically and sends it on every request.
 
+`baseURL` is the only test seam for the HTTP layer: `New` sets it to `defaultBaseURL`, and same-package tests assign an `httptest.Server` URL (see `client_test.go`). Never read the const directly in a `Client` method — always `c.baseURL`.
+
+### Session-expiry detection (`client.go`)
+
+Eversports does **not** return HTTP 401 for a dead session. It answers with HTTP 200 and either a top-level GraphQL error (`"User is a non complete user"` — the caller is resolved to an incomplete guest identity) or an HTML login page. Three mechanisms cover this:
+
+- `EnsureLoggedIn` treats a session as valid only when `loggedIn && hasCookie("et")`. The cookie is the authority: the jar drops it silently on expiry, and a flag-only check leaves the client sending cookieless requests forever (this caused the July 2026 booking outage).
+- `invalidateSession` clears the flag **and deletes the `et` cookie**, so a stale cookie cannot make `Login`'s "did the server set an et cookie?" check pass and turn the re-login into a no-op.
+- `gqlTopLevelError(op, msg)` wraps `errUnauthorized` when `isAuthErrorMessage(msg)` matches (`non complete user`, `not authenticated`, `unauthenticated`, `unauthorized`), letting `withAuth` re-login and retry once. Use it for every **top-level** `errors` array. Errors from the `ExpectedErrors` union are business rules (e.g. "Eine Stornierung der Buchung ist nicht möglich") and must never be routed through it.
+- `htmlAuthError(op, body)` returns an `errUnauthorized`-wrapped error when a body is HTML (`isHTMLResponse` = leading `<` or `isCFChallenge`). Call it after the status check and before every JSON decode. Two exceptions: `GetCourts` legitimately parses HTML, and **pay-offline (checkout step 2) returns a plain error** — wrapping it would retry from step 1 and duplicate the booking.
+- `bodySnippet(b)` renders a body for errors/logs: whitespace collapsed to one line, capped at 300 bytes. Use it everywhere a response body is embedded — raw bodies can be multi-KB Cloudflare pages.
+
 ### `withAuth` generic helper (`client.go`)
 
 ```go
@@ -62,9 +77,11 @@ func withAuth[T any](ctx context.Context, c *Client, do func() (T, error)) (T, e
 ```
 
 Used by `GetMatchByID`, `GetCourts`, `GetSlots`, `CancelMatch`, `GetFacility`. Pattern:
-1. `EnsureLoggedIn(ctx)` — no-op if already logged in (atomic check, mutex on first call)
+1. `EnsureLoggedIn(ctx)` — no-op only if already logged in **and** the `et` cookie is still in the jar (atomic check, mutex on first call)
 2. Call `do()`
 3. If `errUnauthorized` → `invalidateSession()` → `EnsureLoggedIn(ctx)` → retry `do()` once
+
+`errUnauthorized` now comes from three sources: HTTP 401, auth-shaped top-level GraphQL errors (`gqlTopLevelError`), and HTML-instead-of-JSON bodies (`htmlAuthError`).
 
 **`CreateBooking` does NOT use `withAuth`** — it has custom mid-flow 401 handling. A 401 after step 1 of the checkout returns an error without retry to avoid duplicate bookings.
 
@@ -93,6 +110,8 @@ Step 5: POST /checkout/api/tracking/trackCheckoutCompleted  (best-effort)
 ```
 
 Steps 3–5 never abort the booking on failure — errors are logged, result is returned.
+
+Step 1 also maps an HTML body to `errUnauthorized` (nothing was reserved yet, so the retry is safe). Step 2 detects HTML but returns a plain error: the slot is already reserved, so a retry would book it twice.
 
 ### HTML parsing for GetCourts
 
@@ -205,5 +224,6 @@ Note: `EVERSPORTS_EMAIL`/`EVERSPORTS_PASSWORD` are removed. Credentials are supp
 - `withAuth` is for ALL retry logic except `CreateBooking` — do not duplicate the retry pattern manually in new methods
 - Adding a new Eversports operation: create/choose the right operation file (`matches.go`, `slots.go`, etc.), put public domain types in `models.go`, put wire types in the operation file, use `withAuth` unless mid-flow 401 is unsafe
 - Adding a new HTTP endpoint: add the route in `handler.go → RegisterRoutes`, add the method to `eversportsClient` interface if it calls a new eversports method, implement the handler method on `*Handler`
-- `isCFChallenge` detects Cloudflare bot-challenge pages that return HTTP 200 with HTML — always check for it when parsing JSON from Eversports endpoints that may be unprotected
+- `isCFChallenge` detects Cloudflare bot-challenge pages that return HTTP 200 with HTML. For any new JSON endpoint use `htmlAuthError` (which includes the CF check) before decoding, and embed bodies in errors via `bodySnippet` — never raw `string(respBytes)`
+- Never trust HTTP 401 alone as the session-expiry signal — see "Session-expiry detection". Any new GraphQL operation must route its top-level `errors` through `gqlTopLevelError`
 - Version in `cmd/booking/VERSION`, injected via `-ldflags "-X main.Version=<ver>"`
