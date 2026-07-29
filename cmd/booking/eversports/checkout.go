@@ -102,7 +102,7 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 			"start", payload.Start,
 			"end", payload.End,
 		)
-		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+courtBookingEndpoint, bytes.NewReader(body))
+		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+courtBookingEndpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: court booking request: %w", err)
 		}
@@ -117,20 +117,26 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: court booking HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: court booking HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+		}
+		// An HTML body here means the request was redirected to the login page (or
+		// challenged by Cloudflare) — no slot was reserved, so the errUnauthorized
+		// wrapping lets the retry below re-login and start over safely.
+		if err := htmlAuthError("court booking", respBytes); err != nil {
+			return nil, err
 		}
 		var bookResp courtBookingResponse
 		if err := json.Unmarshal(respBytes, &bookResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode court booking response: %w", err)
+			return nil, fmt.Errorf("eversports: decode court booking response: %w (body: %s)", err, bodySnippet(respBytes))
 		}
 		if !bookResp.Success {
-			return nil, fmt.Errorf("eversports: court booking not successful: status=%q body=%s", bookResp.Status, string(respBytes))
+			return nil, fmt.Errorf("eversports: court booking not successful: status=%q body=%s", bookResp.Status, bodySnippet(respBytes))
 		}
 
 		// Step 2: pay with account budget. A 401 here means the session expired
 		// mid-flow; we return a plain error rather than wrapping errUnauthorized
 		// to prevent retrying from step 1 and creating a duplicate booking.
-		payURL := fmt.Sprintf("%s/checkout/api/payment/%d/pay-offline", baseURL, bookResp.Payment.ID)
+		payURL := fmt.Sprintf("%s/checkout/api/payment/%d/pay-offline", c.baseURL, bookResp.Payment.ID)
 		payResp, err := c.doAuthed(ctx, http.MethodPost, payURL, bytes.NewReader([]byte("{}")))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: pay-offline request: %w", err)
@@ -141,7 +147,14 @@ func (c *Client) CreateBooking(ctx context.Context, facilityUUID, courtUUID, spo
 			return nil, fmt.Errorf("eversports: read pay-offline response: %w", err)
 		}
 		if payResp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: pay-offline HTTP %d: %s", payResp.StatusCode, string(payRespBytes))
+			return nil, fmt.Errorf("eversports: pay-offline HTTP %d: %s", payResp.StatusCode, bodySnippet(payRespBytes))
+		}
+		// HTML here means the session died between steps 1 and 2: the slot is
+		// reserved but unpaid. Deliberately a plain error — wrapping errUnauthorized
+		// would retry from step 1 and reserve the slot a second time.
+		if isHTMLResponse(payRespBytes) {
+			return nil, fmt.Errorf("eversports: pay-offline returned HTML (session expired mid-checkout; not retrying to avoid a duplicate booking): %s",
+				bodySnippet(payRespBytes))
 		}
 
 		// Step 3: create match record (best-effort — failure does not abort the booking).
@@ -186,7 +199,7 @@ func (c *Client) reportMPFee(ctx context.Context, bookingID int, venueUUID strin
 		c.logger.Warn("eversports: booking step 4 marshal failed", "err", err)
 		return
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+mpFeeEndpoint, bytes.NewReader(body))
+	resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+mpFeeEndpoint, bytes.NewReader(body))
 	if err != nil {
 		c.logger.Warn("eversports: reportMPFee failed", "err", err)
 		return
@@ -198,7 +211,7 @@ func (c *Client) reportMPFee(ctx context.Context, bookingID int, venueUUID strin
 // trackCheckoutCompleted fires a best-effort POST to the checkout tracking
 // endpoint after payment is settled. Errors are logged and ignored.
 func (c *Client) trackCheckoutCompleted(ctx context.Context) {
-	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+trackCheckoutEndpoint, bytes.NewReader([]byte{}))
+	resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+trackCheckoutEndpoint, bytes.NewReader([]byte{}))
 	if err != nil {
 		c.logger.Warn("eversports: trackCheckoutCompleted failed", "err", err)
 		return
@@ -218,7 +231,7 @@ func isCFChallenge(body []byte) bool {
 // string on failure.
 func (c *Client) createMatchFromBooking(ctx context.Context, bookingUUID string) string {
 	body, _ := json.Marshal(createMatchRequest{BookingID: bookingUUID})
-	resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+createFromBookingEndpoint, bytes.NewReader(body))
+	resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+createFromBookingEndpoint, bytes.NewReader(body))
 	if err != nil {
 		c.logger.Warn("eversports: createMatchFromBooking failed", "err", err)
 		return ""

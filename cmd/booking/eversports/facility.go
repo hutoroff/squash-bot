@@ -102,7 +102,7 @@ func (c *Client) GetFacility(ctx context.Context, slug string) (*Facility, error
 		if err != nil {
 			return nil, fmt.Errorf("eversports: marshal facility request: %w", err)
 		}
-		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: facility request: %w", err)
 		}
@@ -116,14 +116,17 @@ func (c *Client) GetFacility(ctx context.Context, slug string) (*Facility, error
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: facility HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: facility HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+		}
+		if err := htmlAuthError("facility", respBytes); err != nil {
+			return nil, err
 		}
 		var gqlResp gqlFacilityResponse
 		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode facility response: %w", err)
+			return nil, fmt.Errorf("eversports: decode facility response: %w (body: %s)", err, bodySnippet(respBytes))
 		}
 		if len(gqlResp.Errors) > 0 {
-			return nil, fmt.Errorf("eversports: facility GraphQL error: %s", gqlResp.Errors[0].Message)
+			return nil, gqlTopLevelError("facility", gqlResp.Errors[0].Message)
 		}
 
 		v := gqlResp.Data.VenueContext.Venue

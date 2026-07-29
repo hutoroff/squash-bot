@@ -116,7 +116,7 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 		if err != nil {
 			return nil, fmt.Errorf("eversports: marshal Match request: %w", err)
 		}
-		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: Match request: %w", err)
 		}
@@ -130,15 +130,18 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: Match HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: Match HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+		}
+		if err := htmlAuthError("Match", respBytes); err != nil {
+			return nil, err
 		}
 
 		var gqlResp gqlMatchResponse
 		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode Match response: %w", err)
+			return nil, fmt.Errorf("eversports: decode Match response: %w (body: %s)", err, bodySnippet(respBytes))
 		}
 		if len(gqlResp.Errors) > 0 {
-			return nil, fmt.Errorf("eversports: Match graphql error: %s", gqlResp.Errors[0].Message)
+			return nil, gqlTopLevelError("Match", gqlResp.Errors[0].Message)
 		}
 		b, err := gqlResp.Data.Match.toBooking()
 		if err != nil {
@@ -213,7 +216,7 @@ func (c *Client) CancelMatch(ctx context.Context, matchID string) (*Cancellation
 		if err != nil {
 			return nil, fmt.Errorf("eversports: marshal CancelMatch request: %w", err)
 		}
-		resp, err := c.doAuthed(ctx, http.MethodPost, baseURL+graphqlEndpoint, bytes.NewReader(body))
+		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: CancelMatch request: %w", err)
 		}
@@ -227,16 +230,21 @@ func (c *Client) CancelMatch(ctx context.Context, matchID string) (*Cancellation
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: CancelMatch HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+		}
+		if err := htmlAuthError("CancelMatch", respBytes); err != nil {
+			return nil, err
 		}
 
 		var gqlResp gqlCancelMatchResponse
 		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode CancelMatch response: %w", err)
+			return nil, fmt.Errorf("eversports: decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes))
 		}
 		if len(gqlResp.Errors) > 0 {
-			return nil, fmt.Errorf("eversports: CancelMatch graphql error: %s", gqlResp.Errors[0].Message)
+			return nil, gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
 		}
+		// ExpectedErrors are business-rule rejections (e.g. past the cancellation
+		// deadline) — a real answer, never retried.
 		cm := gqlResp.Data.CancelMatch
 		if len(cm.Errors) > 0 {
 			return nil, fmt.Errorf("eversports: CancelMatch error: %s", cm.Errors[0].Message)

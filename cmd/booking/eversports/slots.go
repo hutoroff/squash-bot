@@ -55,7 +55,7 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 		form.Set("date", date)
 		form.Set("type", "user")
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+calendarUpdateEndpoint, strings.NewReader(form.Encode()))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+calendarUpdateEndpoint, strings.NewReader(form.Encode()))
 		if err != nil {
 			return nil, fmt.Errorf("eversports: create GetCourts request: %w", err)
 		}
@@ -76,9 +76,11 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: GetCourts HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: GetCourts HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
 		}
 
+		// No htmlAuthError check here: this endpoint legitimately returns HTML.
+		// An expired session degrades to zero courts, covered by the Warn below.
 		courts := parseCalendarHTML(string(respBytes))
 		if len(courts) == 0 {
 			c.logger.Warn("eversports: GetCourts: no courts found in calendar response — facility may be closed on this date, or check EVERSPORTS_FACILITY_ID/FACILITY_SLUG/SPORT_ID/SPORT_UUID config")
@@ -156,7 +158,7 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 		for _, id := range courtIDs {
 			params.Add("courts[]", id)
 		}
-		rawURL := baseURL + slotsEndpoint + "?" + params.Encode()
+		rawURL := c.baseURL + slotsEndpoint + "?" + params.Encode()
 
 		resp, err := c.doAuthed(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
@@ -172,12 +174,15 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 			return nil, fmt.Errorf("%w", errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: GetSlots HTTP %d: %s", resp.StatusCode, string(respBytes))
+			return nil, fmt.Errorf("eversports: GetSlots HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+		}
+		if err := htmlAuthError("GetSlots", respBytes); err != nil {
+			return nil, err
 		}
 
 		var slotsResp rawSlotsResponse
 		if err := json.Unmarshal(respBytes, &slotsResp); err != nil {
-			return nil, fmt.Errorf("eversports: GetSlots decode response: %w", err)
+			return nil, fmt.Errorf("eversports: GetSlots decode response: %w (body: %s)", err, bodySnippet(respBytes))
 		}
 		c.logger.Info("eversports slots fetched", "count", len(slotsResp.Slots), "date", startDate)
 
