@@ -130,7 +130,14 @@ func (b *Bot) reply(chatID int64, replyToID int, text string) {
 func (b *Bot) answerCallback(callbackID, text string) {
 	answer := tgbotapi.NewCallback(callbackID, text)
 	if _, err := b.api.Request(answer); err != nil {
-		slog.Debug("answer callback", "err", err)
+		slog.Warn("answer callback", "callback_id", callbackID, "err", err)
+	}
+}
+
+func (b *Bot) answerCallbackAlert(callbackID, text string) {
+	answer := tgbotapi.NewCallbackWithAlert(callbackID, text)
+	if _, err := b.api.Request(answer); err != nil {
+		slog.Warn("answer callback alert", "callback_id", callbackID, "err", err)
 	}
 }
 

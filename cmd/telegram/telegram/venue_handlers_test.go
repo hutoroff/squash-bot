@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -20,14 +21,17 @@ import (
 // newFakeBotAPI returns a *tgbotapi.BotAPI backed by an httptest server that
 // responds with a minimal valid Telegram API payload for any request.
 func newFakeBotAPI(t *testing.T) *tgbotapi.BotAPI {
+	return newFakeBotAPIWithHandler(t, nil)
+}
+
+func newFakeBotAPIWithHandler(t *testing.T, handler http.HandlerFunc) *tgbotapi.BotAPI {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Combined payload: satisfies both the User decoder (getMe) and the
-		// Message decoder (sendMessage, editMessageText, etc.).
-		_, _ = io.WriteString(w, `{"ok":true,"result":{`+
-			`"id":1,"is_bot":true,"first_name":"TestBot","username":"testbot",`+
-			`"message_id":1,"date":1000000,"chat":{"id":42,"type":"private"}}}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handler != nil {
+			handler(w, r)
+			return
+		}
+		writeFakeTelegramOK(w)
 	}))
 	t.Cleanup(srv.Close)
 	api, err := tgbotapi.NewBotAPIWithClient("faketoken", srv.URL+"/bot%s/%s", srv.Client())
@@ -37,8 +41,53 @@ func newFakeBotAPI(t *testing.T) *tgbotapi.BotAPI {
 	return api
 }
 
+func writeFakeTelegramOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	// Combined payload: satisfies both the User decoder (getMe) and the
+	// Message decoder (sendMessage, editMessageText, etc.).
+	_, _ = io.WriteString(w, `{"ok":true,"result":{`+
+		`"id":1,"is_bot":true,"first_name":"TestBot","username":"testbot",`+
+		`"message_id":1,"date":1000000,"chat":{"id":42,"type":"private"}}}`)
+}
+
 func telegramNoopLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestAnswerCallbackAlert_SendsAlert(t *testing.T) {
+	var showAlert, callbackID, text string
+	api := newFakeBotAPIWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		if path.Base(r.URL.Path) == "answerCallbackQuery" {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm: %v", err)
+			}
+			showAlert = r.Form.Get("show_alert")
+			callbackID = r.Form.Get("callback_query_id")
+			text = r.Form.Get("text")
+		}
+		writeFakeTelegramOK(w)
+	})
+
+	(&Bot{api: api}).answerCallbackAlert("callback-id", "Cannot delete")
+
+	if showAlert != "true" || callbackID != "callback-id" || text != "Cannot delete" {
+		t.Errorf("callback alert = show_alert=%q callback_id=%q text=%q", showAlert, callbackID, text)
+	}
+}
+
+func TestEditText_ReturnsTelegramError(t *testing.T) {
+	api := newFakeBotAPIWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		if path.Base(r.URL.Path) == "editMessageText" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: message is not modified"}`)
+			return
+		}
+		writeFakeTelegramOK(w)
+	})
+
+	if err := (&Bot{api: api}).editText(42, 1, "text", nil); err == nil {
+		t.Fatal("editText returned nil for rejected editMessageText")
+	}
 }
 
 // ── renderAutoBookingEnabledKeyboard ──────────────────────────────────────────
