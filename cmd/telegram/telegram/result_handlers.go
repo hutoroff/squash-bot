@@ -47,8 +47,15 @@ var scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 // ── /result command ───────────────────────────────────────────────────────────
 
 func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("handleCommandResult: resolve user", "err", err)
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+
 	// Block opted-out authors before starting the wizard.
-	if optOut, err := b.client.GetUserResultsOptOut(ctx, msg.From.ID); err == nil && optOut {
+	if user, err := b.client.GetUser(ctx, ru.UserID); err == nil && user.ResultsOptOut {
 		b.sendText(msg.Chat.ID, lz.T(i18n.MsgResultSelfOptedOut), nil)
 		return
 	}
@@ -65,7 +72,7 @@ func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz
 	// Filter to groups where the player has participated.
 	var playerGroups []models.Group
 	for _, g := range groups {
-		games, err := b.client.GetRecentCompletedGames(ctx, msg.From.ID, g.ChatID)
+		games, err := b.client.GetRecentCompletedGames(ctx, ru.UserID, g.ChatID)
 		if err != nil {
 			continue
 		}
@@ -87,7 +94,7 @@ func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz
 		// Auto-pick the only group and go straight to game picker.
 		wiz.groupID = playerGroups[0].ChatID
 		wiz.step = resultStepGame
-		b.sendResultGamePicker(ctx, msg.Chat.ID, msg.From.ID, wiz, lz, 0)
+		b.sendResultGamePicker(ctx, msg.Chat.ID, ru.UserID, wiz, lz, 0)
 		return
 	}
 
@@ -122,12 +129,18 @@ func (b *Bot) handleResultPickGroup(ctx context.Context, cb *tgbotapi.CallbackQu
 	wiz.groupID = groupID
 	wiz.step = resultStepGame
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
 	b.answerCallback(cb.ID, "")
-	b.sendResultGamePicker(ctx, cb.Message.Chat.ID, cb.From.ID, wiz, lz, cb.Message.MessageID)
+	b.sendResultGamePicker(ctx, cb.Message.Chat.ID, ru.UserID, wiz, lz, cb.Message.MessageID)
 }
 
-func (b *Bot) sendResultGamePicker(ctx context.Context, chatID, tgID int64, wiz *resultWizard, lz *i18n.Localizer, editMsgID int) {
-	games, err := b.client.GetRecentCompletedGames(ctx, tgID, wiz.groupID)
+func (b *Bot) sendResultGamePicker(ctx context.Context, chatID, userID int64, wiz *resultWizard, lz *i18n.Localizer, editMsgID int) {
+	games, err := b.client.GetRecentCompletedGames(ctx, userID, wiz.groupID)
 	if err != nil {
 		slog.Error("sendResultGamePicker: get games", "err", err)
 		b.sendText(chatID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -189,11 +202,17 @@ func (b *Bot) handleResultPickGame(ctx context.Context, cb *tgbotapi.CallbackQue
 	}
 	wiz.step = resultStepOpponent
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
 	b.answerCallback(cb.ID, "")
-	b.sendResultOpponentPicker(ctx, cb.Message.Chat.ID, cb.From.ID, cb.Message.MessageID, wiz, lz)
+	b.sendResultOpponentPicker(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wiz, lz, ru.PlayerID)
 }
 
-func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID, tgID int64, msgID int, wiz *resultWizard, lz *i18n.Localizer) {
+func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID int64, msgID int, wiz *resultWizard, lz *i18n.Localizer, selfPlayerID *int64) {
 	parts, err := b.client.GetParticipations(ctx, wiz.gameID)
 	if err != nil {
 		slog.Error("sendResultOpponentPicker: get participations", "err", err)
@@ -201,9 +220,7 @@ func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID, tgID int64, 
 		return
 	}
 
-	// Resolve self player ID.
-	selfPlayer, err := b.resolvePlayer(ctx, tgID)
-	if err != nil || selfPlayer == nil {
+	if selfPlayerID == nil {
 		b.editText(chatID, msgID, lz.T(i18n.MsgResultNotInGame), nil)
 		b.pendingResultWizard.Delete(chatID)
 		return
@@ -216,7 +233,7 @@ func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID, tgID int64, 
 		if p.Status != models.StatusRegistered {
 			continue
 		}
-		if p.PlayerID == selfPlayer.ID {
+		if p.PlayerID == *selfPlayerID {
 			continue
 		}
 		if p.Player != nil {
@@ -265,8 +282,8 @@ func (b *Bot) handleResultPickOpponent(ctx context.Context, cb *tgbotapi.Callbac
 	}
 
 	// Check if the selected opponent has opted out.
-	if opp.TelegramID != 0 {
-		if optOut, err := b.client.GetUserResultsOptOut(ctx, opp.TelegramID); err == nil && optOut {
+	if opp.UserID != 0 {
+		if user, err := b.client.GetUser(ctx, opp.UserID); err == nil && user.ResultsOptOut {
 			b.answerCallback(cb.ID, lz.Tf(i18n.MsgResultOpponentOptedOut, playerModelDisplayName(opp)))
 			return
 		}
@@ -302,15 +319,15 @@ func (b *Bot) handleResultPickWinner(ctx context.Context, cb *tgbotapi.CallbackQ
 	}
 	wiz := raw.(*resultWizard)
 
-	selfPlayer, err := b.resolvePlayer(ctx, cb.From.ID)
-	if err != nil || selfPlayer == nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil || ru.PlayerID == nil {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
 	switch rawID {
 	case "me":
-		wiz.winnerID = &selfPlayer.ID
+		wiz.winnerID = ru.PlayerID
 		wiz.winnerLabel = lz.T(i18n.MsgResultWinnerMe)
 	case "opp":
 		oppID := wiz.opponent.ID
@@ -370,8 +387,11 @@ func (b *Bot) processResultWizard(ctx context.Context, msg *tgbotapi.Message, wi
 
 	// Validate winner's number ≥ loser's if a winner is set.
 	if wiz.winnerID != nil {
-		selfPlayer, _ := b.resolvePlayer(ctx, msg.From.ID)
-		if err := validateResultScore(score, wiz, selfPlayer); err != nil {
+		var selfPlayerID *int64
+		if ru, err := b.resolveUser(ctx, msg.From); err == nil {
+			selfPlayerID = ru.PlayerID
+		}
+		if err := validateResultScore(score, wiz, selfPlayerID); err != nil {
 			b.sendText(msg.Chat.ID, lz.T(i18n.MsgResultErrBadScore), nil)
 			return
 		}
@@ -434,14 +454,20 @@ func (b *Bot) handleResultEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 	}
 	wiz := raw.(*resultWizard)
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
 	b.answerCallback(cb.ID, "")
 	switch field {
 	case "game":
 		wiz.step = resultStepGame
-		b.sendResultGamePicker(ctx, cb.Message.Chat.ID, cb.From.ID, wiz, lz, cb.Message.MessageID)
+		b.sendResultGamePicker(ctx, cb.Message.Chat.ID, ru.UserID, wiz, lz, cb.Message.MessageID)
 	case "opp":
 		wiz.step = resultStepOpponent
-		b.sendResultOpponentPicker(ctx, cb.Message.Chat.ID, cb.From.ID, cb.Message.MessageID, wiz, lz)
+		b.sendResultOpponentPicker(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wiz, lz, ru.PlayerID)
 	case "winner":
 		wiz.step = resultStepWinner
 		b.renderWinnerPicker(cb.Message.Chat.ID, cb.Message.MessageID, wiz, lz)
@@ -468,9 +494,16 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 	wiz := raw.(*resultWizard)
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleResultSubmit: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
 	result, err := b.client.SubmitGameResult(ctx,
-		wiz.gameID, cb.From.ID, wiz.opponent.ID,
-		wiz.winnerID, wiz.score, actorDisplayFrom(cb.From),
+		wiz.gameID, ru.UserID, wiz.opponent.ID,
+		wiz.winnerID, wiz.score, ru.DisplayName,
 	)
 	if err != nil {
 		if errors.Is(err, client.ErrResultOpponentOptedOut) {
@@ -491,7 +524,7 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 	oppDisplay := playerModelDisplayName(wiz.opponent)
 
 	// Try to DM the opponent.
-	approvalText := b.buildApprovalCardText(ctx, result, wiz, actorDisplayFrom(cb.From), lz)
+	approvalText := b.buildApprovalCardText(ctx, result, wiz, ru.DisplayName, lz)
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnResultApprove), fmt.Sprintf("res_approve:%d", result.ID)),
@@ -507,7 +540,7 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 	if dmErr != nil {
 		// Any failure to deliver the approval DM cancels the result so it cannot silently auto-approve.
 		slog.Warn("handleResultSubmit: send approval DM", "err", dmErr)
-		_, _ = b.client.CancelGameResult(ctx, result.ID, cb.From.ID, actorDisplayFrom(cb.From))
+		_, _ = b.client.CancelGameResult(ctx, result.ID, ru.UserID, ru.DisplayName)
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID,
 			lz.Tf(i18n.MsgResultDMUnreachable, escapeMarkdown(oppDisplay)), nil)
 		return
@@ -603,7 +636,14 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 		return
 	}
 
-	result, err := b.client.ApproveGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleResultApprove: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	result, err := b.client.ApproveGameResult(ctx, id, ru.UserID, ru.DisplayName)
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
@@ -622,7 +662,7 @@ func (b *Bot) handleResultApprove(ctx context.Context, cb *tgbotapi.CallbackQuer
 		b.buildApprovedCardText(ctx, result, lz), nil)
 
 	// DM the author.
-	deciderDisplay := actorDisplayFrom(cb.From)
+	deciderDisplay := ru.DisplayName
 	if result.Author != nil && result.Author.TelegramID != 0 {
 		m := tgbotapi.NewMessage(result.Author.TelegramID, lz.Tf(i18n.MsgResultApproved, deciderDisplay))
 		if _, err := b.api.Send(m); err != nil {
@@ -640,7 +680,14 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 		return
 	}
 
-	result, err := b.client.RejectGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleResultReject: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	result, err := b.client.RejectGameResult(ctx, id, ru.UserID, ru.DisplayName)
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
@@ -656,7 +703,7 @@ func (b *Bot) handleResultReject(ctx context.Context, cb *tgbotapi.CallbackQuery
 		lz.Tf(i18n.MsgResultRejectedOn, lz.FormatUpdatedAt(time.Now())), nil)
 
 	// DM the author with a resubmit button.
-	deciderDisplay := actorDisplayFrom(cb.From)
+	deciderDisplay := ru.DisplayName
 	if result.Author != nil && result.Author.TelegramID != 0 {
 		resubmitKB := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -680,7 +727,14 @@ func (b *Bot) handleResultWithdraw(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 
-	result, err := b.client.CancelGameResult(ctx, id, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleResultWithdraw: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	result, err := b.client.CancelGameResult(ctx, id, ru.UserID, ru.DisplayName)
 	if err != nil {
 		if errors.Is(err, client.ErrGameResultNotPending) {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgResultAlreadyDecided))
@@ -757,20 +811,6 @@ func (b *Bot) handleResultResubmit(ctx context.Context, cb *tgbotapi.CallbackQue
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// resolvePlayer fetches a Player by Telegram ID, returning nil if not found.
-func (b *Bot) resolvePlayer(ctx context.Context, tgID int64) (*models.Player, error) {
-	p, err := b.client.GetPlayerByTelegramID(ctx, tgID)
-	if err != nil {
-		// 404 means the player hasn't joined any game yet.
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return p, nil
-}
-
 // participationDisplayName returns a display string for a game participation.
 func participationDisplayName(p *models.GameParticipation) string {
 	if p.Player == nil {
@@ -801,7 +841,7 @@ func playerModelDisplayName(p *models.Player) string {
 }
 
 // validateResultScore checks that the score is consistent with the winner.
-func validateResultScore(score string, wiz *resultWizard, self *models.Player) error {
+func validateResultScore(score string, wiz *resultWizard, selfPlayerID *int64) error {
 	if score == "" || wiz.winnerID == nil {
 		return nil
 	}
@@ -814,7 +854,7 @@ func validateResultScore(score string, wiz *resultWizard, self *models.Player) e
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("bad score numbers")
 	}
-	if self != nil && *wiz.winnerID == self.ID {
+	if selfPlayerID != nil && *wiz.winnerID == *selfPlayerID {
 		if left < right {
 			return fmt.Errorf("winner's score must be ≥ loser's")
 		}

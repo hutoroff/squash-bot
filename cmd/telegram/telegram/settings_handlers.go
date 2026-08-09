@@ -15,15 +15,22 @@ import (
 func (b *Bot) handleToggleResultsOptOut(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	lz := b.userLocalizer(ctx, cb.From)
 
-	current, err := b.client.GetUserResultsOptOut(ctx, cb.From.ID)
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleToggleResultsOptOut: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	user, err := b.client.GetUser(ctx, ru.UserID)
 	if err != nil {
 		slog.Error("handleToggleResultsOptOut: get opt-out", "err", err, "user_id", cb.From.ID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 
-	newOptOut := !current
-	if err := b.client.SetUserResultsOptOut(ctx, cb.From.ID, newOptOut); err != nil {
+	newOptOut := !user.ResultsOptOut
+	if err := b.client.SetUserResultsOptOut(ctx, ru.UserID, newOptOut); err != nil {
 		slog.Error("handleToggleResultsOptOut: set opt-out", "err", err, "user_id", cb.From.ID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -70,7 +77,13 @@ func (b *Bot) handleSetUserLang(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
-	if err := b.client.SetUserDMLanguage(ctx, cb.From.ID, lang); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleSetUserLang: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if err := b.client.SetUserDMLanguage(ctx, ru.UserID, lang); err != nil {
 		slog.Error("handleSetUserLang: set language", "err", err, "user_id", cb.From.ID, "lang", lang)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -142,7 +155,13 @@ func (b *Bot) handleSetLang(ctx context.Context, cb *tgbotapi.CallbackQuery, lan
 		return
 	}
 
-	if err := b.client.SetGroupLanguage(ctx, groupID, lang, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleSetLang: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if err := b.client.SetGroupLanguage(ctx, groupID, lang, ru.UserID, ru.DisplayName); err != nil {
 		slog.Error("handleSetLang: set language", "err", err, "group_id", groupID, "lang", lang)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -244,8 +263,14 @@ func (b *Bot) handleToggleChangelog(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleToggleChangelog: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
 	newEnabled := !group.ChangelogEnabled
-	if err := b.client.SetGroupChangelog(ctx, groupID, newEnabled, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	if err := b.client.SetGroupChangelog(ctx, groupID, newEnabled, ru.UserID, ru.DisplayName); err != nil {
 		slog.Error("handleToggleChangelog: set changelog", "err", err, "group_id", groupID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -284,7 +309,13 @@ func (b *Bot) handleSetTz(ctx context.Context, cb *tgbotapi.CallbackQuery, tz st
 		return
 	}
 
-	if err := b.client.SetGroupTimezone(ctx, groupID, tz, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleSetTz: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if err := b.client.SetGroupTimezone(ctx, groupID, tz, ru.UserID, ru.DisplayName); err != nil {
 		slog.Error("handleSetTz: set timezone", "err", err, "group_id", groupID, "tz", tz)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
@@ -441,8 +472,14 @@ func (b *Bot) handleToggleLeaderboardNotify(ctx context.Context, cb *tgbotapi.Ca
 		return
 	}
 
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleToggleLeaderboardNotify: resolve user", "err", err, "user_id", cb.From.ID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
 	newEnabled := !group.LeaderboardNotificationsEnabled
-	if err := b.client.SetGroupLeaderboardNotifications(ctx, groupID, newEnabled, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	if err := b.client.SetGroupLeaderboardNotifications(ctx, groupID, newEnabled, ru.UserID, ru.DisplayName); err != nil {
 		slog.Error("handleToggleLeaderboardNotify: set", "err", err, "group_id", groupID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return

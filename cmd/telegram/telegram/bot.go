@@ -363,9 +363,15 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 	// Use the language of the person who triggered the membership change.
 	lz := b.userLocalizer(ctx, &update.From)
 
+	ru, err := b.resolveUser(ctx, &update.From)
+	if err != nil {
+		slog.Error("handleMyChatMember: resolve user", "user_id", update.From.ID, "err", err)
+		return
+	}
+
 	switch newStatus {
 	case "left", "kicked":
-		if err := b.client.RemoveGroup(ctx, chat.ID, update.From.ID, actorDisplayFrom(&update.From), chat.Title); err != nil {
+		if err := b.client.RemoveGroup(ctx, chat.ID, ru.UserID, ru.DisplayName, chat.Title); err != nil {
 			slog.Error("handleMyChatMember: remove group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot removed from group", "chat_id", chat.ID, "title", chat.Title)
@@ -374,7 +380,7 @@ func (b *Bot) handleMyChatMember(ctx context.Context, update *tgbotapi.ChatMembe
 		isAdmin := newStatus == "administrator"
 		isNewJoin := oldStatus == "left" || oldStatus == "kicked"
 
-		if err := b.client.UpsertGroup(ctx, chat.ID, chat.Title, isAdmin, update.From.ID, actorDisplayFrom(&update.From), isNewJoin); err != nil {
+		if err := b.client.UpsertGroup(ctx, chat.ID, chat.Title, isAdmin, ru.UserID, ru.DisplayName, isNewJoin); err != nil {
 			slog.Error("handleMyChatMember: upsert group", "chat_id", chat.ID, "err", err)
 		}
 		slog.Info("Bot membership changed", "chat_id", chat.ID, "title", chat.Title,
@@ -467,18 +473,29 @@ func (b *Bot) resolveUserLang(ctx context.Context, u *tgbotapi.User) i18n.Lang {
 	// Cap the preference lookup so a slow management service never stalls interactive handlers.
 	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	lang, err := b.client.GetUserDMLanguage(lookupCtx, u.ID)
+	ru, err := b.resolveUser(lookupCtx, u)
+	if err != nil {
+		b.logger.Debug("resolveUserLang: resolve error, using fallback", "user_id", u.ID, "err", err)
+		return fallback
+	}
+	user, err := b.client.GetUser(lookupCtx, ru.UserID)
 	if err != nil {
 		b.logger.Debug("resolveUserLang: API error, using fallback", "user_id", u.ID, "err", err)
 		return fallback
 	}
-	if lang == "" {
+	if user.DMLanguage == "" {
 		b.userLangCache.Store(u.ID, userLangPref{lang: fallback, hasOverride: false})
 		return fallback
 	}
-	resolved := i18n.Lang(lang)
+	resolved := i18n.Lang(user.DMLanguage)
 	b.userLangCache.Store(u.ID, userLangPref{lang: resolved, hasOverride: true})
 	return resolved
+}
+
+// resolveUser finds-or-creates the canonical user for a Telegram user. Every
+// handler that calls a user-keyed management method must resolve first.
+func (b *Bot) resolveUser(ctx context.Context, u *tgbotapi.User) (*client.ResolvedUser, error) {
+	return b.client.ResolveUser(ctx, u.ID, u.UserName, u.FirstName, u.LastName)
 }
 
 // userLocalizer returns a Localizer for the given Telegram user, honoring any

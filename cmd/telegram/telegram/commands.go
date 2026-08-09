@@ -76,7 +76,13 @@ func (b *Bot) handleCommandHelp(ctx context.Context, msg *tgbotapi.Message, lz *
 }
 
 func (b *Bot) handleCommandMyGame(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
-	game, err := b.client.GetNextGameForTelegramUser(ctx, msg.From.ID)
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("handleCommandMyGame: resolve user", "err", err)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchGame))
+		return
+	}
+	game, err := b.client.GetNextGameForUser(ctx, ru.UserID)
 	if err != nil {
 		slog.Error("handleCommandMyGame: get next game", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedFetchGame))
@@ -227,7 +233,13 @@ func (b *Bot) handleCommandGroups(ctx context.Context, msg *tgbotapi.Message, lz
 
 // handleCommandSettings shows the per-user DM settings menu (private chat only).
 func (b *Bot) handleCommandSettings(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
-	keyboard := b.buildSettingsKeyboard(ctx, msg.From.ID, lz)
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("handleCommandSettings: resolve user", "err", err)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	keyboard := b.buildSettingsKeyboard(ctx, ru.UserID, lz)
 	out := tgbotapi.NewMessage(msg.Chat.ID, lz.T(i18n.MsgSettingsTitle))
 	out.ReplyMarkup = keyboard
 	if _, err := b.api.Send(out); err != nil {
@@ -236,9 +248,9 @@ func (b *Bot) handleCommandSettings(ctx context.Context, msg *tgbotapi.Message, 
 }
 
 // buildSettingsKeyboard builds the /settings inline keyboard, fetching current opt-out state.
-func (b *Bot) buildSettingsKeyboard(ctx context.Context, tgID int64, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
+func (b *Bot) buildSettingsKeyboard(ctx context.Context, userID int64, lz *i18n.Localizer) tgbotapi.InlineKeyboardMarkup {
 	optOutBtnKey := i18n.BtnSettingsResultsOptOutOn
-	if optOut, err := b.client.GetUserResultsOptOut(ctx, tgID); err == nil && optOut {
+	if user, err := b.client.GetUser(ctx, userID); err == nil && user.ResultsOptOut {
 		optOutBtnKey = i18n.BtnSettingsResultsOptOutOff
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(

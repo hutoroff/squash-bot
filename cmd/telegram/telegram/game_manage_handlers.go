@@ -134,7 +134,7 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 		label := lz.Tf(i18n.MsgKickPlayerLabel, gameformat.PlayerDisplayName(p.Player))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
-				fmt.Sprintf("manage_kick:%d:%d", gameID, p.Player.TelegramID)),
+				fmt.Sprintf("manage_kick:%d:%d", gameID, p.PlayerID)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -148,26 +148,63 @@ func (b *Bot) handleManageShowPlayers(ctx context.Context, cb *tgbotapi.Callback
 	b.answerCallback(cb.ID, "")
 }
 
+// legacyKickTargetToPlayerID looks up maybeTelegramID against the game's current
+// roster and returns the matching PlayerID. Exists solely to translate
+// manage_kick buttons rendered before this callback's payload changed from a
+// Telegram ID to a player ID — see handleManageKickPlayer.
+func (b *Bot) legacyKickTargetToPlayerID(ctx context.Context, gameID, maybeTelegramID int64) (int64, bool) {
+	participations, err := b.client.GetParticipations(ctx, gameID)
+	if err != nil {
+		return 0, false
+	}
+	for _, p := range participations {
+		if p.Player != nil && p.Player.TelegramID == maybeTelegramID {
+			return p.PlayerID, true
+		}
+	}
+	return 0, false
+}
+
 // handleManageKickPlayer removes a player from the game and updates the group message.
-func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, telegramID int64) {
+func (b *Bot) handleManageKickPlayer(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID, playerID int64) {
 	lz := b.userLocalizer(ctx, cb.From)
 	game, ok := b.checkManageAdmin(ctx, cb, gameID, lz)
 	if !ok {
 		return
 	}
 
-	_, _, removed, err := b.client.KickPlayer(ctx, gameID, telegramID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManageKickPlayer: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	_, _, removed, err := b.client.KickPlayer(ctx, gameID, playerID, game.ChatID, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("handleManageKickPlayer: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
 	if !removed {
+		// The kick keyboard used to encode a Telegram ID in this position; a button
+		// rendered before this rekey and clicked afterwards would otherwise always
+		// 404. Retry once, translating it via the game's current roster.
+		if legacyID, ok := b.legacyKickTargetToPlayerID(ctx, gameID, playerID); ok {
+			_, _, removed, err = b.client.KickPlayer(ctx, gameID, legacyID, game.ChatID, ru.UserID, ru.DisplayName)
+			if err != nil {
+				slog.Error("handleManageKickPlayer: legacy kick", "err", err)
+				b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+				return
+			}
+		}
+	}
+	if !removed {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgKickPlayerNotFound))
 		return
 	}
 
-	slog.Info("Admin kicked player", "admin", cb.From.ID, "target_telegram_id", telegramID, "game_id", gameID)
+	slog.Info("Admin kicked player", "admin", cb.From.ID, "target_player_id", playerID, "game_id", gameID)
 
 	b.answerCallback(cb.ID, lz.T(i18n.MsgPlayerKicked))
 	b.scheduleGameMessageEdit(game.ID)
@@ -220,7 +257,14 @@ func (b *Bot) handleManageKickGuest(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID, game.ChatID, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManageKickGuest: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	_, _, removed, err := b.client.KickGuestByID(ctx, gameID, guestID, game.ChatID, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("handleManageKickGuest: kick", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -491,7 +535,14 @@ func (b *Bot) handleManageBook(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 	b.pendingManageBookCount.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 
-	result, err := b.client.BookGameCourts(ctx, gameID, state.groupID, cb.From.ID, actorDisplayFrom(cb.From), int(count))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManageBook: resolve user", "err", err)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+
+	result, err := b.client.BookGameCourts(ctx, gameID, state.groupID, ru.UserID, ru.DisplayName, int(count))
 	if err != nil {
 		slog.Error("handleManageBook: book courts", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -675,7 +726,14 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 
-	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, actorDisplayFrom(cb.From), cb.From.ID); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManageCourtsConfirm: resolve user", "err", err)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+
+	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, ru.DisplayName, ru.UserID); err != nil {
 		slog.Error("handleManageCourtsConfirm: update courts", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)
 		return
@@ -766,7 +824,14 @@ func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.
 	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.answerCallback(cb.ID, "")
 
-	canceledLabels, failed, err := b.client.UpdateCourtsAndCancelBookings(ctx, gameID, state.groupID, state.newCourts, actorDisplayFrom(cb.From), cb.From.ID)
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManageCourtsCancelConfirm: resolve user", "err", err)
+		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+
+	canceledLabels, failed, err := b.client.UpdateCourtsAndCancelBookings(ctx, gameID, state.groupID, state.newCourts, ru.DisplayName, ru.UserID)
 	if err != nil {
 		slog.Error("handleManageCourtsCancelConfirm: update+cancel", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)
@@ -829,7 +894,14 @@ func (b *Bot) handleManagePublish(ctx context.Context, cb *tgbotapi.CallbackQuer
 		return
 	}
 
-	_, err := b.client.PublishGame(ctx, gameID, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleManagePublish: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	_, err = b.client.PublishGame(ctx, gameID, ru.UserID, ru.DisplayName)
 	if err != nil {
 		if errors.Is(err, client.ErrAlreadyPublished) {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgPublishAlreadyDone))
@@ -894,7 +966,14 @@ func (b *Bot) processCourtsEdit(ctx context.Context, msg *tgbotapi.Message, game
 		return
 	}
 
-	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, actorDisplayFrom(msg.From), msg.From.ID); err != nil {
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("processCourtsEdit: resolve user", "err", err)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedUpdateCourts))
+		return
+	}
+
+	if err := b.client.UpdateCourts(ctx, gameID, game.ChatID, courts, ru.DisplayName, ru.UserID); err != nil {
 		slog.Error("processCourtsEdit: update courts", "err", err, "game_id", gameID)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgFailedUpdateCourts))
 		return

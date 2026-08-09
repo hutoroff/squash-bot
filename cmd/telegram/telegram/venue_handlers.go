@@ -287,7 +287,13 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 
 		gameDaysStr := gameDaysToString(wiz.gameDays)
 		preferredGameTimes := joinSelectedTimesOrdered(splitCSV(wiz.timeSlots), wiz.selectedPreferredTimes)
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, preferredGameTimes, wiz.autoBookingCourts, wiz.autoBookingEnabled, wiz.autoBookingCourtsCount, msg.From.ID, actorDisplayFrom(msg.From))
+		ru, err := b.resolveUser(ctx, msg.From)
+		if err != nil {
+			slog.Error("processVenueWizard: resolve user", "err", err)
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+			return
+		}
+		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, preferredGameTimes, wiz.autoBookingCourts, wiz.autoBookingEnabled, wiz.autoBookingCourtsCount, ru.UserID, ru.DisplayName)
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -632,7 +638,13 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 		venue.AutoBookingCourts = strings.Join(valid, ",")
 	}
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, msg.From.ID, actorDisplayFrom(msg.From))
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("processVenueEdit: resolve user", "err", err)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -689,7 +701,14 @@ func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 
-	if err := b.client.DeleteVenue(ctx, venueID, groupID, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleVenueDelete: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	if err := b.client.DeleteVenue(ctx, venueID, groupID, ru.UserID, ru.DisplayName); err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueHasActiveBookings))
@@ -773,7 +792,13 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 		}
 
 		venue.GameDays = gameDaysToString(state.selectedDays)
-		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, cb.From.ID, actorDisplayFrom(cb.From))
+		ru, err := b.resolveUser(ctx, cb.From)
+		if err != nil {
+			slog.Error("handleVenueDayConfirm: resolve user", "err", err)
+			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			return
+		}
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
 		if err != nil {
 			slog.Error("handleVenueDayConfirm: update venue", "err", err)
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -910,7 +935,14 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 	}
 	venue.PreferredGameTimes = preferredTime
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleVenuePtimeSet: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("handleVenuePtimeSet: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -987,7 +1019,14 @@ func (b *Bot) handleVenuePtimeConfirm(ctx context.Context, cb *tgbotapi.Callback
 	}
 	venue.PreferredGameTimes = preferredGameTimes
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleVenuePtimeConfirm: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("handleVenuePtimeConfirm: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -1224,7 +1263,13 @@ func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.Cal
 	if !venue.AutoBookingEnabled {
 		venue.AutoBookingCourts = ""
 	}
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, cb.From.ID, actorDisplayFrom(cb.From))
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleVenueToggleAutoBooking: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("handleVenueToggleAutoBooking: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -1431,7 +1476,14 @@ func (b *Bot) processVenueCredWizard(ctx context.Context, msg *tgbotapi.Message,
 
 		b.pendingVenueCredAdd.Delete(msg.Chat.ID)
 
-		cred, err := b.client.AddVenueCredential(ctx, wiz.venueID, wiz.groupID, wiz.login, text, wiz.priority, wiz.maxCourts, msg.From.ID, actorDisplayFrom(msg.From))
+		ru, err := b.resolveUser(ctx, msg.From)
+		if err != nil {
+			slog.Error("processVenueCredWizard: resolve user", "err", err)
+			b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+			return
+		}
+
+		cred, err := b.client.AddVenueCredential(ctx, wiz.venueID, wiz.groupID, wiz.login, text, wiz.priority, wiz.maxCourts, ru.UserID, ru.DisplayName)
 		if err != nil {
 			slog.Error("processVenueCredWizard: add credential", "err", err)
 			if strings.Contains(err.Error(), "already exists") {
@@ -1543,7 +1595,14 @@ func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 
-	if err := b.client.DeleteVenueCredential(ctx, venueID, credID, groupID, cb.From.ID, actorDisplayFrom(cb.From)); err != nil {
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("handleVenueCredDelete: resolve user", "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+
+	if err := b.client.DeleteVenueCredential(ctx, venueID, credID, groupID, ru.UserID, ru.DisplayName); err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
 			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCredHasActiveBookings))
