@@ -45,6 +45,11 @@ type GameRepository interface {
 	GetUpcomingGamesForFinalCheck(ctx context.Context) ([]*models.Game, error)
 	// MarkFinalCourtCheckDone sets final_court_check_done = true for the given game.
 	MarkFinalCourtCheckDone(ctx context.Context, gameID int64) error
+	// GetUpcomingGamesForHalfwayCheck returns future uncompleted games where
+	// halfway_court_check_done is false, with venue data joined.
+	GetUpcomingGamesForHalfwayCheck(ctx context.Context) ([]*models.Game, error)
+	// MarkHalfwayCourtCheckDone sets halfway_court_check_done = true for the given game.
+	MarkHalfwayCourtCheckDone(ctx context.Context, gameID int64) error
 	// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
 	// in a specific group within the result-submission window (`days`), ignoring the
 	// completed flag.

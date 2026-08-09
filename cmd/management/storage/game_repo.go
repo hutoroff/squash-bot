@@ -191,6 +191,48 @@ func (r *GameRepo) MarkFinalCourtCheckDone(ctx context.Context, gameID int64) er
 	return err
 }
 
+// GetUpcomingGamesForHalfwayCheck returns all future uncompleted games where halfway_court_check_done
+// is false, with venue data joined. Used by HalfwayCourtCheckJob.
+func (r *GameRepo) GetUpcomingGamesForHalfwayCheck(ctx context.Context) ([]*models.Game, error) {
+	const q = `
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		       g.notified_day_before, g.completed, g.created_at,
+		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
+		FROM games g
+		LEFT JOIN venues v ON v.id = g.venue_id
+		WHERE g.completed = false
+		  AND g.halfway_court_check_done = false
+		  AND g.game_date > now()
+		ORDER BY g.game_date`
+
+	slog.Debug("GameRepo.GetUpcomingGamesForHalfwayCheck")
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("query upcoming games for halfway check: %w", err)
+	}
+	defer rows.Close()
+
+	var games []*models.Game
+	for rows.Next() {
+		g, err := scanGameWithVenue(rows)
+		if err != nil {
+			return nil, err
+		}
+		games = append(games, g)
+	}
+	return games, rows.Err()
+}
+
+func (r *GameRepo) MarkHalfwayCourtCheckDone(ctx context.Context, gameID int64) error {
+	const q = `UPDATE games SET halfway_court_check_done = true WHERE id = $1`
+	slog.Debug("GameRepo.MarkHalfwayCourtCheckDone", "game_id", gameID)
+	_, err := r.pool.Exec(ctx, q, gameID)
+	return err
+}
+
 func (r *GameRepo) MarkCompleted(ctx context.Context, gameID int64) error {
 	const q = `UPDATE games SET completed = true WHERE id = $1`
 	slog.Debug("GameRepo.MarkCompleted", "game_id", gameID)

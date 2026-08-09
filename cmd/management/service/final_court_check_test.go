@@ -67,6 +67,10 @@ func (r *stubGameRepoFCC) MarkFinalCourtCheckDone(_ context.Context, gameID int6
 	r.markedIDs = append(r.markedIDs, gameID)
 	return r.markErr
 }
+func (r *stubGameRepoFCC) GetUpcomingGamesForHalfwayCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoFCC) MarkHalfwayCourtCheckDone(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoFCC) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
 	return false, nil
 }
