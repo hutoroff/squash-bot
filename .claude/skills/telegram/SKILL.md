@@ -52,8 +52,13 @@ cmd/telegram/
 │                              renderPreferredTimeEditKeyboard, joinSelectedTimesOrdered,
 │                              processVenueWizard, processVenueEdit
 └── client/
-    ├── interface.go         — ManagementClient interface (39 methods across 5 groups)
-    └── client.go            — *Client HTTP implementation (satisfies ManagementClient structurally)
+    ├── interface.go         — ManagementClient interface, keyed by canonical userID/playerID
+    │                          throughout (never a raw Telegram ID except inside ResolveUser
+    │                          itself); ResolveUser(ctx, tgID, username, firstName, lastName)
+    │                          (*ResolvedUser{UserID, PlayerID *int64, DisplayName, IsServerOwner}, error)
+    │                          and GetUser(ctx, userID) (*models.User, error) are the identity primitives
+    └── client.go            — *Client HTTP implementation (satisfies ManagementClient structurally);
+                               ResolveUser posts to management's POST /api/v1/identities/resolve
 ```
 
 ---
@@ -85,6 +90,46 @@ type Bot struct {
 ```
 
 `New()` signature: `New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, logger *slog.Logger) *Bot`
+
+### Identity resolution (`resolveUser`, `bot.go`)
+
+The bot has no local notion of "who is this Telegram user" beyond the update itself — every handler
+that calls a user-keyed management method (join/skip/guest, kick, publish, court edits, venue CRUD,
+credentials, group settings, results, preferences, leaderboard) must resolve first:
+
+```go
+func (b *Bot) resolveUser(ctx context.Context, u *tgbotapi.User) (*client.ResolvedUser, error) {
+    return b.client.ResolveUser(ctx, u.ID, u.UserName, u.FirstName, u.LastName)
+}
+```
+
+This calls management's `POST /api/v1/identities/resolve`, which finds-or-creates the canonical
+`(UserID, PlayerID *int64, DisplayName, IsServerOwner)` for the Telegram user. `PlayerID` is `nil`
+until the user's first game join. Handlers pass `ru.UserID`/`ru.DisplayName` wherever the old code
+passed a raw Telegram ID/derived display string — there is no `actorDisplayFrom` helper anymore,
+`ResolvedUser.DisplayName` (computed identically by management: `"@username"` else trimmed
+`"first last"`) fully supersedes it.
+
+`resolveUserLang` (used by `userLocalizer` for DM language) also resolves internally and calls
+`GetUser(ctx, ru.UserID)` to read `DMLanguage`, caching the result in `userLangCache` keyed by the
+Telegram ID (cheap to key by — the cache is purely a local optimization, not an identity source).
+This means a cold cache costs **two** management calls (resolve + get-user) instead of one; accepted
+as a deliberate tradeoff (see the plan's Risk #5) rather than threading a resolved userID through
+every call site that only indirectly needs a localizer.
+
+**Result wizard note:** `result_handlers.go` used to call a since-deleted `resolvePlayer`/
+`GetPlayerByTelegramID` to find the caller's own player row for "which participant is me" checks
+(opponent picker exclusion, winner-is-me detection, score-side validation). That's gone — `ru.PlayerID`
+from `resolveUser` is the replacement; a `nil` PlayerID means the same thing `resolvePlayer` returning
+`(nil, nil)` used to mean (caller has never joined a game in this group), handled identically
+(`MsgResultNotInGame`).
+
+**Stale-keyboard fallback:** `manage_kick:<gameID>:<playerID>` used to encode a Telegram ID in that
+last position (pre-rekey). A button rendered before this rekey and clicked afterwards would 404
+(playerIDs are small sequential ints; a 9-10 digit Telegram ID essentially never collides with one).
+`handleManageKickPlayer` retries once via `legacyKickTargetToPlayerID`, matching the given value
+against the game's current roster by `Player.TelegramID` before giving up — closes the narrow
+window without a new/versioned callback action.
 
 ---
 
@@ -409,24 +454,44 @@ If the opponent has never DM'd the bot, the approval message can't be delivered;
 
 ## ManagementClient interface (`client/interface.go`)
 
-44 methods across 6 groups. `*client.Client` satisfies this structurally — no explicit declaration.
+51 methods across 8 groups. `*client.Client` satisfies this structurally — no explicit declaration.
+Every method is keyed by canonical `userID`/`playerID`; the **only** exception is `ResolveUser`,
+which is the one place a raw Telegram ID is allowed to enter the client at all.
 
 ```
+Identity:       ResolveUser(ctx, tgID int64, username, firstName, lastName string) (*ResolvedUser, error),
+                GetUser(ctx, userID int64) (*models.User, error),
+                SetUserDMLanguage(ctx, userID int64, language string) error,
+                SetUserResultsOptOut(ctx, userID int64, optOut bool) error
 Games:          CreateGame, GetGameByID, UpdateMessageID, UpdateCourts,
-                GetUpcomingGamesByChatIDs, GetNextGameForTelegramUser,
-                PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error),
+                GetUpcomingGamesByChatIDs, GetNextGameForUser,
+                PublishGame(ctx, gameID, actorUserID int64, actorDisplay string) (*models.Game, error),
                 ListActiveCourtBookings(ctx, gameID int64, courts []string) ([]CourtBookingInfo, error),
-                UpdateCourtsAndCancelBookings(ctx, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error),
-                BookGameCourts(ctx, gameID, groupID, actorTgID int64, actorDisplay string, count int) (*BookGameCourtsResult, error)
-Participations: Join, Skip, AddGuest, RemoveGuest, GetParticipations, GetGuests,
-                KickPlayer, KickGuestByID
+                UpdateCourtsAndCancelBookings(ctx, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64) (canceledLabels []string, failed []CancelFailure, err error),
+                BookGameCourts(ctx, gameID, groupID, actorUserID int64, actorDisplay string, count int) (*BookGameCourtsResult, error)
+Participations: Join(ctx, gameID, chatID, userID int64), Skip, AddGuest, RemoveGuest,
+                GetParticipations, GetGuests,
+                KickPlayer(ctx, gameID, playerID, groupID, actorUserID int64, actorDisplay string) (...),
+                KickGuestByID
 Groups:         UpsertGroup, RemoveGroup, GetGroups, GroupExists, GetGroupByID,
-                SetGroupLanguage, SetGroupTimezone, SetGroupChangelog, SetGroupAutoBookingAllowed
+                SetGroupLanguage, SetGroupTimezone, SetGroupChangelog,
+                SetGroupLeaderboardNotifications, SetGroupAutoBookingAllowed
 Venues:         CreateVenue, GetVenuesByGroup, GetVenueByID, UpdateVenue, DeleteVenue,
                 GetVenueBookingReadiness(ctx, venueID, groupID int64) (*BookingReadiness, error)
-VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts),
+VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, priority, maxCourts, actorUserID int64, actorDisplay string),
                   ListVenueCredentials, DeleteVenueCredential, ListVenueCredentialPriorities
+Leaderboard:    GetLeaderboard(ctx, groupID int64) ([]LeaderboardEntry, error),
+                GetPlayerGroups(ctx, userID int64) ([]models.Group, error)
+GameResults:    SubmitGameResult(ctx, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error),
+                GetGameResult, SetGameResultApprovalMessage,
+                ApproveGameResult(ctx, id, actorUserID int64, actorDisplay string) (*GameResultDTO, error),
+                RejectGameResult, CancelGameResult,
+                GetRecentCompletedGames(ctx, userID, groupID int64) ([]models.PlayerGame, error)
 ```
+
+`GetPlayerByTelegramID`, `GetUserDMLanguage(ctx, telegramID)`, `GetUserResultsOptOut(ctx, telegramID)`,
+and `GetNextGameForTelegramUser` no longer exist — `GetUser` + `resolveUser` (see above) replace all
+of them.
 
 **Client-side types** (defined in `client.go`, used by handlers):
 - `CourtBookingInfo{CourtLabel, GameTime, MatchID string}` — returned by `ListActiveCourtBookings`
@@ -436,7 +501,7 @@ VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, pri
 
 **Error propagation:** `client.go` defines `HTTPError{StatusCode int, Message string}` — a typed error returned by `parseErrorBody`. Handlers use `errors.As(err, &httpErr)` to branch on specific HTTP status codes (e.g. 409 Conflict) before falling through to generic error messages. Always return `*HTTPError` from `parseErrorBody` for new error cases; do not wrap with `fmt.Errorf`.
 
-`client.go` also defines package-level sentinel errors for specific status codes: `ErrAlreadyPublished` (mapped from HTTP 409 on `PublishGame`), `ErrAutoBookingNotAvailable` (mapped from HTTP 409 on `BookGameCourts`). Handlers use `errors.Is` to show dedicated messages.
+`client.go` also defines package-level sentinel errors for specific status codes: `ErrAlreadyPublished` (mapped from HTTP 409 on `PublishGame`), `ErrAutoBookingNotAvailable` (mapped from HTTP 409 on `BookGameCourts`), `ErrGameResultNotPending` (HTTP 409 on approve/reject/cancel — result already decided), `ErrResultOpponentOptedOut` (HTTP 409 with body `opponent_opted_out` on `SubmitGameResult`). Handlers use `errors.Is` to show dedicated messages.
 
 **Adding a new management API call:** Add the method to `ManagementClient` in `client/interface.go`, implement it in `client/client.go`, then use it in the appropriate handler file.
 
@@ -445,7 +510,7 @@ VenueCredentials: AddVenueCredential(ctx, venueID, groupID, login, password, pri
 ## Language resolution
 
 - **Group messages** (game announcements, callback responses that edit group messages): use `b.groupLocalizer(ctx, chatID)` which calls `GetGroupByID` and reads `group.Language`
-- **Private messages** (DMs, wizard interactions): use `b.userLocalizer(msg.From.LanguageCode)` which reads the Telegram user's `LanguageCode` field
+- **Private messages** (DMs, wizard interactions): use `b.userLocalizer(ctx, u *tgbotapi.User)`, which calls `resolveUserLang` — on a cache miss this resolves the user (`resolveUser`) and calls `GetUser` to read `DMLanguage`, falling back to `i18n.Normalize(u.LanguageCode)` on any resolve/API error, then caches the result in `userLangCache` (keyed by Telegram ID) so repeat calls in the same process don't re-hit management
 - Never use `userLocalizer` for group-visible text; never use `groupLocalizer` for private DMs
 
 ---
