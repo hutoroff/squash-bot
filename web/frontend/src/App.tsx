@@ -5,6 +5,9 @@ import Dashboard from './components/Dashboard'
 import GamesPage from './components/GamesPage'
 import AuditPage from './components/AuditPage'
 import GroupsPage from './components/GroupsPage'
+import GroupSettingsPage from './components/GroupSettingsPage'
+import VenueFormPage from './components/VenueFormPage'
+import SettingsPage from './components/SettingsPage'
 import type { User } from './types'
 
 function App() {
@@ -36,9 +39,11 @@ function App() {
         <Route path="/" element={<Dashboard user={user} />}>
           <Route index element={<GamesPage user={user} />} />
           <Route path="audit" element={<AuditPage user={user} />} />
-          {user.is_server_owner && (
-            <Route path="groups" element={<GroupsPage user={user} />} />
-          )}
+          <Route path="groups" element={<GroupsPage user={user} />} />
+          <Route path="groups/:chatId" element={<GroupSettingsPage user={user} />} />
+          <Route path="groups/:chatId/venues/new" element={<VenueFormPage user={user} />} />
+          <Route path="groups/:chatId/venues/:venueId" element={<VenueFormPage user={user} />} />
+          <Route path="settings" element={<SettingsPage user={user} />} />
         </Route>
       </Routes>
     </BrowserRouter>

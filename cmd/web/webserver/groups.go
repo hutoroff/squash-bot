@@ -1,132 +1,78 @@
 package webserver
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"time"
+	"strconv"
 )
 
-// GroupsHandler proxies GET /api/groups to the management service.
-// Access is restricted to server owners (SERVICE_ADMIN_IDS).
+// GroupsHandler proxies the group settings endpoints to the management service.
+// Every group-scoped route is gated by authorizeGroup: server owners may manage
+// any group, other users only the groups they administer in Telegram.
 type GroupsHandler struct {
-	auth       *AuthHandler
-	mgmtURL    string
-	mgmtSecret string
-	httpClient *http.Client
+	mgmtClient
 }
 
 // NewGroupsHandler creates a GroupsHandler.
 func NewGroupsHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *GroupsHandler {
-	return &GroupsHandler{
-		auth:       auth,
-		mgmtURL:    mgmtURL,
-		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-	}
+	return &GroupsHandler{newMgmtClient(auth, mgmtURL, mgmtSecret)}
 }
 
 // handleListGroups handles GET /api/groups.
-// Requires an authenticated session belonging to a server owner.
+// Returns the groups the caller may manage — all of them for a server owner,
+// the ones they administer otherwise, and [] for a plain user.
 func (g *GroupsHandler) handleListGroups(w http.ResponseWriter, r *http.Request) {
-	claims, err := g.auth.claimsFromRequest(r)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+	claims, ok := g.claims(w, r)
+	if !ok {
 		return
 	}
+	g.proxy(w, r, http.MethodGet, fmt.Sprintf("/api/v1/admins/%d/groups", claims.TelegramID), nil)
+}
 
-	if !g.auth.serverOwnerIDs[claims.TelegramID] {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"forbidden"}`)) //nolint:errcheck
+// handleGetGroup handles GET /api/groups/{chatID}.
+func (g *GroupsHandler) handleGetGroup(w http.ResponseWriter, r *http.Request) {
+	_, chatID, ok := g.authorizeGroup(w, r)
+	if !ok {
 		return
 	}
+	g.proxy(w, r, http.MethodGet, fmt.Sprintf("/api/v1/groups/%d", chatID), nil)
+}
 
-	upstream := fmt.Sprintf("%s/api/v1/groups", g.mgmtURL)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream, nil)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
-		return
+// patchGroupSetting returns a handler for PATCH /api/groups/{chatID}/<suffix>.
+// The client body is forwarded with the actor fields overwritten from the JWT.
+func (g *GroupsHandler) patchGroupSetting(suffix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, chatID, ok := g.authorizeGroup(w, r)
+		if !ok {
+			return
+		}
+		body, ok := decodeWithActor(w, r, claims, nil)
+		if !ok {
+			return
+		}
+		g.proxy(w, r, http.MethodPatch, fmt.Sprintf("/api/v1/groups/%d/%s", chatID, suffix), body)
 	}
-	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body) //nolint:errcheck
 }
 
 // handleSetGroupAutoBookingAllowed handles PATCH /api/groups/{chatID}/auto-booking-allowed.
-// Requires an authenticated session belonging to a server owner.
+// Server-owner only; the management service re-checks the actor.
 func (g *GroupsHandler) handleSetGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Request) {
-	claims, err := g.auth.claimsFromRequest(r)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+	claims, ok := g.claims(w, r)
+	if !ok {
 		return
 	}
 	if !g.auth.serverOwnerIDs[claims.TelegramID] {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"forbidden"}`)) //nolint:errcheck
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-
-	var reqBody struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"invalid request body"}`)) //nolint:errcheck
-		return
-	}
-
-	displayName := strings.TrimSpace(claims.FirstName + " " + claims.LastName)
-	upstreamBody, _ := json.Marshal(map[string]any{
-		"enabled":           reqBody.Enabled,
-		"actor_telegram_id": claims.TelegramID,
-		"actor_display":     displayName,
-	})
-
-	chatID := r.PathValue("chatID")
-	upstream := fmt.Sprintf("%s/api/v1/groups/%s/auto-booking-allowed", g.mgmtURL, chatID)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPatch, upstream, bytes.NewReader(upstreamBody))
+	chatID, err := strconv.ParseInt(r.PathValue("chatID"), 10, 64)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"internal error"}`)) //nolint:errcheck
+		writeAPIError(w, http.StatusBadRequest, "invalid chat id")
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+g.mgmtSecret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+	body, ok := decodeWithActor(w, r, claims, nil)
+	if !ok {
 		return
 	}
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body) //nolint:errcheck
+	g.proxy(w, r, http.MethodPatch, fmt.Sprintf("/api/v1/groups/%d/auto-booking-allowed", chatID), body)
 }

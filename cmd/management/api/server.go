@@ -28,7 +28,7 @@ type Handler struct {
 	partService      *service.ParticipationService
 	venueService     *service.VenueService
 	venueCredService *service.VenueCredentialService
-	groupRepo        *storage.GroupRepo
+	groupRepo        service.GroupRepository
 	playerRepo       *storage.PlayerRepo
 	userPrefsRepo    *storage.UserPreferencesRepo
 	auditSvc         *service.AuditService
@@ -47,7 +47,7 @@ func NewHandler(
 	partService *service.ParticipationService,
 	venueService *service.VenueService,
 	venueCredService *service.VenueCredentialService,
-	groupRepo *storage.GroupRepo,
+	groupRepo service.GroupRepository,
 	playerRepo *storage.PlayerRepo,
 	userPrefsRepo *storage.UserPreferencesRepo,
 	auditSvc *service.AuditService,
@@ -132,6 +132,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)
+	mux.HandleFunc("GET /api/v1/admins/{tgID}/groups", h.listAdminGroups)
 
 	// Venues
 	mux.HandleFunc("POST /api/v1/venues", h.createVenue)

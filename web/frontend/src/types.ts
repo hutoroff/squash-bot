@@ -72,8 +72,64 @@ export interface BotGroup {
   bot_is_admin: boolean
   language: string
   timezone: string
+  changelog_enabled: boolean
+  leaderboard_notifications_enabled: boolean
   auto_booking_allowed: boolean
   added_at: string
+}
+
+export interface Venue {
+  id: number
+  group_id: number
+  name: string
+  address?: string
+  /** Comma-separated court numbers, e.g. "1,2,3" */
+  courts: string
+  /** Comma-separated HH:MM times, e.g. "18:00,19:00" */
+  time_slots: string
+  /** Comma-separated Go time.Weekday ints, e.g. "0,3" = Sunday+Wednesday */
+  game_days: string
+  grace_period_hours: number
+  booking_opens_days: number
+  auto_booking_enabled: boolean
+  /** Comma-separated HH:MM times; must be a subset of time_slots */
+  preferred_game_times: string
+  /** Ordered comma-separated court numbers tried first when auto-booking */
+  auto_booking_courts: string
+  auto_booking_courts_count: number
+  created_at: string
+}
+
+/** Payload for creating or updating a venue — group_id is forced server-side. */
+export type VenueInput = Omit<Venue, 'id' | 'group_id' | 'created_at'>
+
+export interface VenueCredential {
+  id: number
+  venue_id: number
+  login: string
+  priority: number
+  max_courts: number
+  last_error_at?: string
+  created_at: string
+}
+
+export type BookingReadinessReason =
+  | ''
+  | 'credentials_not_configured'
+  | 'auto_booking_disabled'
+  | 'auto_booking_disallowed_by_owner'
+  | 'no_usable_credentials'
+
+export interface BookingReadiness {
+  ready: boolean
+  max_courts: number
+  reason: BookingReadinessReason
+}
+
+export interface UserPreferences {
+  telegram_id: number
+  dm_language: string
+  results_opt_out: boolean
 }
 
 export type ParticipationStatus = 'registered' | 'skipped'
