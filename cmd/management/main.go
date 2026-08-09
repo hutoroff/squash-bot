@@ -137,13 +137,14 @@ func main() {
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
 	finalCourtCheckJob := service.NewFinalCourtCheckJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, cancellationJob, loc, logger, pollWindow)
+	halfwayCourtCheckJob := service.NewHalfwayCourtCheckJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, cancellationJob, loc, logger)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, gameService, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
 	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, pool, gameResultRepo, playerRepo, auditSvc, logger)
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)
-	scheduler := service.NewScheduler(logger, cancellationJob, finalCourtCheckJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob, postLeaderboardJob)
+	scheduler := service.NewScheduler(logger, cancellationJob, halfwayCourtCheckJob, finalCourtCheckJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob, postLeaderboardJob)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {

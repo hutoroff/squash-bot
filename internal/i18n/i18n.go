@@ -92,6 +92,11 @@ const (
 	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = new capacity, %d = new courts count
 	SchedFinalCheckOddCanceled = "sched.final_check_odd_canceled"
 
+	// Halfway court check — sent at the midpoint between booking creation and the grace-period
+	// deadline, when half (rounded down) of the currently-unneeded courts are released early.
+	// Args: %s = canceled courts (comma-sep), %s = game date+time, %d = player count, %d = capacity, %d = courts remaining
+	SchedHalfwayCheckCanceled = "sched.halfway_check_canceled"
+
 	// Game keyboard buttons
 	BtnImIn     = "btn.im_in"
 	BtnIllSkip  = "btn.ill_skip"
@@ -513,6 +518,8 @@ var translations = map[Lang]map[string]string{
 		SchedFinalCheckCanceled:    "⏰ Last-minute check: courts #%s released. Game on %s is set! %d/%d players, %d courts remain.",
 		SchedFinalCheckOddCanceled: "⏰ Last-minute check: courts #%s released. 1 free spot for game on %s. %d/%d players, %d courts remain.",
 
+		SchedHalfwayCheckCanceled: "📉 Early check: courts #%s released for game on %s. %d/%d players, %d courts remain.",
+
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
 		BtnIllSkip:  "I'll skip",
@@ -890,6 +897,8 @@ var translations = map[Lang]map[string]string{
 		SchedFinalCheckCanceled:    "⏰ Letzter Check: Plätze #%s freigegeben. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze verbleiben.",
 		SchedFinalCheckOddCanceled: "⏰ Letzter Check: Plätze #%s freigegeben. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze verbleiben.",
 
+		SchedHalfwayCheckCanceled: "📉 Frühzeitiger Check: Plätze #%s für das Spiel am %s freigegeben. %d/%d Spieler, %d Plätze verbleiben.",
+
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
 		BtnIllSkip:  "Ich passe",
@@ -1262,6 +1271,8 @@ var translations = map[Lang]map[string]string{
 		SchedFinalCheckAllCanceled: "⏰ Финальная проверка: все корты (%s) освобождены для игры %s. Игра не состоится.",
 		SchedFinalCheckCanceled:    "⏰ Финальная проверка: корт(ы) #%s освобождены. Игра %s — всё готово! %d/%d игроков, %d корт(а) остались.",
 		SchedFinalCheckOddCanceled: "⏰ Финальная проверка: корт(ы) #%s освобождены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) остались.",
+
+		SchedHalfwayCheckCanceled: "📉 Ранняя проверка: корт(ы) #%s освобождены для игры %s. %d/%d игроков, %d корт(а) остались.",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",

@@ -179,6 +179,12 @@ func (r *stubGameRepoForDayAfter) GetUpcomingGamesForFinalCheck(_ context.Contex
 func (r *stubGameRepoForDayAfter) MarkFinalCourtCheckDone(_ context.Context, _ int64) error {
 	return nil
 }
+func (r *stubGameRepoForDayAfter) GetUpcomingGamesForHalfwayCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForDayAfter) MarkHalfwayCourtCheckDone(_ context.Context, _ int64) error {
+	return nil
+}
 func (r *stubGameRepoForDayAfter) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
 	return false, nil
 }

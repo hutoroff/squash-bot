@@ -221,6 +221,10 @@ func (r *stubGameRepoForLB) GetUpcomingGamesForFinalCheck(_ context.Context) ([]
 	return nil, nil
 }
 func (r *stubGameRepoForLB) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
+func (r *stubGameRepoForLB) GetUpcomingGamesForHalfwayCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *stubGameRepoForLB) MarkHalfwayCourtCheckDone(_ context.Context, _ int64) error { return nil }
 func (r *stubGameRepoForLB) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
 	return false, nil
 }

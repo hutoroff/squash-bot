@@ -69,7 +69,9 @@ TelegramAPI      — Send, Request, GetChatAdministrators (satisfied by *tgbotap
 Notifier         — EditGameMessage(ctx, gameID int64)
 GameRepository   — Create, GetByID, GetUpcomingGames, UpdateMessageID, UpdateCourts,
                    GetNextGameForTelegramUser, GetGamesForPlayer, GetUpcomingUnnotifiedGames,
-                   GetUncompletedGamesByGroupAndDay, MarkNotifiedDayBefore, MarkCompleted
+                   GetUncompletedGamesByGroupAndDay, MarkNotifiedDayBefore, MarkCompleted,
+                   GetUpcomingGamesForFinalCheck, MarkFinalCourtCheckDone,
+                   GetUpcomingGamesForHalfwayCheck, MarkHalfwayCourtCheckDone
 PlayerRepository — Upsert, GetByTelegramID
 ParticipationRepository — Upsert, GetByGame, DeleteByGameAndPlayer, GetRegisteredCount
 GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCountByGame
@@ -316,6 +318,7 @@ Time-slot-aware booking lookup. Calls `autoBookingResultRepo.GetByGameID(game.ID
 | Job | File | Window | Dedup guard |
 |-----|------|--------|-------------|
 | CancellationReminderJob | cancellation_reminder.go | ±2m30s of `game_date - (gracePeriod+6)h` | `notified_day_before` flag |
+| HalfwayCourtCheckJob | halfway_court_check.go | ±2m30s of midpoint(`court_bookings.created_at`, `game_date - gracePeriod·h`) | `halfway_court_check_done` flag |
 | FinalCourtCheckJob | final_court_check.go | ±2m30s of `game_date - gracePeriod·h - 15m` | `final_court_check_done` flag |
 | BookingReminderJob | booking_reminder.go | [10:00, 10:05) group local time | `last_booking_reminder_at` per venue (date-scoped) |
 | AutoBookingJob | auto_booking.go | [00:00, 00:05) group local time | `last_auto_booking_at` per venue (date-scoped) |
@@ -347,6 +350,10 @@ Group notification scenarios:
 - `odd_canceled` — odd count, some canceled, 1 free spot
 - `all_canceled` — all courts canceled, game will not happen
 - `even_no_cancel` — even count < capacity, nothing canceled (booking service absent or no owned bookings)
+
+**HalfwayCourtCheckJob** (`halfway_court_check.go`): Releases courts much earlier than the other two jobs — at the midpoint between when the courts were booked and the grace-period deadline — as a conservative early release (only half of the currently-unneeded courts, rounded down; players may still join before the deadline proper). Reuses `CancellationReminderJob.cancelUnusedCourts`/`loadCourtBookingEntries` via the `halfwayCourtCanceler` interface (widens `unusedCourtCanceler`), so it shares all court-selection, per-credential cancellation, and DB-update logic with `CancellationReminderJob`.
+
+Per game: if `now` is past `game_date − gracePeriod·h`, marks done immediately (the reminder/final-check jobs own cleanup from here). Otherwise loads active `court_bookings` entries for the game; if none exist yet (auto-booking may not have run), skips **without** marking done so it's retried next poll. `bookedAt = min(created_at)` over those entries; `halfwayAt = bookedAt + (deadline − bookedAt)/2`, gated by `±pollWindow` (or `force`). `unneeded = (capacity − count) / 2` (same formula as the other jobs); `courtsToCancel = floor(unneeded / 2)` — zero marks done and sends nothing. Sends a group notification only when courts were actually canceled (reply to the pinned announcement); cancellation failures DM group admins via `notifyAdminsCancellationFailure`. Can never cancel all courts (`floor(c/2) < c` for `c ≥ 1`), so there is no "game will not happen" scenario.
 
 **BookingReminderJob**: Fires in the `[10:00, 10:05)` window per group timezone for venues with matching `game_days`. Deduplicates via `last_booking_reminder_at` (date-scoped). Injected with `*GameService` to call `PublishGame`.
 
@@ -441,7 +448,8 @@ Owns Glicko-2 updates and leaderboard queries. Constructor takes the same pool s
 
 ```sql
 games:              id, chat_id, message_id, game_date, courts_count, courts,
-                    venue_id (FK→venues ON DELETE SET NULL), notified_day_before, completed
+                    venue_id (FK→venues ON DELETE SET NULL), notified_day_before, completed,
+                    final_court_check_done, halfway_court_check_done
 players:            id, telegram_id UNIQUE, username, first_name, last_name
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id

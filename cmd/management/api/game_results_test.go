@@ -187,6 +187,10 @@ func (r *apiStubGameRepo) GetUpcomingGamesForFinalCheck(_ context.Context) ([]*m
 	return nil, nil
 }
 func (r *apiStubGameRepo) MarkFinalCourtCheckDone(_ context.Context, _ int64) error { return nil }
+func (r *apiStubGameRepo) GetUpcomingGamesForHalfwayCheck(_ context.Context) ([]*models.Game, error) {
+	return nil, nil
+}
+func (r *apiStubGameRepo) MarkHalfwayCourtCheckDone(_ context.Context, _ int64) error { return nil }
 func (r *apiStubGameRepo) PlayerCanAccessGame(_ context.Context, _, _ int64) (bool, error) {
 	return r.canAccess, r.canAccessErr
 }
