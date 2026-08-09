@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { User, UserPreferences } from '../types'
 import { DEFAULT_PREFERENCES, fetchMyPreferences, updateDMLanguage, updateResultsOptOut } from '../api/prefs'
 import { ApiError } from '../api/http'
@@ -27,18 +27,27 @@ export default function SettingsPage(_props: SettingsPageProps) {
       .finally(() => setLoading(false))
   }, [])
 
-  // Optimistic update: show the new value immediately, roll back if the save fails.
-  const save = useCallback(async (patch: Partial<UserPreferences>, persist: () => Promise<void>) => {
-    const previous = prefs
-    setPrefs({ ...previous, ...patch })
+  // Optimistic update: show the new value immediately, roll back only the patched
+  // fields if the save fails. Saves are chained so overlapping edits to different
+  // controls still reach the server in the order the user made them.
+  const queue = useRef<Promise<void>>(Promise.resolve())
+  const save = useCallback((patch: Partial<UserPreferences>, persist: () => Promise<void>) => {
+    let previous: Partial<UserPreferences> = {}
+    setPrefs(prev => {
+      previous = Object.fromEntries(Object.keys(patch).map(k => [k, prev[k as keyof UserPreferences]]))
+      return { ...prev, ...patch }
+    })
     setError(null)
-    try {
-      await persist()
-    } catch (err) {
-      setPrefs(previous)
-      setError(err instanceof Error ? err.message : 'Failed to save')
-    }
-  }, [prefs])
+    queue.current = queue.current.then(async () => {
+      try {
+        await persist()
+      } catch (err) {
+        setPrefs(prev => ({ ...prev, ...previous }))
+        setError(err instanceof Error ? err.message : 'Failed to save')
+      }
+    })
+    return queue.current
+  }, [])
 
   if (loading) return <p className="groups-page__loading">Loading…</p>
 

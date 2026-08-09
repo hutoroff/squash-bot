@@ -251,6 +251,22 @@ func TestPatchGroupSetting_InjectsActorFields(t *testing.T) {
 	}
 }
 
+// A literal `null` decodes into a nil map; injecting the actor fields into it
+// used to panic instead of rejecting the body.
+func TestPatchGroupSetting_NullBody_400(t *testing.T) {
+	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`, status: http.StatusNoContent}
+	mgmt := newMgmtServer(t, rec)
+	g, auth := testGroupsHandler(t, mgmt, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/language", strings.NewReader(`null`))
+	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
+	w := routeAndServe("PATCH /api/groups/{chatID}/language", g.patchGroupSetting("language"), req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
 func TestPatchGroupSetting_NotAdmin_403(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[]`}
 	mgmt := newMgmtServer(t, rec)

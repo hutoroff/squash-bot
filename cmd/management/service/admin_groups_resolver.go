@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 // adminGroupsCacheTTL bounds how stale an admin-groups answer may be.
@@ -30,6 +32,10 @@ type AdminGroupsResolver struct {
 
 	mu    sync.Mutex
 	cache map[int64]adminGroupsCacheEntry
+
+	// sf collapses concurrent cold-cache lookups for the same Telegram ID into
+	// one scan; the settings page fires several authorized requests at once.
+	sf singleflight.Group
 }
 
 func NewAdminGroupsResolver(groupRepo GroupRepository, tgAPI TelegramAPI, logger *slog.Logger) *AdminGroupsResolver {
@@ -53,29 +59,41 @@ func (r *AdminGroupsResolver) AdminGroupsFor(ctx context.Context, tgID int64) ([
 	}
 	r.mu.Unlock()
 
-	groups, err := r.groupRepo.GetAll(ctx)
+	v, err, _ := r.sf.Do(strconv.FormatInt(tgID, 10), func() (any, error) {
+		groups, err := r.groupRepo.GetAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var adminGroups []int64
+		partial := false
+		for _, g := range groups {
+			members, err := r.tgAPI.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+				ChatConfig: tgbotapi.ChatConfig{ChatID: g.ChatID},
+			})
+			if err != nil {
+				r.logger.Warn("AdminGroupsFor: GetChatAdministrators failed", "group_id", g.ChatID, "err", err)
+				partial = true
+				continue
+			}
+			for _, m := range members {
+				if m.User.ID == tgID {
+					adminGroups = append(adminGroups, g.ChatID)
+					break
+				}
+			}
+		}
+
+		// A partial answer (rate limit, unreachable group) is returned but not
+		// cached — otherwise a missing group stays missing for the whole TTL.
+		if !partial {
+			r.mu.Lock()
+			r.cache[tgID] = adminGroupsCacheEntry{groups: adminGroups, at: time.Now()}
+			r.mu.Unlock()
+		}
+		return adminGroups, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var adminGroups []int64
-	for _, g := range groups {
-		members, err := r.tgAPI.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
-			ChatConfig: tgbotapi.ChatConfig{ChatID: g.ChatID},
-		})
-		if err != nil {
-			r.logger.Warn("AdminGroupsFor: GetChatAdministrators failed", "group_id", g.ChatID, "err", err)
-			continue
-		}
-		for _, m := range members {
-			if m.User.ID == tgID {
-				adminGroups = append(adminGroups, g.ChatID)
-				break
-			}
-		}
-	}
-
-	r.mu.Lock()
-	r.cache[tgID] = adminGroupsCacheEntry{groups: adminGroups, at: time.Now()}
-	r.mu.Unlock()
-	return adminGroups, nil
+	return v.([]int64), nil
 }

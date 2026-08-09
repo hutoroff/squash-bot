@@ -60,8 +60,10 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
   const set = <K extends keyof VenueInput>(key: K, value: VenueInput[K]) =>
     setForm(prev => ({ ...prev, [key]: value }))
 
-  const loadCredentials = useCallback(async () => {
+  // Readiness depends on the credential list, so the two always reload together.
+  const loadCredentialState = useCallback(async () => {
     if (venueID === null) return
+    await fetchBookingReadiness(chatID, venueID).then(setReadiness).catch(() => undefined)
     try {
       const [list, priorities] = await Promise.all([
         fetchCredentials(chatID, venueID),
@@ -97,13 +99,12 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
         auto_booking_courts: v.auto_booking_courts,
         auto_booking_courts_count: v.auto_booking_courts_count || 3,
       })))
-      tasks.push(loadCredentials())
-      tasks.push(fetchBookingReadiness(chatID, venueID).then(setReadiness).catch(() => undefined))
+      tasks.push(loadCredentialState())
     }
     Promise.all(tasks)
       .catch(err => setError(message(err, 'Failed to load venue')))
       .finally(() => setLoading(false))
-  }, [chatID, venueID, loadCredentials])
+  }, [chatID, venueID, loadCredentialState])
 
   // ── structured editors ─────────────────────────────────────────────────────
 
@@ -188,8 +189,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
     try {
       await addCredential(chatID, venueID, newCred)
       setNewCred(prev => ({ ...prev, login: '', password: '' }))
-      await loadCredentials()
-      await fetchBookingReadiness(chatID, venueID).then(setReadiness).catch(() => undefined)
+      await loadCredentialState()
     } catch (err) {
       setCredError(err instanceof ApiError && err.status === 409
         ? 'A credential with this login already exists for this venue.'
@@ -203,7 +203,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
     setCredError(null)
     try {
       await deleteCredential(chatID, venueID, cred.id)
-      await loadCredentials()
+      await loadCredentialState()
     } catch (err) {
       setCredError(err instanceof ApiError && err.status === 409
         ? 'This login has active court bookings and cannot be removed yet.'

@@ -156,7 +156,8 @@ func actorQuery(claims *JWTClaims) url.Values {
 // Writes 400 and returns false on an unparseable body.
 func decodeWithActor(w http.ResponseWriter, r *http.Request, claims *JWTClaims, forced map[string]any) ([]byte, bool) {
 	body := map[string]any{}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// body stays nil on a literal `null`, which would panic on assignment below.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body == nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid request body")
 		return nil, false
 	}

@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -82,6 +86,97 @@ func TestAdminGroupsFor_ExpiredCacheRefetches(t *testing.T) {
 	}
 	if api.calls != 2 {
 		t.Errorf("want 2 Telegram calls after TTL expiry, got %d", api.calls)
+	}
+}
+
+// blockingTelegramAPI holds the first caller inside GetChatAdministrators until
+// release is closed, so concurrent resolver misses can be observed.
+type blockingTelegramAPI struct {
+	adminID int64
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	failFor int64 // chat ID that always errors; 0 disables
+}
+
+func (b *blockingTelegramAPI) Send(_ tgbotapi.Chattable) (tgbotapi.Message, error) {
+	return tgbotapi.Message{}, nil
+}
+
+func (b *blockingTelegramAPI) Request(_ tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	return &tgbotapi.APIResponse{Ok: true}, nil
+}
+
+func (b *blockingTelegramAPI) GetChatAdministrators(c tgbotapi.ChatAdministratorsConfig) ([]tgbotapi.ChatMember, error) {
+	b.calls.Add(1)
+	if b.release != nil {
+		b.once.Do(func() { close(b.entered) })
+		<-b.release
+	}
+	if c.ChatID == b.failFor {
+		return nil, errors.New("rate limited")
+	}
+	return []tgbotapi.ChatMember{{User: &tgbotapi.User{ID: b.adminID}}}, nil
+}
+
+func newBlockingResolver(api *blockingTelegramAPI, chatIDs ...int64) *AdminGroupsResolver {
+	groups := make([]models.Group, 0, len(chatIDs))
+	for _, id := range chatIDs {
+		groups = append(groups, models.Group{ChatID: id})
+	}
+	return NewAdminGroupsResolver(
+		&stubGroupRepoAnnounce{groups: groups},
+		api,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+}
+
+// Several parallel requests on a cold cache must trigger one group scan, not one per request.
+func TestAdminGroupsFor_CoalescesConcurrentMisses(t *testing.T) {
+	api := &blockingTelegramAPI{adminID: 42, entered: make(chan struct{}), release: make(chan struct{})}
+	r := newBlockingResolver(api, -100, -200)
+
+	const callers = 5
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			if _, err := r.AdminGroupsFor(context.Background(), 42); err != nil {
+				t.Errorf("AdminGroupsFor: %v", err)
+			}
+		}()
+	}
+
+	<-api.entered                     // the leader is inside Telegram
+	time.Sleep(50 * time.Millisecond) // let the followers reach the resolver
+	close(api.release)
+	wg.Wait()
+
+	if got := api.calls.Load(); got != 2 {
+		t.Errorf("want 2 Telegram calls (one per group), got %d", got)
+	}
+}
+
+// A scan that lost a group to a Telegram error must not be cached for the whole TTL.
+func TestAdminGroupsFor_PartialResultNotCached(t *testing.T) {
+	api := &blockingTelegramAPI{adminID: 42, failFor: -200}
+	r := newBlockingResolver(api, -100, -200)
+
+	first, err := r.AdminGroupsFor(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("want the one reachable group, got %v", first)
+	}
+
+	if _, err := r.AdminGroupsFor(context.Background(), 42); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if got := api.calls.Load(); got != 4 {
+		t.Errorf("partial result should be refetched, want 4 Telegram calls, got %d", got)
 	}
 }
 

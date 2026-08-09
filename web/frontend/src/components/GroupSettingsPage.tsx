@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { BookingReadiness, BotGroup, User, Venue } from '../types'
 import {
@@ -65,19 +65,28 @@ export default function GroupSettingsPage({ user }: GroupSettingsPageProps) {
       .finally(() => setLoading(false))
   }, [chatID, loadVenues])
 
-  // Optimistic update: show the new value immediately, roll back if the save fails.
-  const save = useCallback(async (patch: Partial<BotGroup>, persist: () => Promise<void>) => {
-    const previous = group
-    if (!previous) return
-    setGroup({ ...previous, ...patch })
+  // Optimistic update: show the new value immediately, roll back only the patched
+  // fields if the save fails. Saves are chained so overlapping edits to different
+  // controls still reach the server in the order the user made them.
+  const queue = useRef<Promise<void>>(Promise.resolve())
+  const save = useCallback((patch: Partial<BotGroup>, persist: () => Promise<void>) => {
+    let previous: Partial<BotGroup> = {}
+    setGroup(prev => {
+      if (!prev) return prev
+      previous = Object.fromEntries(Object.keys(patch).map(k => [k, prev[k as keyof BotGroup]]))
+      return { ...prev, ...patch }
+    })
     setError(null)
-    try {
-      await persist()
-    } catch (err) {
-      setGroup(previous)
-      setError(message(err, 'Failed to save'))
-    }
-  }, [group])
+    queue.current = queue.current.then(async () => {
+      try {
+        await persist()
+      } catch (err) {
+        setGroup(prev => prev && { ...prev, ...previous })
+        setError(message(err, 'Failed to save'))
+      }
+    })
+    return queue.current
+  }, [])
 
   const handleAutoBookingAllowed = useCallback(async (enabled: boolean) => {
     if (!enabled && !window.confirm(
