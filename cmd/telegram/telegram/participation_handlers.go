@@ -11,24 +11,15 @@ import (
 	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
-// actorDisplayFrom formats a display name for audit from a Telegram user.
-func actorDisplayFrom(u *tgbotapi.User) string {
-	if u.UserName != "" {
-		return "@" + u.UserName
-	}
-	name := u.FirstName
-	if u.LastName != "" {
-		if name != "" {
-			name += " "
-		}
-		name += u.LastName
-	}
-	return name
-}
-
 func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(ctx, cb.From)
-	_, err := b.client.Join(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("join game: resolve user", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	_, err = b.client.Join(ctx, gameID, cb.Message.Chat.ID, ru.UserID)
 	if err != nil {
 		slog.Error("join game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -40,7 +31,13 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 
 func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(ctx, cb.From)
-	_, skipped, err := b.client.Skip(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("skip game: resolve user", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	_, skipped, err := b.client.Skip(ctx, gameID, cb.Message.Chat.ID, ru.UserID)
 	if err != nil {
 		slog.Error("skip game", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -56,10 +53,15 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 
 func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(ctx, cb.From)
-	u := cb.From
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("add guest: resolve user", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
 	// Capacity enforcement is done atomically inside AddGuest (DB advisory lock +
 	// transaction), so there is no TOCTOU race even under concurrent clicks.
-	added, _, _, err := b.client.AddGuest(ctx, gameID, cb.Message.Chat.ID, u.ID, u.UserName, u.FirstName, u.LastName)
+	added, _, _, err := b.client.AddGuest(ctx, gameID, cb.Message.Chat.ID, ru.UserID)
 	if err != nil {
 		slog.Error("add guest", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -75,7 +77,13 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 
 func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
 	lz := b.userLocalizer(ctx, cb.From)
-	removed, _, _, err := b.client.RemoveGuest(ctx, gameID, cb.Message.Chat.ID, cb.From.ID, cb.From.UserName, cb.From.FirstName, cb.From.LastName)
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		slog.Error("remove guest: resolve user", "err", err, "game_id", gameID)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	removed, _, _, err := b.client.RemoveGuest(ctx, gameID, cb.Message.Chat.ID, ru.UserID)
 	if err != nil {
 		slog.Error("remove guest", "err", err, "game_id", gameID)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))

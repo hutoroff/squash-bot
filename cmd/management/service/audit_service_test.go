@@ -50,13 +50,13 @@ func assertEventBase(t *testing.T, evt *models.AuditEvent,
 	}
 }
 
-func assertUserActor(t *testing.T, evt *models.AuditEvent, tgID int64, display string) {
+func assertUserActor(t *testing.T, evt *models.AuditEvent, userID int64, display string) {
 	t.Helper()
 	if evt.ActorKind != models.AuditActorUser {
 		t.Errorf("ActorKind: got %q, want user", evt.ActorKind)
 	}
-	if evt.ActorTgID == nil || *evt.ActorTgID != tgID {
-		t.Errorf("ActorTgID: got %v, want %d", evt.ActorTgID, tgID)
+	if evt.ActorUserID == nil || *evt.ActorUserID != userID {
+		t.Errorf("ActorUserID: got %v, want %d", evt.ActorUserID, userID)
 	}
 	if evt.ActorDisplay != display {
 		t.Errorf("ActorDisplay: got %q, want %q", evt.ActorDisplay, display)
@@ -114,8 +114,8 @@ func TestRecordPlayerKicked(t *testing.T) {
 	if evt.GroupID == nil || *evt.GroupID != 20 {
 		t.Errorf("GroupID: got %v, want 20", evt.GroupID)
 	}
-	if evt.Metadata["target_tg_id"] != int64(101) {
-		t.Errorf("Metadata[target_tg_id]: got %v, want 101", evt.Metadata["target_tg_id"])
+	if evt.Metadata["target_player_id"] != int64(101) {
+		t.Errorf("Metadata[target_player_id]: got %v, want 101", evt.Metadata["target_player_id"])
 	}
 }
 
@@ -259,8 +259,8 @@ func TestRecordCourtBooked_SystemActor(t *testing.T) {
 	if evt.ActorKind != models.AuditActorSystem {
 		t.Errorf("ActorKind: got %q, want system", evt.ActorKind)
 	}
-	if evt.ActorTgID != nil {
-		t.Errorf("ActorTgID: expected nil for system actor, got %v", evt.ActorTgID)
+	if evt.ActorUserID != nil {
+		t.Errorf("ActorUserID: expected nil for system actor, got %v", evt.ActorUserID)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestRecordPlayerKicked_Description(t *testing.T) {
 	svc, repo := newCaptureAuditSvc()
 	svc.RecordPlayerKicked(context.Background(), 10, 20, 99, 101, "@admin")
 
-	want := fmt.Sprintf("%s kicked player (tg:%d) from game", "@admin", 101)
+	want := fmt.Sprintf("%s kicked player (id:%d) from game", "@admin", 101)
 	if repo.inserted[0].Description != want {
 		t.Errorf("Description: got %q, want %q", repo.inserted[0].Description, want)
 	}

@@ -47,7 +47,7 @@ function makeGame(overrides: Partial<Game> = {}): Game {
 }
 
 function makeUser(overrides: Partial<User> = {}): User {
-  return { telegram_id: 42, first_name: 'Alice', ...overrides }
+  return { user_id: 42, first_name: 'Alice', ...overrides }
 }
 
 function makeParticipants(overrides: Partial<GameParticipants> = {}): GameParticipants {
@@ -74,8 +74,8 @@ describe('GameCard', () => {
     it('renders player names after fetch resolves', async () => {
       mockFetch.mockResolvedValue(makeParticipants({
         participations: [
-          { id: 1, player: { telegram_id: 10, username: 'alice' }, status: 'registered' },
-          { id: 2, player: { telegram_id: 11, first_name: 'Bob' }, status: 'registered' },
+          { id: 1, player: { user_id: 10, telegram_id: 10, username: 'alice' }, status: 'registered' },
+          { id: 2, player: { user_id: 11, telegram_id: 11, first_name: 'Bob' }, status: 'registered' },
         ],
       }))
       render(<GameCard game={makeGame()} user={makeUser()} />)
@@ -91,7 +91,7 @@ describe('GameCard', () => {
 
     it('shows guests with inviter name', async () => {
       mockFetch.mockResolvedValue(makeParticipants({
-        guests: [{ id: 5, invited_by: { telegram_id: 99, username: 'bob' } }],
+        guests: [{ id: 5, invited_by: { user_id: 99, telegram_id: 99, username: 'bob' } }],
       }))
       render(<GameCard game={makeGame()} user={makeUser()} />)
       expect(await screen.findByText(/by @bob/)).toBeInTheDocument()
@@ -106,10 +106,10 @@ describe('GameCard', () => {
     it('updates count from fetch result', async () => {
       mockFetch.mockResolvedValue(makeParticipants({
         participations: [
-          { id: 1, player: { telegram_id: 1 }, status: 'registered' },
-          { id: 2, player: { telegram_id: 2 }, status: 'registered' },
+          { id: 1, player: { user_id: 1, telegram_id: 1 }, status: 'registered' },
+          { id: 2, player: { user_id: 2, telegram_id: 2 }, status: 'registered' },
         ],
-        guests: [{ id: 1, invited_by: { telegram_id: 1 } }],
+        guests: [{ id: 1, invited_by: { user_id: 1, telegram_id: 1 } }],
       }))
       // participant_count=0 in game data; fetch gives 2 registered + 1 guest = 3
       render(<GameCard game={makeGame({ participant_count: 0, courts_count: 2 })} user={makeUser()} />)
@@ -119,8 +119,8 @@ describe('GameCard', () => {
     it('skipped participations are excluded from the player list', async () => {
       mockFetch.mockResolvedValue(makeParticipants({
         participations: [
-          { id: 1, player: { telegram_id: 10, username: 'alice' }, status: 'registered' },
-          { id: 2, player: { telegram_id: 11, username: 'bob' }, status: 'skipped' },
+          { id: 1, player: { user_id: 10, telegram_id: 10, username: 'alice' }, status: 'registered' },
+          { id: 2, player: { user_id: 11, telegram_id: 11, username: 'bob' }, status: 'skipped' },
         ],
       }))
       render(<GameCard game={makeGame()} user={makeUser()} />)
@@ -166,7 +166,7 @@ describe('GameCard', () => {
     it('updates badge after Join action', async () => {
       const ue = userEvent.setup()
       mockJoin.mockResolvedValue(makeParticipants({
-        participations: [{ id: 1, player: { telegram_id: 42 }, status: 'registered' }],
+        participations: [{ id: 1, player: { user_id: 42, telegram_id: 42 }, status: 'registered' }],
       }))
       render(<GameCard game={makeGame({ participation_status: null })} user={makeUser()} />)
       await ue.click(screen.getByRole('button', { name: 'Join' }))
@@ -176,7 +176,7 @@ describe('GameCard', () => {
     it('updates badge after Skip action', async () => {
       const ue = userEvent.setup()
       mockSkip.mockResolvedValue(makeParticipants({
-        participations: [{ id: 1, player: { telegram_id: 42 }, status: 'skipped' }],
+        participations: [{ id: 1, player: { user_id: 42, telegram_id: 42 }, status: 'skipped' }],
       }))
       render(<GameCard game={makeGame({ participation_status: 'registered' })} user={makeUser()} />)
       await ue.click(screen.getByRole('button', { name: 'Skip' }))
@@ -207,9 +207,9 @@ describe('GameCard', () => {
 
     it('shows −1 when user has a guest', async () => {
       mockFetch.mockResolvedValue(makeParticipants({
-        guests: [{ id: 10, invited_by: { telegram_id: 42 } }],
+        guests: [{ id: 10, invited_by: { user_id: 42, telegram_id: 42 } }],
       }))
-      render(<GameCard game={makeGame()} user={makeUser({ telegram_id: 42 })} />)
+      render(<GameCard game={makeGame()} user={makeUser({ user_id: 42 })} />)
       expect(await screen.findByRole('button', { name: '−1' })).toBeInTheDocument()
     })
 
@@ -225,7 +225,7 @@ describe('GameCard', () => {
     it('Join calls joinGame and updates state', async () => {
       const ue = userEvent.setup()
       mockJoin.mockResolvedValue(makeParticipants({
-        participations: [{ id: 1, player: { telegram_id: 42 }, status: 'registered' }],
+        participations: [{ id: 1, player: { user_id: 42, telegram_id: 42 }, status: 'registered' }],
       }))
       render(<GameCard game={makeGame({ participation_status: null })} user={makeUser()} />)
       await ue.click(screen.getByRole('button', { name: 'Join' }))
@@ -237,7 +237,7 @@ describe('GameCard', () => {
     it('Skip calls skipGame and updates state', async () => {
       const ue = userEvent.setup()
       mockSkip.mockResolvedValue(makeParticipants({
-        participations: [{ id: 1, player: { telegram_id: 42 }, status: 'skipped' }],
+        participations: [{ id: 1, player: { user_id: 42, telegram_id: 42 }, status: 'skipped' }],
       }))
       render(<GameCard game={makeGame({ participation_status: 'registered' })} user={makeUser()} />)
       await ue.click(screen.getByRole('button', { name: 'Skip' }))
@@ -248,7 +248,7 @@ describe('GameCard', () => {
     it('+1 calls addGuest and switches to −1', async () => {
       const ue = userEvent.setup()
       mockAddGuest.mockResolvedValue(makeParticipants({
-        guests: [{ id: 10, invited_by: { telegram_id: 42 } }],
+        guests: [{ id: 10, invited_by: { user_id: 42, telegram_id: 42 } }],
       }))
       render(<GameCard game={makeGame()} user={makeUser()} />)
       await ue.click(screen.getByRole('button', { name: '+1' }))
@@ -259,10 +259,10 @@ describe('GameCard', () => {
     it('−1 calls removeGuest and switches to +1', async () => {
       const ue = userEvent.setup()
       mockFetch.mockResolvedValue(makeParticipants({
-        guests: [{ id: 10, invited_by: { telegram_id: 42 } }],
+        guests: [{ id: 10, invited_by: { user_id: 42, telegram_id: 42 } }],
       }))
       mockRemoveGuest.mockResolvedValue(makeParticipants())
-      render(<GameCard game={makeGame()} user={makeUser({ telegram_id: 42 })} />)
+      render(<GameCard game={makeGame()} user={makeUser({ user_id: 42 })} />)
       await ue.click(await screen.findByRole('button', { name: '−1' }))
       expect(mockRemoveGuest).toHaveBeenCalledWith(1)
       expect(await screen.findByRole('button', { name: '+1' })).toBeInTheDocument()

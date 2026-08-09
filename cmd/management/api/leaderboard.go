@@ -33,13 +33,13 @@ func (h *Handler) getGroupLeaderboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// getPlayerGroupsWithResults handles GET /api/v1/players/{tgID}/groups-with-results
-// Returns the groups where the player has at least one game participation,
+// getPlayerGroupsWithResults handles GET /api/v1/users/{userID}/groups-with-results
+// Returns the groups where the user has at least one game participation,
 // so any member can view the leaderboard regardless of personal rated results.
 func (h *Handler) getPlayerGroupsWithResults(w http.ResponseWriter, r *http.Request) {
-	tgID, err := parseID(r.PathValue("tgID"))
+	userID, err := parseID(r.PathValue("userID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid telegram_id")
+		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
 	if h.gameService == nil {
@@ -47,7 +47,7 @@ func (h *Handler) getPlayerGroupsWithResults(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	player, err := h.playerRepo.GetByTelegramID(r.Context(), tgID)
+	player, err := h.playerRepo.GetByUserID(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusOK, []*models.Group{})

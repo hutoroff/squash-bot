@@ -18,11 +18,11 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title           string `json:"title"`
-		BotIsAdmin      bool   `json:"bot_is_admin"`
-		IsNewJoin       bool   `json:"is_new_join"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Title        string `json:"title"`
+		BotIsAdmin   bool   `json:"bot_is_admin"`
+		IsNewJoin    bool   `json:"is_new_join"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -33,8 +33,8 @@ func (h *Handler) upsertGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.IsNewJoin && req.ActorTelegramID != 0 {
-		h.auditSvc.RecordBotAddedToGroup(r.Context(), chatID, req.Title, req.ActorTelegramID, req.ActorDisplay)
+	if req.IsNewJoin && req.ActorUserID != 0 {
+		h.auditSvc.RecordBotAddedToGroup(r.Context(), chatID, req.Title, req.ActorUserID, req.ActorDisplay)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -47,9 +47,9 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Language        string `json:"language"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Language     string `json:"language"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -63,7 +63,7 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var oldLang string
-	if req.ActorTelegramID != 0 {
+	if req.ActorUserID != 0 {
 		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
 			oldLang = g.Language
 		}
@@ -77,8 +77,8 @@ func (h *Handler) setGroupLanguage(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "language", oldLang, req.Language)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorUserID, req.ActorDisplay, "language", oldLang, req.Language)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -91,9 +91,9 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Timezone        string `json:"timezone"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Timezone     string `json:"timezone"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -104,7 +104,7 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var oldTZ string
-	if req.ActorTelegramID != 0 {
+	if req.ActorUserID != 0 {
 		if g, err := h.groupRepo.GetByID(r.Context(), chatID); err == nil {
 			oldTZ = g.Timezone
 		}
@@ -118,8 +118,8 @@ func (h *Handler) setGroupTimezone(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, "timezone", oldTZ, req.Timezone)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGroupSettings(r.Context(), chatID, req.ActorUserID, req.ActorDisplay, "timezone", oldTZ, req.Timezone)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -133,7 +133,7 @@ func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		ChangelogEnabled bool   `json:"changelog_enabled"`
-		ActorTelegramID  int64  `json:"actor_telegram_id"`
+		ActorUserID      int64  `json:"actor_user_id"`
 		ActorDisplay     string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -149,8 +149,8 @@ func (h *Handler) setGroupChangelog(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGroupChangelogToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.ChangelogEnabled)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGroupChangelogToggled(r.Context(), chatID, req.ActorUserID, req.ActorDisplay, req.ChangelogEnabled)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -163,9 +163,9 @@ func (h *Handler) setGroupLeaderboardNotifications(w http.ResponseWriter, r *htt
 		return
 	}
 	var req struct {
-		Enabled         bool   `json:"leaderboard_notifications_enabled"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Enabled      bool   `json:"leaderboard_notifications_enabled"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -180,8 +180,8 @@ func (h *Handler) setGroupLeaderboardNotifications(w http.ResponseWriter, r *htt
 		}
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGroupLeaderboardNotificationsToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.Enabled)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGroupLeaderboardNotificationsToggled(r.Context(), chatID, req.ActorUserID, req.ActorDisplay, req.Enabled)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -194,16 +194,16 @@ func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		Enabled         bool   `json:"enabled"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Enabled      bool   `json:"enabled"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if !h.serverOwnerIDs[req.ActorTelegramID] {
+	if !h.isServerOwner(r.Context(), req.ActorUserID) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -229,14 +229,14 @@ func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGroupAutoBookingAllowedToggled(r.Context(), chatID, req.ActorTelegramID, req.ActorDisplay, req.Enabled, cascadedIDs)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGroupAutoBookingAllowedToggled(r.Context(), chatID, req.ActorUserID, req.ActorDisplay, req.Enabled, cascadedIDs)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // removeGroup handles DELETE /api/v1/groups/{chatID}
-// Optional query params: actor_tg_id, actor_display, group_title (for audit).
+// Optional query params: actor_user_id, actor_display, group_title (for audit).
 func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 	chatID, err := parseID(r.PathValue("chatID"))
 	if err != nil {
@@ -244,12 +244,12 @@ func (h *Handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	actorTgID, _ := strconv.ParseInt(q.Get("actor_tg_id"), 10, 64)
+	actorUserID, _ := strconv.ParseInt(q.Get("actor_user_id"), 10, 64)
 	actorDisp := q.Get("actor_display")
 	groupTitle := q.Get("group_title")
 
-	if actorTgID != 0 {
-		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorTgID, actorDisp)
+	if actorUserID != 0 {
+		h.auditSvc.RecordBotRemovedFromGroup(r.Context(), chatID, groupTitle, actorUserID, actorDisp)
 	}
 	if err := h.groupRepo.Remove(r.Context(), chatID); err != nil {
 		h.logger.Error("removeGroup", "err", err, "chat_id", chatID)
@@ -273,13 +273,13 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, groups)
 }
 
-// listAdminGroups handles GET /api/v1/admins/{tgID}/groups
-// Returns the groups tgID may administer: all groups for a server owner,
+// listAdminGroups handles GET /api/v1/users/{userID}/admin-groups
+// Returns the groups userID may administer: all groups for a server owner,
 // otherwise the groups where Telegram reports them as an administrator.
 func (h *Handler) listAdminGroups(w http.ResponseWriter, r *http.Request) {
-	tgID, err := parseID(r.PathValue("tgID"))
-	if err != nil || tgID == 0 {
-		writeError(w, http.StatusBadRequest, "invalid telegram id")
+	userID, err := parseID(r.PathValue("userID"))
+	if err != nil || userID == 0 {
+		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
 	groups, err := h.groupRepo.GetAll(r.Context())
@@ -290,12 +290,12 @@ func (h *Handler) listAdminGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := []models.Group{}
-	if h.isServerOwner(tgID) {
+	if h.isServerOwner(r.Context(), userID) {
 		result = append(result, groups...)
 	} else if h.adminResolver != nil {
-		adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), tgID)
+		adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), userID)
 		if err != nil {
-			h.logger.Error("listAdminGroups: resolver", "err", err, "tg_id", tgID)
+			h.logger.Error("listAdminGroups: resolver", "err", err, "user_id", userID)
 			writeError(w, http.StatusInternalServerError, "failed to resolve admin groups")
 			return
 		}

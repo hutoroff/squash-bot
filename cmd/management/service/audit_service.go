@@ -48,8 +48,8 @@ func (s *AuditService) RunRetention(ctx context.Context, retentionDays int) {
 	}
 }
 
-func userActor(tgID int64, display string) (*int64, string) {
-	return &tgID, display
+func userActor(userID int64, display string) (*int64, string) {
+	return &userID, display
 }
 
 func groupIDPtr(groupID int64) *int64 {
@@ -61,13 +61,13 @@ func groupIDPtr(groupID int64) *int64 {
 
 // Game events
 
-func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay, courts string, gameDate time.Time) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string, gameDate time.Time) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameCreated,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -77,13 +77,13 @@ func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, a
 	})
 }
 
-func (s *AuditService) RecordCourtsReserved(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay, courts string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordCourtsReserved(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventCourtsReserved,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -95,13 +95,13 @@ func (s *AuditService) RecordCourtsReserved(ctx context.Context, gameID, groupID
 
 // Participation events
 
-func (s *AuditService) RecordPlayerJoined(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordPlayerJoined(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventPlayerJoined,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -110,13 +110,13 @@ func (s *AuditService) RecordPlayerJoined(ctx context.Context, gameID, groupID, 
 	})
 }
 
-func (s *AuditService) RecordPlayerSkipped(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordPlayerSkipped(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventPlayerSkipped,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -125,13 +125,13 @@ func (s *AuditService) RecordPlayerSkipped(ctx context.Context, gameID, groupID,
 	})
 }
 
-func (s *AuditService) RecordGuestAdded(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGuestAdded(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGuestAdded,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -140,13 +140,13 @@ func (s *AuditService) RecordGuestAdded(ctx context.Context, gameID, groupID, ac
 	})
 }
 
-func (s *AuditService) RecordGuestRemoved(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGuestRemoved(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGuestRemoved,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -155,29 +155,29 @@ func (s *AuditService) RecordGuestRemoved(ctx context.Context, gameID, groupID, 
 	})
 }
 
-func (s *AuditService) RecordPlayerKicked(ctx context.Context, gameID, groupID, actorTgID, targetTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordPlayerKicked(ctx context.Context, gameID, groupID, actorUserID, targetPlayerID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventPlayerKicked,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
 		SubjectID:    fmt.Sprintf("%d", gameID),
-		Description:  fmt.Sprintf("%s kicked player (tg:%d) from game", display, targetTgID),
-		Metadata:     map[string]any{"target_tg_id": targetTgID},
+		Description:  fmt.Sprintf("%s kicked player (id:%d) from game", display, targetPlayerID),
+		Metadata:     map[string]any{"target_player_id": targetPlayerID},
 	})
 }
 
-func (s *AuditService) RecordGuestKicked(ctx context.Context, gameID, groupID, actorTgID, guestID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGuestKicked(ctx context.Context, gameID, groupID, actorUserID, guestID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGuestKicked,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGame,
@@ -189,13 +189,13 @@ func (s *AuditService) RecordGuestKicked(ctx context.Context, gameID, groupID, a
 
 // Venue events
 
-func (s *AuditService) RecordVenueCreated(ctx context.Context, venueID, groupID, actorTgID int64, actorDisplay, venueName string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordVenueCreated(ctx context.Context, venueID, groupID, actorUserID int64, actorDisplay, venueName string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventVenueCreated,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectVenue,
@@ -205,13 +205,13 @@ func (s *AuditService) RecordVenueCreated(ctx context.Context, venueID, groupID,
 	})
 }
 
-func (s *AuditService) RecordVenueUpdated(ctx context.Context, venueID, groupID, actorTgID int64, actorDisplay, venueName string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordVenueUpdated(ctx context.Context, venueID, groupID, actorUserID int64, actorDisplay, venueName string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventVenueUpdated,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectVenue,
@@ -221,13 +221,13 @@ func (s *AuditService) RecordVenueUpdated(ctx context.Context, venueID, groupID,
 	})
 }
 
-func (s *AuditService) RecordVenueDeleted(ctx context.Context, venueID, groupID, actorTgID int64, actorDisplay, venueName string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordVenueDeleted(ctx context.Context, venueID, groupID, actorUserID int64, actorDisplay, venueName string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventVenueDeleted,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectVenue,
@@ -239,13 +239,13 @@ func (s *AuditService) RecordVenueDeleted(ctx context.Context, venueID, groupID,
 
 // Credential events
 
-func (s *AuditService) RecordCredentialAdded(ctx context.Context, credID, venueID, groupID, actorTgID int64, actorDisplay, login string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordCredentialAdded(ctx context.Context, credID, venueID, groupID, actorUserID int64, actorDisplay, login string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventCredentialAdded,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectCredential,
@@ -255,13 +255,13 @@ func (s *AuditService) RecordCredentialAdded(ctx context.Context, credID, venueI
 	})
 }
 
-func (s *AuditService) RecordCredentialRemoved(ctx context.Context, credID, venueID, groupID, actorTgID int64, actorDisplay, login string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordCredentialRemoved(ctx context.Context, credID, venueID, groupID, actorUserID int64, actorDisplay, login string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventCredentialRemoved,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectCredential,
@@ -273,13 +273,13 @@ func (s *AuditService) RecordCredentialRemoved(ctx context.Context, credID, venu
 
 // Group events
 
-func (s *AuditService) RecordBotAddedToGroup(ctx context.Context, groupID int64, groupTitle string, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordBotAddedToGroup(ctx context.Context, groupID int64, groupTitle string, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventBotAddedToGroup,
 		Visibility:   models.AuditVisibilityServerOwner,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -289,13 +289,13 @@ func (s *AuditService) RecordBotAddedToGroup(ctx context.Context, groupID int64,
 	})
 }
 
-func (s *AuditService) RecordBotRemovedFromGroup(ctx context.Context, groupID int64, groupTitle string, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordBotRemovedFromGroup(ctx context.Context, groupID int64, groupTitle string, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventBotRemovedFromGroup,
 		Visibility:   models.AuditVisibilityServerOwner,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -305,13 +305,13 @@ func (s *AuditService) RecordBotRemovedFromGroup(ctx context.Context, groupID in
 	})
 }
 
-func (s *AuditService) RecordGroupSettings(ctx context.Context, groupID, actorTgID int64, actorDisplay, setting, from, to string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGroupSettings(ctx context.Context, groupID, actorUserID int64, actorDisplay, setting, from, to string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGroupSettings,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -323,8 +323,8 @@ func (s *AuditService) RecordGroupSettings(ctx context.Context, groupID, actorTg
 
 // RecordGroupChangelogToggled records when a group admin enables or disables changelog announcements.
 // Visibility is server_owner — group admins cannot inspect this in the audit log.
-func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID, actorUserID int64, actorDisplay string, enabled bool) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	newVal := "false"
 	if enabled {
 		newVal = "true"
@@ -333,7 +333,7 @@ func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID,
 		EventType:    models.AuditEventGroupChangelogToggled,
 		Visibility:   models.AuditVisibilityServerOwner,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -345,8 +345,8 @@ func (s *AuditService) RecordGroupChangelogToggled(ctx context.Context, groupID,
 
 // RecordGroupLeaderboardNotificationsToggled records when a group admin enables or disables post-game leaderboard notifications.
 // Visibility is server_owner — group admins cannot inspect this in the audit log.
-func (s *AuditService) RecordGroupLeaderboardNotificationsToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGroupLeaderboardNotificationsToggled(ctx context.Context, groupID, actorUserID int64, actorDisplay string, enabled bool) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	newVal := "false"
 	if enabled {
 		newVal = "true"
@@ -355,7 +355,7 @@ func (s *AuditService) RecordGroupLeaderboardNotificationsToggled(ctx context.Co
 		EventType:    models.AuditEventGroupLeaderboardNotificationsToggled,
 		Visibility:   models.AuditVisibilityServerOwner,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -366,8 +366,8 @@ func (s *AuditService) RecordGroupLeaderboardNotificationsToggled(ctx context.Co
 }
 
 // RecordGroupAutoBookingAllowedToggled records when a server owner enables or disables auto-booking for a group.
-func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context, groupID, actorTgID int64, actorDisplay string, enabled bool, cascadedVenueIDs []int64) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context, groupID, actorUserID int64, actorDisplay string, enabled bool, cascadedVenueIDs []int64) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	newVal := "false"
 	if enabled {
 		newVal = "true"
@@ -380,7 +380,7 @@ func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context,
 		EventType:    models.AuditEventGroupAutoBookingAllowedToggled,
 		Visibility:   models.AuditVisibilityServerOwner,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGroup,
@@ -391,8 +391,8 @@ func (s *AuditService) RecordGroupAutoBookingAllowedToggled(ctx context.Context,
 }
 
 // RecordGamePublished records that a game was published (announcement sent to group).
-// When actorTgID == 0, the action is treated as a system event (e.g. BookingReminderJob).
-func (s *AuditService) RecordGamePublished(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string) {
+// When actorUserID == 0, the action is treated as a system event (e.g. BookingReminderJob).
+func (s *AuditService) RecordGamePublished(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
 	evt := &models.AuditEvent{
 		EventType:   models.AuditEventGamePublished,
 		Visibility:  models.AuditVisibilityGroupAdmin,
@@ -401,9 +401,9 @@ func (s *AuditService) RecordGamePublished(ctx context.Context, gameID, groupID,
 		SubjectID:   fmt.Sprintf("%d", gameID),
 		Description: fmt.Sprintf("Game %d published", gameID),
 	}
-	if actorTgID != 0 {
+	if actorUserID != 0 {
 		evt.ActorKind = models.AuditActorUser
-		evt.ActorTgID = &actorTgID
+		evt.ActorUserID = &actorUserID
 		evt.ActorDisplay = actorDisplay
 	} else {
 		evt.ActorKind = models.AuditActorSystem
@@ -427,13 +427,13 @@ func (s *AuditService) RecordCourtBooked(ctx context.Context, venueID, groupID i
 }
 
 // RecordCourtsAutoBooked records that courts were auto-booked on-demand for an existing game.
-func (s *AuditService) RecordCourtsAutoBooked(ctx context.Context, chatID, actorTgID int64, actorDisplay string, gameID int64, venueName, gameDate string, bookedCount, requested int, courtLabels []string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordCourtsAutoBooked(ctx context.Context, chatID, actorUserID int64, actorDisplay string, gameID int64, venueName, gameDate string, bookedCount, requested int, courtLabels []string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventCourtsAutoBooked,
 		Visibility:   models.AuditVisibilityGroupAdmin,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(chatID),
 		SubjectType:  models.AuditSubjectGame,
@@ -450,13 +450,13 @@ func (s *AuditService) RecordCourtsAutoBooked(ctx context.Context, chatID, actor
 
 // Game result events
 
-func (s *AuditService) RecordGameResultSubmitted(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGameResultSubmitted(ctx context.Context, resultID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameResultSubmitted,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGameResult,
@@ -465,13 +465,13 @@ func (s *AuditService) RecordGameResultSubmitted(ctx context.Context, resultID, 
 	})
 }
 
-func (s *AuditService) RecordGameResultApproved(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGameResultApproved(ctx context.Context, resultID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameResultApproved,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGameResult,
@@ -480,13 +480,13 @@ func (s *AuditService) RecordGameResultApproved(ctx context.Context, resultID, g
 	})
 }
 
-func (s *AuditService) RecordGameResultRejected(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGameResultRejected(ctx context.Context, resultID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameResultRejected,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGameResult,
@@ -495,13 +495,13 @@ func (s *AuditService) RecordGameResultRejected(ctx context.Context, resultID, g
 	})
 }
 
-func (s *AuditService) RecordGameResultCanceled(ctx context.Context, resultID, groupID, actorTgID int64, actorDisplay string) {
-	tgID, display := userActor(actorTgID, actorDisplay)
+func (s *AuditService) RecordGameResultCanceled(ctx context.Context, resultID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameResultCanceled,
 		Visibility:   models.AuditVisibilityPlayer,
 		ActorKind:    models.AuditActorUser,
-		ActorTgID:    tgID,
+		ActorUserID:  uid,
 		ActorDisplay: display,
 		GroupID:      groupIDPtr(groupID),
 		SubjectType:  models.AuditSubjectGameResult,
@@ -548,5 +548,27 @@ func (s *AuditService) RecordCourtCanceled(ctx context.Context, venueID, groupID
 		SubjectID:   fmt.Sprintf("%d", venueID),
 		Description: fmt.Sprintf("Court %s canceled at %q for %s", courtLabel, venueName, gameDate.Format("2006-01-02")),
 		Metadata:    map[string]any{"venue_id": venueID, "court_label": courtLabel, "game_date": gameDate.Format("2006-01-02")},
+	})
+}
+
+// User events
+
+// RecordUserRoleChanged records a server-owner role grant or revocation.
+// Visibility is server_owner — only server owners may view this in the audit log.
+func (s *AuditService) RecordUserRoleChanged(ctx context.Context, actorUserID int64, actorDisplay string, targetUserID int64, targetDisplay string, enabled bool) {
+	action := "revoked"
+	if enabled {
+		action = "granted"
+	}
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventUserRoleChanged,
+		Visibility:   models.AuditVisibilityServerOwner,
+		ActorKind:    models.AuditActorUser,
+		ActorUserID:  &actorUserID,
+		ActorDisplay: actorDisplay,
+		SubjectType:  models.AuditSubjectUser,
+		SubjectID:    fmt.Sprintf("%d", targetUserID),
+		Description:  fmt.Sprintf("Server-owner role %s for %s by %s", action, targetDisplay, actorDisplay),
+		Metadata:     map[string]any{"enabled": enabled, "target_user_id": targetUserID, "target_display": targetDisplay},
 	})
 }

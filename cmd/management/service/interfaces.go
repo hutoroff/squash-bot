@@ -30,7 +30,7 @@ type GameRepository interface {
 	GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error)
 	UpdateMessageID(ctx context.Context, gameID, messageID int64) error
 	UpdateCourts(ctx context.Context, gameID int64, courts string, courtsCount int) error
-	GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error)
+	GetNextGameForUser(ctx context.Context, userID int64) (*models.Game, error)
 	GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error)
 	GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Game, error)
 	GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error)
@@ -50,27 +50,28 @@ type GameRepository interface {
 	GetUpcomingGamesForHalfwayCheck(ctx context.Context) ([]*models.Game, error)
 	// MarkHalfwayCourtCheckDone sets halfway_court_check_done = true for the given game.
 	MarkHalfwayCourtCheckDone(ctx context.Context, gameID int64) error
-	// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
-	// in a specific group within the result-submission window (`days`), ignoring the
+	// GetRecentCompletedGamesForPlayer returns past games for a user in a
+	// specific group within the result-submission window (`days`), ignoring the
 	// completed flag.
-	GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error)
+	GetRecentCompletedGamesForPlayer(ctx context.Context, userID, groupID int64, days int) ([]models.PlayerGame, error)
 	// GameInResultWindow reports whether a result may still be submitted for the game,
 	// i.e. its local day (group timezone) is today or up to `days` days ago.
 	GameInResultWindow(ctx context.Context, gameID int64, days int) (bool, error)
 	// ListGroupIDsForPlayer returns the distinct chat_ids of groups where the player
 	// has at least one participation record. Used by the leaderboard group picker.
 	ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([]int64, error)
-	// PlayerCanAccessGame reports whether the Telegram user has any participation
+	// PlayerCanAccessGame reports whether the user has any participation
 	// record (registered or skipped) in any game within the same chat as gameID's
 	// game — i.e. whether the caller is associated with that game's group. Used
 	// to authorize the web service's per-game endpoints (IDOR guard).
-	PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error)
+	PlayerCanAccessGame(ctx context.Context, userID, gameID int64) (bool, error)
 }
 
-// PlayerRepository is the data access interface for players.
+// PlayerRepository is the data access interface for players. players stay
+// lazy — Upsert only creates a row on first join.
 type PlayerRepository interface {
-	Upsert(ctx context.Context, player *models.Player) (*models.Player, error)
-	GetByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error)
+	Upsert(ctx context.Context, userID int64) (*models.Player, error)
+	GetByUserID(ctx context.Context, userID int64) (*models.Player, error)
 	GetByID(ctx context.Context, id int64) (*models.Player, error)
 }
 
@@ -213,9 +214,12 @@ type RatingChangeRepository interface {
 // GroupRepository also needs SetLastLeaderboardPostedFor.
 // (This is an extension added in migration 027 — method added to existing GroupRepository interface below.)
 
-// UserPreferencesReader is the subset of UserPreferencesRepo used by GameResultService.
-type UserPreferencesReader interface {
-	GetByTelegramID(ctx context.Context, telegramID int64) (*models.UserPreferences, error)
+// UserRepository is the subset of storage.UserRepo used by the service layer:
+// GameResultService checks results_opt_out; AdminGroupsResolver translates a
+// canonical userID to the Telegram external_id needed by GetChatAdministrators.
+type UserRepository interface {
+	GetByID(ctx context.Context, userID int64) (*models.User, error)
+	TelegramID(ctx context.Context, userID int64) (int64, error)
 }
 
 // AuditEventRepository is the data access interface for audit events.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -74,12 +75,13 @@ func (r *PlayerRatingRepo) Upsert(ctx context.Context, pr *models.PlayerRating) 
 func (r *PlayerRatingRepo) ListByGroup(ctx context.Context, groupID int64) ([]*models.PlayerRating, error) {
 	const q = `
 		SELECT pr.group_id, pr.player_id, pr.rating, pr.rd, pr.volatility, pr.games_played, pr.updated_at,
-		       p.id, p.telegram_id, p.username, p.first_name, p.last_name, p.created_at
+		       p.id, p.user_id, ti.external_id, ti.username, ti.first_name, ti.last_name, p.created_at
 		FROM player_ratings pr
 		JOIN players p ON p.id = pr.player_id
-		LEFT JOIN user_preferences up ON up.telegram_id = p.telegram_id
+		JOIN users u ON u.id = p.user_id
+		LEFT JOIN user_identities ti ON ti.user_id = p.user_id AND ti.provider = 'telegram'
 		WHERE pr.group_id = $1
-		  AND COALESCE(up.results_opt_out, FALSE) = FALSE
+		  AND u.results_opt_out = FALSE
 		ORDER BY pr.rating DESC`
 	rows, err := r.pool.Query(ctx, q, groupID)
 	if err != nil {
@@ -90,11 +92,17 @@ func (r *PlayerRatingRepo) ListByGroup(ctx context.Context, groupID int64) ([]*m
 	for rows.Next() {
 		var pr models.PlayerRating
 		var p models.Player
+		var externalID *string
 		if err := rows.Scan(
 			&pr.GroupID, &pr.PlayerID, &pr.Rating, &pr.RD, &pr.Volatility, &pr.GamesPlayed, &pr.UpdatedAt,
-			&p.ID, &p.TelegramID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
+			&p.ID, &p.UserID, &externalID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan player rating: %w", err)
+		}
+		if externalID != nil {
+			if tgID, err := strconv.ParseInt(*externalID, 10, 64); err == nil {
+				p.TelegramID = tgID
+			}
 		}
 		pr.Player = &p
 		result = append(result, &pr)

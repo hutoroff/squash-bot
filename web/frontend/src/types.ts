@@ -1,11 +1,21 @@
 export interface User {
-  telegram_id: number
-  player_id?: number
+  user_id: number
   first_name: string
   last_name?: string
   username?: string
   photo_url?: string
   is_server_owner?: boolean
+}
+
+/** Row shape for the owner-only Users admin page (GET /api/users). */
+export interface AdminUser {
+  user_id: number
+  display_name: string
+  is_server_owner: boolean
+  dm_language: string
+  results_opt_out: boolean
+  created_at: string
+  providers: string[]
 }
 
 export type AuditVisibility = 'player' | 'group_admin' | 'server_owner'
@@ -40,6 +50,7 @@ export type AuditEventType =
   | 'group.auto_booking_allowed_toggled'
   | 'court.booked'
   | 'court.canceled'
+  | 'user.role_changed'
 
 export interface AuditEvent {
   id: number
@@ -47,7 +58,9 @@ export interface AuditEvent {
   event_type: AuditEventType
   visibility: AuditVisibility
   actor_kind: AuditActorKind
+  /** Legacy actor key, present only on rows recorded before the user-ID migration. */
   actor_tg_id?: number
+  actor_user_id?: number
   actor_display?: string
   group_id?: number
   subject_type: string
@@ -61,7 +74,7 @@ export interface AuditFilters {
   from?: string
   to?: string
   group_id?: number
-  actor_tg_id?: number
+  actor_user_id?: number
   before_id?: number
   limit?: number
 }
@@ -127,7 +140,7 @@ export interface BookingReadiness {
 }
 
 export interface UserPreferences {
-  telegram_id: number
+  user_id: number
   dm_language: string
   results_opt_out: boolean
 }
@@ -153,6 +166,7 @@ export interface Game {
 }
 
 export interface GamePlayer {
+  user_id: number
   telegram_id: number
   username?: string
   first_name?: string

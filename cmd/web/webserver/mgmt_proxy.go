@@ -100,7 +100,9 @@ func (c mgmtClient) get(r *http.Request, path string, out any) (int, error) {
 
 // authorizeGroup resolves the {chatID} path value and verifies the caller may
 // manage it: server owners always may, everyone else only for groups they
-// administer in Telegram (resolved by the management service, which caches).
+// administer in Telegram. Both cases are resolved by a single management call
+// — /admin-groups already returns every group for an owner — so there is no
+// local owner shortcut here; management is the sole source of truth.
 // It writes the error response itself and returns ok=false when access is denied.
 func (c mgmtClient) authorizeGroup(w http.ResponseWriter, r *http.Request) (claims *JWTClaims, chatID int64, ok bool) {
 	claims, ok = c.claims(w, r)
@@ -112,14 +114,11 @@ func (c mgmtClient) authorizeGroup(w http.ResponseWriter, r *http.Request) (clai
 		writeAPIError(w, http.StatusBadRequest, "invalid chat id")
 		return nil, 0, false
 	}
-	if c.auth.serverOwnerIDs[claims.TelegramID] {
-		return claims, chatID, true
-	}
 
 	var groups []struct {
 		ChatID int64 `json:"chat_id"`
 	}
-	status, err := c.get(r, fmt.Sprintf("/api/v1/admins/%d/groups", claims.TelegramID), &groups)
+	status, err := c.get(r, fmt.Sprintf("/api/v1/users/%d/admin-groups", claims.UserID), &groups)
 	if err != nil || status != http.StatusOK {
 		writeAPIError(w, http.StatusBadGateway, "upstream unavailable")
 		return nil, 0, false
@@ -137,8 +136,8 @@ func (c mgmtClient) authorizeGroup(w http.ResponseWriter, r *http.Request) (clai
 // mutation bodies. Always derived from the JWT, never from the request body.
 func actorFields(claims *JWTClaims) map[string]any {
 	return map[string]any{
-		"actor_telegram_id": claims.TelegramID,
-		"actor_display":     strings.TrimSpace(claims.FirstName + " " + claims.LastName),
+		"actor_user_id": claims.UserID,
+		"actor_display": strings.TrimSpace(claims.FirstName + " " + claims.LastName),
 	}
 }
 
@@ -146,7 +145,7 @@ func actorFields(claims *JWTClaims) map[string]any {
 // DELETE endpoints, which carry no body.
 func actorQuery(claims *JWTClaims) url.Values {
 	return url.Values{
-		"actor_tg_id":   {strconv.FormatInt(claims.TelegramID, 10)},
+		"actor_user_id": {strconv.FormatInt(claims.UserID, 10)},
 		"actor_display": {strings.TrimSpace(claims.FirstName + " " + claims.LastName)},
 	}
 }

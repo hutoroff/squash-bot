@@ -20,10 +20,7 @@ func seedRatingDeps(t *testing.T, ctx context.Context) (groupChatID, playerID in
 	if err := groupRepo.Upsert(ctx, groupChatID, "Rating Group", true); err != nil {
 		t.Fatalf("seed group: %v", err)
 	}
-	p, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 333})
-	if err != nil {
-		t.Fatalf("seed player: %v", err)
-	}
+	p := mustCreatePlayer(t, ctx, playerRepo, 333, "")
 	return groupChatID, p.ID
 }
 
@@ -90,8 +87,8 @@ func TestPlayerRatingRepo_ListByGroup(t *testing.T) {
 	groupID := int64(-8002)
 	groupRepo.Upsert(ctx, groupID, "LB Group", true)
 
-	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 444})
-	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 444, "")
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 555, "")
 
 	now := time.Now().UTC()
 	repo.Upsert(ctx, &models.PlayerRating{GroupID: groupID, PlayerID: p1.ID, Rating: 1600, RD: 200, Volatility: 0.05, GamesPlayed: 3, UpdatedAt: now})

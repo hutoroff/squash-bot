@@ -19,6 +19,21 @@ func mustTruncate(t *testing.T) {
 	}
 }
 
+// mustCreatePlayer creates a user with a telegram identity and the
+// corresponding lazy players row, returning the hydrated player.
+func mustCreatePlayer(t *testing.T, ctx context.Context, playerRepo *storage.PlayerRepo, telegramID int64, username string) *models.Player {
+	t.Helper()
+	userID, err := testutil.CreateTestUser(ctx, testPool, telegramID, username)
+	if err != nil {
+		t.Fatalf("CreateTestUser: %v", err)
+	}
+	p, err := playerRepo.Upsert(ctx, userID)
+	if err != nil {
+		t.Fatalf("Upsert player: %v", err)
+	}
+	return p
+}
+
 func newGame(chatID int64, date time.Time, courts string) *models.Game {
 	return &models.Game{
 		ChatID:      chatID,
@@ -334,22 +349,22 @@ func TestGameRepo_GetUpcomingGamesByChatIDs_EmptySlice(t *testing.T) {
 	}
 }
 
-// --- GetNextGameForTelegramUser ---
+// --- GetNextGameForUser ---
 
-func TestGameRepo_GetNextGameForTelegramUser_Registered(t *testing.T) {
+func TestGameRepo_GetNextGameForUser_Registered(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)
 	gameRepo := storage.NewGameRepo(testPool)
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900001})
+	p := mustCreatePlayer(t, ctx, playerRepo, 900001, "")
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1,2"))
 	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 
-	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900001)
+	got, err := gameRepo.GetNextGameForUser(ctx, p.UserID)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected a game, got nil")
@@ -359,77 +374,77 @@ func TestGameRepo_GetNextGameForTelegramUser_Registered(t *testing.T) {
 	}
 }
 
-func TestGameRepo_GetNextGameForTelegramUser_NoGame(t *testing.T) {
+func TestGameRepo_GetNextGameForUser_NoGame(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)
 	repo := storage.NewGameRepo(testPool)
 
-	got, err := repo.GetNextGameForTelegramUser(ctx, 999999)
+	got, err := repo.GetNextGameForUser(ctx, 999999)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got != nil {
 		t.Errorf("expected nil game for unknown user, got game ID %d", got.ID)
 	}
 }
 
-func TestGameRepo_GetNextGameForTelegramUser_SkippedNotReturned(t *testing.T) {
+func TestGameRepo_GetNextGameForUser_SkippedNotReturned(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)
 	gameRepo := storage.NewGameRepo(testPool)
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900002})
+	p := mustCreatePlayer(t, ctx, playerRepo, 900002, "")
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1"))
 	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusSkipped)
 
-	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900002)
+	got, err := gameRepo.GetNextGameForUser(ctx, p.UserID)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got != nil {
 		t.Errorf("skipped participation should not be returned, got game ID %d", got.ID)
 	}
 }
 
-func TestGameRepo_GetNextGameForTelegramUser_CompletedNotReturned(t *testing.T) {
+func TestGameRepo_GetNextGameForUser_CompletedNotReturned(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)
 	gameRepo := storage.NewGameRepo(testPool)
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900003})
+	p := mustCreatePlayer(t, ctx, playerRepo, 900003, "")
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "1"))
 	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 	_ = gameRepo.MarkCompleted(ctx, g.ID)
 
-	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900003)
+	got, err := gameRepo.GetNextGameForUser(ctx, p.UserID)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got != nil {
 		t.Errorf("completed game should not be returned, got game ID %d", got.ID)
 	}
 }
 
-func TestGameRepo_GetNextGameForTelegramUser_ReturnsNearest(t *testing.T) {
+func TestGameRepo_GetNextGameForUser_ReturnsNearest(t *testing.T) {
 	ctx := context.Background()
 	mustTruncate(t)
 	gameRepo := storage.NewGameRepo(testPool)
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 900004})
+	p := mustCreatePlayer(t, ctx, playerRepo, 900004, "")
 	near, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
 	far, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(96*time.Hour), "2"))
 	_ = partRepo.Upsert(ctx, near.ID, p.ID, models.StatusRegistered)
 	_ = partRepo.Upsert(ctx, far.ID, p.ID, models.StatusRegistered)
 
-	got, err := gameRepo.GetNextGameForTelegramUser(ctx, 900004)
+	got, err := gameRepo.GetNextGameForUser(ctx, p.UserID)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected nearest game, got nil")
@@ -448,7 +463,7 @@ func TestGameRepo_GetGamesForPlayer_WithoutGroupRow(t *testing.T) {
 	playerRepo := storage.NewPlayerRepo(testPool)
 	partRepo := storage.NewParticipationRepo(testPool)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 910001})
+	p := mustCreatePlayer(t, ctx, playerRepo, 910001, "")
 	g, _ := gameRepo.Create(ctx, newGame(-991001, time.Now().Add(24*time.Hour), "1,2"))
 	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 
@@ -494,7 +509,7 @@ func TestGameRepo_GetGamesForPlayer_UsesGroupMetadata(t *testing.T) {
 		t.Fatalf("SetTimezone: %v", err)
 	}
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 910002})
+	p := mustCreatePlayer(t, ctx, playerRepo, 910002, "")
 	g, _ := gameRepo.Create(ctx, newGame(chatID, time.Now().Add(24*time.Hour), "3,4"))
 	_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusSkipped)
 
@@ -533,7 +548,7 @@ func TestGameRepo_GetRecentCompletedGamesForPlayer_Window(t *testing.T) {
 	now := time.Now().UTC()
 	justPast := now.Add(-5 * time.Minute)
 
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 930001})
+	p := mustCreatePlayer(t, ctx, playerRepo, 930001, "")
 
 	// eligible: played 5 minutes ago (same calendar day, clearly past)
 	justPlayed, _ := gameRepo.Create(ctx, newGame(chatID, justPast, "1,2"))
@@ -550,7 +565,7 @@ func TestGameRepo_GetRecentCompletedGamesForPlayer_Window(t *testing.T) {
 		_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 	}
 
-	games, err := gameRepo.GetRecentCompletedGamesForPlayer(ctx, p.TelegramID, chatID, windowDays)
+	games, err := gameRepo.GetRecentCompletedGamesForPlayer(ctx, p.UserID, chatID, windowDays)
 	if err != nil {
 		t.Fatalf("GetRecentCompletedGamesForPlayer: %v", err)
 	}
@@ -626,10 +641,7 @@ func TestGameRepo_ListGroupIDsForPlayer(t *testing.T) {
 	partRepo := storage.NewParticipationRepo(testPool)
 
 	const chatID int64 = -9001
-	player, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555001, Username: strPtr("lb_test")})
-	if err != nil {
-		t.Fatalf("upsert player: %v", err)
-	}
+	player := mustCreatePlayer(t, ctx, playerRepo, 555001, "lb_test")
 
 	// Player with a participation but no rating row should be returned.
 	g, err := gameRepo.Create(ctx, newGame(chatID, time.Now().Add(24*time.Hour), "1"))
@@ -649,10 +661,7 @@ func TestGameRepo_ListGroupIDsForPlayer(t *testing.T) {
 	}
 
 	// Player with no participations returns empty.
-	other, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555002, Username: strPtr("lb_nopart")})
-	if err != nil {
-		t.Fatalf("upsert other player: %v", err)
-	}
+	other := mustCreatePlayer(t, ctx, playerRepo, 555002, "lb_nopart")
 	ids2, err := gameRepo.ListGroupIDsForPlayer(ctx, other.ID)
 	if err != nil {
 		t.Fatalf("ListGroupIDsForPlayer no-part: %v", err)
@@ -673,10 +682,7 @@ func TestGameRepo_PlayerCanAccessGame(t *testing.T) {
 	const groupAChatID int64 = -9101
 	const groupBChatID int64 = -9102
 
-	player, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 555101, Username: strPtr("access_test")})
-	if err != nil {
-		t.Fatalf("upsert player: %v", err)
-	}
+	player := mustCreatePlayer(t, ctx, playerRepo, 555101, "access_test")
 
 	// Player registers for one game in group A.
 	gameA1, err := gameRepo.Create(ctx, newGame(groupAChatID, time.Now().Add(24*time.Hour), "1"))
@@ -700,25 +706,25 @@ func TestGameRepo_PlayerCanAccessGame(t *testing.T) {
 		t.Fatalf("create game B: %v", err)
 	}
 
-	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameA1.ID); err != nil {
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.UserID, gameA1.ID); err != nil {
 		t.Fatalf("PlayerCanAccessGame (own game): %v", err)
 	} else if !allowed {
 		t.Error("expected access to the game the player is registered in")
 	}
 
-	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameA2.ID); err != nil {
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.UserID, gameA2.ID); err != nil {
 		t.Fatalf("PlayerCanAccessGame (same group): %v", err)
 	} else if !allowed {
 		t.Error("expected access to another game in the same group")
 	}
 
-	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, gameB.ID); err != nil {
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.UserID, gameB.ID); err != nil {
 		t.Fatalf("PlayerCanAccessGame (other group): %v", err)
 	} else if allowed {
 		t.Error("expected no access to a game in a different group")
 	}
 
-	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.TelegramID, 999999999); err != nil {
+	if allowed, err := gameRepo.PlayerCanAccessGame(ctx, player.UserID, 999999999); err != nil {
 		t.Fatalf("PlayerCanAccessGame (nonexistent game): %v", err)
 	} else if allowed {
 		t.Error("expected no access to a nonexistent game")

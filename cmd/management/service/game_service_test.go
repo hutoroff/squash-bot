@@ -90,7 +90,7 @@ func TestGameService_GetByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestGameService_GetNextGameForTelegramUser_Registered(t *testing.T) {
+func TestGameService_GetNextGameForUser_Registered(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
@@ -104,12 +104,16 @@ func TestGameService_GetNextGameForTelegramUser_Registered(t *testing.T) {
 		nil,
 	)
 
-	game, _ := gameSvc.CreateGame(ctx, -1, time.Now().Add(48*time.Hour), "1,2", nil)
-	_, _ = partSvc.Join(ctx, game.ID, 80001, "alice", "Alice", "")
-
-	got, err := gameSvc.GetNextGameForTelegramUser(ctx, 80001)
+	userID, err := testutil.CreateTestUser(ctx, testPool, 80001, "alice")
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("CreateTestUser: %v", err)
+	}
+	game, _ := gameSvc.CreateGame(ctx, -1, time.Now().Add(48*time.Hour), "1,2", nil)
+	_, _ = partSvc.Join(ctx, game.ID, userID)
+
+	got, err := gameSvc.GetNextGameForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected a game, got nil")
@@ -119,16 +123,16 @@ func TestGameService_GetNextGameForTelegramUser_Registered(t *testing.T) {
 	}
 }
 
-func TestGameService_GetNextGameForTelegramUser_NoGame(t *testing.T) {
+func TestGameService_GetNextGameForUser_NoGame(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
 	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
 
-	got, err := svc.GetNextGameForTelegramUser(ctx, 99999)
+	got, err := svc.GetNextGameForUser(ctx, 99999)
 	if err != nil {
-		t.Fatalf("GetNextGameForTelegramUser: %v", err)
+		t.Fatalf("GetNextGameForUser: %v", err)
 	}
 	if got != nil {
 		t.Errorf("expected nil for user with no games, got game ID %d", got.ID)

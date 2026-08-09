@@ -20,10 +20,11 @@ type Handler struct {
 	groups   *GroupsHandler
 	venues   *VenuesHandler
 	prefs    *PrefsHandler
+	users    *UsersHandler
 }
 
 // NewHandler creates a Handler that serves static files from fsys.
-func NewHandler(fsys fs.FS, version string, logger *slog.Logger, auth *AuthHandler, games *GamesHandler, audit *AuditHandler, groups *GroupsHandler, venues *VenuesHandler, prefs *PrefsHandler) *Handler {
+func NewHandler(fsys fs.FS, version string, logger *slog.Logger, auth *AuthHandler, games *GamesHandler, audit *AuditHandler, groups *GroupsHandler, venues *VenuesHandler, prefs *PrefsHandler, users *UsersHandler) *Handler {
 	return &Handler{
 		staticFS: fsys,
 		logger:   logger,
@@ -34,6 +35,7 @@ func NewHandler(fsys fs.FS, version string, logger *slog.Logger, auth *AuthHandl
 		groups:   groups,
 		venues:   venues,
 		prefs:    prefs,
+		users:    users,
 	}
 }
 
@@ -74,6 +76,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me/preferences", h.prefs.handleGetPreferences)
 	mux.HandleFunc("PATCH /api/me/dm-language", h.prefs.patchPreference("dm-language"))
 	mux.HandleFunc("PATCH /api/me/results-opt-out", h.prefs.patchPreference("results-opt-out"))
+
+	mux.HandleFunc("GET /api/users", h.users.handleListUsers)
+	mux.HandleFunc("PATCH /api/users/{userID}/server-owner", h.users.handleSetServerOwner)
 
 	mux.Handle("/", spaFileServer(h.staticFS))
 }

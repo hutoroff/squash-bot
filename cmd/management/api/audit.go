@@ -11,25 +11,25 @@ import (
 
 // adminGroupsResolver is satisfied by service.AdminGroupsResolver and by test fakes.
 type adminGroupsResolver interface {
-	AdminGroupsFor(ctx context.Context, tgID int64) ([]int64, error)
+	AdminGroupsFor(ctx context.Context, userID int64) ([]int64, error)
 }
 
 // listAuditEvents handles GET /api/v1/audit
 //
 // Visibility rules enforced server-side:
-//   - Server owner (caller TG ID in serverOwnerIDs): sees all events; may filter by any field.
+//   - Server owner (DB-backed role, see isServerOwner): sees all events; may filter by any field.
 //   - Group admin (caller administers ≥1 group): sees own player events PLUS all
 //     player+group_admin events for their administered groups.
 //   - Everyone else: sees only their own events with visibility="player".
 //
 // Query params: limit, before_id, event_type, from (RFC3339), to (RFC3339).
-// Server-owner-only params: group_id, actor_tg_id.
-// Required header: X-Caller-Tg-Id.
+// Server-owner-only params: group_id, actor_user_id.
+// Required header: X-Caller-User-Id.
 func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
-	callerTgIDStr := r.Header.Get("X-Caller-Tg-Id")
-	callerTgID, err := strconv.ParseInt(callerTgIDStr, 10, 64)
-	if err != nil || callerTgID == 0 {
-		writeError(w, http.StatusBadRequest, "X-Caller-Tg-Id header required")
+	callerUserIDStr := r.Header.Get("X-Caller-User-Id")
+	callerUserID, err := strconv.ParseInt(callerUserIDStr, 10, 64)
+	if err != nil || callerUserID == 0 {
+		writeError(w, http.StatusBadRequest, "X-Caller-User-Id header required")
 		return
 	}
 
@@ -60,21 +60,21 @@ func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if h.isServerOwner(callerTgID) {
+	if h.isServerOwner(r.Context(), callerUserID) {
 		if v := q.Get("group_id"); v != "" {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 				filter.GroupID = &n
 			}
 		}
-		if v := q.Get("actor_tg_id"); v != "" {
+		if v := q.Get("actor_user_id"); v != "" {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-				filter.ActorTgID = &n
+				filter.ActorUserID = &n
 			}
 		}
 	} else {
-		filter.OwnTgID = &callerTgID
+		filter.OwnUserID = &callerUserID
 		if h.adminResolver != nil {
-			adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), callerTgID)
+			adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), callerUserID)
 			if err == nil && len(adminGroups) > 0 {
 				filter.AdminGroupIDs = adminGroups
 			}
@@ -93,6 +93,16 @@ func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-func (h *Handler) isServerOwner(tgID int64) bool {
-	return h.serverOwnerIDs[tgID]
+// isServerOwner checks the DB-backed server-owner role. This is the single
+// authorization source: the DB role set via the Users page (PATCH
+// /api/v1/users/{userID}/server-owner) takes effect here immediately, unlike
+// the static SERVICE_ADMIN_IDS seed which only grants at startup. On lookup
+// error, fail closed (treat as not-owner).
+func (h *Handler) isServerOwner(ctx context.Context, userID int64) bool {
+	isOwner, err := h.userRepo.IsServerOwner(ctx, userID)
+	if err != nil {
+		h.logger.Error("isServerOwner", "user_id", userID, "err", err)
+		return false
+	}
+	return isOwner
 }

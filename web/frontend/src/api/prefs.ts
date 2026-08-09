@@ -1,20 +1,15 @@
 import type { UserPreferences } from '../types'
-import { ApiError, handleResponse, expectNoContent } from './http'
+import { handleResponse, expectNoContent } from './http'
 
-/** Defaults used before the user has ever changed a preference (management 404s). */
+/** Initial state shown while the real preferences are loading. */
 export const DEFAULT_PREFERENCES: UserPreferences = {
-  telegram_id: 0,
+  user_id: 0,
   dm_language: 'en',
   results_opt_out: false,
 }
 
 export async function fetchMyPreferences(): Promise<UserPreferences> {
-  try {
-    return await handleResponse<UserPreferences>(await fetch('/api/me/preferences'))
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return DEFAULT_PREFERENCES
-    throw err
-  }
+  return handleResponse<UserPreferences>(await fetch('/api/me/preferences'))
 }
 
 export async function updateDMLanguage(language: string): Promise<void> {

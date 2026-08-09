@@ -13,7 +13,13 @@ import (
 
 // handleCommandLeaderboard handles the /leaderboard private command.
 func (b *Bot) handleCommandLeaderboard(ctx context.Context, msg *tgbotapi.Message, lz *i18n.Localizer) {
-	groups, err := b.client.GetPlayerGroups(ctx, msg.From.ID)
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		slog.Error("handleCommandLeaderboard: resolve user", "err", err)
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+	groups, err := b.client.GetPlayerGroups(ctx, ru.UserID)
 	if err != nil {
 		slog.Error("handleCommandLeaderboard: get groups", "err", err)
 		b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)

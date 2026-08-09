@@ -17,7 +17,7 @@ import (
 
 // TestBookCourts_MissingCount verifies that omitting count (or count=0) returns 400.
 func TestBookCourts_MissingCount(t *testing.T) {
-	body := `{"group_id":1,"actor_telegram_id":123}`
+	body := `{"group_id":1,"actor_user_id":123}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/games/1/book-courts", strings.NewReader(body))
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func newTestGameService(gameRepo service.GameRepository) *service.GameService {
 }
 
 func TestCheckGameAccess_InvalidGameID(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/abc/access?telegram_id=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/abc/access?user_id=1", nil)
 	req.SetPathValue("id", "abc")
 	w := httptest.NewRecorder()
 
@@ -126,7 +126,7 @@ func TestCheckGameAccess_InvalidGameID(t *testing.T) {
 	}
 }
 
-func TestCheckGameAccess_MissingTelegramID(t *testing.T) {
+func TestCheckGameAccess_MissingUserID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access", nil)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
@@ -135,14 +135,14 @@ func TestCheckGameAccess_MissingTelegramID(t *testing.T) {
 	h.checkGameAccess(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("missing telegram_id: want 400, got %d", w.Code)
+		t.Errorf("missing user_id: want 400, got %d", w.Code)
 	}
 }
 
 func TestCheckGameAccess_Allowed(t *testing.T) {
 	svc := newTestGameService(&apiStubGameRepo{canAccess: true})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?user_id=42", nil)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 
@@ -160,7 +160,7 @@ func TestCheckGameAccess_Allowed(t *testing.T) {
 func TestCheckGameAccess_Denied(t *testing.T) {
 	svc := newTestGameService(&apiStubGameRepo{canAccess: false})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?user_id=42", nil)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 
@@ -178,7 +178,7 @@ func TestCheckGameAccess_Denied(t *testing.T) {
 func TestCheckGameAccess_RepoError(t *testing.T) {
 	svc := newTestGameService(&apiStubGameRepo{canAccessErr: context.DeadlineExceeded})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?telegram_id=42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/1/access?user_id=42", nil)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 

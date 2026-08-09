@@ -26,7 +26,7 @@ func (g *GroupsHandler) handleListGroups(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	g.proxy(w, r, http.MethodGet, fmt.Sprintf("/api/v1/admins/%d/groups", claims.TelegramID), nil)
+	g.proxy(w, r, http.MethodGet, fmt.Sprintf("/api/v1/users/%d/admin-groups", claims.UserID), nil)
 }
 
 // handleGetGroup handles GET /api/groups/{chatID}.
@@ -55,14 +55,12 @@ func (g *GroupsHandler) patchGroupSetting(suffix string) http.HandlerFunc {
 }
 
 // handleSetGroupAutoBookingAllowed handles PATCH /api/groups/{chatID}/auto-booking-allowed.
-// Server-owner only; the management service re-checks the actor.
+// Server-owner only; enforced entirely by the management service against the DB
+// (no local pre-check — a stale session must never be able to grant itself owner
+// authority), which returns 403 for a non-owner actor.
 func (g *GroupsHandler) handleSetGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Request) {
 	claims, ok := g.claims(w, r)
 	if !ok {
-		return
-	}
-	if !g.auth.serverOwnerIDs[claims.TelegramID] {
-		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	chatID, err := strconv.ParseInt(r.PathValue("chatID"), 10, 64)

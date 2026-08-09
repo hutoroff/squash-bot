@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
-	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
@@ -23,7 +22,7 @@ func TestGuestRepo_AddAndGet(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400001, Username: strPtr("inviter")})
+	p := mustCreatePlayer(t, ctx, playerRepo, 400001, "inviter")
 
 	if _, err := guestRepo.AddGuest(ctx, g.ID, p.ID); err != nil {
 		t.Fatalf("AddGuest: %v", err)
@@ -58,7 +57,7 @@ func TestGuestRepo_MultipleGuestsSameInviter(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400002, Username: strPtr("multi_inviter")})
+	p := mustCreatePlayer(t, ctx, playerRepo, 400002, "multi_inviter")
 
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
@@ -84,7 +83,7 @@ func TestGuestRepo_RemoveLatestGuest_Success(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400003})
+	p := mustCreatePlayer(t, ctx, playerRepo, 400003, "")
 
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
@@ -114,7 +113,7 @@ func TestGuestRepo_RemoveLatestGuest_NoGuests(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400004})
+	p := mustCreatePlayer(t, ctx, playerRepo, 400004, "")
 
 	removed, err := guestRepo.RemoveLatestGuest(ctx, g.ID, p.ID)
 	if err != nil {
@@ -136,8 +135,8 @@ func TestGuestRepo_RemoveOnlyOwnGuests(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
-	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400005, Username: strPtr("owner")})
-	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400006, Username: strPtr("other")})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 400005, "owner")
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 400006, "other")
 
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p1.ID)
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p2.ID)
@@ -173,7 +172,7 @@ func TestGuestRepo_DeleteByID_CorrectGame(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500001})
+	p := mustCreatePlayer(t, ctx, playerRepo, 500001, "")
 	_, _ = guestRepo.AddGuest(ctx, g.ID, p.ID)
 
 	guests, _ := guestRepo.GetByGame(ctx, g.ID)
@@ -208,7 +207,7 @@ func TestGuestRepo_DeleteByID_WrongGame(t *testing.T) {
 
 	gA, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
 	gB, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(48*time.Hour), "2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 500002})
+	p := mustCreatePlayer(t, ctx, playerRepo, 500002, "")
 	_, _ = guestRepo.AddGuest(ctx, gA.ID, p.ID)
 
 	guestsA, _ := guestRepo.GetByGame(ctx, gA.ID)
@@ -247,9 +246,9 @@ func TestGuestRepo_AddGuest_AtCapacity(t *testing.T) {
 
 	// 1 court → capacity 2.
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1"))
-	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600001})
-	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600002})
-	p3, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 600003})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 600001, "")
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 600002, "")
+	p3 := mustCreatePlayer(t, ctx, playerRepo, 600003, "")
 
 	added1, err := guestRepo.AddGuest(ctx, g.ID, p1.ID)
 	if err != nil {
@@ -297,7 +296,7 @@ func TestGuestRepo_GetCountByGame(t *testing.T) {
 	guestRepo := storage.NewGuestRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
-	p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 400007})
+	p := mustCreatePlayer(t, ctx, playerRepo, 400007, "")
 
 	count, _ := guestRepo.GetCountByGame(ctx, g.ID)
 	if count != 0 {

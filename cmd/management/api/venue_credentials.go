@@ -29,13 +29,13 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		GroupID         int64  `json:"group_id"`
-		Login           string `json:"login"`
-		Password        string `json:"password"`
-		Priority        int    `json:"priority"`
-		MaxCourts       int    `json:"max_courts"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		GroupID      int64  `json:"group_id"`
+		Login        string `json:"login"`
+		Password     string `json:"password"`
+		Priority     int    `json:"priority"`
+		MaxCourts    int    `json:"max_courts"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -59,8 +59,8 @@ func (h *Handler) addCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordCredentialAdded(r.Context(), cred.ID, venueID, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Login)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordCredentialAdded(r.Context(), cred.ID, venueID, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Login)
 	}
 	writeJSON(w, http.StatusCreated, cred)
 }
@@ -98,7 +98,7 @@ func (h *Handler) listCredentials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, creds)
 }
 
-// removeCredential handles DELETE /api/v1/venues/{id}/credentials/{cid}?group_id=X[&actor_tg_id=Y&actor_display=Z]
+// removeCredential handles DELETE /api/v1/venues/{id}/credentials/{cid}?group_id=X[&actor_user_id=Y&actor_display=Z]
 func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 	if !h.credServiceAvailable(w) {
 		return
@@ -124,7 +124,7 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid group_id")
 		return
 	}
-	actorTgID, _ := parseID(q.Get("actor_tg_id"))
+	actorUserID, _ := parseID(q.Get("actor_user_id"))
 	actorDisplay := q.Get("actor_display")
 
 	if err := h.venueCredService.Remove(r.Context(), credID, venueID, groupID); err != nil {
@@ -140,8 +140,8 @@ func (h *Handler) removeCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if actorTgID != 0 {
-		h.auditSvc.RecordCredentialRemoved(r.Context(), credID, venueID, groupID, actorTgID, actorDisplay, "")
+	if actorUserID != 0 {
+		h.auditSvc.RecordCredentialRemoved(r.Context(), credID, venueID, groupID, actorUserID, actorDisplay, "")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

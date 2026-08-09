@@ -36,16 +36,77 @@ func New(baseURL, apiSecret string) *Client {
 	}
 }
 
+// ── Identity ──────────────────────────────────────────────────────────────────
+
+type resolveUserRequest struct {
+	Provider   string `json:"provider"`
+	ExternalID string `json:"external_id"`
+	Username   string `json:"username"`
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+	PhotoURL   string `json:"photo_url"`
+}
+
+type resolveUserResponse struct {
+	UserID        int64  `json:"user_id"`
+	PlayerID      *int64 `json:"player_id"`
+	DisplayName   string `json:"display_name"`
+	IsServerOwner bool   `json:"is_server_owner"`
+}
+
+// ResolveUser finds-or-creates the canonical user for a Telegram user. Called
+// at the top of every handler that needs a userID or playerID for the caller.
+func (c *Client) ResolveUser(ctx context.Context, tgID int64, username, firstName, lastName string) (*ResolvedUser, error) {
+	body := resolveUserRequest{
+		Provider:   "telegram",
+		ExternalID: strconv.FormatInt(tgID, 10),
+		Username:   username,
+		FirstName:  firstName,
+		LastName:   lastName,
+	}
+	var resp resolveUserResponse
+	if err := c.do(ctx, http.MethodPost, "/api/v1/identities/resolve", body, &resp); err != nil {
+		return nil, err
+	}
+	return &ResolvedUser{
+		UserID:        resp.UserID,
+		PlayerID:      resp.PlayerID,
+		DisplayName:   resp.DisplayName,
+		IsServerOwner: resp.IsServerOwner,
+	}, nil
+}
+
+// GetUser returns the canonical user record (profile, role, preferences).
+func (c *Client) GetUser(ctx context.Context, userID int64) (*models.User, error) {
+	var u models.User
+	if err := c.do(ctx, http.MethodGet, "/api/v1/users/"+strconv.FormatInt(userID, 10), nil, &u); err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// SetUserDMLanguage saves the DM language override for the user.
+func (c *Client) SetUserDMLanguage(ctx context.Context, userID int64, language string) error {
+	path := "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/dm-language"
+	return c.do(ctx, http.MethodPatch, path, map[string]string{"language": language}, nil)
+}
+
+// SetUserResultsOptOut persists the results opt-out flag for the user.
+func (c *Client) SetUserResultsOptOut(ctx context.Context, userID int64, optOut bool) error {
+	path := "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/results-opt-out"
+	return c.do(ctx, http.MethodPatch, path, map[string]bool{"opt_out": optOut}, nil)
+}
+
 // ── Games ─────────────────────────────────────────────────────────────────────
 
-func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorTgID int64, actorDisplay string) (*models.Game, error) {
+func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorUserID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
-		"chat_id":           chatID,
-		"game_date":         gameDate,
-		"courts":            courts,
-		"venue_id":          venueID,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"chat_id":       chatID,
+		"game_date":     gameDate,
+		"courts":        courts,
+		"venue_id":      venueID,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	var game models.Game
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games", body, &game); err != nil {
@@ -67,12 +128,12 @@ func (c *Client) UpdateMessageID(ctx context.Context, gameID, messageID int64) e
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/message-id", body, nil)
 }
 
-func (c *Client) UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorTgID int64) error {
+func (c *Client) UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorUserID int64) error {
 	body := map[string]any{
-		"courts":            courts,
-		"group_id":          groupID,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"courts":        courts,
+		"group_id":      groupID,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body, nil)
 }
@@ -98,8 +159,8 @@ func (c *Client) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64)
 	return games, nil
 }
 
-func (c *Client) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
-	path := "/api/v1/players/" + strconv.FormatInt(telegramID, 10) + "/next-game"
+func (c *Client) GetNextGameForUser(ctx context.Context, userID int64) (*models.Game, error) {
+	path := "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/next-game"
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -124,16 +185,13 @@ func (c *Client) GetNextGameForTelegramUser(ctx context.Context, telegramID int6
 
 // ── Participations ────────────────────────────────────────────────────────────
 
-type playerBody struct {
-	TelegramID int64  `json:"telegram_id"`
-	Username   string `json:"username"`
-	FirstName  string `json:"first_name"`
-	LastName   string `json:"last_name"`
-	GroupID    int64  `json:"group_id"`
+type participationBody struct {
+	UserID  int64 `json:"user_id"`
+	GroupID int64 `json:"group_id"`
 }
 
-func (c *Client) Join(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
+func (c *Client) Join(ctx context.Context, gameID, chatID, userID int64) ([]*models.GameParticipation, error) {
+	body := participationBody{UserID: userID, GroupID: chatID}
 	var participations []*models.GameParticipation
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/join", body, &participations); err != nil {
 		return nil, err
@@ -146,8 +204,8 @@ type skipResponse struct {
 	Participations []*models.GameParticipation `json:"participations"`
 }
 
-func (c *Client) Skip(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
+func (c *Client) Skip(ctx context.Context, gameID, chatID, userID int64) ([]*models.GameParticipation, bool, error) {
+	body := participationBody{UserID: userID, GroupID: chatID}
 	var resp skipResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/skip", body, &resp); err != nil {
 		return nil, false, err
@@ -161,8 +219,8 @@ type guestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) AddGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := playerBody{TelegramID: telegramID, Username: username, FirstName: firstName, LastName: lastName, GroupID: chatID}
+func (c *Client) AddGuest(ctx context.Context, gameID, chatID, userID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := participationBody{UserID: userID, GroupID: chatID}
 	var resp guestResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
@@ -176,14 +234,8 @@ type removeGuestResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) RemoveGuest(ctx context.Context, gameID, chatID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	body := map[string]any{
-		"telegram_id": telegramID,
-		"group_id":    chatID,
-		"username":    username,
-		"first_name":  firstName,
-		"last_name":   lastName,
-	}
+func (c *Client) RemoveGuest(ctx context.Context, gameID, chatID, userID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	body := participationBody{UserID: userID, GroupID: chatID}
 	var resp removeGuestResponse
 	if err := c.do(ctx, http.MethodDelete, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/guests", body, &resp); err != nil {
 		return false, nil, nil, err
@@ -213,9 +265,9 @@ type kickResponse struct {
 	Guests         []*models.GuestParticipation `json:"guests"`
 }
 
-func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/players/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
-		gameID, telegramID, groupID, actorTgID, url.QueryEscape(actorDisplay))
+func (c *Client) KickPlayer(ctx context.Context, gameID, playerID, groupID, actorUserID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/players/%d?group_id=%d&actor_user_id=%d&actor_display=%s",
+		gameID, playerID, groupID, actorUserID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -223,9 +275,9 @@ func (c *Client) KickPlayer(ctx context.Context, gameID, telegramID, groupID, ac
 	return resp.Participations, resp.Guests, resp.Removed, nil
 }
 
-func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID, groupID, actorTgID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	path := fmt.Sprintf("/api/v1/games/%d/guests/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
-		gameID, guestID, groupID, actorTgID, url.QueryEscape(actorDisplay))
+func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID, groupID, actorUserID int64, actorDisplay string) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	path := fmt.Sprintf("/api/v1/games/%d/guests/%d?group_id=%d&actor_user_id=%d&actor_display=%s",
+		gameID, guestID, groupID, actorUserID, url.QueryEscape(actorDisplay))
 	var resp kickResponse
 	if err := c.do(ctx, http.MethodDelete, path, nil, &resp); err != nil {
 		return nil, nil, false, err
@@ -235,20 +287,20 @@ func (c *Client) KickGuestByID(ctx context.Context, gameID, guestID, groupID, ac
 
 // ── Groups ────────────────────────────────────────────────────────────────────
 
-func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool, actorTgID int64, actorDisplay string, isNewJoin bool) error {
+func (c *Client) UpsertGroup(ctx context.Context, chatID int64, title string, botIsAdmin bool, actorUserID int64, actorDisplay string, isNewJoin bool) error {
 	body := map[string]any{
-		"title":             title,
-		"bot_is_admin":      botIsAdmin,
-		"is_new_join":       isNewJoin,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"title":         title,
+		"bot_is_admin":  botIsAdmin,
+		"is_new_join":   isNewJoin,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	return c.do(ctx, http.MethodPut, "/api/v1/groups/"+strconv.FormatInt(chatID, 10), body, nil)
 }
 
-func (c *Client) RemoveGroup(ctx context.Context, chatID, actorTgID int64, actorDisplay, groupTitle string) error {
-	path := fmt.Sprintf("/api/v1/groups/%d?actor_tg_id=%d&actor_display=%s&group_title=%s",
-		chatID, actorTgID, url.QueryEscape(actorDisplay), url.QueryEscape(groupTitle))
+func (c *Client) RemoveGroup(ctx context.Context, chatID, actorUserID int64, actorDisplay, groupTitle string) error {
+	path := fmt.Sprintf("/api/v1/groups/%d?actor_user_id=%d&actor_display=%s&group_title=%s",
+		chatID, actorUserID, url.QueryEscape(actorDisplay), url.QueryEscape(groupTitle))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
@@ -304,50 +356,50 @@ func (c *Client) GetGroupByID(ctx context.Context, chatID int64) (*models.Group,
 }
 
 // SetGroupLanguage sets the language preference for a group.
-func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string, actorTgID int64, actorDisplay string) error {
+func (c *Client) SetGroupLanguage(ctx context.Context, chatID int64, language string, actorUserID int64, actorDisplay string) error {
 	body := map[string]any{
-		"language":          language,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"language":      language,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/language", body, nil)
 }
 
 // SetGroupTimezone sets the IANA timezone for a group.
-func (c *Client) SetGroupTimezone(ctx context.Context, chatID int64, timezone string, actorTgID int64, actorDisplay string) error {
+func (c *Client) SetGroupTimezone(ctx context.Context, chatID int64, timezone string, actorUserID int64, actorDisplay string) error {
 	body := map[string]any{
-		"timezone":          timezone,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"timezone":      timezone,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/timezone", body, nil)
 }
 
 // SetGroupChangelog sets the changelog_enabled flag for a group.
-func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error {
+func (c *Client) SetGroupChangelog(ctx context.Context, chatID int64, enabled bool, actorUserID int64, actorDisplay string) error {
 	body := map[string]any{
 		"changelog_enabled": enabled,
-		"actor_telegram_id": actorTgID,
+		"actor_user_id":     actorUserID,
 		"actor_display":     actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/changelog", body, nil)
 }
 
 // SetGroupLeaderboardNotifications sets the leaderboard_notifications_enabled flag for a group.
-func (c *Client) SetGroupLeaderboardNotifications(ctx context.Context, chatID int64, enabled bool, actorTgID int64, actorDisplay string) error {
+func (c *Client) SetGroupLeaderboardNotifications(ctx context.Context, chatID int64, enabled bool, actorUserID int64, actorDisplay string) error {
 	body := map[string]any{
 		"leaderboard_notifications_enabled": enabled,
-		"actor_telegram_id":                 actorTgID,
+		"actor_user_id":                     actorUserID,
 		"actor_display":                     actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/leaderboard-notifications", body, nil)
 }
 
-func (c *Client) SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorTgID int64, actorDisplay string) error {
+func (c *Client) SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorUserID int64, actorDisplay string) error {
 	body := map[string]any{
-		"enabled":           allowed,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"enabled":       allowed,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	return c.do(ctx, http.MethodPatch, "/api/v1/groups/"+strconv.FormatInt(chatID, 10)+"/auto-booking-allowed", body, nil)
 }
@@ -367,17 +419,17 @@ type venueBody struct {
 	AutoBookingCourts      string `json:"auto_booking_courts"`
 	AutoBookingEnabled     bool   `json:"auto_booking_enabled"`
 	AutoBookingCourtsCount int    `json:"auto_booking_courts_count"`
-	ActorTelegramID        int64  `json:"actor_telegram_id,omitempty"`
+	ActorUserID            int64  `json:"actor_user_id,omitempty"`
 	ActorDisplay           string `json:"actor_display,omitempty"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
-		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
+		ActorUserID: actorUserID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
@@ -403,13 +455,13 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorTgID int64, actorDisplay string) (*models.Venue, error) {
+func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error) {
 	body := venueBody{
 		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
 		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
 		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
 		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
-		ActorTelegramID: actorTgID, ActorDisplay: actorDisplay,
+		ActorUserID: actorUserID, ActorDisplay: actorDisplay,
 	}
 	var venue models.Venue
 	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {
@@ -418,23 +470,23 @@ func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, court
 	return &venue, nil
 }
 
-func (c *Client) DeleteVenue(ctx context.Context, id, groupID, actorTgID int64, actorDisplay string) error {
-	path := fmt.Sprintf("/api/v1/venues/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
-		id, groupID, actorTgID, url.QueryEscape(actorDisplay))
+func (c *Client) DeleteVenue(ctx context.Context, id, groupID, actorUserID int64, actorDisplay string) error {
+	path := fmt.Sprintf("/api/v1/venues/%d?group_id=%d&actor_user_id=%d&actor_display=%s",
+		id, groupID, actorUserID, url.QueryEscape(actorDisplay))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // ── Venue credentials ─────────────────────────────────────────────────────────
 
-func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int, actorTgID int64, actorDisplay string) (*models.VenueCredential, error) {
+func (c *Client) AddVenueCredential(ctx context.Context, venueID, groupID int64, login, password string, priority, maxCourts int, actorUserID int64, actorDisplay string) (*models.VenueCredential, error) {
 	body := map[string]any{
-		"group_id":          groupID,
-		"login":             login,
-		"password":          password,
-		"priority":          priority,
-		"max_courts":        maxCourts,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"group_id":      groupID,
+		"login":         login,
+		"password":      password,
+		"priority":      priority,
+		"max_courts":    maxCourts,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	var cred models.VenueCredential
 	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/venues/%d/credentials", venueID), body, &cred); err != nil {
@@ -452,9 +504,9 @@ func (c *Client) ListVenueCredentials(ctx context.Context, venueID, groupID int6
 	return creds, nil
 }
 
-func (c *Client) DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID, actorTgID int64, actorDisplay string) error {
-	path := fmt.Sprintf("/api/v1/venues/%d/credentials/%d?group_id=%d&actor_tg_id=%d&actor_display=%s",
-		venueID, credentialID, groupID, actorTgID, url.QueryEscape(actorDisplay))
+func (c *Client) DeleteVenueCredential(ctx context.Context, venueID, credentialID, groupID, actorUserID int64, actorDisplay string) error {
+	path := fmt.Sprintf("/api/v1/venues/%d/credentials/%d?group_id=%d&actor_user_id=%d&actor_display=%s",
+		venueID, credentialID, groupID, actorUserID, url.QueryEscape(actorDisplay))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
@@ -506,13 +558,13 @@ func (c *Client) ListActiveCourtBookings(ctx context.Context, gameID int64, cour
 
 // UpdateCourtsAndCancelBookings cancels active bookings for removed courts then persists the new courts list.
 // On partial failure, failed contains per-court errors and courts are still updated.
-func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorTgID int64) (canceledLabels []string, failed []CancelFailure, err error) {
+func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64) (canceledLabels []string, failed []CancelFailure, err error) {
 	body := map[string]any{
-		"courts":            newCourts,
-		"group_id":          groupID,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
-		"cancel_bookings":   true,
+		"courts":          newCourts,
+		"group_id":        groupID,
+		"actor_user_id":   actorUserID,
+		"actor_display":   actorDisplay,
+		"cancel_bookings": true,
 	}
 	req, reqErr := c.newRequest(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body)
 	if reqErr != nil {
@@ -568,10 +620,10 @@ type BookingReadiness struct {
 
 // PublishGame sends the game announcement and pins it.
 // Returns ErrAlreadyPublished if the game is already published (HTTP 409).
-func (c *Client) PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error) {
+func (c *Client) PublishGame(ctx context.Context, gameID, actorUserID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/publish", body)
 	if err != nil {
@@ -599,12 +651,12 @@ func (c *Client) PublishGame(ctx context.Context, gameID, actorTgID int64, actor
 
 // BookGameCourts calls POST /api/v1/games/{id}/book-courts.
 // Returns ErrAutoBookingNotAvailable when the server responds with HTTP 409.
-func (c *Client) BookGameCourts(ctx context.Context, gameID, groupID, actorTgID int64, actorDisplay string, count int) (*BookGameCourtsResult, error) {
+func (c *Client) BookGameCourts(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string, count int) (*BookGameCourtsResult, error) {
 	body := map[string]any{
-		"count":             count,
-		"group_id":          groupID,
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"count":         count,
+		"group_id":      groupID,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, fmt.Sprintf("/api/v1/games/%d/book-courts", gameID), body)
 	if err != nil {
@@ -730,56 +782,13 @@ func (c *Client) GetLeaderboard(ctx context.Context, groupID int64) ([]Leaderboa
 	return entries, nil
 }
 
-func (c *Client) GetPlayerGroups(ctx context.Context, tgID int64) ([]models.Group, error) {
-	path := fmt.Sprintf("/api/v1/players/%d/groups-with-results", tgID)
+func (c *Client) GetPlayerGroups(ctx context.Context, userID int64) ([]models.Group, error) {
+	path := fmt.Sprintf("/api/v1/users/%d/groups-with-results", userID)
 	var groups []models.Group
 	if err := c.do(ctx, http.MethodGet, path, nil, &groups); err != nil {
 		return nil, err
 	}
 	return groups, nil
-}
-
-// GetPlayerByTelegramID fetches a player by Telegram user ID.
-// Returns a nil *models.Player if not found (HTTP 404).
-func (c *Client) GetPlayerByTelegramID(ctx context.Context, telegramID int64) (*models.Player, error) {
-	var p models.Player
-	if err := c.do(ctx, http.MethodGet, "/api/v1/players/"+strconv.FormatInt(telegramID, 10), nil, &p); err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-// GetUserDMLanguage returns the stored DM language for the user, or "" when no preference exists.
-func (c *Client) GetUserDMLanguage(ctx context.Context, telegramID int64) (string, error) {
-	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/preferences"
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "", nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", parseErrorBody(resp)
-	}
-	var prefs struct {
-		DMLanguage string `json:"dm_language"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&prefs); err != nil {
-		return "", fmt.Errorf("decode user preferences: %w", err)
-	}
-	return prefs.DMLanguage, nil
-}
-
-// SetUserDMLanguage saves the DM language override for the user.
-func (c *Client) SetUserDMLanguage(ctx context.Context, telegramID int64, language string) error {
-	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/dm-language"
-	return c.do(ctx, http.MethodPatch, path, map[string]string{"language": language}, nil)
 }
 
 // ── Game Results ──────────────────────────────────────────────────────────────
@@ -809,10 +818,10 @@ var ErrGameResultNotPending = errors.New("game result is not pending")
 // ErrResultOpponentOptedOut is returned by SubmitGameResult when the opponent has opted out.
 var ErrResultOpponentOptedOut = errors.New("opponent has opted out of game results")
 
-func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorTgID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
+func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
 	body := map[string]any{
 		"game_id":            gameID,
-		"author_telegram_id": authorTgID,
+		"author_user_id":     authorUserID,
 		"opponent_player_id": opponentPlayerID,
 		"winner_player_id":   winnerPlayerID,
 		"score":              score,
@@ -858,22 +867,22 @@ func (c *Client) SetGameResultApprovalMessage(ctx context.Context, id, chatID in
 	return c.do(ctx, http.MethodPost, "/api/v1/game-results/"+strconv.FormatInt(id, 10)+"/approval-message", body, nil)
 }
 
-func (c *Client) ApproveGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
-	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "approve")
+func (c *Client) ApproveGameResult(ctx context.Context, id, actorUserID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorUserID, actorDisplay, "approve")
 }
 
-func (c *Client) RejectGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
-	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "reject")
+func (c *Client) RejectGameResult(ctx context.Context, id, actorUserID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorUserID, actorDisplay, "reject")
 }
 
-func (c *Client) CancelGameResult(ctx context.Context, id, actorTgID int64, actorDisplay string) (*GameResultDTO, error) {
-	return c.resultDecision(ctx, id, actorTgID, actorDisplay, "cancel")
+func (c *Client) CancelGameResult(ctx context.Context, id, actorUserID int64, actorDisplay string) (*GameResultDTO, error) {
+	return c.resultDecision(ctx, id, actorUserID, actorDisplay, "cancel")
 }
 
-func (c *Client) resultDecision(ctx context.Context, id, actorTgID int64, actorDisplay, action string) (*GameResultDTO, error) {
+func (c *Client) resultDecision(ctx context.Context, id, actorUserID int64, actorDisplay, action string) (*GameResultDTO, error) {
 	body := map[string]any{
-		"actor_telegram_id": actorTgID,
-		"actor_display":     actorDisplay,
+		"actor_user_id": actorUserID,
+		"actor_display": actorDisplay,
 	}
 	path := fmt.Sprintf("/api/v1/game-results/%d/%s", id, action)
 	req, err := c.newRequest(ctx, http.MethodPost, path, body)
@@ -898,46 +907,12 @@ func (c *Client) resultDecision(ctx context.Context, id, actorTgID int64, actorD
 	return &result, nil
 }
 
-func (c *Client) GetRecentCompletedGames(ctx context.Context, playerTgID, groupID int64) ([]models.PlayerGame, error) {
-	path := fmt.Sprintf("/api/v1/players/%d/recent-completed-games?group_id=%d",
-		playerTgID, groupID)
+func (c *Client) GetRecentCompletedGames(ctx context.Context, userID, groupID int64) ([]models.PlayerGame, error) {
+	path := fmt.Sprintf("/api/v1/users/%d/recent-completed-games?group_id=%d",
+		userID, groupID)
 	var games []models.PlayerGame
 	if err := c.do(ctx, http.MethodGet, path, nil, &games); err != nil {
 		return nil, err
 	}
 	return games, nil
-}
-
-// GetUserResultsOptOut returns true when the user has opted out of the results/leaderboard system.
-// Returns false (no error) when no preference row exists yet.
-func (c *Client) GetUserResultsOptOut(ctx context.Context, telegramID int64) (bool, error) {
-	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/preferences"
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return false, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return false, parseErrorBody(resp)
-	}
-	var prefs struct {
-		ResultsOptOut bool `json:"results_opt_out"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&prefs); err != nil {
-		return false, fmt.Errorf("decode user preferences: %w", err)
-	}
-	return prefs.ResultsOptOut, nil
-}
-
-// SetUserResultsOptOut persists the results opt-out flag for the user.
-func (c *Client) SetUserResultsOptOut(ctx context.Context, telegramID int64, optOut bool) error {
-	path := "/api/v1/users/" + strconv.FormatInt(telegramID, 10) + "/results-opt-out"
-	return c.do(ctx, http.MethodPatch, path, map[string]bool{"opt_out": optOut}, nil)
 }

@@ -50,11 +50,12 @@ Four independently deployable binaries in one Go module:
 
 ### Trust model
 
-Authorization is enforced at the edges, not in `management`:
+`management` owns canonical identity and server-owner authorization; `telegram` and `web` are thin clients over it:
 
-- `telegram` checks live Telegram group-admin rights before allowing privileged actions.
-- `web` gates on a signed JWT session, plus `SERVICE_ADMIN_IDS` for server-owner-only routes.
-- `management` trusts the caller-supplied actor identity (`actor_telegram_id` / `X-Caller-Tg-Id`) as-is and performs no authorization of its own.
+- Every Telegram user is resolved once (`POST /api/v1/identities/resolve`) to a canonical `user_id`; a `players` row exists only once that user joins a game. `telegram` and `web` never mint their own IDs — mutating calls carry `actor_user_id` (bodies) or `X-Caller-User-Id` (headers), always derived from the resolved identity/JWT, never trusted from raw client input.
+- `telegram` checks live Telegram group-admin rights before allowing privileged group actions (unchanged — this stays Telegram-derived, not DB-derived).
+- Server-owner authority is DB-backed (`users.is_server_owner`) and enforced by `management` itself for every owner-only route (`GET /api/v1/users`, `PATCH /api/v1/users/{id}/server-owner`, `PATCH /api/v1/groups/{id}/auto-booking-allowed`, audit visibility). `web` forwards the caller's identity but never grants access on its own — a 403 from `management` is proxied verbatim. `SERVICE_ADMIN_IDS` (management-only) is a grant-only bootstrap seed applied at startup, not a live authorization source.
+- `web` additionally gates every route on a signed JWT session (`uid` claim); role changes made on the Users page take effect immediately for `GET /api/auth/me` since `is_server_owner` is always read live from `management`, never cached in the JWT.
 
 This is safe only because `management` and `booking` are never exposed to the internet — in `docker-compose.prod.yml` only `web` publishes a port; `management`, `booking`, and `postgres` are reachable exclusively over the internal Docker network. The single shared `INTERNAL_API_SECRET` is therefore the entire security boundary protecting those two services; treat it with the same care as a database password.
 
@@ -123,6 +124,7 @@ Everything above can also be managed in the web UI (port 8082) — the bot's men
   - **Venues** — one card per venue with its schedule and an auto-booking readiness badge, plus add/edit/delete
 - **Venue form** covers every venue field, with structured editors instead of comma-separated typing: weekday chips for game days, time chips for slots and preferred times, and an ordered pick-list for auto-booking court priority. Booking credentials are managed at the bottom of the form when editing an existing venue; passwords are write-only, exactly as in the bot.
 - **My settings** holds your personal preferences: the language the bot uses in DMs, and whether it asks you to submit game results.
+- **Users** (server owners only) lists every user — display name, linked identity providers, and creation date — and lets you grant or revoke the server-owner role. Revoking the last remaining server owner is blocked.
 
 The web UI is English-only. Group-level settings changed there apply in the group's own language as usual.
 
@@ -403,7 +405,7 @@ Guest spots count toward capacity.
 | `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
 | `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
-| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs. Grants two privileges: (1) server-owner visibility tier in the audit log (can see all events for all groups, filter by `group_id`/`actor_tg_id`), and (2) server-owner flag in the web SPA (unlocks group/actor filters on the audit page). Must be set consistently on the management and web services. |
+| `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs granted the `is_server_owner` role at startup. Grant-only and idempotent: re-running with the same list is a no-op, and removing an ID here does **not** revoke an existing owner — the `users` table is the source of truth once seeded. Manage ownership afterwards via the web UI's Users page (`GET/PATCH /api/v1/users*`), not this variable. Not read by the web service. |
 | `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
 | `RESULT_WINDOW_DAYS`         | No | `14`             | How far back (days) a past game stays eligible for result submission. A game is eligible when its local day (group timezone) is today or up to this many days ago; the `completed` flag is not considered. |
 
@@ -434,9 +436,8 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
 | `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
-| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `GET /api/v1/players/{id}` (login) and `GET /api/v1/players/{id}/games` (games list) |
-| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry); generate with `openssl rand -hex 32`                      |
-| `SERVICE_ADMIN_IDS`      | No       | _(empty)_ | Comma-separated Telegram user IDs treated as server owners. Grants full audit visibility (all events, all groups, `group_id`/`actor_tg_id` filters). Must match the value set on the management service. |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
+| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); generate with `openssl rand -hex 32` |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
 | `LOG_DIR`                | No       | _(empty)_ | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |

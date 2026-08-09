@@ -54,14 +54,14 @@ export default function GameCard({ game, user }: GameCardProps) {
   const guests = participants?.guests ?? []
   const totalCount = participants ? registered.length + guests.length : game.participant_count
 
-  const myGuest = guests.find(g => g.invited_by.telegram_id === user.telegram_id)
+  const myGuest = guests.find(g => g.invited_by.user_id === user.user_id)
 
   async function handleAction(action: () => Promise<GameParticipants>) {
     setActionLoading(true)
     try {
       const updated = await action()
       setParticipants(updated)
-      const myPart = updated.participations.find(p => p.player.telegram_id === user.telegram_id)
+      const myPart = updated.participations.find(p => p.player.user_id === user.user_id)
       setParticipationStatus(myPart?.status ?? null)
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {

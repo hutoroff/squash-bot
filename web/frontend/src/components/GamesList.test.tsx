@@ -41,7 +41,7 @@ function makeGame(overrides: Partial<Game> = {}): Game {
   }
 }
 
-const testUser: User = { telegram_id: 42, first_name: 'Alice' }
+const testUser: User = { user_id: 42, first_name: 'Alice' }
 
 // ── setup ─────────────────────────────────────────────────────────────────────
 

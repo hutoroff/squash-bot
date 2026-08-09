@@ -269,9 +269,9 @@ func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int6
 	return games, rows.Err()
 }
 
-// GetNextGameForTelegramUser returns the nearest upcoming game where the user is registered.
+// GetNextGameForUser returns the nearest upcoming game where the user is registered.
 // Returns nil, nil if the user has no upcoming registered games.
-func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
+func (r *GameRepo) GetNextGameForUser(ctx context.Context, userID int64) (*models.Game, error) {
 	const q = `
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
@@ -282,14 +282,14 @@ func (r *GameRepo) GetNextGameForTelegramUser(ctx context.Context, telegramID in
 		JOIN game_participations gp ON gp.game_id = g.id
 		JOIN players p ON p.id = gp.player_id
 		LEFT JOIN venues v ON v.id = g.venue_id
-		WHERE p.telegram_id = $1 AND gp.status = 'registered'
+		WHERE p.user_id = $1 AND gp.status = 'registered'
 		  AND g.completed = false AND g.game_date > now()
 		ORDER BY g.game_date
 		LIMIT 1`
 
-	slog.Debug("GameRepo.GetNextGameForTelegramUser", "telegram_id", telegramID)
+	slog.Debug("GameRepo.GetNextGameForUser", "user_id", userID)
 
-	row := r.pool.QueryRow(ctx, q, telegramID)
+	row := r.pool.QueryRow(ctx, q, userID)
 	g, err := scanGameWithVenue(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -438,10 +438,10 @@ func (r *GameRepo) ListGroupIDsForPlayer(ctx context.Context, playerID int64) ([
 	return groupIDs, rows.Err()
 }
 
-// PlayerCanAccessGame reports whether the Telegram user has any participation
-// record (registered or skipped) in any game within the same chat as gameID's
-// game. Returns false (not an error) when gameID does not exist.
-func (r *GameRepo) PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error) {
+// PlayerCanAccessGame reports whether the user has any participation record
+// (registered or skipped) in any game within the same chat as gameID's game.
+// Returns false (not an error) when gameID does not exist.
+func (r *GameRepo) PlayerCanAccessGame(ctx context.Context, userID, gameID int64) (bool, error) {
 	const q = `
 		SELECT EXISTS (
 			SELECT 1
@@ -449,13 +449,13 @@ func (r *GameRepo) PlayerCanAccessGame(ctx context.Context, telegramID, gameID i
 			JOIN games g ON g.chat_id = target.chat_id
 			JOIN game_participations gp ON gp.game_id = g.id
 			JOIN players p ON p.id = gp.player_id
-			WHERE target.id = $1 AND p.telegram_id = $2
+			WHERE target.id = $1 AND p.user_id = $2
 		)`
 
-	slog.Debug("GameRepo.PlayerCanAccessGame", "telegram_id", telegramID, "game_id", gameID)
+	slog.Debug("GameRepo.PlayerCanAccessGame", "user_id", userID, "game_id", gameID)
 
 	var allowed bool
-	if err := r.pool.QueryRow(ctx, q, gameID, telegramID).Scan(&allowed); err != nil {
+	if err := r.pool.QueryRow(ctx, q, gameID, userID).Scan(&allowed); err != nil {
 		return false, fmt.Errorf("player can access game: %w", err)
 	}
 	return allowed, nil
@@ -492,13 +492,13 @@ func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID in
 	return games, rows.Err()
 }
 
-// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
-// in a specific group that fall within the result-submission window. A game is
+// GetRecentCompletedGamesForPlayer returns past games for a user in a
+// specific group that fall within the result-submission window. A game is
 // eligible when game_date <= NOW() (start time has passed) AND its local calendar
 // day (group timezone) is today or up to `days` days ago. The `completed` flag is
 // intentionally NOT considered. Used by the /result wizard game picker. Mirrors the
 // window predicate in GameInResultWindow.
-func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64, days int) ([]models.PlayerGame, error) {
+func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, userID, groupID int64, days int) ([]models.PlayerGame, error) {
 	const q = `
 		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
 		       gp.status,
@@ -512,7 +512,7 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, g
 		       COALESCE(NULLIF(bg.timezone, ''), 'UTC')        AS timezone
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
-		JOIN players p ON p.id = gp.player_id AND p.telegram_id = $1
+		JOIN players p ON p.id = gp.player_id AND p.user_id = $1
 		LEFT JOIN venues v ON v.id = g.venue_id
 		LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
 		WHERE g.chat_id = $2
@@ -522,9 +522,9 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, g
 		      BETWEEN 0 AND $3
 		ORDER BY g.game_date DESC`
 
-	slog.Debug("GameRepo.GetRecentCompletedGamesForPlayer", "tg_id", tgID, "group_id", groupID, "days", days)
+	slog.Debug("GameRepo.GetRecentCompletedGamesForPlayer", "user_id", userID, "group_id", groupID, "days", days)
 
-	rows, err := r.pool.Query(ctx, q, tgID, groupID, days)
+	rows, err := r.pool.Query(ctx, q, userID, groupID, days)
 	if err != nil {
 		return nil, fmt.Errorf("query recent completed games for player: %w", err)
 	}

@@ -11,17 +11,17 @@ import (
 )
 
 // testGroupsHandler returns a GroupsHandler wired to the given fake management server.
-// ownerIDs maps Telegram IDs that should be treated as server owners.
-func testGroupsHandler(t *testing.T, mgmt *httptest.Server, ownerIDs map[int64]bool) (*GroupsHandler, *AuthHandler) {
+// Whether the session's user is treated as an owner is decided entirely by what the
+// fake server's /admin-groups response contains — there is no local owner shortcut.
+func testGroupsHandler(t *testing.T, mgmt *httptest.Server) (*GroupsHandler, *AuthHandler) {
 	t.Helper()
 	auth := testAuthHandler(t, nil)
-	auth.serverOwnerIDs = ownerIDs
 	return NewGroupsHandler(auth, mgmt.URL, "mgmt-secret"), auth
 }
 
 // mgmtRecorder is a fake management service that records the requests it saw
-// and answers /api/v1/admins/{id}/groups with adminGroupsJSON; every other path
-// returns 200 with respJSON.
+// and answers /api/v1/users/{id}/admin-groups with adminGroupsJSON; every other
+// path returns 200 with respJSON.
 type mgmtRecorder struct {
 	adminGroupsJSON string
 	respJSON        string
@@ -41,7 +41,7 @@ func newMgmtServer(t *testing.T, rec *mgmtRecorder) *httptest.Server {
 		rec.bodies = append(rec.bodies, string(body))
 
 		w.Header().Set("Content-Type", "application/json")
-		if strings.HasPrefix(r.URL.Path, "/api/v1/admins/") {
+		if strings.Contains(r.URL.Path, "/admin-groups") {
 			fmt.Fprint(w, rec.adminGroupsJSON)
 			return
 		}
@@ -62,7 +62,7 @@ func TestGroupsHandler_NoSession_401(t *testing.T) {
 	}))
 	t.Cleanup(mgmt.Close)
 
-	g, _ := testGroupsHandler(t, mgmt, nil)
+	g, _ := testGroupsHandler(t, mgmt)
 	req := httptest.NewRequest(http.MethodGet, "/api/groups", nil)
 	w := routeAndServe("GET /api/groups", g.handleListGroups, req)
 
@@ -75,7 +75,7 @@ func TestGroupsHandler_NoSession_401(t *testing.T) {
 func TestGroupsHandler_NonOwner_ListsOwnGroups(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -84,7 +84,7 @@ func TestGroupsHandler_NonOwner_ListsOwnGroups(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
-	if want := "/api/v1/admins/42/groups"; rec.paths[0] != want {
+	if want := "/api/v1/users/42/admin-groups"; rec.paths[0] != want {
 		t.Errorf("upstream path: want %q, got %q", want, rec.paths[0])
 	}
 }
@@ -100,7 +100,7 @@ func TestGroupsHandler_Owner_ProxiesResponse(t *testing.T) {
 	}))
 	t.Cleanup(mgmt.Close)
 
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{42: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -124,7 +124,7 @@ func TestGroupsHandler_UpstreamError_502(t *testing.T) {
 	// Close immediately so the HTTP client gets a connection error.
 	mgmt.Close()
 
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{42: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -140,7 +140,7 @@ func TestGroupsHandler_UpstreamError_502(t *testing.T) {
 func TestAuthorizeGroup_NoSession_401(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[]`}
 	mgmt := newMgmtServer(t, rec)
-	g, _ := testGroupsHandler(t, mgmt, nil)
+	g, _ := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups/-100123", nil)
 	w := routeAndServe("GET /api/groups/{chatID}", g.handleGetGroup, req)
@@ -156,7 +156,7 @@ func TestAuthorizeGroup_NoSession_401(t *testing.T) {
 func TestAuthorizeGroup_NotAdmin_403(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-999}]`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups/-100123", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -170,7 +170,7 @@ func TestAuthorizeGroup_NotAdmin_403(t *testing.T) {
 func TestAuthorizeGroup_Admin_200(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`, respJSON: `{"chat_id":-100123}`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups/-100123", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -184,10 +184,13 @@ func TestAuthorizeGroup_Admin_200(t *testing.T) {
 	}
 }
 
-func TestAuthorizeGroup_Owner_SkipsLookup(t *testing.T) {
-	rec := &mgmtRecorder{adminGroupsJSON: `[]`, respJSON: `{"chat_id":-100123}`}
+// Owners get every group back from a single /admin-groups call (management's
+// listAdminGroups already includes all groups for an owner) — authorizeGroup
+// has no local shortcut of its own, it just trusts that one lookup.
+func TestAuthorizeGroup_OwnerGroupsComeFromAdminGroupsList(t *testing.T) {
+	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`, respJSON: `{"chat_id":-100123}`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{42: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups/-100123", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -196,17 +199,21 @@ func TestAuthorizeGroup_Owner_SkipsLookup(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
+	sawAdminGroupsLookup := false
 	for _, p := range rec.paths {
-		if strings.HasPrefix(p, "/api/v1/admins/") {
-			t.Errorf("owner must not trigger an admin-groups lookup, saw %v", rec.paths)
+		if strings.Contains(p, "/admin-groups") {
+			sawAdminGroupsLookup = true
 		}
+	}
+	if !sawAdminGroupsLookup {
+		t.Error("expected an admin-groups lookup — authorizeGroup has no local owner shortcut")
 	}
 }
 
 func TestAuthorizeGroup_InvalidChatID_400(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[]`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, nil)
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/groups/abc", nil)
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -222,10 +229,10 @@ func TestAuthorizeGroup_InvalidChatID_400(t *testing.T) {
 func TestPatchGroupSetting_InjectsActorFields(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`, status: http.StatusNoContent}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/language",
-		strings.NewReader(`{"language":"de","actor_telegram_id":1,"actor_display":"spoofed"}`))
+		strings.NewReader(`{"language":"de","actor_user_id":1,"actor_display":"spoofed"}`))
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
 	w := routeAndServe("PATCH /api/groups/{chatID}/language", g.patchGroupSetting("language"), req)
 
@@ -240,8 +247,8 @@ func TestPatchGroupSetting_InjectsActorFields(t *testing.T) {
 	if sent["language"] != "de" {
 		t.Errorf("language not forwarded: %v", sent)
 	}
-	if sent["actor_telegram_id"] != float64(42) {
-		t.Errorf("actor_telegram_id must come from the JWT, got %v", sent["actor_telegram_id"])
+	if sent["actor_user_id"] != float64(42) {
+		t.Errorf("actor_user_id must come from the JWT, got %v", sent["actor_user_id"])
 	}
 	if sent["actor_display"] != "Test" {
 		t.Errorf("actor_display must come from the JWT, got %v", sent["actor_display"])
@@ -256,7 +263,7 @@ func TestPatchGroupSetting_InjectsActorFields(t *testing.T) {
 func TestPatchGroupSetting_NullBody_400(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`, status: http.StatusNoContent}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, nil)
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/language", strings.NewReader(`null`))
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -270,7 +277,7 @@ func TestPatchGroupSetting_NullBody_400(t *testing.T) {
 func TestPatchGroupSetting_NotAdmin_403(t *testing.T) {
 	rec := &mgmtRecorder{adminGroupsJSON: `[]`}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/timezone", strings.NewReader(`{"timezone":"UTC"}`))
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -281,24 +288,26 @@ func TestPatchGroupSetting_NotAdmin_403(t *testing.T) {
 	}
 }
 
+// There is no local owner pre-check anymore: management itself rejects a
+// non-owner actor for this server-owner-only setting.
 func TestSetGroupAutoBookingAllowed_NonOwner_403(t *testing.T) {
-	rec := &mgmtRecorder{adminGroupsJSON: `[{"chat_id":-100123}]`}
+	rec := &mgmtRecorder{status: http.StatusForbidden}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{999: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/auto-booking-allowed", strings.NewReader(`{"enabled":false}`))
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
 	w := routeAndServe("PATCH /api/groups/{chatID}/auto-booking-allowed", g.handleSetGroupAutoBookingAllowed, req)
 
 	if w.Code != http.StatusForbidden {
-		t.Errorf("group admin must not flip the master switch: want 403, got %d", w.Code)
+		t.Errorf("management must reject a non-owner actor: want 403, got %d", w.Code)
 	}
 }
 
 func TestSetGroupAutoBookingAllowed_Owner_Forwards(t *testing.T) {
-	rec := &mgmtRecorder{adminGroupsJSON: `[]`, status: http.StatusNoContent}
+	rec := &mgmtRecorder{status: http.StatusNoContent}
 	mgmt := newMgmtServer(t, rec)
-	g, auth := testGroupsHandler(t, mgmt, map[int64]bool{42: true})
+	g, auth := testGroupsHandler(t, mgmt)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/-100123/auto-booking-allowed", strings.NewReader(`{"enabled":false}`))
 	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
@@ -307,7 +316,7 @@ func TestSetGroupAutoBookingAllowed_Owner_Forwards(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", w.Code)
 	}
-	if !strings.Contains(rec.bodies[0], `"actor_telegram_id":42`) {
+	if !strings.Contains(rec.bodies[0], `"actor_user_id":42`) {
 		t.Errorf("actor not injected: %s", rec.bodies[0])
 	}
 }

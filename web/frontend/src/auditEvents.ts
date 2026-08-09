@@ -30,6 +30,7 @@ export const EVENT_LABELS: Record<AuditEventType, string> = {
   'group.auto_booking_allowed_toggled': 'Auto-booking toggled',
   'court.booked': 'Court booked',
   'court.canceled': 'Court canceled',
+  'user.role_changed': 'Server owner role changed',
 }
 
 export const EVENT_TYPE_OPTIONS = Object.entries(EVENT_LABELS).map(

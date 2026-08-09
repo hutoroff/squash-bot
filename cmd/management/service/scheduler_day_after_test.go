@@ -153,7 +153,7 @@ func (r *stubGameRepoForDayAfter) GetUpcomingGamesByChatIDs(_ context.Context, _
 func (r *stubGameRepoForDayAfter) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoForDayAfter) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoForDayAfter) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoForDayAfter) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

@@ -25,6 +25,10 @@ cmd/management/
 │   ├── participations.go — participation HTTP handlers; kick endpoints accept audit query params
 │   ├── groups.go      — group HTTP handlers; upsertGroup/removeGroup accept actor audit params
 │   ├── venues.go      — venue HTTP handlers
+│   ├── users.go       — identity resolve, per-user reads/writes, owner-only list/role-toggle
+│   │                    (resolveIdentity, getUser, listUsers, setUserServerOwner, setUserDMLanguage,
+│   │                    setUserResultsOptOut, getNextGame, listPlayerGames, getRecentCompletedGames,
+│   │                    getPlayerGroupsWithResults, listAdminGroups)
 │   └── audit.go       — GET /api/v1/audit (listAuditEvents); enforces visibility per caller
 └── service/
 │   ├── interfaces.go           — ALL repository + Telegram interfaces (source of truth)
@@ -33,9 +37,11 @@ cmd/management/
 │   ├── venue_service.go        — VenueService: Create, GetByGroup, Update, Delete
 │   ├── audit_service.go        — AuditService: 15+ Record* methods, Query, RunRetention
 │   ├── changelog_announcer.go  — AnnounceChangelog: on startup, send new-version changelog to opted-in groups
-│   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
-│   │                              a caller administers (satisfies api.adminGroupsResolver interface);
-│   │                              per-tgID in-memory cache, TTL `adminGroupsCacheTTL` (5 min), because
+│   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, userID) resolves which groups
+│   │                              a caller administers, translating the canonical userID to its Telegram
+│   │                              external_id via UserRepository.TelegramID before the unchanged
+│   │                              GetChatAdministrators loop (satisfies api.adminGroupsResolver interface);
+│   │                              per-userID in-memory cache, TTL `adminGroupsCacheTTL` (5 min), because
 │   │                              an uncached resolve is one GetChatAdministrators call per known group
 │   │                              and it now sits on every settings request, not just audit.
 │   │                              Trade-off: Telegram admin promotions/demotions apply within ≤5 min.
@@ -50,8 +56,17 @@ cmd/management/
 │   └── group_resolver.go       — resolveGroupTimezone, groupLang helpers
 └── storage/
     ├── postgres.go              — pool setup, migration runner
+    ├── user_repo.go             — UserRepo implements UserRepository: ResolveIdentity (find-or-create,
+    │                              always overwrites profile fields — Telegram accurately reports cleared
+    │                              ones), EnsureIdentity (seed-only, never touches an existing profile),
+    │                              GetByID, List (LEFT JOIN user_identities, array_agg providers),
+    │                              SetServerOwner (pg_advisory_xact_lock + last-owner guard →
+    │                              ErrLastServerOwner), IsServerOwner, TelegramID, SetDMLanguage,
+    │                              SetResultsOptOut, GrantServerOwnersByTelegramID (idempotent seed)
     ├── game_repo.go             — GameRepo implements GameRepository
-    ├── player_repo.go           — PlayerRepo implements PlayerRepository
+    ├── player_repo.go           — PlayerRepo implements PlayerRepository; every SELECT hydrates
+    │                              telegram_id/username/first_name/last_name via
+    │                              LEFT JOIN user_identities ON provider='telegram'
     ├── participation_repo.go    — ParticipationRepo implements ParticipationRepository
     ├── guest_repo.go            — GuestRepo implements GuestRepository
     ├── group_repo.go            — GroupRepo implements GroupRepository
@@ -72,11 +87,19 @@ All interfaces are defined here and implemented in `storage/`. Never import `sto
 TelegramAPI      — Send, Request, GetChatAdministrators (satisfied by *tgbotapi.BotAPI)
 Notifier         — EditGameMessage(ctx, gameID int64)
 GameRepository   — Create, GetByID, GetUpcomingGames, UpdateMessageID, UpdateCourts,
-                   GetNextGameForTelegramUser, GetGamesForPlayer, GetUpcomingUnnotifiedGames,
+                   GetNextGameForUser, GetGamesForPlayer, GetUpcomingUnnotifiedGames,
                    GetUncompletedGamesByGroupAndDay, MarkNotifiedDayBefore, MarkCompleted,
                    GetUpcomingGamesForFinalCheck, MarkFinalCourtCheckDone,
-                   GetUpcomingGamesForHalfwayCheck, MarkHalfwayCourtCheckDone
-PlayerRepository — Upsert, GetByTelegramID
+                   GetUpcomingGamesForHalfwayCheck, MarkHalfwayCourtCheckDone,
+                   GetRecentCompletedGamesForPlayer(ctx, userID, groupID, days) — result-window query,
+                   GameInResultWindow(ctx, gameID, days),
+                   PlayerCanAccessGame(ctx, userID, gameID) — IDOR guard backing the web service's
+                   per-game endpoints (any participation in gameID's chat, registered or skipped)
+UserRepository   — subset the service layer needs: GetByID(ctx, userID) (*models.User, error),
+                   TelegramID(ctx, userID) (int64, error) — used by GameResultService (opt-out check)
+                   and AdminGroupsResolver (userID → Telegram external_id translation)
+PlayerRepository — players stay lazy — a row is created only on first game join:
+                   Upsert(ctx, userID) (*models.Player, error), GetByUserID, GetByID
 ParticipationRepository — Upsert, GetByGame, DeleteByGameAndPlayer, GetRegisteredCount
 GuestRepository  — AddGuest, RemoveLatestGuest, GetByGame, DeleteByID, GetCountByGame
 GroupRepository  — Upsert, SetLanguage, SetTimezone, SetChangelogEnabled, SetAutoBookingAllowed, Remove, Exists, GetByID, GetAll
@@ -142,25 +165,68 @@ PATCH  /api/v1/games/{id}/courts                   — updateCourts; when body c
                                                      on partial failure
 GET    /api/v1/games/{id}/active-court-bookings    — listActiveCourtBookings; query: courts (comma-sep labels);
                                                      returns [{court_label,game_time,match_id}] for active bookings
-POST   /api/v1/games/{id}/book-courts              — bookCourts; body: {count int, group_id, actor_telegram_id, actor_display};
+POST   /api/v1/games/{id}/book-courts              — bookCourts; body: {count int, group_id, actor_user_id, actor_display};
                                                      409 (ErrAutoBookingNotAvailable) when venue has no auto-booking or no usable credentials;
                                                      returns {requested, booked_count, booked_labels, failures};
                                                      credCooldown defaults to 24h (defaultCredentialErrorCooldown in server.go)
-POST   /api/v1/games/{id}/publish                  — publishGame; body: actor_telegram_id, actor_display;
+POST   /api/v1/games/{id}/publish                  — publishGame; body: actor_user_id, actor_display;
                                                      404 if not found, 409 if already published, 502 on Telegram send failure
+GET    /api/v1/games/{id}/access                   — checkGameAccess; query: user_id (required); returns {allowed bool};
+                                                     backs the web service's per-game IDOR guard (authorizeGameAccess)
 
-POST   /api/v1/games/{id}/join                     — joinGame
-POST   /api/v1/games/{id}/skip                     — skipGame
-POST   /api/v1/games/{id}/guests                   — addGuest
-DELETE /api/v1/games/{id}/guests                   — removeGuest
+POST   /api/v1/games/{id}/join                     — joinGame; body: {user_id, group_id} — group_id is optional,
+                                                     used only for the audit entry's group association
+POST   /api/v1/games/{id}/skip                     — skipGame; same body shape as join
+POST   /api/v1/games/{id}/guests                   — addGuest; same body shape as join
+DELETE /api/v1/games/{id}/guests                   — removeGuest; body: {user_id}
 GET    /api/v1/games/{id}/participations           — getParticipations
 GET    /api/v1/games/{id}/guests                   — getGuests
-DELETE /api/v1/games/{id}/players/{telegramID}     — kickPlayer
-DELETE /api/v1/games/{id}/guests/{guestID}         — kickGuest
+DELETE /api/v1/games/{id}/players/{playerID}       — kickPlayer; query: group_id, actor_user_id, actor_display
+DELETE /api/v1/games/{id}/guests/{guestID}         — kickGuest; query: group_id, actor_user_id, actor_display
 
-GET /api/v1/players/{telegramID}                   — getPlayerByTelegramID
-GET /api/v1/players/{telegramID}/next-game         — getNextGame
-GET /api/v1/players/{playerID}/games               — listPlayerGames
+POST   /api/v1/identities/resolve                  — resolveIdentity; internal-only, bearer-gated like every
+                                                     other route here. Body: {provider, external_id, username,
+                                                     first_name, last_name, photo_url}; only provider="telegram"
+                                                     accepted today. Finds-or-creates the (provider, external_id)
+                                                     identity — race-safe via a unique constraint + retry-on-23505
+                                                     inside a transaction — always overwrites the user's profile
+                                                     fields from the supplied values (Telegram accurately reports
+                                                     cleared username/name). Returns {user_id, player_id (nullable —
+                                                     null until the user's first game join), display_name,
+                                                     is_server_owner}. This is the ONLY route that accepts a raw
+                                                     provider ID; every other route is keyed by the canonical user_id
+                                                     or player_id it returns.
+GET    /api/v1/users                               — listUsers; owner-only. Required header: X-Caller-User-Id
+                                                     (never trust a body/query value — role escalation must be
+                                                     checked against the DB, not a client-controlled header value
+                                                     alone: the header identifies the caller, IsServerOwner(callerID)
+                                                     re-verifies against users.is_server_owner). Returns
+                                                     []UserSummary{User, providers []string}.
+GET    /api/v1/users/{userID}                      — getUser; returns the full User row (display_name,
+                                                     is_server_owner, dm_language, results_opt_out, timestamps).
+                                                     404 if the user doesn't exist (users always exist once
+                                                     resolved, so this is effectively unreachable in practice).
+PATCH  /api/v1/users/{userID}/server-owner         — setUserServerOwner; body: {enabled bool, actor_user_id,
+                                                     actor_display}. Actor must already be a server owner (403
+                                                     otherwise); revoking the last remaining owner returns 409
+                                                     (ErrLastServerOwner, race-safe via pg_advisory_xact_lock).
+                                                     Records `user.role_changed` (server_owner visibility).
+PATCH  /api/v1/users/{userID}/dm-language          — setUserDMLanguage; body: {language: "en"|"de"|"ru"}
+PATCH  /api/v1/users/{userID}/results-opt-out      — setUserResultsOptOut; body: {opt_out bool}
+GET    /api/v1/users/{userID}/next-game            — getNextGame
+GET    /api/v1/users/{userID}/games                — listPlayerGames; returns [] for a user with no player
+                                                     row yet (never joined a game) instead of 404
+GET    /api/v1/users/{userID}/recent-completed-games — getRecentCompletedGames (query: group_id); see the
+                                                     result-window note below (unchanged semantics, re-keyed)
+GET    /api/v1/users/{userID}/groups-with-results  — getPlayerGroupsWithResults; groups where the user has
+                                                     a player_ratings row with games_played > 0
+GET    /api/v1/users/{userID}/admin-groups         — listAdminGroups: groups userID may administer.
+                                                     Server owner → all groups; otherwise the groups
+                                                     AdminGroupsResolver reports (cached, see below).
+                                                     Same []models.Group shape as listGroups; [] when none.
+                                                     Backs the web service's group-settings authorization —
+                                                     web has no local owner shortcut of its own, it always
+                                                     trusts this one lookup (owners already get every group back).
 
 PUT    /api/v1/groups/{chatID}                     — upsertGroup
 PATCH  /api/v1/groups/{chatID}/language            — setGroupLanguage
@@ -173,11 +239,6 @@ PATCH  /api/v1/groups/{chatID}/auto-booking-allowed      — setGroupAutoBooking
 DELETE /api/v1/groups/{chatID}                     — removeGroup
 GET    /api/v1/groups                              — listGroups (response includes added_at)
 GET    /api/v1/groups/{chatID}                     — getGroup (response includes added_at)
-GET    /api/v1/admins/{tgID}/groups                — listAdminGroups: groups tgID may administer.
-                                                     Server owner → all groups; otherwise the groups
-                                                     AdminGroupsResolver reports (cached, see below).
-                                                     Same []models.Group shape as listGroups; [] when none.
-                                                     Backs the web service's group-settings authorization.
 
 POST   /api/v1/venues                              — createVenue; rejects auto_booking_enabled=true
                                                      when group auto_booking_allowed=false (400)
@@ -203,22 +264,25 @@ POST   /api/v1/game-results/{id}/approve           — approveGameResult; synchr
                                                      500 on rating-apply failure leaves the row pending.
 POST   /api/v1/game-results/{id}/reject            — rejectGameResult
 POST   /api/v1/game-results/{id}/cancel            — cancelGameResult (author only)
-GET    /api/v1/players/{tgID}/recent-completed-games — getRecentCompletedGames (query: group_id). Returns past
-                                                     games within the result window (RESULT_WINDOW_DAYS, default 14,
-                                                     per-group-tz calendar days); ignores the completed flag. No days param.
+(getRecentCompletedGames and getPlayerGroupsWithResults are the /api/v1/users/{userID}/... routes above;
+the result window is RESULT_WINDOW_DAYS, default 14, per-group-tz calendar days, ignores completed flag)
 
 GET /api/v1/groups/{chatID}/leaderboard            — getGroupLeaderboard
-GET /api/v1/players/{tgID}/groups-with-results     — getPlayerGroupsWithResults; returns groups where the
-                                                     player has a player_ratings row with games_played > 0
-                                                     (not "recent completed games" — that overrepresented
-                                                     unrated activity and missed rated players older than 90 d)
+(/api/v1/users/{userID}/groups-with-results above returns groups where the player has a
+ player_ratings row with games_played > 0 — not "recent completed games", which overrepresented
+ unrated activity and missed rated players older than 90 d)
 
 GET  /api/v1/audit                                 — listAuditEvents
-     required header: X-Caller-Tg-Id (caller's Telegram ID, injected by web service)
+     required header: X-Caller-User-Id (caller's canonical user ID, injected by the web service
+     from its JWT — never trusted from a raw client-supplied value)
      query: limit (default 50, max 200), before_id, event_type, from (RFC3339), to (RFC3339, exclusive upper bound)
-     server-owner-only params: group_id, actor_tg_id
+     server-owner-only params: group_id, actor_user_id
      visibility scoping (non-owners):
-       - own player events: visibility='player' AND actor_tg_id = caller's TG ID
+       - own player events: visibility='player' AND actor_user_id = caller's user ID.
+         actor_tg_id is kept only as read-only history — migration 033 backfilled actor_user_id
+         on every pre-existing row (JOIN users ON tmp_tg = actor_tg_id) before dropping the old
+         actor_tg_id index, so this single filter covers events recorded before the identity
+         migration too; no dual OwnTgID/OwnUserID filtering is needed.
        - group admin events: visibility IN ('player','group_admin') AND group_id IN (groups where caller is admin)
        both scopes are OR-combined; AdminGroupsResolver calls GetChatAdministrators per group (errors silently ignored)
 ```
@@ -256,16 +320,19 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 | `court.booked` | group_admin | Court booked (scheduler or admin via BookGameCourts) |
 | `court.canceled` | group_admin | Scheduler cancels a court |
 | `game.published` | group_admin | Game announcement sent to group (by scheduler or admin) |
+| `user.role_changed` | server_owner | Server owner grants/revokes the server-owner role via the Users page |
 
-**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners (IDs in `SERVICE_ADMIN_IDS` on management/web) see all events. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
+**Visibility hierarchy:** `server_owner` ≥ `group_admin` ≥ `player`. Server owners see all events — determined live from `users.is_server_owner` (`isServerOwner(ctx, userID)`), not from `SERVICE_ADMIN_IDS`, which only seeds that DB flag at startup. Group admins see their own `player` events plus all `player`+`group_admin` events for groups they administrate. Regular users see only their own `player` events.
 
 **Retention:** `RunRetention(ctx, days)` deletes rows older than `days` days. Called daily by a cron entry in `main.go` (controlled by `AUDIT_RETENTION_DAYS`, default 365).
 
-**Actor propagation pattern:** HTTP handlers receive actor info from the caller:
-- POST/PATCH bodies carry `actor_telegram_id` and `actor_display` JSON fields
-- DELETE endpoints carry `actor_tg_id` and `actor_display` query params (no body)
+**Actor propagation pattern:** HTTP handlers receive actor info from the caller — always the canonical `user_id`, never a raw provider ID:
+- POST/PATCH bodies carry `actor_user_id` and `actor_display` JSON fields
+- DELETE endpoints carry `actor_user_id` and `actor_display` query params (no body)
 - `group_id` is passed as a query param for kick endpoints (handler doesn't know chat ID from path alone)
-- Audit is skipped when `actorTgID == 0` (system/anonymous callers)
+- Audit is skipped when `actorUserID == 0` (system/anonymous callers)
+- `actor_tg_id` still exists as a column (read-only history for rows recorded before the identity
+  migration) but no handler writes it anymore — every write goes through `actor_user_id`
 
 ### GameService / ParticipationService / VenueService
 
@@ -274,7 +341,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 - `ParticipationService` calls `Notifier.EditGameMessage(ctx, gameID)` asynchronously after every join/skip/guest mutation — this fires a Telegram message edit in a background goroutine
 - All write operations update the DB then notify; notification failures are logged but do not fail the API response
 
-**`GameService.PublishGame(ctx, gameID, actorTgID int64, actorDisplay string) (*models.Game, error)`**
+**`GameService.PublishGame(ctx, gameID, actorUserID int64, actorDisplay string) (*models.Game, error)`**
 
 The canonical publication primitive. Sends the game announcement to the group chat, pins it silently, sets `message_id`, and records a `game.published` audit event.
 
@@ -282,11 +349,11 @@ The canonical publication primitive. Sends the game announcement to the group ch
 - Returns `ErrGameAlreadyPublished` when `game.MessageID != nil` — idempotency guard.
 - On `api.Send` failure: returns error without touching the DB (game stays cleanly unpublished).
 - On `gameRepo.UpdateMessageID` failure: deletes the orphaned Telegram message, then returns error.
-- `actorTgID == 0` → audit records `actor_kind = system`; non-zero → `actor_kind = user`.
+- `actorUserID == 0` → audit records `actor_kind = system`; non-zero → `actor_kind = user`.
 
 `NewGameService` signature (13 args): `gameRepo, venueRepo, participationRepo, guestRepo, groupRepo GameRepository…, auditSvc *AuditService, api TelegramAPI, defaultLoc *time.Location, logger *slog.Logger, courtBookingRepo CourtBookingRepository, bookingClient BookingServiceClient, credService *VenueCredentialService, autoBookingResultRepo AutoBookingResultRepository`.
 
-**`GameService.BookGameCourts(ctx, gameID int64, count int, actorTgID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error)`**
+**`GameService.BookGameCourts(ctx, gameID int64, count int, actorUserID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error)`**
 
 On-demand court booking for an existing game. Delegates to `bookFreeCourts` (shared with `AutoBookingJob`). Appends booked labels to `game.Courts` (multiset-dedup: skips labels already present). Upserts `auto_booking_results` (insert only when no row exists for venue+date+time). Fires `notifier.EditGameMessage` asynchronously using `context.Background()` (detached from request context).
 
@@ -417,12 +484,12 @@ Owns the 1-v-1 game-result submission and approval lifecycle. Constructor takes 
 
 | Method | Purpose |
 |--------|---------|
-| `Submit(ctx, gameID, authorTgID, opponentPlayerID, winnerPlayerID *int64, score, actorDisplay)` | Resolves author from Telegram ID, validates author ≠ opponent, validates both are `registered` in the game, validates score format (`^\d+:\d+$`, winner's side ≥ loser's). Creates a `pending` row; returns it with `AutoApproveAt = SubmittedAt + 48h` populated. Errors: `ErrGameResultNotInGame`, `ErrGameResultBadScore`, `ErrGameResultSamePlayer`, `ErrGameNotFound`. |
+| `Submit(ctx, gameID, authorUserID, opponentPlayerID, winnerPlayerID *int64, score, actorDisplay)` | Resolves the author's player row via `playerRepo.GetByUserID(authorUserID)`, checks `userRepo.GetByID(authorUserID).ResultsOptOut` (→ `ErrAuthorOptedOut`), validates author ≠ opponent, validates both are `registered` in the game, validates score format (`^\d+:\d+$`, winner's side ≥ loser's). Creates a `pending` row; returns it with `AutoApproveAt = SubmittedAt + 48h` populated. Errors: `ErrGameResultNotInGame`, `ErrGameResultBadScore`, `ErrGameResultSamePlayer`, `ErrGameNotFound`, `ErrAuthorOptedOut`. |
 | `Get(ctx, id)` | Fetches by ID and populates `Author` / `Opponent` from `playerRepo` (best-effort enrichment, errors ignored). |
 | `SetApprovalMessage(ctx, id, chatID, messageID)` | Stores the opponent DM `chat_id` + `message_id` so `AutoApproveResultsJob` can edit the card on timeout. |
-| `Approve(ctx, id, opponentTgID, actorDisplay)` | Verifies caller is the opponent. Calls `commitDecision`: when `pool` and `ratingSvc` are wired, opens a tx and runs `resultRepo.DecideInTx` + `ratingSvc.ApplyInTx` together. On any failure the whole tx rolls back and the row stays pending. Records `RecordGameResultApproved` on success (best-effort, outside tx). |
-| `Reject(ctx, id, opponentTgID, actorDisplay)` | Verifies caller is the opponent. Plain `Decide` (no rating change). Records `RecordGameResultRejected`. |
-| `CancelByAuthor(ctx, id, authorTgID, actorDisplay)` | Verifies caller is the author. Plain `Decide` (no rating change). Records `RecordGameResultCanceled`. |
+| `Approve(ctx, id, actorUserID, actorDisplay)` | Verifies caller (by user ID) is the opponent. Calls `commitDecision`: when `pool` and `ratingSvc` are wired, opens a tx and runs `resultRepo.DecideInTx` + `ratingSvc.ApplyInTx` together. On any failure the whole tx rolls back and the row stays pending. Records `RecordGameResultApproved` on success (best-effort, outside tx). |
+| `Reject(ctx, id, actorUserID, actorDisplay)` | Verifies caller (by user ID) is the opponent. Plain `Decide` (no rating change). Records `RecordGameResultRejected`. |
+| `CancelByAuthor(ctx, id, actorUserID, actorDisplay)` | Verifies caller (by user ID) is the author. Plain `Decide` (no rating change). Records `RecordGameResultCanceled`. |
 
 `commitDecision` falls back to a non-tx `Decide` when `newStatus != Approved`, or when `pool == nil` / `ratingSvc == nil` — used by unit tests and by environments where rating is intentionally disabled.
 
@@ -437,7 +504,7 @@ Owns Glicko-2 updates and leaderboard queries. Constructor takes the same pool s
 | `Apply(ctx, result)` | Opens a transaction and delegates to `ApplyInTx`. Used by callers that don't already hold a tx. |
 | `ApplyInTx(ctx, tx, result)` | The critical-section update. Locks both `player_ratings` rows `FOR UPDATE` ordered by `player_id ASC` (deadlock prevention). Initialises missing rows with default rating/RD/volatility via `getOrInitForUpdate`. Computes scores `{1, 0.5, 0}` from `WinnerID` (nil → draw). Upserts both ratings and inserts both `rating_changes` rows **inside the caller's tx** — so the leaderboard's current rating and DeltaToday history can never diverge. Audit (`RecordRatingUpdated`) runs after the rating mutation but outside the commit (best-effort). |
 | `GetLeaderboard(ctx, groupID)` | Returns `[]LeaderboardEntry{Rank, Player, Rating, RD, GamesPlayed, DeltaToday}` ordered by rating DESC, hiding players with `games_played == 0` and re-numbering ranks after the filter. `DeltaToday` is the sum of `rating_changes.delta` rows in the group's local-tz day `[00:00, 24:00)`. |
-| `ListGroupsForPlayer(ctx, playerID)` | Returns group IDs where the player has a `player_ratings` row with `games_played > 0`. Backs `GET /api/v1/players/{tgID}/groups-with-results`. |
+| `ListGroupsForPlayer(ctx, playerID)` | Returns group IDs where the player has a `player_ratings` row with `games_played > 0`. Backs `GET /api/v1/users/{userID}/groups-with-results`. |
 
 `Apply` is now called synchronously from `GameResultService.commitDecision` and `AutoApproveResultsJob.autoApproveOne`; the older async-goroutine path was removed because a crash or DB blip between Decide and Apply could permanently desync the leaderboard.
 
@@ -456,10 +523,25 @@ Owns Glicko-2 updates and leaderboard queries. Constructor takes the same pool s
 ## Database schema (key columns for planning changes)
 
 ```sql
+users:              id BIGSERIAL PK, display_name TEXT DEFAULT '', is_server_owner BOOLEAN DEFAULT FALSE,
+                    dm_language VARCHAR(5) DEFAULT '', results_opt_out BOOLEAN DEFAULT FALSE,
+                    created_at, updated_at
+                    — the canonical identity; a row exists for every resolved caller, independent
+                    of whether they've ever joined a game (no players row required)
+user_identities:    id BIGSERIAL PK, user_id FK→users ON DELETE CASCADE, provider TEXT (only
+                    "telegram" today), external_id TEXT (stringified Telegram user ID),
+                    username, first_name, last_name, photo_url (all nullable — hydrated onto
+                    Player/User via LEFT JOIN, not stored redundantly elsewhere),
+                    created_at, updated_at, UNIQUE(provider, external_id)
+                    — one row per linked provider account; future providers (Strava, email) add
+                    rows here, never a new column on `users`
 games:              id, chat_id, message_id, game_date, courts_count, courts,
                     venue_id (FK→venues ON DELETE SET NULL), notified_day_before, completed,
                     final_court_check_done, halfway_court_check_done
-players:            id, telegram_id UNIQUE, username, first_name, last_name
+players:            id, user_id BIGINT NOT NULL UNIQUE FK→users, created_at
+                    — telegram_id/username/first_name/last_name were dropped in migration 034;
+                    every read hydrates them via LEFT JOIN user_identities ON provider='telegram'
+                    instead. A row is created only on a caller's first game join (PlayerRepo.Upsert).
 game_participations: game_id, player_id, status ('registered'|'skipped'), UNIQUE(game_id,player_id)
 guest_participations: id, game_id, invited_by_player_id
 bot_groups:         chat_id PK, title, bot_is_admin, language DEFAULT 'en', timezone DEFAULT 'UTC',
@@ -511,11 +593,15 @@ rating_changes:     id BIGSERIAL PK, game_result_id BIGINT FK→game_results ON 
                     (one row per player per applied result; powers DeltaToday in GetLeaderboard)
 audit_events:       id BIGSERIAL PK, occurred_at TIMESTAMPTZ DEFAULT NOW(),
                     event_type TEXT, visibility TEXT ('player'|'group_admin'|'server_owner'),
-                    actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable),
+                    actor_kind TEXT ('user'|'system'), actor_tg_id BIGINT (nullable — read-only
+                    history; no handler writes this anymore), actor_user_id BIGINT FK→users
+                    (nullable; the live actor key — migration 033 backfilled it on every
+                    pre-existing row from actor_tg_id),
                     actor_display TEXT, group_id BIGINT (nullable, NO FK — stored value; deleting a group does not null-out historical events),
                     subject_type TEXT, subject_id TEXT, description TEXT, metadata JSONB (nullable)
-                    INDEX: (group_id, occurred_at DESC), (actor_tg_id, occurred_at DESC),
+                    INDEX: (group_id, occurred_at DESC), (actor_user_id, occurred_at DESC),
                            (event_type, occurred_at DESC)
+                    (actor_tg_id_idx was dropped in migration 033 when actor_user_id_idx replaced it)
 ```
 
 Adding a new column always requires a new migration file in `migrations/`. Test DB must be truncated via `testutil.TruncateTables` which lists tables explicitly.
@@ -536,8 +622,11 @@ TIMEZONE=UTC
 SPORTS_BOOKING_SERVICE_URL=   optional; enables auto court cancellation + auto booking
 CREDENTIALS_ENCRYPTION_KEY=   optional; 64 hex chars (AES-256-GCM) for venue booking credentials at rest; 503 when unset
 CREDENTIAL_ERROR_COOLDOWN=24h how long a failed credential is skipped before retry
-SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs treated as server owners;
-                              grants full audit event visibility (server_owner tier) and server-owner flag in web SPA
+SERVICE_ADMIN_IDS=            optional; comma-separated Telegram user IDs granted is_server_owner at
+                              startup (GrantServerOwnersByTelegramID). Grant-only and idempotent — does
+                              NOT revoke on removal. The DB (users.is_server_owner) is the sole
+                              authorization source afterwards; manage it via the Users page
+                              (GET/PATCH /api/v1/users*). Not read by the web service.
 AUDIT_RETENTION_DAYS=365      optional; how long audit events are kept (daily retention cron deletes older rows)
 RESULT_WINDOW_DAYS=14         optional; how far back a past game stays eligible for result submission (per-group-tz calendar days; ignores completed flag)
 ```
@@ -549,7 +638,7 @@ RESULT_WINDOW_DAYS=14         optional; how far back a past game stays eligible 
 - **Audit any action that meaningfully changes state.** Every new endpoint or service method that creates, updates, or deletes a meaningful entity must call the appropriate `AuditService.Record*` method. Use the table in the AuditService section to pick visibility. Steps:
   1. Add an `AuditEventType` constant in `internal/models/audit_event.go`.
   2. Add a `Record<Action>` method on `AuditService` in `audit_service.go` following the best-effort pattern (call `s.record`, never return error). Set `Visibility` to the lowest tier that should see the event: `player` for self-service actions, `group_admin` for admin-gated actions, `server_owner` for global/infra events.
-  3. Call the method from the API handler (after the state-changing operation succeeds) or from the scheduler job. Propagate actor info via the **actor propagation pattern** (body fields for POST/PATCH/PUT; query params `actor_tg_id`, `actor_display`, `group_id` for DELETE). Skip the call when `actorTgID == 0`.
+  3. Call the method from the API handler (after the state-changing operation succeeds) or from the scheduler job. Propagate actor info via the **actor propagation pattern** (body fields `actor_user_id`/`actor_display` for POST/PATCH/PUT; query params `actor_user_id`, `actor_display`, `group_id` for DELETE). Skip the call when `actorUserID == 0`.
   4. **Mirror the new type in the frontend** — add the string literal to the `AuditEventType` union in `web/frontend/src/types.ts` AND add a human-readable label in `web/frontend/src/auditEvents.ts` (`EVENT_LABELS`). The test `src/auditEvents.test.ts` reads `internal/models/audit_event.go` at test time and fails CI if the two sides diverge — run `npm test` in `web/frontend/` to verify.
   5. Update the event-type table in this SKILL.md.
 - New business rules go in `service/`, not `api/`

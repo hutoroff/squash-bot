@@ -26,19 +26,8 @@ func NewParticipationService(playerRepo PlayerRepository, participationRepo Part
 	}
 }
 
-func (s *ParticipationService) Join(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, error) {
-	player := &models.Player{TelegramID: telegramID}
-	if username != "" {
-		player.Username = &username
-	}
-	if firstName != "" {
-		player.FirstName = &firstName
-	}
-	if lastName != "" {
-		player.LastName = &lastName
-	}
-
-	saved, err := s.playerRepo.Upsert(ctx, player)
+func (s *ParticipationService) Join(ctx context.Context, gameID, userID int64) ([]*models.GameParticipation, error) {
+	saved, err := s.playerRepo.Upsert(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upsert player: %w", err)
 	}
@@ -47,7 +36,7 @@ func (s *ParticipationService) Join(ctx context.Context, gameID, telegramID int6
 		return nil, fmt.Errorf("upsert participation: %w", err)
 	}
 
-	slog.Info("Player joined", "player", displayName(username, firstName, lastName), "game_id", gameID)
+	slog.Info("Player joined", "player", playerDisplayName(saved), "game_id", gameID)
 
 	parts, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
@@ -62,8 +51,8 @@ func (s *ParticipationService) Join(ctx context.Context, gameID, telegramID int6
 // Skip marks a player as skipped. Returns (participations, skipped, error).
 // skipped=false means the player was not registered, so no change was made.
 // Guests previously added by this player are independent and are not affected.
-func (s *ParticipationService) Skip(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) ([]*models.GameParticipation, bool, error) {
-	existingPlayer, err := s.playerRepo.GetByTelegramID(ctx, telegramID)
+func (s *ParticipationService) Skip(ctx context.Context, gameID, userID int64) ([]*models.GameParticipation, bool, error) {
+	existingPlayer, err := s.playerRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
@@ -91,7 +80,7 @@ func (s *ParticipationService) Skip(ctx context.Context, gameID, telegramID int6
 		return nil, false, fmt.Errorf("upsert participation: %w", err)
 	}
 
-	slog.Info("Player skipped", "player", displayName(username, firstName, lastName), "game_id", gameID)
+	slog.Info("Player skipped", "player", playerDisplayName(existingPlayer), "game_id", gameID)
 
 	updated, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
@@ -103,22 +92,11 @@ func (s *ParticipationService) Skip(ctx context.Context, gameID, telegramID int6
 	return updated, true, nil
 }
 
-// AddGuest records a +1 for the given Telegram user and returns the refreshed
+// AddGuest records a +1 for the given user and returns the refreshed
 // participant and guest lists for message update.
 // Returns (false, nil, nil, nil) when the game is already at full capacity.
-func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID int64, username, firstName, lastName string) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	player := &models.Player{TelegramID: telegramID}
-	if username != "" {
-		player.Username = &username
-	}
-	if firstName != "" {
-		player.FirstName = &firstName
-	}
-	if lastName != "" {
-		player.LastName = &lastName
-	}
-
-	saved, err := s.playerRepo.Upsert(ctx, player)
+func (s *ParticipationService) AddGuest(ctx context.Context, gameID, userID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	saved, err := s.playerRepo.Upsert(ctx, userID)
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("upsert player: %w", err)
 	}
@@ -131,7 +109,7 @@ func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID 
 		return false, nil, nil, nil
 	}
 
-	slog.Info("Guest added", "inviter", displayName(username, firstName, lastName), "game_id", gameID)
+	slog.Info("Guest added", "inviter", playerDisplayName(saved), "game_id", gameID)
 
 	parts, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
@@ -147,10 +125,10 @@ func (s *ParticipationService) AddGuest(ctx context.Context, gameID, telegramID 
 	return true, parts, guests, nil
 }
 
-// RemoveGuest removes the most recently added guest for the given Telegram user.
+// RemoveGuest removes the most recently added guest for the given user.
 // Returns (removed, participations, guests, error). removed=false means the user had no guests.
-func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, telegramID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
-	player, err := s.playerRepo.GetByTelegramID(ctx, telegramID)
+func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, userID int64) (bool, []*models.GameParticipation, []*models.GuestParticipation, error) {
+	player, err := s.playerRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil, nil, nil
@@ -166,7 +144,7 @@ func (s *ParticipationService) RemoveGuest(ctx context.Context, gameID, telegram
 		return false, nil, nil, nil
 	}
 
-	slog.Info("Guest removed", "inviter_id", telegramID, "game_id", gameID)
+	slog.Info("Guest removed", "inviter_user_id", userID, "game_id", gameID)
 
 	parts, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
@@ -202,19 +180,11 @@ func (s *ParticipationService) GetGuestCount(ctx context.Context, gameID int64) 
 	return s.guestRepo.GetCountByGame(ctx, gameID)
 }
 
-// KickPlayer removes a player's participation from a game by their Telegram ID.
+// KickPlayer removes a player's participation from a game by player ID.
 // Returns the refreshed participant and guest lists.
-// Returns nil, nil, false, nil if the player is not in the database.
-func (s *ParticipationService) KickPlayer(ctx context.Context, gameID, telegramID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
-	player, err := s.playerRepo.GetByTelegramID(ctx, telegramID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, false, nil
-		}
-		return nil, nil, false, fmt.Errorf("get player: %w", err)
-	}
-
-	removed, err := s.participationRepo.DeleteByGameAndPlayer(ctx, gameID, player.ID)
+// Returns nil, nil, false, nil if the player was not in the game.
+func (s *ParticipationService) KickPlayer(ctx context.Context, gameID, playerID int64) ([]*models.GameParticipation, []*models.GuestParticipation, bool, error) {
+	removed, err := s.participationRepo.DeleteByGameAndPlayer(ctx, gameID, playerID)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("delete participation: %w", err)
 	}
@@ -222,7 +192,7 @@ func (s *ParticipationService) KickPlayer(ctx context.Context, gameID, telegramI
 		return nil, nil, false, nil
 	}
 
-	slog.Info("Player kicked", "telegram_id", telegramID, "game_id", gameID)
+	slog.Info("Player kicked", "player_id", playerID, "game_id", gameID)
 
 	parts, err := s.participationRepo.GetByGame(ctx, gameID)
 	if err != nil {
@@ -259,16 +229,19 @@ func (s *ParticipationService) KickGuestByID(ctx context.Context, gameID, guestI
 	return parts, guests, true, nil
 }
 
-func displayName(username, firstName, lastName string) string {
-	if username != "" {
-		return "@" + username
+func playerDisplayName(p *models.Player) string {
+	if p.Username != nil && *p.Username != "" {
+		return "@" + *p.Username
 	}
-	name := firstName
-	if lastName != "" {
+	name := ""
+	if p.FirstName != nil {
+		name = *p.FirstName
+	}
+	if p.LastName != nil && *p.LastName != "" {
 		if name != "" {
 			name += " "
 		}
-		name += lastName
+		name += *p.LastName
 	}
 	return name
 }

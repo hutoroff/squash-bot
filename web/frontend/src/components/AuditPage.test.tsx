@@ -28,7 +28,7 @@ const mockFetch = vi.mocked(auditApi.fetchAuditEvents)
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
 function makeUser(overrides: Partial<User> = {}): User {
-  return { telegram_id: 42, first_name: 'Alice', ...overrides }
+  return { user_id: 42, first_name: 'Alice', ...overrides }
 }
 
 function makeEvent(id: number, overrides: Partial<AuditEvent> = {}): AuditEvent {
@@ -38,7 +38,7 @@ function makeEvent(id: number, overrides: Partial<AuditEvent> = {}): AuditEvent 
     event_type: 'participation.joined',
     visibility: 'player',
     actor_kind: 'user',
-    actor_tg_id: 42,
+    actor_user_id: 42,
     actor_display: 'Alice',
     subject_type: 'game',
     subject_id: '1',
@@ -108,18 +108,18 @@ describe('AuditPage', () => {
     })
   })
 
-  it('hides group_id and actor_tg_id filters for regular users', () => {
+  it('hides group_id and actor_user_id filters for regular users', () => {
     mockFetch.mockReturnValue(new Promise(() => {}))
     renderAuditPage(makeUser())
     expect(screen.queryByLabelText(/Group ID/)).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/Actor TG ID/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Actor user ID/)).not.toBeInTheDocument()
   })
 
-  it('shows group_id and actor_tg_id filters for server owners', () => {
+  it('shows group_id and actor_user_id filters for server owners', () => {
     mockFetch.mockReturnValue(new Promise(() => {}))
     renderAuditPage(makeUser({ is_server_owner: true }))
     expect(screen.getByLabelText(/Group ID/)).toBeInTheDocument()
-    expect(screen.getByLabelText(/Actor TG ID/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Actor user ID/)).toBeInTheDocument()
   })
 
   it('shows Load more button when exactly 50 events returned', async () => {

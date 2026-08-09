@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -22,40 +23,110 @@ const tokenExpiry = 7 * 24 * time.Hour
 
 // AuthHandler handles Telegram Login Widget authentication and session management.
 type AuthHandler struct {
-	botToken       string
-	botName        string
-	jwtSecret      string
-	mgmtURL        string
-	mgmtSecret     string
-	serverOwnerIDs map[int64]bool
-	httpClient     *http.Client
-	logger         *slog.Logger
+	botToken   string
+	botName    string
+	jwtSecret  string
+	mgmtURL    string
+	mgmtSecret string
+	httpClient *http.Client
+	logger     *slog.Logger
 }
 
 // NewAuthHandler creates an AuthHandler.
-func NewAuthHandler(botToken, botName, jwtSecret, mgmtURL, mgmtSecret string, serverOwnerIDs map[int64]bool, logger *slog.Logger) *AuthHandler {
+func NewAuthHandler(botToken, botName, jwtSecret, mgmtURL, mgmtSecret string, logger *slog.Logger) *AuthHandler {
 	return &AuthHandler{
-		botToken:       botToken,
-		botName:        botName,
-		jwtSecret:      jwtSecret,
-		mgmtURL:        mgmtURL,
-		mgmtSecret:     mgmtSecret,
-		serverOwnerIDs: serverOwnerIDs,
-		httpClient:     &http.Client{Timeout: 5 * time.Second},
-		logger:         logger,
+		botToken:   botToken,
+		botName:    botName,
+		jwtSecret:  jwtSecret,
+		mgmtURL:    mgmtURL,
+		mgmtSecret: mgmtSecret,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		logger:     logger,
 	}
 }
 
 // JWTClaims holds the user information stored in the session JWT.
+// UserID is the canonical identity — the presence check in parseJWT rejects
+// any pre-v2 cookie (which never had "uid"), forcing a clean re-login.
 type JWTClaims struct {
-	TelegramID    int64  `json:"tid"`
-	PlayerID      *int64 `json:"pid,omitempty"`
-	FirstName     string `json:"fn"`
-	LastName      string `json:"ln,omitempty"`
-	Username      string `json:"un,omitempty"`
-	PhotoURL      string `json:"ph,omitempty"`
-	IsServerOwner bool   `json:"so,omitempty"`
-	Exp           int64  `json:"exp"`
+	UserID    int64  `json:"uid"`
+	PlayerID  *int64 `json:"pid,omitempty"`
+	FirstName string `json:"fn"`
+	LastName  string `json:"ln,omitempty"`
+	Username  string `json:"un,omitempty"`
+	PhotoURL  string `json:"ph,omitempty"`
+	Exp       int64  `json:"exp"`
+}
+
+// resolvedIdentity mirrors the management service's POST /api/v1/identities/resolve response.
+type resolvedIdentity struct {
+	UserID        int64  `json:"user_id"`
+	PlayerID      *int64 `json:"player_id"`
+	DisplayName   string `json:"display_name"`
+	IsServerOwner bool   `json:"is_server_owner"`
+}
+
+// resolveUser finds-or-creates the canonical user for a Telegram identity.
+func (a *AuthHandler) resolveUser(ctx context.Context, telegramID int64, username, firstName, lastName, photoURL string) (*resolvedIdentity, error) {
+	body, err := json.Marshal(map[string]string{
+		"provider":    "telegram",
+		"external_id": strconv.FormatInt(telegramID, 10),
+		"username":    username,
+		"first_name":  firstName,
+		"last_name":   lastName,
+		"photo_url":   photoURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.mgmtURL+"/api/v1/identities/resolve", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.mgmtSecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("management service returned %d", resp.StatusCode)
+	}
+
+	var out resolvedIdentity
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// getUser fetches the canonical user record from the management service.
+func (a *AuthHandler) getUser(ctx context.Context, userID int64) (*resolvedIdentity, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/users/%d", a.mgmtURL, userID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.mgmtSecret)
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("management service returned %d", resp.StatusCode)
+	}
+
+	var out struct {
+		UserID        int64 `json:"user_id"`
+		IsServerOwner bool  `json:"is_server_owner"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &resolvedIdentity{UserID: out.UserID, IsServerOwner: out.IsServerOwner}, nil
 }
 
 // handleCallback handles GET /api/auth/callback.
@@ -80,20 +151,21 @@ func (a *AuthHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims := JWTClaims{
-		TelegramID:    telegramID,
-		FirstName:     params["first_name"],
-		LastName:      params["last_name"],
-		Username:      params["username"],
-		PhotoURL:      params["photo_url"],
-		IsServerOwner: a.serverOwnerIDs[telegramID],
-		Exp:           time.Now().Add(tokenExpiry).Unix(),
+	resolved, err := a.resolveUser(r.Context(), telegramID, params["username"], params["first_name"], params["last_name"], params["photo_url"])
+	if err != nil {
+		a.logger.Error("resolveUser", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
-	if pid, err := a.lookupPlayer(r.Context(), telegramID); err == nil && pid != nil {
-		claims.PlayerID = pid
-	} else if err != nil {
-		a.logger.Debug("lookupPlayer", "telegram_id", telegramID, "err", err)
+	claims := JWTClaims{
+		UserID:    resolved.UserID,
+		PlayerID:  resolved.PlayerID,
+		FirstName: params["first_name"],
+		LastName:  params["last_name"],
+		Username:  params["username"],
+		PhotoURL:  params["photo_url"],
+		Exp:       time.Now().Add(tokenExpiry).Unix(),
 	}
 
 	token, err := issueJWT(a.jwtSecret, claims)
@@ -117,6 +189,8 @@ func (a *AuthHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 // handleMe handles GET /api/auth/me.
 // Returns 200 with the current user's info if authenticated, or 401 if not.
+// is_server_owner is always read live from the management service so a role
+// change takes effect immediately, without waiting for the session to expire.
 func (a *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	claims, err := a.claimsFromRequest(r)
 	if err != nil {
@@ -126,8 +200,17 @@ func (a *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, err := a.getUser(r.Context(), claims.UserID)
+	if err != nil {
+		a.logger.Error("handleMe: getUser", "user_id", claims.UserID, "err", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
+		return
+	}
+
 	type userResponse struct {
-		TelegramID    int64  `json:"telegram_id"`
+		UserID        int64  `json:"user_id"`
 		PlayerID      *int64 `json:"player_id,omitempty"`
 		FirstName     string `json:"first_name"`
 		LastName      string `json:"last_name,omitempty"`
@@ -137,13 +220,13 @@ func (a *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userResponse{ //nolint:errcheck
-		TelegramID:    claims.TelegramID,
+		UserID:        claims.UserID,
 		PlayerID:      claims.PlayerID,
 		FirstName:     claims.FirstName,
 		LastName:      claims.LastName,
 		Username:      claims.Username,
 		PhotoURL:      claims.PhotoURL,
-		IsServerOwner: a.serverOwnerIDs[claims.TelegramID],
+		IsServerOwner: user.IsServerOwner,
 	})
 }
 
@@ -176,82 +259,6 @@ func (a *AuthHandler) claimsFromRequest(r *http.Request) (*JWTClaims, error) {
 		return nil, err
 	}
 	return parseJWT(a.jwtSecret, cookie.Value)
-}
-
-// lookupPlayer fetches the player record from the management service.
-// Returns the player ID if found, nil if the player hasn't used the bot yet (404).
-func (a *AuthHandler) lookupPlayer(ctx context.Context, telegramID int64) (*int64, error) {
-	url := fmt.Sprintf("%s/api/v1/players/%d", a.mgmtURL, telegramID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+a.mgmtSecret)
-
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("management service returned %d", resp.StatusCode)
-	}
-
-	var p struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-		return nil, err
-	}
-	return &p.ID, nil
-}
-
-// resolvePlayerID returns the player ID for the given claims.
-//
-// If claims.PlayerID is already set it is returned immediately. Otherwise a
-// fresh lookup by TelegramID is performed against the management service. If a
-// player record is found the session cookie is refreshed in the same response
-// so that subsequent requests skip this round-trip.
-//
-// Returns (nil, nil) when the player record genuinely does not exist yet.
-func (a *AuthHandler) resolvePlayerID(w http.ResponseWriter, r *http.Request, claims *JWTClaims) (*int64, error) {
-	if claims.PlayerID != nil {
-		return claims.PlayerID, nil
-	}
-
-	pid, err := a.lookupPlayer(r.Context(), claims.TelegramID)
-	if err != nil {
-		return nil, fmt.Errorf("lookup player: %w", err)
-	}
-	if pid == nil {
-		return nil, nil
-	}
-
-	// Player record now exists — refresh the JWT so future requests skip this lookup.
-	updated := *claims
-	updated.PlayerID = pid
-	updated.Exp = time.Now().Add(tokenExpiry).Unix()
-	token, err := issueJWT(a.jwtSecret, updated)
-	if err != nil {
-		// Non-fatal: the resolved pid is still usable; the stale cookie will
-		// self-correct the next time the user logs in or the JWT rotates.
-		a.logger.Warn("resolvePlayerID: could not refresh JWT", "err", err)
-		return pid, nil
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    token,
-		Path:     "/",
-		Expires:  time.Now().Add(tokenExpiry),
-		HttpOnly: true,
-		Secure:   isSecureRequest(r),
-		SameSite: http.SameSiteLaxMode,
-	})
-	return pid, nil
 }
 
 // verifyTelegramAuth validates the Telegram Login Widget data hash.
@@ -319,6 +326,8 @@ func issueJWT(secret string, claims JWTClaims) (string, error) {
 }
 
 // parseJWT validates a JWT's signature and expiry, returning its claims.
+// A missing UserID (uid == 0) rejects pre-v2 cookies, which never carried
+// that field, forcing a clean re-login instead of resolving to user 0.
 func parseJWT(secret, token string) (*JWTClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -339,6 +348,9 @@ func parseJWT(secret, token string) (*JWTClaims, error) {
 	var c JWTClaims
 	if err := json.Unmarshal(payloadBytes, &c); err != nil {
 		return nil, fmt.Errorf("unmarshal claims: %w", err)
+	}
+	if c.UserID == 0 {
+		return nil, fmt.Errorf("stale session: missing uid")
 	}
 	if time.Now().Unix() > c.Exp {
 		return nil, fmt.Errorf("token expired")

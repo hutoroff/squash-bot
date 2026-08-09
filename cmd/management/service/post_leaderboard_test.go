@@ -197,7 +197,7 @@ func (r *stubGameRepoForLB) UpdateMessageID(_ context.Context, _, _ int64) error
 func (r *stubGameRepoForLB) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoForLB) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoForLB) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoForLB) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

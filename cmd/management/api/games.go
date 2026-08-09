@@ -9,17 +9,18 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // createGame handles POST /api/v1/games
 func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ChatID          int64     `json:"chat_id"`
-		GameDate        time.Time `json:"game_date"`
-		Courts          string    `json:"courts"`
-		VenueID         *int64    `json:"venue_id"`
-		ActorTelegramID int64     `json:"actor_telegram_id"`
-		ActorDisplay    string    `json:"actor_display"`
+		ChatID       int64     `json:"chat_id"`
+		GameDate     time.Time `json:"game_date"`
+		Courts       string    `json:"courts"`
+		VenueID      *int64    `json:"venue_id"`
+		ActorUserID  int64     `json:"actor_user_id"`
+		ActorDisplay string    `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -36,8 +37,8 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordGameCreated(r.Context(), game.ID, req.ChatID, req.ActorTelegramID, req.ActorDisplay, game.Courts, game.GameDate)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordGameCreated(r.Context(), game.ID, req.ChatID, req.ActorUserID, req.ActorDisplay, game.Courts, game.GameDate)
 	}
 	writeJSON(w, http.StatusCreated, game)
 }
@@ -125,11 +126,11 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Courts          string `json:"courts"`
-		GroupID         int64  `json:"group_id"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
-		CancelBookings  bool   `json:"cancel_bookings"`
+		Courts         string `json:"courts"`
+		GroupID        int64  `json:"group_id"`
+		ActorUserID    int64  `json:"actor_user_id"`
+		ActorDisplay   string `json:"actor_display"`
+		CancelBookings bool   `json:"cancel_bookings"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -143,8 +144,8 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, svcErr.Error())
 			return
 		}
-		if req.ActorTelegramID != 0 {
-			h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Courts)
+		if req.ActorUserID != 0 {
+			h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
 		}
 		if len(cancelErrors) > 0 {
 			type failureItem struct {
@@ -174,8 +175,8 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.ActorTelegramID != 0 {
-		h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorTelegramID, req.ActorDisplay, req.Courts)
+	if req.ActorUserID != 0 {
+		h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -207,9 +208,9 @@ func (h *Handler) listActiveCourtBookings(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, infos)
 }
 
-// checkGameAccess handles GET /api/v1/games/{id}/access?telegram_id=<id>.
+// checkGameAccess handles GET /api/v1/games/{id}/access?user_id=<id>.
 // Used by the web service to authorize its per-game endpoints before acting
-// on a caller-supplied game id (IDOR guard) — reports whether telegram_id is
+// on a caller-supplied game id (IDOR guard) — reports whether user_id is
 // associated with the game's group.
 func (h *Handler) checkGameAccess(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
@@ -217,30 +218,30 @@ func (h *Handler) checkGameAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid game id")
 		return
 	}
-	telegramID, err := parseID(r.URL.Query().Get("telegram_id"))
+	userID, err := parseID(r.URL.Query().Get("user_id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid or missing telegram_id")
+		writeError(w, http.StatusBadRequest, "invalid or missing user_id")
 		return
 	}
-	allowed, err := h.gameService.PlayerCanAccessGame(r.Context(), telegramID, id)
+	allowed, err := h.gameService.PlayerCanAccessGame(r.Context(), userID, id)
 	if err != nil {
-		h.logger.Error("checkGameAccess", "err", err, "id", id, "telegram_id", telegramID)
+		h.logger.Error("checkGameAccess", "err", err, "id", id, "user_id", userID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"allowed": allowed})
 }
 
-// getNextGame handles GET /api/v1/players/{telegramID}/next-game
+// getNextGame handles GET /api/v1/users/{userID}/next-game
 func (h *Handler) getNextGame(w http.ResponseWriter, r *http.Request) {
-	telegramID, err := parseID(r.PathValue("telegramID"))
+	userID, err := parseID(r.PathValue("userID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid telegram_id")
+		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
-	game, err := h.gameService.GetNextGameForTelegramUser(r.Context(), telegramID)
+	game, err := h.gameService.GetNextGameForUser(r.Context(), userID)
 	if err != nil {
-		h.logger.Error("getNextGame", "err", err, "telegram_id", telegramID)
+		h.logger.Error("getNextGame", "err", err, "user_id", userID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -251,18 +252,29 @@ func (h *Handler) getNextGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, game)
 }
 
-// listPlayerGames handles GET /api/v1/players/{playerID}/games.
-// Returns all games in which the player has any participation record, newest-first,
+// listPlayerGames handles GET /api/v1/users/{userID}/games.
+// Returns all games in which the user has any participation record, newest-first,
 // with participation status, registered count, venue info, and group timezone included.
+// Returns an empty list for a user who has never joined a game (no players row yet).
 func (h *Handler) listPlayerGames(w http.ResponseWriter, r *http.Request) {
-	playerID, err := parseID(r.PathValue("playerID"))
+	userID, err := parseID(r.PathValue("userID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid player id")
+		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
-	games, err := h.gameService.GetGamesForPlayer(r.Context(), playerID)
+	player, err := h.playerRepo.GetByUserID(r.Context(), userID)
 	if err != nil {
-		h.logger.Error("listPlayerGames", "err", err, "player_id", playerID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusOK, []models.PlayerGame{})
+			return
+		}
+		h.logger.Error("listPlayerGames: get player", "err", err, "user_id", userID)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	games, err := h.gameService.GetGamesForPlayer(r.Context(), player.ID)
+	if err != nil {
+		h.logger.Error("listPlayerGames", "err", err, "player_id", player.ID)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -280,15 +292,15 @@ func (h *Handler) publishGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	game, err := h.gameService.PublishGame(r.Context(), id, req.ActorTelegramID, req.ActorDisplay)
+	game, err := h.gameService.PublishGame(r.Context(), id, req.ActorUserID, req.ActorDisplay)
 	if err != nil {
 		if errors.Is(err, service.ErrGameNotFound) {
 			writeError(w, http.StatusNotFound, "game not found")
@@ -313,10 +325,10 @@ func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Count           int    `json:"count"`
-		GroupID         int64  `json:"group_id"`
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		Count        int    `json:"count"`
+		GroupID      int64  `json:"group_id"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -327,7 +339,7 @@ func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.gameService.BookGameCourts(r.Context(), id, req.Count, req.ActorTelegramID, req.ActorDisplay, h.credentialErrorCooldown)
+	result, err := h.gameService.BookGameCourts(r.Context(), id, req.Count, req.ActorUserID, req.ActorDisplay, h.credentialErrorCooldown)
 	if err != nil {
 		if errors.Is(err, service.ErrGameNotFound) {
 			writeError(w, http.StatusNotFound, "game not found")

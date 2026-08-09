@@ -30,10 +30,9 @@ type Handler struct {
 	venueCredService *service.VenueCredentialService
 	groupRepo        service.GroupRepository
 	playerRepo       *storage.PlayerRepo
-	userPrefsRepo    *storage.UserPreferencesRepo
+	userRepo         userRepository
 	auditSvc         *service.AuditService
 	adminResolver    adminGroupsResolver
-	serverOwnerIDs   map[int64]bool
 	logger           *slog.Logger
 	version          string
 	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
@@ -49,10 +48,9 @@ func NewHandler(
 	venueCredService *service.VenueCredentialService,
 	groupRepo service.GroupRepository,
 	playerRepo *storage.PlayerRepo,
-	userPrefsRepo *storage.UserPreferencesRepo,
+	userRepo userRepository,
 	auditSvc *service.AuditService,
 	adminResolver adminGroupsResolver,
-	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
 	credentialErrorCooldown time.Duration,
@@ -69,10 +67,9 @@ func NewHandler(
 		venueCredService:        venueCredService,
 		groupRepo:               groupRepo,
 		playerRepo:              playerRepo,
-		userPrefsRepo:           userPrefsRepo,
+		userRepo:                userRepo,
 		auditSvc:                auditSvc,
 		adminResolver:           adminResolver,
-		serverOwnerIDs:          serverOwnerIDs,
 		logger:                  logger,
 		version:                 version,
 		credentialErrorCooldown: credentialErrorCooldown,
@@ -100,7 +97,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/games/{id}/guests", h.removeGuest)
 	mux.HandleFunc("GET /api/v1/games/{id}/participations", h.getParticipations)
 	mux.HandleFunc("GET /api/v1/games/{id}/guests", h.getGuests)
-	mux.HandleFunc("DELETE /api/v1/games/{id}/players/{telegramID}", h.kickPlayer)
+	mux.HandleFunc("DELETE /api/v1/games/{id}/players/{playerID}", h.kickPlayer)
 	mux.HandleFunc("DELETE /api/v1/games/{id}/guests/{guestID}", h.kickGuest)
 
 	// Game results
@@ -111,16 +108,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/game-results/{id}/reject", h.rejectGameResult)
 	mux.HandleFunc("POST /api/v1/game-results/{id}/cancel", h.cancelGameResult)
 
-	// Players
-	mux.HandleFunc("GET /api/v1/players/{telegramID}", h.getPlayerByTelegramID)
-	mux.HandleFunc("GET /api/v1/players/{telegramID}/next-game", h.getNextGame)
-	mux.HandleFunc("GET /api/v1/players/{playerID}/games", h.listPlayerGames)
-	mux.HandleFunc("GET /api/v1/players/{tgID}/recent-completed-games", h.getRecentCompletedGames)
-
-	// User preferences
-	mux.HandleFunc("GET /api/v1/users/{telegramID}/preferences", h.getUserPreferences)
-	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/dm-language", h.setUserDMLanguage)
-	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/results-opt-out", h.setUserResultsOptOut)
+	// Users (canonical identity; player_id survives only for game-scoped resources)
+	mux.HandleFunc("POST /api/v1/identities/resolve", h.resolveIdentity)
+	mux.HandleFunc("GET /api/v1/users", h.listUsers)
+	mux.HandleFunc("GET /api/v1/users/{userID}", h.getUser)
+	mux.HandleFunc("PATCH /api/v1/users/{userID}/server-owner", h.setUserServerOwner)
+	mux.HandleFunc("PATCH /api/v1/users/{userID}/dm-language", h.setUserDMLanguage)
+	mux.HandleFunc("PATCH /api/v1/users/{userID}/results-opt-out", h.setUserResultsOptOut)
+	mux.HandleFunc("GET /api/v1/users/{userID}/next-game", h.getNextGame)
+	mux.HandleFunc("GET /api/v1/users/{userID}/games", h.listPlayerGames)
+	mux.HandleFunc("GET /api/v1/users/{userID}/recent-completed-games", h.getRecentCompletedGames)
+	mux.HandleFunc("GET /api/v1/users/{userID}/groups-with-results", h.getPlayerGroupsWithResults)
+	mux.HandleFunc("GET /api/v1/users/{userID}/admin-groups", h.listAdminGroups)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)
@@ -132,7 +131,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/groups/{chatID}", h.removeGroup)
 	mux.HandleFunc("GET /api/v1/groups", h.listGroups)
 	mux.HandleFunc("GET /api/v1/groups/{chatID}", h.getGroup)
-	mux.HandleFunc("GET /api/v1/admins/{tgID}/groups", h.listAdminGroups)
 
 	// Venues
 	mux.HandleFunc("POST /api/v1/venues", h.createVenue)
@@ -150,7 +148,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Leaderboard
 	mux.HandleFunc("GET /api/v1/groups/{chatID}/leaderboard", h.getGroupLeaderboard)
-	mux.HandleFunc("GET /api/v1/players/{tgID}/groups-with-results", h.getPlayerGroupsWithResults)
 
 	// Audit
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditEvents)

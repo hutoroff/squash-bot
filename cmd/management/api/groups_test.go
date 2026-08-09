@@ -15,13 +15,13 @@ import (
 )
 
 func newGroupsHandler(ownerIDs ...int64) *Handler {
-	owners := make(map[int64]bool, len(ownerIDs))
+	byID := make(map[int64]*models.User, len(ownerIDs))
 	for _, id := range ownerIDs {
-		owners[id] = true
+		byID[id] = &models.User{ID: id, IsServerOwner: true}
 	}
 	return &Handler{
-		serverOwnerIDs: owners,
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		userRepo: &fakeUserRepo{byID: byID},
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -35,7 +35,7 @@ func patchAutoBookingAllowed(h *Handler, chatID, body string) *httptest.Response
 
 func TestSetGroupAutoBookingAllowed_NonOwner(t *testing.T) {
 	h := newGroupsHandler(111)
-	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_telegram_id":999}`)
+	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_user_id":999}`)
 	if w.Code != http.StatusForbidden {
 		t.Errorf("non-owner: want 403, got %d", w.Code)
 	}
@@ -43,9 +43,9 @@ func TestSetGroupAutoBookingAllowed_NonOwner(t *testing.T) {
 
 func TestSetGroupAutoBookingAllowed_ZeroActorID(t *testing.T) {
 	h := newGroupsHandler(111)
-	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_telegram_id":0}`)
+	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_user_id":0}`)
 	if w.Code != http.StatusForbidden {
-		t.Errorf("zero actor_telegram_id: want 403, got %d", w.Code)
+		t.Errorf("zero actor_user_id: want 403, got %d", w.Code)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestSetGroupAutoBookingAllowed_MissingActorID(t *testing.T) {
 	h := newGroupsHandler(111)
 	w := patchAutoBookingAllowed(h, "42", `{"enabled":true}`)
 	if w.Code != http.StatusForbidden {
-		t.Errorf("missing actor_telegram_id: want 403, got %d", w.Code)
+		t.Errorf("missing actor_user_id: want 403, got %d", w.Code)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestSetGroupAutoBookingAllowed_InvalidBody(t *testing.T) {
 
 func TestSetGroupAutoBookingAllowed_InvalidChatID(t *testing.T) {
 	h := newGroupsHandler(111)
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/groups/abc/auto-booking-allowed", strings.NewReader(`{"enabled":true,"actor_telegram_id":111}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/groups/abc/auto-booking-allowed", strings.NewReader(`{"enabled":true,"actor_user_id":111}`))
 	req.SetPathValue("chatID", "abc")
 	w := httptest.NewRecorder()
 	h.setGroupAutoBookingAllowed(w, req)
@@ -78,7 +78,7 @@ func TestSetGroupAutoBookingAllowed_InvalidChatID(t *testing.T) {
 
 func TestSetGroupAutoBookingAllowed_EmptyOwnerSet(t *testing.T) {
 	h := newGroupsHandler() // no owners configured
-	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_telegram_id":111}`)
+	w := patchAutoBookingAllowed(h, "42", `{"enabled":true,"actor_user_id":111}`)
 	if w.Code != http.StatusForbidden {
 		t.Errorf("empty owner set: want 403, got %d", w.Code)
 	}
@@ -120,9 +120,9 @@ func newAdminGroupsHandler(resolver adminGroupsResolver, groups []models.Group, 
 	return h
 }
 
-func getAdminGroups(h *Handler, tgID string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admins/"+tgID+"/groups", nil)
-	req.SetPathValue("tgID", tgID)
+func getAdminGroups(h *Handler, userID string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/"+userID+"/admin-groups", nil)
+	req.SetPathValue("userID", userID)
 	w := httptest.NewRecorder()
 	h.listAdminGroups(w, req)
 	return w
@@ -182,7 +182,7 @@ func TestListAdminGroups_ResolverError_500(t *testing.T) {
 	}
 }
 
-func TestListAdminGroups_InvalidTgID(t *testing.T) {
+func TestListAdminGroups_InvalidUserID(t *testing.T) {
 	h := newAdminGroupsHandler(&fakeAdminResolver{}, nil, 999)
 	if w := getAdminGroups(h, "abc"); w.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d", w.Code)

@@ -1274,7 +1274,7 @@ func (r *stubGameRepoPC) UpdateMessageID(_ context.Context, _, _ int64) error { 
 func (r *stubGameRepoPC) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoPC) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoPC) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoPC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

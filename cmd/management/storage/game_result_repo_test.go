@@ -23,9 +23,9 @@ func seedGameResultDeps(t *testing.T, ctx context.Context) (groupChatID int64, g
 	}
 
 	game, err := gameRepo.Create(ctx, &models.Game{
-		ChatID:     groupChatID,
-		GameDate:   time.Now().Add(-24 * time.Hour),
-		Courts:     "1,2",
+		ChatID:      groupChatID,
+		GameDate:    time.Now().Add(-24 * time.Hour),
+		Courts:      "1,2",
 		CourtsCount: 2,
 	})
 	if err != nil {
@@ -33,11 +33,11 @@ func seedGameResultDeps(t *testing.T, ctx context.Context) (groupChatID int64, g
 	}
 	gameID = game.ID
 
-	p1, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 111})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 111, "")
 	if err != nil {
 		t.Fatalf("seed player1: %v", err)
 	}
-	p2, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: 222})
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 222, "")
 	if err != nil {
 		t.Fatalf("seed player2: %v", err)
 	}
