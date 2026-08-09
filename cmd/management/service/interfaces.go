@@ -143,9 +143,9 @@ type CourtBookingRepository interface {
 	GetByVenueAndDateAndTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) ([]*models.CourtBooking, error)
 	// MarkCanceled soft-deletes the booking by setting canceled_at to NOW().
 	MarkCanceled(ctx context.Context, matchID string) error
-	// HasActiveByCredentialID returns true if any non-canceled booking uses the credential.
+	// HasActiveByCredentialID returns true if any non-canceled booking dated today or later in its group's timezone uses the credential.
 	HasActiveByCredentialID(ctx context.Context, credentialID int64) (bool, error)
-	// HasActiveByVenueID returns true if any non-canceled booking exists for the venue.
+	// HasActiveByVenueID returns true if any non-canceled booking dated today or later in the venue's group timezone exists.
 	HasActiveByVenueID(ctx context.Context, venueID int64) (bool, error)
 	// MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
 	// Called by DayAfterCleanupJob to close out kept bookings after a game completes.

@@ -711,7 +711,8 @@ func (b *Bot) handleVenueDelete(ctx context.Context, cb *tgbotapi.CallbackQuery,
 	if err := b.client.DeleteVenue(ctx, venueID, groupID, ru.UserID, ru.DisplayName); err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueHasActiveBookings))
+			slog.Warn("handleVenueDelete: active bookings", "venue_id", venueID, "group_id", groupID, "actor_id", ru.UserID)
+			b.answerCallbackAlert(cb.ID, lz.T(i18n.MsgVenueHasActiveBookings))
 			return
 		}
 		slog.Error("handleVenueDelete: delete", "err", err, "venue_id", venueID)
@@ -1172,11 +1173,15 @@ func parseInt64(s string) (int64, error) {
 }
 
 // editText edits an existing message's text and optional keyboard.
-func (b *Bot) editText(chatID int64, messageID int, text string, keyboard *tgbotapi.InlineKeyboardMarkup) {
+func (b *Bot) editText(chatID int64, messageID int, text string, keyboard *tgbotapi.InlineKeyboardMarkup) error {
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = keyboard
-	b.api.Send(edit) //nolint:errcheck
+	_, err := b.api.Send(edit)
+	if err != nil {
+		slog.Error("edit message text", "chat_id", chatID, "message_id", messageID, "err", err)
+	}
+	return err
 }
 
 // ── Auto-booking enable/disable ───────────────────────────────────────────────
@@ -1549,7 +1554,12 @@ func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.Callba
 	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
-	if err != nil || !isAdmin {
+	if err != nil {
+		slog.Error("handleVenueCredDelConfirm: check admin", "group_id", groupID, "actor_id", cb.From.ID, "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if !isAdmin {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
 		return
 	}
@@ -1557,6 +1567,7 @@ func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.Callba
 	// Find the credential in the list to get the login for the confirmation message.
 	creds, err := b.client.ListVenueCredentials(ctx, venueID, groupID)
 	if err != nil {
+		slog.Error("handleVenueCredDelConfirm: list credentials", "venue_id", venueID, "group_id", groupID, "cred_id", credID, "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
@@ -1572,8 +1583,6 @@ func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.Callba
 		return
 	}
 
-	b.answerCallback(cb.ID, "")
-
 	text := lz.Tf(i18n.MsgVenueCredConfirmDelete, escapeMarkdown(login))
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -1581,7 +1590,11 @@ func (b *Bot) handleVenueCredDelConfirm(ctx context.Context, cb *tgbotapi.Callba
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_creds:%d:%d", venueID, groupID)),
 		),
 	)
-	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, text, &keyboard)
+	if err := b.editText(cb.Message.Chat.ID, cb.Message.MessageID, text, &keyboard); err != nil {
+		b.answerCallbackAlert(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	b.answerCallback(cb.ID, "")
 }
 
 // handleVenueCredDelete executes credential deletion.
@@ -1590,7 +1603,12 @@ func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQu
 	lz := b.userLocalizer(ctx, cb.From)
 
 	isAdmin, err := b.isAdminInGroup(cb.From.ID, groupID)
-	if err != nil || !isAdmin {
+	if err != nil {
+		slog.Error("handleVenueCredDelete: check admin", "group_id", groupID, "actor_id", cb.From.ID, "err", err)
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	if !isAdmin {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
 		return
 	}
@@ -1605,7 +1623,8 @@ func (b *Bot) handleVenueCredDelete(ctx context.Context, cb *tgbotapi.CallbackQu
 	if err := b.client.DeleteVenueCredential(ctx, venueID, credID, groupID, ru.UserID, ru.DisplayName); err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCredHasActiveBookings))
+			slog.Warn("handleVenueCredDelete: active bookings", "cred_id", credID, "venue_id", venueID, "group_id", groupID, "actor_id", ru.UserID)
+			b.answerCallbackAlert(cb.ID, lz.T(i18n.MsgVenueCredHasActiveBookings))
 			return
 		}
 		slog.Error("handleVenueCredDelete: delete", "err", err, "cred_id", credID)

@@ -98,17 +98,35 @@ func (r *CourtBookingRepo) MarkCanceled(ctx context.Context, matchID string) err
 	return err
 }
 
-// HasActiveByCredentialID returns true if any active (non-canceled) booking uses the credential.
+// HasActiveByCredentialID returns true if any non-canceled booking dated today or later in its group's timezone uses the credential.
 func (r *CourtBookingRepo) HasActiveByCredentialID(ctx context.Context, credentialID int64) (bool, error) {
-	const q = `SELECT EXISTS(SELECT 1 FROM court_bookings WHERE credential_id = $1 AND canceled_at IS NULL)`
+	const q = `
+		SELECT EXISTS(
+			SELECT 1
+			FROM court_bookings cb
+			JOIN venues v ON v.id = cb.venue_id
+			JOIN bot_groups bg ON bg.chat_id = v.group_id
+			WHERE cb.credential_id = $1
+				AND cb.canceled_at IS NULL
+				AND cb.game_date >= (NOW() AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		)`
 	var exists bool
 	err := r.pool.QueryRow(ctx, q, credentialID).Scan(&exists)
 	return exists, err
 }
 
-// HasActiveByVenueID returns true if any active (non-canceled) booking exists for the venue.
+// HasActiveByVenueID returns true if any non-canceled booking dated today or later in the venue's group timezone exists.
 func (r *CourtBookingRepo) HasActiveByVenueID(ctx context.Context, venueID int64) (bool, error) {
-	const q = `SELECT EXISTS(SELECT 1 FROM court_bookings WHERE venue_id = $1 AND canceled_at IS NULL)`
+	const q = `
+		SELECT EXISTS(
+			SELECT 1
+			FROM court_bookings cb
+			JOIN venues v ON v.id = cb.venue_id
+			JOIN bot_groups bg ON bg.chat_id = v.group_id
+			WHERE cb.venue_id = $1
+				AND cb.canceled_at IS NULL
+				AND cb.game_date >= (NOW() AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
+		)`
 	var exists bool
 	err := r.pool.QueryRow(ctx, q, venueID).Scan(&exists)
 	return exists, err
