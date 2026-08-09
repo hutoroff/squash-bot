@@ -203,7 +203,7 @@ func (h *Handler) setGroupAutoBookingAllowed(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !h.serverOwnerIDs[req.ActorTelegramID] {
+	if !h.isServerOwner(r.Context(), req.ActorTelegramID) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -290,7 +290,7 @@ func (h *Handler) listAdminGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := []models.Group{}
-	if h.isServerOwner(tgID) {
+	if h.isServerOwner(r.Context(), tgID) {
 		result = append(result, groups...)
 	} else if h.adminResolver != nil {
 		adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), tgID)

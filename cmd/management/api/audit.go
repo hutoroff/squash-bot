@@ -17,7 +17,7 @@ type adminGroupsResolver interface {
 // listAuditEvents handles GET /api/v1/audit
 //
 // Visibility rules enforced server-side:
-//   - Server owner (caller TG ID in serverOwnerIDs): sees all events; may filter by any field.
+//   - Server owner (DB-backed role, see isServerOwner): sees all events; may filter by any field.
 //   - Group admin (caller administers ≥1 group): sees own player events PLUS all
 //     player+group_admin events for their administered groups.
 //   - Everyone else: sees only their own events with visibility="player".
@@ -60,7 +60,7 @@ func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if h.isServerOwner(callerTgID) {
+	if h.isServerOwner(r.Context(), callerTgID) {
 		if v := q.Get("group_id"); v != "" {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 				filter.GroupID = &n
@@ -93,6 +93,16 @@ func (h *Handler) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-func (h *Handler) isServerOwner(tgID int64) bool {
-	return h.serverOwnerIDs[tgID]
+// isServerOwner checks the DB-backed server-owner role for a Telegram caller.
+// This is the single authorization source: the DB role set via the Users
+// page (PATCH /api/v1/users/{userID}/server-owner) takes effect here
+// immediately, unlike the static SERVICE_ADMIN_IDS seed which only grants at
+// startup. On lookup error, fail closed (treat as not-owner).
+func (h *Handler) isServerOwner(ctx context.Context, tgID int64) bool {
+	isOwner, err := h.userRepo.IsServerOwnerByTelegramID(ctx, tgID)
+	if err != nil {
+		h.logger.Error("isServerOwner", "tg_id", tgID, "err", err)
+		return false
+	}
+	return isOwner
 }

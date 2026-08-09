@@ -31,14 +31,14 @@ func (r *AuditEventRepo) Insert(ctx context.Context, evt *models.AuditEvent) err
 
 	const q = `
 		INSERT INTO audit_events
-			(event_type, visibility, actor_kind, actor_tg_id, actor_display,
+			(event_type, visibility, actor_kind, actor_tg_id, actor_user_id, actor_display,
 			 group_id, subject_type, subject_id, description, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, occurred_at`
 
 	return r.pool.QueryRow(ctx, q,
 		evt.EventType, evt.Visibility, evt.ActorKind,
-		evt.ActorTgID, evt.ActorDisplay,
+		evt.ActorTgID, evt.ActorUserID, evt.ActorDisplay,
 		evt.GroupID, evt.SubjectType, evt.SubjectID,
 		evt.Description, metaJSON,
 	).Scan(&evt.ID, &evt.OccurredAt)
@@ -55,7 +55,7 @@ func (r *AuditEventRepo) Query(ctx context.Context, f models.AuditQueryFilter) (
 		n++
 	}
 
-	// Scope clause: OR-combination of visibility scopes (OwnTgID + AdminGroupIDs).
+	// Scope clause: OR-combination of visibility scopes (OwnTgID/OwnUserID + AdminGroupIDs).
 	// When both are set the query returns the union of own player events and
 	// all player+group_admin events for groups the caller administers.
 	var scopeParts []string
@@ -63,6 +63,12 @@ func (r *AuditEventRepo) Query(ctx context.Context, f models.AuditQueryFilter) (
 		scopeParts = append(scopeParts, fmt.Sprintf(
 			"(visibility = $%d AND actor_tg_id = $%d)", n, n+1))
 		args = append(args, string(models.AuditVisibilityPlayer), *f.OwnTgID)
+		n += 2
+	}
+	if f.OwnUserID != nil {
+		scopeParts = append(scopeParts, fmt.Sprintf(
+			"(visibility = $%d AND actor_user_id = $%d)", n, n+1))
+		args = append(args, string(models.AuditVisibilityPlayer), *f.OwnUserID)
 		n += 2
 	}
 	if len(f.AdminGroupIDs) > 0 {
@@ -81,6 +87,9 @@ func (r *AuditEventRepo) Query(ctx context.Context, f models.AuditQueryFilter) (
 	}
 	if f.ActorTgID != nil {
 		add("actor_tg_id = $%d", *f.ActorTgID)
+	}
+	if f.ActorUserID != nil {
+		add("actor_user_id = $%d", *f.ActorUserID)
 	}
 	if f.EventType != "" {
 		add("event_type = $%d", f.EventType)
@@ -116,7 +125,7 @@ func (r *AuditEventRepo) Query(ctx context.Context, f models.AuditQueryFilter) (
 
 	q := fmt.Sprintf(`
 		SELECT id, occurred_at, event_type, visibility, actor_kind,
-		       actor_tg_id, actor_display, group_id, subject_type,
+		       actor_tg_id, actor_user_id, actor_display, group_id, subject_type,
 		       subject_id, description, metadata
 		FROM audit_events
 		WHERE %s
@@ -158,7 +167,7 @@ func scanAuditEvent(row scannable) (*models.AuditEvent, error) {
 	var metaRaw []byte
 	if err := row.Scan(
 		&evt.ID, &evt.OccurredAt, &evt.EventType, &evt.Visibility, &evt.ActorKind,
-		&evt.ActorTgID, &evt.ActorDisplay, &evt.GroupID, &evt.SubjectType,
+		&evt.ActorTgID, &evt.ActorUserID, &evt.ActorDisplay, &evt.GroupID, &evt.SubjectType,
 		&evt.SubjectID, &evt.Description, &metaRaw,
 	); err != nil {
 		return nil, err

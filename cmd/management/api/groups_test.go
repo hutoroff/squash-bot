@@ -20,8 +20,8 @@ func newGroupsHandler(ownerIDs ...int64) *Handler {
 		owners[id] = true
 	}
 	return &Handler{
-		serverOwnerIDs: owners,
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		userRepo: &fakeUserRepo{ownerByTelegramID: owners},
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

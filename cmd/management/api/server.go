@@ -31,9 +31,9 @@ type Handler struct {
 	groupRepo        service.GroupRepository
 	playerRepo       *storage.PlayerRepo
 	userPrefsRepo    *storage.UserPreferencesRepo
+	userRepo         userRepository
 	auditSvc         *service.AuditService
 	adminResolver    adminGroupsResolver
-	serverOwnerIDs   map[int64]bool
 	logger           *slog.Logger
 	version          string
 	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
@@ -50,9 +50,9 @@ func NewHandler(
 	groupRepo service.GroupRepository,
 	playerRepo *storage.PlayerRepo,
 	userPrefsRepo *storage.UserPreferencesRepo,
+	userRepo userRepository,
 	auditSvc *service.AuditService,
 	adminResolver adminGroupsResolver,
-	serverOwnerIDs map[int64]bool,
 	logger *slog.Logger,
 	version string,
 	credentialErrorCooldown time.Duration,
@@ -70,9 +70,9 @@ func NewHandler(
 		groupRepo:               groupRepo,
 		playerRepo:              playerRepo,
 		userPrefsRepo:           userPrefsRepo,
+		userRepo:                userRepo,
 		auditSvc:                auditSvc,
 		adminResolver:           adminResolver,
-		serverOwnerIDs:          serverOwnerIDs,
 		logger:                  logger,
 		version:                 version,
 		credentialErrorCooldown: credentialErrorCooldown,
@@ -121,6 +121,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users/{telegramID}/preferences", h.getUserPreferences)
 	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/dm-language", h.setUserDMLanguage)
 	mux.HandleFunc("PATCH /api/v1/users/{telegramID}/results-opt-out", h.setUserResultsOptOut)
+
+	// Users (provider-agnostic identity; coexists with the routes above until Step 3)
+	mux.HandleFunc("POST /api/v1/identities/resolve", h.resolveIdentity)
+	mux.HandleFunc("GET /api/v1/users", h.listUsers)
+	mux.HandleFunc("GET /api/v1/users/{userID}", h.getUser)
+	mux.HandleFunc("PATCH /api/v1/users/{userID}/server-owner", h.setUserServerOwner)
 
 	// Groups
 	mux.HandleFunc("PUT /api/v1/groups/{chatID}", h.upsertGroup)

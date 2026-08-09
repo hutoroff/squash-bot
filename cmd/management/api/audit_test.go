@@ -54,10 +54,10 @@ func newAuditHandlerWithResolver(resolver adminGroupsResolver, ownerIDs ...int64
 		owners[id] = true
 	}
 	return &Handler{
-		auditSvc:       auditSvc,
-		adminResolver:  resolver,
-		serverOwnerIDs: owners,
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		auditSvc:      auditSvc,
+		adminResolver: resolver,
+		userRepo:      &fakeUserRepo{ownerByTelegramID: owners},
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}, repo
 }
 

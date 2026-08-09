@@ -94,9 +94,21 @@ func main() {
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
 	ratingChangeRepo := storage.NewRatingChangeRepo(pool)
 	userPrefsRepo := storage.NewUserPreferencesRepo(pool)
+	userRepo := storage.NewUserRepo(pool)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
+
+	// Grant-only, idempotent bootstrap: SERVICE_ADMIN_IDS seeds server owners
+	// in the DB but never revokes. Revocation is web-Users-page-only.
+	seedIDs := make([]int64, 0, len(serverOwnerIDs))
+	for id := range serverOwnerIDs {
+		seedIDs = append(seedIDs, id)
+	}
+	if err := userRepo.GrantServerOwnersByTelegramID(ctx, seedIDs); err != nil {
+		slog.Error("seed server owners", "err", err)
+		os.Exit(1)
+	}
 
 	venueService := service.NewVenueService(venueRepo, courtBookingRepo)
 
@@ -166,7 +178,7 @@ func main() {
 	service.AnnounceChangelog(ctx, tgAPI, groupRepo, stateRepo, loc, logger, Version)
 
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
-	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userPrefsRepo, auditSvc, adminResolver, serverOwnerIDs, logger, Version, cfg.CredentialErrorCooldown)
+	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userPrefsRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

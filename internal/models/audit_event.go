@@ -50,6 +50,9 @@ const (
 	// Rating events.
 	AuditEventGameRatingUpdated AuditEventType = "game.rating_updated"
 
+	// User events.
+	AuditEventUserRoleChanged AuditEventType = "user.role_changed"
+
 	// Subject types.
 	AuditSubjectGame       = "game"
 	AuditSubjectVenue      = "venue"
@@ -57,18 +60,22 @@ const (
 	AuditSubjectGroup      = "group"
 	AuditSubjectCourtSlot  = "court_slot"
 	AuditSubjectGameResult = "game_result"
+	AuditSubjectUser       = "user"
 )
 
 // AuditQueryFilter defines constraints for listing audit events.
 type AuditQueryFilter struct {
 	GroupID      *int64
 	ActorTgID    *int64
+	ActorUserID  *int64
 	EventType    string
 	From         *time.Time
 	To           *time.Time
 	Visibilities []AuditVisibility
 	// OwnTgID, when set, includes events with visibility='player' AND actor_tg_id=*OwnTgID.
 	OwnTgID *int64
+	// OwnUserID, when set, includes events with visibility='player' AND actor_user_id=*OwnUserID.
+	OwnUserID *int64
 	// AdminGroupIDs, when non-empty, includes events with visibility IN ('player','group_admin')
 	// AND group_id IN AdminGroupIDs.
 	AdminGroupIDs []int64
@@ -84,6 +91,7 @@ type AuditEvent struct {
 	Visibility   AuditVisibility `json:"visibility"`
 	ActorKind    AuditActorKind  `json:"actor_kind"`
 	ActorTgID    *int64          `json:"actor_tg_id,omitempty"`
+	ActorUserID  *int64          `json:"actor_user_id,omitempty"`
 	ActorDisplay string          `json:"actor_display,omitempty"`
 	GroupID      *int64          `json:"group_id,omitempty"`
 	SubjectType  string          `json:"subject_type"`

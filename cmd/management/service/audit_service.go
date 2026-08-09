@@ -550,3 +550,25 @@ func (s *AuditService) RecordCourtCanceled(ctx context.Context, venueID, groupID
 		Metadata:    map[string]any{"venue_id": venueID, "court_label": courtLabel, "game_date": gameDate.Format("2006-01-02")},
 	})
 }
+
+// User events
+
+// RecordUserRoleChanged records a server-owner role grant or revocation.
+// Visibility is server_owner — only server owners may view this in the audit log.
+func (s *AuditService) RecordUserRoleChanged(ctx context.Context, actorUserID int64, actorDisplay string, targetUserID int64, targetDisplay string, enabled bool) {
+	action := "revoked"
+	if enabled {
+		action = "granted"
+	}
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventUserRoleChanged,
+		Visibility:   models.AuditVisibilityServerOwner,
+		ActorKind:    models.AuditActorUser,
+		ActorUserID:  &actorUserID,
+		ActorDisplay: actorDisplay,
+		SubjectType:  models.AuditSubjectUser,
+		SubjectID:    fmt.Sprintf("%d", targetUserID),
+		Description:  fmt.Sprintf("Server-owner role %s for %s by %s", action, targetDisplay, actorDisplay),
+		Metadata:     map[string]any{"enabled": enabled, "target_user_id": targetUserID, "target_display": targetDisplay},
+	})
+}

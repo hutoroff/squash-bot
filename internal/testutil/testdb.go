@@ -105,6 +105,28 @@ func IsDockerAvailable() bool {
 // Call this at the start of each test to ensure isolation.
 func Truncate(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx,
-		"TRUNCATE rating_changes, player_ratings, game_results, audit_events, guest_participations, game_participations, players, games, venues, bot_groups RESTART IDENTITY CASCADE")
+		"TRUNCATE rating_changes, player_ratings, game_results, audit_events, guest_participations, game_participations, players, games, venues, bot_groups, user_identities, users RESTART IDENTITY CASCADE")
 	return err
+}
+
+// CreateTestUser inserts a user with a telegram identity for test fixtures
+// and returns the new user ID. username may be empty.
+func CreateTestUser(ctx context.Context, pool *pgxpool.Pool, telegramID int64, username string) (int64, error) {
+	displayName := ""
+	if username != "" {
+		displayName = "@" + username
+	}
+	var userID int64
+	if err := pool.QueryRow(ctx,
+		"INSERT INTO users (display_name) VALUES ($1) RETURNING id", displayName,
+	).Scan(&userID); err != nil {
+		return 0, fmt.Errorf("insert test user: %w", err)
+	}
+	if _, err := pool.Exec(ctx,
+		"INSERT INTO user_identities (user_id, provider, external_id, username) VALUES ($1, 'telegram', $2, NULLIF($3, ''))",
+		userID, fmt.Sprintf("%d", telegramID), username,
+	); err != nil {
+		return 0, fmt.Errorf("insert test identity: %w", err)
+	}
+	return userID, nil
 }
