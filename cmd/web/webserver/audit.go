@@ -28,8 +28,8 @@ func NewAuditHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *AuditHandle
 }
 
 // handleListAuditEvents handles GET /api/audit.
-// It requires an authenticated session; the caller's TelegramID is injected
-// into X-Caller-Tg-Id so the management service can apply visibility rules.
+// It requires an authenticated session; the caller's UserID is injected
+// into X-Caller-User-Id so the management service can apply visibility rules.
 // Supported query params: limit, before_id, event_type, from, to (passed through).
 func (a *AuditHandler) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	claims, err := a.auth.claimsFromRequest(r)
@@ -52,7 +52,7 @@ func (a *AuditHandler) handleListAuditEvents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+a.mgmtSecret)
-	req.Header.Set("X-Caller-Tg-Id", strconv.FormatInt(claims.TelegramID, 10))
+	req.Header.Set("X-Caller-User-Id", strconv.FormatInt(claims.UserID, 10))
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {

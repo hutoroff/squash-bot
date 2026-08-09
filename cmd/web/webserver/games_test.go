@@ -20,14 +20,14 @@ func testGamesHandler(t *testing.T, mgmt *httptest.Server) (*GamesHandler, *Auth
 	return NewGamesHandler(auth, mgmt.URL, "mgmt-secret"), auth
 }
 
-// validSessionCookie returns a signed JWT cookie for the given telegram user.
-func validSessionCookie(t *testing.T, auth *AuthHandler, telegramID int64, username string) *http.Cookie {
+// validSessionCookie returns a signed JWT cookie for the given canonical user.
+func validSessionCookie(t *testing.T, auth *AuthHandler, userID int64, username string) *http.Cookie {
 	t.Helper()
 	token, err := issueJWT(auth.jwtSecret, JWTClaims{
-		TelegramID: telegramID,
-		Username:   username,
-		FirstName:  "Test",
-		Exp:        time.Now().Add(time.Hour).Unix(),
+		UserID:    userID,
+		Username:  username,
+		FirstName: "Test",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("issueJWT: %v", err)
@@ -262,16 +262,13 @@ func TestHandleJoinGame_HappyPath(t *testing.T) {
 		t.Errorf("Authorization: want 'Bearer mgmt-secret', got %q", capturedAuth)
 	}
 
-	// JWT claims forwarded as player identity in the request body.
+	// JWT claims forwarded as user identity in the request body.
 	var body map[string]any
 	if err := json.Unmarshal(*capturedBody, &body); err != nil {
 		t.Fatalf("decode forwarded body: %v (raw: %s)", err, string(*capturedBody))
 	}
-	if tid, _ := body["telegram_id"].(float64); int64(tid) != 99 {
-		t.Errorf("forwarded telegram_id: want 99, got %v", body["telegram_id"])
-	}
-	if uname, _ := body["username"].(string); uname != "bob" {
-		t.Errorf("forwarded username: want 'bob', got %q", uname)
+	if uid, _ := body["user_id"].(float64); int64(uid) != 99 {
+		t.Errorf("forwarded user_id: want 99, got %v", body["user_id"])
 	}
 }
 
@@ -310,8 +307,8 @@ func TestHandleSkipGame_ForwardsUserIdentity(t *testing.T) {
 	if err := json.Unmarshal(*capturedBody, &body); err != nil {
 		t.Fatalf("decode forwarded body: %v", err)
 	}
-	if tid, _ := body["telegram_id"].(float64); int64(tid) != 55 {
-		t.Errorf("forwarded telegram_id: want 55, got %v", body["telegram_id"])
+	if uid, _ := body["user_id"].(float64); int64(uid) != 55 {
+		t.Errorf("forwarded user_id: want 55, got %v", body["user_id"])
 	}
 }
 

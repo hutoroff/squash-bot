@@ -15,12 +15,12 @@ vi.mock('../api/prefs', async () => {
   }
 })
 
-const user: User = { telegram_id: 42, first_name: 'Alice' }
+const user: User = { user_id: 42, first_name: 'Alice' }
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(prefsApi.fetchMyPreferences).mockResolvedValue({
-    telegram_id: 42, dm_language: 'de', results_opt_out: false,
+    user_id: 42, dm_language: 'de', results_opt_out: false,
   })
 })
 

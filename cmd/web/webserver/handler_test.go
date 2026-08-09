@@ -15,6 +15,7 @@ func TestRegisterRoutes_NoPatternConflicts(t *testing.T) {
 		NewGroupsHandler(auth, "http://mgmt", "s"),
 		NewVenuesHandler(auth, "http://mgmt", "s"),
 		NewPrefsHandler(auth, "http://mgmt", "s"),
+		NewUsersHandler(auth, "http://mgmt", "s"),
 	)
 	h.RegisterRoutes(http.NewServeMux())
 }

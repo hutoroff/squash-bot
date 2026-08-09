@@ -25,7 +25,7 @@ vi.mock('../api/venues', () => ({
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
-const user: User = { telegram_id: 42, first_name: 'Alice' }
+const user: User = { user_id: 42, first_name: 'Alice' }
 
 function makeGroup(overrides: Partial<BotGroup> = {}): BotGroup {
   return {

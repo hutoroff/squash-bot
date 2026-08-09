@@ -12,6 +12,7 @@ import (
 
 // mgmtPlayer is a player record as returned by the management service.
 type mgmtPlayer struct {
+	UserID     int64   `json:"user_id"`
 	TelegramID int64   `json:"telegram_id"`
 	Username   *string `json:"username"`
 	FirstName  *string `json:"first_name"`
@@ -51,13 +52,12 @@ func NewGamesHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *GamesHandle
 
 // handleListGames handles GET /api/games.
 //
-// The player_id is taken exclusively from the validated JWT session cookie —
+// The user ID is taken exclusively from the validated JWT session cookie —
 // never from query parameters or the request body. This guarantees that an
 // authenticated user can only retrieve their own games.
 //
-// If the JWT does not contain a player_id (user authenticated via Telegram but
-// has never interacted with the bot), an empty list is returned rather than an
-// error, because the user simply has no games yet.
+// The user always exists (resolved at login), so this simply proxies to the
+// user-scoped games endpoint; a user who has never joined a game gets [].
 func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 	claims, err := g.auth.claimsFromRequest(r)
 	if err != nil {
@@ -69,22 +69,7 @@ func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// Resolve the player ID from the JWT, performing a live lookup when the
-	// JWT was issued before the player record existed and refreshing the cookie.
-	playerID, err := g.auth.resolvePlayerID(w, r, claims)
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
-		return
-	}
-	if playerID == nil {
-		// User is authenticated but has no player record yet — no games to show.
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("[]")) //nolint:errcheck
-		return
-	}
-
-	url := fmt.Sprintf("%s/api/v1/players/%d/games", g.mgmtURL, *playerID)
+	url := fmt.Sprintf("%s/api/v1/users/%d/games", g.mgmtURL, claims.UserID)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -132,10 +117,10 @@ func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(games) //nolint:errcheck
 }
 
-// checkGameAccess asks the management service whether telegramID is associated
+// checkGameAccess asks the management service whether userID is associated
 // with gameID's group (GET /api/v1/games/{id}/access).
-func (g *GamesHandler) checkGameAccess(ctx context.Context, telegramID int64, gameID string) (bool, error) {
-	url := fmt.Sprintf("%s/api/v1/games/%s/access?telegram_id=%d", g.mgmtURL, gameID, telegramID)
+func (g *GamesHandler) checkGameAccess(ctx context.Context, userID int64, gameID string) (bool, error) {
+	url := fmt.Sprintf("%s/api/v1/games/%s/access?user_id=%d", g.mgmtURL, gameID, userID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false, err
@@ -167,8 +152,8 @@ func (g *GamesHandler) checkGameAccess(ctx context.Context, telegramID int64, ga
 // by simply changing the id in the URL. On denial or upstream failure it writes
 // the response itself (403 or 502) and returns false, so the caller should
 // return immediately.
-func (g *GamesHandler) authorizeGameAccess(w http.ResponseWriter, r *http.Request, telegramID int64, gameID string) bool {
-	allowed, err := g.checkGameAccess(r.Context(), telegramID, gameID)
+func (g *GamesHandler) authorizeGameAccess(w http.ResponseWriter, r *http.Request, userID int64, gameID string) bool {
+	allowed, err := g.checkGameAccess(r.Context(), userID, gameID)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		w.Write([]byte(`{"error":"upstream unavailable"}`)) //nolint:errcheck
@@ -258,7 +243,7 @@ func (g *GamesHandler) handleGetParticipants(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	id := r.PathValue("id")
-	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+	if !g.authorizeGameAccess(w, r, claims.UserID, id) {
 		return
 	}
 	g.writeParticipantsResponse(w, r, id)
@@ -274,14 +259,11 @@ func (g *GamesHandler) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+	if !g.authorizeGameAccess(w, r, claims.UserID, id) {
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
-		"telegram_id": claims.TelegramID,
-		"username":    claims.Username,
-		"first_name":  claims.FirstName,
-		"last_name":   claims.LastName,
+		"user_id": claims.UserID,
 	})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		fmt.Sprintf("%s/api/v1/games/%s/join", g.mgmtURL, id), bytes.NewReader(body))
@@ -318,14 +300,11 @@ func (g *GamesHandler) handleSkipGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+	if !g.authorizeGameAccess(w, r, claims.UserID, id) {
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
-		"telegram_id": claims.TelegramID,
-		"username":    claims.Username,
-		"first_name":  claims.FirstName,
-		"last_name":   claims.LastName,
+		"user_id": claims.UserID,
 	})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		fmt.Sprintf("%s/api/v1/games/%s/skip", g.mgmtURL, id), bytes.NewReader(body))
@@ -362,14 +341,11 @@ func (g *GamesHandler) handleAddGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+	if !g.authorizeGameAccess(w, r, claims.UserID, id) {
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
-		"telegram_id": claims.TelegramID,
-		"username":    claims.Username,
-		"first_name":  claims.FirstName,
-		"last_name":   claims.LastName,
+		"user_id": claims.UserID,
 	})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		fmt.Sprintf("%s/api/v1/games/%s/guests", g.mgmtURL, id), bytes.NewReader(body))
@@ -406,11 +382,11 @@ func (g *GamesHandler) handleRemoveGuest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
-	if !g.authorizeGameAccess(w, r, claims.TelegramID, id) {
+	if !g.authorizeGameAccess(w, r, claims.UserID, id) {
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
-		"telegram_id": claims.TelegramID,
+		"user_id": claims.UserID,
 	})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete,
 		fmt.Sprintf("%s/api/v1/games/%s/guests", g.mgmtURL, id), bytes.NewReader(body))

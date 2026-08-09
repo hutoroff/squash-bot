@@ -69,7 +69,27 @@ func testAuthHandler(t *testing.T, mgmtHandler http.Handler) *AuthHandler {
 	mgmt := httptest.NewServer(mgmtHandler)
 	t.Cleanup(mgmt.Close)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret", nil, logger)
+	return NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret", logger)
+}
+
+// resolveHandler fakes management's POST /api/v1/identities/resolve, used by handleCallback tests.
+func resolveHandler(userID int64, playerID *int64, isOwner bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		pidJSON := "null"
+		if playerID != nil {
+			pidJSON = fmt.Sprintf("%d", *playerID)
+		}
+		fmt.Fprintf(w, `{"user_id":%d,"player_id":%s,"display_name":"x","is_server_owner":%v}`, userID, pidJSON, isOwner)
+	}
+}
+
+// getUserHandler fakes management's GET /api/v1/users/{userID}, used by handleMe tests.
+func getUserHandler(userID int64, isOwner bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"user_id":%d,"is_server_owner":%v}`, userID, isOwner)
+	}
 }
 
 // ── verifyTelegramAuth ────────────────────────────────────────────────────────
@@ -162,13 +182,13 @@ func TestJWTRoundTrip(t *testing.T) {
 	playerID := int64(99)
 
 	original := JWTClaims{
-		TelegramID: 12345,
-		PlayerID:   &playerID,
-		FirstName:  "Alice",
-		LastName:   "Smith",
-		Username:   "alice",
-		PhotoURL:   "https://example.com/photo.jpg",
-		Exp:        time.Now().Add(time.Hour).Unix(),
+		UserID:    12345,
+		PlayerID:  &playerID,
+		FirstName: "Alice",
+		LastName:  "Smith",
+		Username:  "alice",
+		PhotoURL:  "https://example.com/photo.jpg",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	}
 
 	token, err := issueJWT(secret, original)
@@ -183,8 +203,8 @@ func TestJWTRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseJWT: %v", err)
 	}
-	if got.TelegramID != original.TelegramID {
-		t.Errorf("TelegramID: want %d, got %d", original.TelegramID, got.TelegramID)
+	if got.UserID != original.UserID {
+		t.Errorf("UserID: want %d, got %d", original.UserID, got.UserID)
 	}
 	if got.PlayerID == nil || *got.PlayerID != *original.PlayerID {
 		t.Errorf("PlayerID: want %d, got %v", *original.PlayerID, got.PlayerID)
@@ -198,7 +218,7 @@ func TestJWTRoundTrip(t *testing.T) {
 }
 
 func TestJWTHeader_IsValidJSON(t *testing.T) {
-	token, err := issueJWT("secret", JWTClaims{TelegramID: 1, Exp: time.Now().Add(time.Hour).Unix()})
+	token, err := issueJWT("secret", JWTClaims{UserID: 1, Exp: time.Now().Add(time.Hour).Unix()})
 	if err != nil {
 		t.Fatalf("issueJWT: %v", err)
 	}
@@ -223,8 +243,8 @@ func TestParseJWT_Errors(t *testing.T) {
 	const secret = "jwt-secret-32-bytes-long-xxxxxxx"
 
 	validToken, _ := issueJWT(secret, JWTClaims{
-		TelegramID: 1,
-		Exp:        time.Now().Add(time.Hour).Unix(),
+		UserID: 1,
+		Exp:    time.Now().Add(time.Hour).Unix(),
 	})
 
 	t.Run("wrong secret", func(t *testing.T) {
@@ -235,8 +255,8 @@ func TestParseJWT_Errors(t *testing.T) {
 
 	t.Run("expired token", func(t *testing.T) {
 		expired, _ := issueJWT(secret, JWTClaims{
-			TelegramID: 1,
-			Exp:        time.Now().Add(-time.Minute).Unix(),
+			UserID: 1,
+			Exp:    time.Now().Add(-time.Minute).Unix(),
 		})
 		if _, err := parseJWT(secret, expired); err == nil {
 			t.Error("want error for expired token")
@@ -264,14 +284,25 @@ func TestParseJWT_Errors(t *testing.T) {
 			t.Error("want error for tampered payload")
 		}
 	})
+
+	// A pre-v2 cookie never carried "uid", so it unmarshals with UserID == 0.
+	// This must be rejected rather than silently resolving to a fake user 0,
+	// forcing every stale session into a clean re-login.
+	t.Run("missing uid (stale pre-v2 cookie)", func(t *testing.T) {
+		stale, _ := issueJWT(secret, JWTClaims{
+			FirstName: "Alice",
+			Exp:       time.Now().Add(time.Hour).Unix(),
+		})
+		if _, err := parseJWT(secret, stale); err == nil {
+			t.Error("want error for a token with uid == 0")
+		}
+	})
 }
 
 // ── handleCallback ────────────────────────────────────────────────────────────
 
 func TestHandleCallback_ValidAuth(t *testing.T) {
-	h := testAuthHandler(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound) // player not yet in the bot
-	}))
+	h := testAuthHandler(t, resolveHandler(100, nil, false)) // no player record yet
 
 	params := buildTelegramParams("bot-token", 42, "Alice", "username", "alice")
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback"+paramsToQuery(params), nil)
@@ -310,8 +341,8 @@ func TestHandleCallback_ValidAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseJWT on issued cookie: %v", err)
 	}
-	if claims.TelegramID != 42 {
-		t.Errorf("TelegramID in JWT: want 42, got %d", claims.TelegramID)
+	if claims.UserID != 100 {
+		t.Errorf("UserID in JWT: want 100 (resolved), got %d", claims.UserID)
 	}
 	if claims.FirstName != "Alice" {
 		t.Errorf("FirstName in JWT: want Alice, got %q", claims.FirstName)
@@ -319,11 +350,9 @@ func TestHandleCallback_ValidAuth(t *testing.T) {
 }
 
 func TestHandleCallback_PlayerLinked(t *testing.T) {
-	// Management service returns a known player record.
-	h := testAuthHandler(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintln(w, `{"id":7,"telegram_id":42}`)
-	}))
+	// Resolve reports an existing player for this user.
+	pid := int64(7)
+	h := testAuthHandler(t, resolveHandler(100, &pid, false))
 
 	params := buildTelegramParams("bot-token", 42, "Alice")
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback"+paramsToQuery(params), nil)
@@ -365,8 +394,29 @@ func TestHandleCallback_InvalidHash(t *testing.T) {
 	}
 }
 
+func TestHandleCallback_ResolveFailure(t *testing.T) {
+	// Management is unreachable/errors during resolve — must not issue a session.
+	h := testAuthHandler(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	params := buildTelegramParams("bot-token", 42, "Alice")
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback"+paramsToQuery(params), nil)
+	w := httptest.NewRecorder()
+	h.handleCallback(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("want 500 when resolve fails, got %d", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			t.Error("session cookie must not be set when resolve fails")
+		}
+	}
+}
+
 func TestHandleCallback_SecureCookieOverProxy(t *testing.T) {
-	h := testAuthHandler(t, nil)
+	h := testAuthHandler(t, resolveHandler(100, nil, false))
 
 	params := buildTelegramParams("bot-token", 42, "Alice")
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback"+paramsToQuery(params), nil)
@@ -398,14 +448,14 @@ func TestHandleMe_NoCookie(t *testing.T) {
 }
 
 func TestHandleMe_ValidCookie(t *testing.T) {
-	h := testAuthHandler(t, nil)
+	h := testAuthHandler(t, getUserHandler(100, false))
 	playerID := int64(5)
 	token, err := issueJWT(h.jwtSecret, JWTClaims{
-		TelegramID: 42,
-		PlayerID:   &playerID,
-		FirstName:  "Alice",
-		Username:   "alice",
-		Exp:        time.Now().Add(time.Hour).Unix(),
+		UserID:    100,
+		PlayerID:  &playerID,
+		FirstName: "Alice",
+		Username:  "alice",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("issueJWT: %v", err)
@@ -423,6 +473,9 @@ func TestHandleMe_ValidCookie(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response body: %v", err)
 	}
+	if got, _ := resp["user_id"].(float64); int64(got) != 100 {
+		t.Errorf("user_id: want 100, got %v", resp["user_id"])
+	}
 	if got, _ := resp["first_name"].(string); got != "Alice" {
 		t.Errorf("first_name: want Alice, got %q", got)
 	}
@@ -435,22 +488,15 @@ func TestHandleMe_ValidCookie(t *testing.T) {
 	}
 }
 
-func TestHandleMe_IsServerOwner_LiveConfig(t *testing.T) {
-	// User 42 is a server owner in live config — handleMe must reflect that
-	// regardless of the JWT claim value.
-	mgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(mgmt.Close)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	h := NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret",
-		map[int64]bool{42: true}, logger)
+func TestHandleMe_IsServerOwner_ReflectsLiveManagementState(t *testing.T) {
+	// is_server_owner is not stored in the JWT at all — it always comes from a
+	// live GET /api/v1/users/{uid} call, so a role change takes effect immediately.
+	h := testAuthHandler(t, getUserHandler(42, true))
 
 	token, err := issueJWT(h.jwtSecret, JWTClaims{
-		TelegramID: 42,
-		FirstName:  "Alice",
-		Exp:        time.Now().Add(time.Hour).Unix(),
-		// IsServerOwner deliberately omitted (false) — live config must win
+		UserID:    42,
+		FirstName: "Alice",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("issueJWT: %v", err)
@@ -469,26 +515,17 @@ func TestHandleMe_IsServerOwner_LiveConfig(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	if got, _ := resp["is_server_owner"].(bool); !got {
-		t.Errorf("is_server_owner: want true for user in serverOwnerIDs, got %v", resp["is_server_owner"])
+		t.Errorf("is_server_owner: want true (live management state), got %v", resp["is_server_owner"])
 	}
 }
 
-func TestHandleMe_IsServerOwner_StaleJWT(t *testing.T) {
-	// User 42 has IsServerOwner=true in the JWT but is NOT in the live config.
-	// handleMe must return false (live config wins over stale claim).
-	mgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(mgmt.Close)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	h := NewAuthHandler("bot-token", "TestBot", "jwt-secret-32-bytes-long-xxxxxxx", mgmt.URL, "mgmt-secret",
-		map[int64]bool{}, logger) // user 42 NOT in the map
+func TestHandleMe_IsServerOwner_False(t *testing.T) {
+	h := testAuthHandler(t, getUserHandler(42, false))
 
 	token, err := issueJWT(h.jwtSecret, JWTClaims{
-		TelegramID:    42,
-		FirstName:     "Alice",
-		Exp:           time.Now().Add(time.Hour).Unix(),
-		IsServerOwner: true, // stale claim that should be ignored
+		UserID:    42,
+		FirstName: "Alice",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("issueJWT: %v", err)
@@ -507,16 +544,38 @@ func TestHandleMe_IsServerOwner_StaleJWT(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	if got, _ := resp["is_server_owner"].(bool); got {
-		t.Errorf("is_server_owner: want false when user removed from serverOwnerIDs, got true")
+		t.Errorf("is_server_owner: want false, got true")
+	}
+}
+
+func TestHandleMe_UpstreamError(t *testing.T) {
+	h := testAuthHandler(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	token, err := issueJWT(h.jwtSecret, JWTClaims{
+		UserID: 42,
+		Exp:    time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("issueJWT: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	h.handleMe(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("want 502 on upstream error, got %d", w.Code)
 	}
 }
 
 func TestHandleMe_ExpiredCookie(t *testing.T) {
 	h := testAuthHandler(t, nil)
 	token, _ := issueJWT(h.jwtSecret, JWTClaims{
-		TelegramID: 42,
-		FirstName:  "Alice",
-		Exp:        time.Now().Add(-time.Minute).Unix(),
+		UserID:    42,
+		FirstName: "Alice",
+		Exp:       time.Now().Add(-time.Minute).Unix(),
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
@@ -532,9 +591,9 @@ func TestHandleMe_ExpiredCookie(t *testing.T) {
 func TestHandleMe_TamperedCookie(t *testing.T) {
 	h := testAuthHandler(t, nil)
 	token, _ := issueJWT(h.jwtSecret, JWTClaims{
-		TelegramID: 42,
-		FirstName:  "Alice",
-		Exp:        time.Now().Add(time.Hour).Unix(),
+		UserID:    42,
+		FirstName: "Alice",
+		Exp:       time.Now().Add(time.Hour).Unix(),
 	})
 	parts := strings.Split(token, ".")
 	payload := []byte(parts[1])
@@ -548,6 +607,24 @@ func TestHandleMe_TamperedCookie(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("want 401 for tampered token, got %d", w.Code)
+	}
+}
+
+func TestHandleMe_StaleV1Cookie(t *testing.T) {
+	// A pre-v2 cookie never carried "uid" — it must 401, not resolve to user 0.
+	h := testAuthHandler(t, nil)
+	token, _ := issueJWT(h.jwtSecret, JWTClaims{
+		FirstName: "Alice",
+		Exp:       time.Now().Add(time.Hour).Unix(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	h.handleMe(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401 for a stale pre-v2 cookie, got %d", w.Code)
 	}
 }
 

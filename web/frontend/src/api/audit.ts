@@ -7,7 +7,7 @@ export async function fetchAuditEvents(filters: AuditFilters = {}): Promise<Audi
   if (filters.from !== undefined) params.set('from', filters.from)
   if (filters.to !== undefined) params.set('to', filters.to)
   if (filters.group_id !== undefined) params.set('group_id', String(filters.group_id))
-  if (filters.actor_tg_id !== undefined) params.set('actor_tg_id', String(filters.actor_tg_id))
+  if (filters.actor_user_id !== undefined) params.set('actor_user_id', String(filters.actor_user_id))
   if (filters.before_id !== undefined) params.set('before_id', String(filters.before_id))
   if (filters.limit !== undefined) params.set('limit', String(filters.limit))
 

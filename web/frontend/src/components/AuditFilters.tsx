@@ -12,7 +12,7 @@ export default function AuditFiltersForm({ isServerOwner, onApply }: AuditFilter
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [groupId, setGroupId] = useState('')
-  const [actorTgId, setActorTgId] = useState('')
+  const [actorUserId, setActorUserId] = useState('')
 
   const handleApply = () => {
     const filters: AuditFilters = {}
@@ -20,7 +20,7 @@ export default function AuditFiltersForm({ isServerOwner, onApply }: AuditFilter
     if (from) filters.from = new Date(from).toISOString()
     if (to) { const [y, m, d] = to.split('-').map(Number); filters.to = new Date(Date.UTC(y, m - 1, d + 1)).toISOString() }
     if (isServerOwner && groupId) filters.group_id = parseInt(groupId, 10)
-    if (isServerOwner && actorTgId) filters.actor_tg_id = parseInt(actorTgId, 10)
+    if (isServerOwner && actorUserId) filters.actor_user_id = parseInt(actorUserId, 10)
     onApply(filters)
   }
 
@@ -74,12 +74,12 @@ export default function AuditFiltersForm({ isServerOwner, onApply }: AuditFilter
               />
             </label>
             <label className="audit-filters__label">
-              Actor TG ID
+              Actor user ID
               <input
                 type="number"
                 className="audit-filters__input audit-filters__input--narrow"
-                value={actorTgId}
-                onChange={e => setActorTgId(e.target.value)}
+                value={actorUserId}
+                onChange={e => setActorUserId(e.target.value)}
                 placeholder="any"
               />
             </label>

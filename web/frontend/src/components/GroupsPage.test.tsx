@@ -28,7 +28,7 @@ const mockFetch = vi.mocked(groupsApi.fetchGroups)
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 function makeUser(overrides: Partial<User> = {}): User {
-  return { telegram_id: 42, first_name: 'Alice', is_server_owner: true, ...overrides }
+  return { user_id: 42, first_name: 'Alice', is_server_owner: true, ...overrides }
 }
 
 function makeGroup(overrides: Partial<BotGroup> = {}): BotGroup {

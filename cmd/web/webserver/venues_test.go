@@ -11,8 +11,8 @@ import (
 )
 
 // venueMgmt is a fake management service for venue routes. It answers
-// /api/v1/admins/… with adminGroupsJSON, GET /api/v1/venues/{id} with a venue
-// owned by venueGroupID, and everything else with status + respJSON.
+// /api/v1/users/{id}/admin-groups with adminGroupsJSON, GET /api/v1/venues/{id}
+// with a venue owned by venueGroupID, and everything else with status + respJSON.
 type venueMgmt struct {
 	adminGroupsJSON string
 	venueGroupID    int64
@@ -25,7 +25,7 @@ type venueMgmt struct {
 	bodies  []string
 }
 
-func newVenuesHandler(t *testing.T, m *venueMgmt, ownerIDs map[int64]bool) (*VenuesHandler, *AuthHandler) {
+func newVenuesHandler(t *testing.T, m *venueMgmt) (*VenuesHandler, *AuthHandler) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -35,7 +35,7 @@ func newVenuesHandler(t *testing.T, m *venueMgmt, ownerIDs map[int64]bool) (*Ven
 
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasPrefix(r.URL.Path, "/api/v1/admins/"):
+		case strings.Contains(r.URL.Path, "/admin-groups"):
 			fmt.Fprint(w, m.adminGroupsJSON)
 		case r.Method == http.MethodGet && isVenueByIDPath(r.URL.Path):
 			if m.venueStatus != 0 {
@@ -54,7 +54,6 @@ func newVenuesHandler(t *testing.T, m *venueMgmt, ownerIDs map[int64]bool) (*Ven
 	t.Cleanup(srv.Close)
 
 	auth := testAuthHandler(t, nil)
-	auth.serverOwnerIDs = ownerIDs
 	return NewVenuesHandler(auth, srv.URL, "mgmt-secret"), auth
 }
 
@@ -80,7 +79,7 @@ func venueReq(t *testing.T, auth *AuthHandler, method, target string, body strin
 
 func TestListVenues_ForcesGroupID(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, respJSON: `[]`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodGet, "/api/groups/-100123/venues", "")
 	w := routeAndServe("GET /api/groups/{chatID}/venues", v.handleListVenues, req)
@@ -95,7 +94,7 @@ func TestListVenues_ForcesGroupID(t *testing.T) {
 
 func TestListVenues_NotAdmin_403(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[]`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodGet, "/api/groups/-100123/venues", "")
 	w := routeAndServe("GET /api/groups/{chatID}/venues", v.handleListVenues, req)
@@ -107,10 +106,10 @@ func TestListVenues_NotAdmin_403(t *testing.T) {
 
 func TestCreateVenue_ForcesGroupIDAndActor(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, status: http.StatusCreated, respJSON: `{"id":7}`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodPost, "/api/groups/-100123/venues",
-		`{"name":"SquashPoint","courts":"1,2","group_id":-999,"actor_telegram_id":1}`)
+		`{"name":"SquashPoint","courts":"1,2","group_id":-999,"actor_user_id":1}`)
 	w := routeAndServe("POST /api/groups/{chatID}/venues", v.handleCreateVenue, req)
 
 	if w.Code != http.StatusCreated {
@@ -123,8 +122,8 @@ func TestCreateVenue_ForcesGroupIDAndActor(t *testing.T) {
 	if sent["group_id"] != float64(-100123) {
 		t.Errorf("group_id must be forced to the path chat id, got %v", sent["group_id"])
 	}
-	if sent["actor_telegram_id"] != float64(42) {
-		t.Errorf("actor must come from the JWT, got %v", sent["actor_telegram_id"])
+	if sent["actor_user_id"] != float64(42) {
+		t.Errorf("actor must come from the JWT, got %v", sent["actor_user_id"])
 	}
 }
 
@@ -132,7 +131,7 @@ func TestCreateVenue_ForcesGroupIDAndActor(t *testing.T) {
 
 func TestGetVenue_OtherGroupsVenue_404(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -999}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodGet, "/api/groups/-100123/venues/7", "")
 	w := routeAndServe("GET /api/groups/{chatID}/venues/{venueID}", v.handleGetVenue, req)
@@ -144,7 +143,7 @@ func TestGetVenue_OtherGroupsVenue_404(t *testing.T) {
 
 func TestGetVenue_OwnVenue_200(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -100123}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodGet, "/api/groups/-100123/venues/7", "")
 	w := routeAndServe("GET /api/groups/{chatID}/venues/{venueID}", v.handleGetVenue, req)
@@ -161,7 +160,7 @@ func TestUpdateVenue_ConflictPassthrough(t *testing.T) {
 		status:          http.StatusBadRequest,
 		respJSON:        `{"error":"auto_booking_disallowed_by_owner"}`,
 	}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodPatch, "/api/groups/-100123/venues/7",
 		`{"name":"X","courts":"1","auto_booking_enabled":true}`)
@@ -178,7 +177,7 @@ func TestUpdateVenue_ConflictPassthrough(t *testing.T) {
 func TestDeleteVenue_PassesActorAndGroup(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -100123, status: http.StatusConflict,
 		respJSON: `{"error":"venue has active court bookings and cannot be deleted"}`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodDelete, "/api/groups/-100123/venues/7", "")
 	w := routeAndServe("DELETE /api/groups/{chatID}/venues/{venueID}", v.handleDeleteVenue, req)
@@ -187,7 +186,7 @@ func TestDeleteVenue_PassesActorAndGroup(t *testing.T) {
 		t.Fatalf("409 must be proxied, got %d", w.Code)
 	}
 	last := m.paths[len(m.paths)-1]
-	for _, want := range []string{"group_id=-100123", "actor_tg_id=42", "actor_display=Test"} {
+	for _, want := range []string{"group_id=-100123", "actor_user_id=42", "actor_display=Test"} {
 		if !strings.Contains(last, want) {
 			t.Errorf("delete query missing %q: %s", want, last)
 		}
@@ -199,7 +198,7 @@ func TestDeleteVenue_PassesActorAndGroup(t *testing.T) {
 func TestAddCredential_503Passthrough(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -100123,
 		status: http.StatusServiceUnavailable, respJSON: `{"error":"credential management is disabled"}`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodPost, "/api/groups/-100123/venues/7/credentials",
 		`{"login":"a@b.c","password":"secret","priority":1,"max_courts":3}`)
@@ -219,7 +218,7 @@ func TestAddCredential_503Passthrough(t *testing.T) {
 
 func TestDeleteCredential_ScopedToVenueAndGroup(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -100123, status: http.StatusNoContent}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodDelete, "/api/groups/-100123/venues/7/credentials/3", "")
 	w := routeAndServe("DELETE /api/groups/{chatID}/venues/{venueID}/credentials/{cid}", v.handleDeleteCredential, req)
@@ -235,7 +234,7 @@ func TestDeleteCredential_ScopedToVenueAndGroup(t *testing.T) {
 func TestBookingReadiness_ProxiesReason(t *testing.T) {
 	m := &venueMgmt{adminGroupsJSON: `[{"chat_id":-100123}]`, venueGroupID: -100123,
 		respJSON: `{"ready":false,"max_courts":0,"reason":"no_usable_credentials"}`}
-	v, auth := newVenuesHandler(t, m, nil)
+	v, auth := newVenuesHandler(t, m)
 
 	req := venueReq(t, auth, http.MethodGet, "/api/groups/-100123/venues/7/booking-readiness", "")
 	w := routeAndServe("GET /api/groups/{chatID}/venues/{venueID}/booking-readiness", v.handleBookingReadiness, req)
@@ -250,7 +249,7 @@ func TestBookingReadiness_ProxiesReason(t *testing.T) {
 
 // ── preferences ──────────────────────────────────────────────────────────────
 
-func TestPrefs_UsesTelegramIDFromJWT(t *testing.T) {
+func TestPrefs_UsesUserIDFromJWT(t *testing.T) {
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.Path)
