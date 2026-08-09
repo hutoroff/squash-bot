@@ -15,7 +15,8 @@ A Telegram bot for coordinating squash games among a group of friends. The bot p
 - When editing courts on a game whose venue has auto-booking configured and usable credentials, the admin sees a mode chooser ("🤖 Auto-book courts" / "✏️ Edit manually"); choosing auto-book shows a count picker and triggers an immediate on-demand court booking
 - The morning after the game the bot unpins the message, removes buttons, and marks the game complete
 - After playing, any participant can submit a result via `/result` (private chat): pick the game, opponent, winner (or draw), and optional score; the opponent receives a DM with **Approve / Reject** buttons. Approved results immediately update a per-group **Glicko-2 leaderboard** (default rating 1500, RD 350); results left unanswered for 48 hours are auto-approved. Players see standings via `/leaderboard`; once a day, 24 h after that day's last game start, the bot also posts the leaderboard to the group automatically.
-- **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand. Server owners can manage groups on the Groups page, including toggling auto-booking per group.
+- **web** provides a React web UI (port 8082): sign in with your Telegram account, browse upcoming and past games, and manage your participation (join, skip, add/remove a guest) — changes sync to the Telegram announcement in real time. Past games are shown in a collapsed section that loads on demand.
+- The web UI is also a full alternative to the bot's settings menus: any Telegram group admin sees their groups under **Groups** and can edit language, timezone, changelog and leaderboard notifications, and create, edit or delete venues with every field the `/venues` wizard supports — including booking credentials and a per-venue auto-booking readiness badge that says *why* booking will or won't run. Server owners additionally see all groups and the per-group auto-booking master switch. Every user can set their DM language and opt out of result prompts under **My settings**. See [Manage settings in the web UI](#manage-settings-in-the-web-ui).
 - On each service startup, if the running version has a matching `changelogs/<version>.md` file and has not announced it yet, the bot sends that changelog to every group with changelog announcements enabled (per-group toggle in `/groups` → 📋 Changelog, default ON)
 
 ## Tech Stack
@@ -110,6 +111,20 @@ In private chat with the bot, run `/venues`. You can add one or more venues for 
 Auto-booking features (the enable toggle, courts, games-to-book, and credentials) are only available when the server owner has allowed auto-booking for the group. Server owners can toggle this per group via the web UI's Groups page. Disabling auto-booking at the group level cascades: all venues in the group have `auto_booking_enabled` set to false, and the venue wizard and edit menu hide auto-booking controls.
 
 **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
+
+### Manage settings in the web UI
+
+Everything above can also be managed in the web UI (port 8082) — the bot's menus and the web UI edit the same data, so use whichever you prefer.
+
+- **Groups** lists the groups you administer in Telegram (server owners see all of them). Opening a group gives you:
+  - **General** — language and timezone (timezone list comes from the browser, so every IANA zone is available)
+  - **Notifications** — changelog announcements and the daily leaderboard post
+  - **Auto-booking** — the server-owner master switch; group admins see whether the owner has allowed it
+  - **Venues** — one card per venue with its schedule and an auto-booking readiness badge, plus add/edit/delete
+- **Venue form** covers every venue field, with structured editors instead of comma-separated typing: weekday chips for game days, time chips for slots and preferred times, and an ordered pick-list for auto-booking court priority. Booking credentials are managed at the bottom of the form when editing an existing venue; passwords are write-only, exactly as in the bot.
+- **My settings** holds your personal preferences: the language the bot uses in DMs, and whether it asks you to submit game results.
+
+The web UI is English-only. Group-level settings changed there apply in the group's own language as usual.
 
 ### 5. Create a game
 

@@ -34,7 +34,11 @@ cmd/management/
 │   ├── audit_service.go        — AuditService: 15+ Record* methods, Query, RunRetention
 │   ├── changelog_announcer.go  — AnnounceChangelog: on startup, send new-version changelog to opted-in groups
 │   ├── admin_groups_resolver.go — AdminGroupsResolver: AdminGroupsFor(ctx, tgID) resolves which groups
-│   │                              a caller administers (satisfies api.adminGroupsResolver interface)
+│   │                              a caller administers (satisfies api.adminGroupsResolver interface);
+│   │                              per-tgID in-memory cache, TTL `adminGroupsCacheTTL` (5 min), because
+│   │                              an uncached resolve is one GetChatAdministrators call per known group
+│   │                              and it now sits on every settings request, not just audit.
+│   │                              Trade-off: Telegram admin promotions/demotions apply within ≤5 min.
 │   ├── game_notifier.go        — GameNotifier (implements Notifier): EditGameMessage
 │   ├── scheduler.go            — Scheduler: RunScheduledTasks, registers jobs
 │   ├── cancellation_reminder.go — CancellationReminderJob
@@ -169,6 +173,11 @@ PATCH  /api/v1/groups/{chatID}/auto-booking-allowed      — setGroupAutoBooking
 DELETE /api/v1/groups/{chatID}                     — removeGroup
 GET    /api/v1/groups                              — listGroups (response includes added_at)
 GET    /api/v1/groups/{chatID}                     — getGroup (response includes added_at)
+GET    /api/v1/admins/{tgID}/groups                — listAdminGroups: groups tgID may administer.
+                                                     Server owner → all groups; otherwise the groups
+                                                     AdminGroupsResolver reports (cached, see below).
+                                                     Same []models.Group shape as listGroups; [] when none.
+                                                     Backs the web service's group-settings authorization.
 
 POST   /api/v1/venues                              — createVenue; rejects auto_booking_enabled=true
                                                      when group auto_booking_allowed=false (400)

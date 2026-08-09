@@ -38,6 +38,9 @@ function makeGroup(overrides: Partial<BotGroup> = {}): BotGroup {
     bot_is_admin: true,
     language: 'en',
     timezone: 'UTC',
+    changelog_enabled: true,
+    leaderboard_notifications_enabled: true,
+    auto_booking_allowed: true,
     added_at: '2026-01-15T10:00:00Z',
     ...overrides,
   }
@@ -86,17 +89,16 @@ describe('GroupsPage', () => {
     renderGroupsPage(makeUser())
 
     await waitFor(() => {
-      expect(screen.getByText(/No groups found/)).toBeInTheDocument()
+      expect(screen.getByText(/don't administer any groups/)).toBeInTheDocument()
     })
   })
 
-  it('renders forbidden message on 403', async () => {
-    const { ApiError } = await import('../api/http')
-    mockFetch.mockRejectedValue(new ApiError(403, 'Forbidden'))
-    renderGroupsPage(makeUser())
+  it('links each group to its settings page', async () => {
+    mockFetch.mockResolvedValue([makeGroup()])
+    renderGroupsPage(makeUser({ is_server_owner: false }))
 
     await waitFor(() => {
-      expect(screen.getByText(/don't have access/)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Test Group' })).toHaveAttribute('href', '/groups/-100123')
     })
   })
 

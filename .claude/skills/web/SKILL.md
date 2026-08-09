@@ -28,6 +28,12 @@ cmd/web/
     ├── games.go         — GamesHandler: handleListGames, handleGetParticipants,
     │                      handleJoinGame, handleSkipGame, handleAddGuest, handleRemoveGuest
     ├── audit.go         — AuditHandler: handleListAuditEvents (JWT-authenticated proxy)
+    ├── mgmt_proxy.go    — mgmtClient (embedded by the proxy handlers): proxy, get, claims,
+    │                      authorizeGroup, actorFields/actorQuery, decodeWithActor, writeAPIError
+    ├── groups.go        — GroupsHandler: handleListGroups, handleGetGroup, patchGroupSetting,
+    │                      handleSetGroupAutoBookingAllowed
+    ├── venues.go        — VenuesHandler: venue + credential CRUD, all group-scoped via venueScope
+    ├── prefs.go         — PrefsHandler: handleGetPreferences, patchPreference
 
 web/
 ├── embed.go             — //go:embed frontend/dist; var FS embed.FS
@@ -65,10 +71,30 @@ GET  /api/audit                   — list audit events (requires session); all 
                                     forwarded to management; caller's TG ID injected via
                                     X-Caller-Tg-Id header; visibility enforced by management
 
-GET  /api/groups                  — list all groups the bot is in (server-owner only;
-                                    requires session; returns 403 for non-owners)
-PATCH /api/groups/{chatID}/auto-booking-allowed — toggle group auto-booking flag (server-owner only;
-                                    body: {enabled bool}; proxies to management with actor info from JWT)
+GET  /api/groups                  — groups the caller may manage (all for a server owner, the
+                                    ones they administer otherwise, [] for a plain user);
+                                    always proxies GET /api/v1/admins/{tgID}/groups
+GET  /api/groups/{chatID}         — single group (authorizeGroup)
+PATCH /api/groups/{chatID}/language                  — body {language}
+PATCH /api/groups/{chatID}/timezone                  — body {timezone}
+PATCH /api/groups/{chatID}/changelog                 — body {changelog_enabled}
+PATCH /api/groups/{chatID}/leaderboard-notifications — body {leaderboard_notifications_enabled}
+                                    (all four: authorizeGroup, actor fields injected from JWT)
+PATCH /api/groups/{chatID}/auto-booking-allowed — server-owner only; body {enabled}
+
+GET|POST   /api/groups/{chatID}/venues                       — list / create
+GET|PATCH|DELETE /api/groups/{chatID}/venues/{venueID}       — read / full-object update / delete
+GET  /api/groups/{chatID}/venues/{venueID}/booking-readiness
+GET|POST   /api/groups/{chatID}/venues/{venueID}/credentials
+DELETE     /api/groups/{chatID}/venues/{venueID}/credentials/{cid}
+GET  /api/groups/{chatID}/venues/{venueID}/credentials/priorities
+                                    (all venue routes: authorizeGroup, group_id forced to the
+                                    path chatID, actor injected; upstream 400/409/503 proxied verbatim)
+
+GET  /api/me/preferences          — caller's DM preferences (404 from management → frontend defaults)
+PATCH /api/me/dm-language         — body {language}
+PATCH /api/me/results-opt-out     — body {opt_out}
+                                    (Telegram ID always taken from the JWT, never the URL)
 
 GET  /                            — SPA fallback (serves index.html for all unmatched routes)
 ```
@@ -163,6 +189,46 @@ Visibility enforcement happens entirely in management — the web service never 
 
 ---
 
+## Settings proxies (`webserver/mgmt_proxy.go`, `groups.go`, `venues.go`, `prefs.go`)
+
+`mgmtClient` is embedded by `GroupsHandler`, `VenuesHandler` and `PrefsHandler` and carries the
+shared auth + management connection, so a new settings handler is a struct embedding it plus routes.
+
+**`authorizeGroup(w, r)` — the single gate for every group-scoped route.** Resolves `{chatID}`, then:
+missing/invalid session → 401; server owner → allowed without any lookup; otherwise
+`GET /api/v1/admins/{tgID}/groups` and the chat ID must be in the list → else 403. No web-side
+cache: the management resolver caches for 5 minutes, and web→management is one local call.
+
+**Security invariants** (mirror the player-ID rule for games):
+- `group_id` on venue and credential mutations is **forced to the path chatID**, never read from the body.
+- `actor_telegram_id` / `actor_display` always come from the JWT — `decodeWithActor` overwrites whatever the client sent.
+- Personal preference routes derive the Telegram ID from the JWT; there is deliberately no `{tgID}` path param.
+- `GET /api/v1/venues/{id}` is the one management read that is not group-scoped, so `venueScope`
+  fetches the venue first and 404s when `venue.group_id != chatID` before proxying anything.
+
+Upstream status codes and bodies are proxied verbatim (400 `auto_booking_disallowed_by_owner`,
+409 duplicate login / active bookings, 503 credentials-disabled), so the frontend maps them to text.
+
+---
+
+## Frontend pages
+
+| Route | Component | Notes |
+|---|---|---|
+| `/` | `GamesPage` | |
+| `/groups` | `GroupsPage` | visible to everyone; empty state for non-admins (no more 403) |
+| `/groups/:chatId` | `GroupSettingsPage` | General / Notifications / Auto-booking / Venues; optimistic toggles with rollback; master switch owner-only |
+| `/groups/:chatId/venues/new`, `/:venueId` | `VenueFormPage` | full-object save; chip editors for courts, time slots, game days, preferred times; credentials section in edit mode only |
+| `/settings` | `SettingsPage` | DM language + results opt-out |
+| `/audit` | `AuditPage` | |
+
+Shared bits: `components/Field.tsx` (label + permanent help text — every settings field has one),
+`settingsLabels.ts` (`LANGUAGES`, `WEEKDAYS` indexed by Go `time.Weekday`, `READINESS_TEXT`,
+`splitList`/`joinList` for the comma-separated storage columns, `scheduleSummary`).
+Timezones come from native `Intl.supportedValuesOf('timeZone')` — no hardcoded list, no dependency.
+
+---
+
 ## Management service calls made by web service
 
 All with `Authorization: Bearer <INTERNAL_API_SECRET>`.
@@ -177,8 +243,16 @@ POST /api/v1/games/{id}/skip              — skip
 POST /api/v1/games/{id}/guests            — add guest
 DELETE /api/v1/games/{id}/guests          — remove guest
 GET  /api/v1/audit                        — audit event query (with X-Caller-Tg-Id injected)
-GET  /api/v1/groups                       — list all groups (server-owner only proxy)
-PATCH /api/v1/groups/{chatID}/auto-booking-allowed — toggle group auto-booking (proxied with actor info from JWT)
+GET  /api/v1/admins/{tgID}/groups         — groups the caller may manage; backs GET /api/groups
+                                            and every authorizeGroup check
+GET  /api/v1/groups/{chatID}              — single group
+PATCH /api/v1/groups/{chatID}/{language|timezone|changelog|leaderboard-notifications|auto-booking-allowed}
+GET|POST /api/v1/venues, GET|PATCH|DELETE /api/v1/venues/{id}
+GET  /api/v1/venues/{id}/booking-readiness
+GET|POST /api/v1/venues/{id}/credentials, DELETE /api/v1/venues/{id}/credentials/{cid}
+GET  /api/v1/venues/{id}/credentials/priorities
+GET  /api/v1/users/{tgID}/preferences
+PATCH /api/v1/users/{tgID}/{dm-language|results-opt-out}
 ```
 
 ---

@@ -100,3 +100,10 @@ func TestLimitRequestBody_RejectsBodyOverLimit(t *testing.T) {
 		t.Errorf("oversized body: want 413, got %d", w.Code)
 	}
 }
+
+// RegisterRoutes panics on conflicting ServeMux patterns; without this the
+// first sign of a bad route would be a crash at service start.
+func TestRegisterRoutes_NoPatternConflicts(t *testing.T) {
+	h := &Handler{}
+	h.RegisterRoutes(http.NewServeMux())
+}

@@ -273,6 +273,45 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, groups)
 }
 
+// listAdminGroups handles GET /api/v1/admins/{tgID}/groups
+// Returns the groups tgID may administer: all groups for a server owner,
+// otherwise the groups where Telegram reports them as an administrator.
+func (h *Handler) listAdminGroups(w http.ResponseWriter, r *http.Request) {
+	tgID, err := parseID(r.PathValue("tgID"))
+	if err != nil || tgID == 0 {
+		writeError(w, http.StatusBadRequest, "invalid telegram id")
+		return
+	}
+	groups, err := h.groupRepo.GetAll(r.Context())
+	if err != nil {
+		h.logger.Error("listAdminGroups", "err", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := []models.Group{}
+	if h.isServerOwner(tgID) {
+		result = append(result, groups...)
+	} else if h.adminResolver != nil {
+		adminGroups, err := h.adminResolver.AdminGroupsFor(r.Context(), tgID)
+		if err != nil {
+			h.logger.Error("listAdminGroups: resolver", "err", err, "tg_id", tgID)
+			writeError(w, http.StatusInternalServerError, "failed to resolve admin groups")
+			return
+		}
+		allowed := make(map[int64]bool, len(adminGroups))
+		for _, id := range adminGroups {
+			allowed[id] = true
+		}
+		for _, g := range groups {
+			if allowed[g.ChatID] {
+				result = append(result, g)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // getGroup handles GET /api/v1/groups/{chatID}
 // Returns the full group object if found, 404 if not.
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {

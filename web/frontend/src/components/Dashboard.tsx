@@ -27,14 +27,15 @@ export default function Dashboard({ user }: DashboardProps) {
           <NavLink to="/" end className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
             My games
           </NavLink>
+          <NavLink to="/groups" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
+            Groups
+          </NavLink>
+          <NavLink to="/settings" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
+            My settings
+          </NavLink>
           <NavLink to="/audit" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
             Audit log
           </NavLink>
-          {user.is_server_owner && (
-            <NavLink to="/groups" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
-              Groups
-            </NavLink>
-          )}
         </nav>
         <div className="dashboard-header__actions">
           {logoutError && (
