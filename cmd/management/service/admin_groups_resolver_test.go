@@ -34,6 +34,19 @@ func (c *countingTelegramAPI) GetChatAdministrators(_ tgbotapi.ChatAdministrator
 	return []tgbotapi.ChatMember{{User: &tgbotapi.User{ID: c.adminID}}}, nil
 }
 
+// identityUserRepo is a UserRepository fake whose TelegramID is the identity
+// function, so tests can keep using one numeric constant for both userID and
+// the Telegram ID GetChatAdministrators matches against.
+type identityUserRepo struct{}
+
+func (identityUserRepo) GetByID(_ context.Context, userID int64) (*models.User, error) {
+	return &models.User{ID: userID}, nil
+}
+
+func (identityUserRepo) TelegramID(_ context.Context, userID int64) (int64, error) {
+	return userID, nil
+}
+
 func newTestResolver(adminID int64, chatIDs ...int64) (*AdminGroupsResolver, *countingTelegramAPI) {
 	groups := make([]models.Group, 0, len(chatIDs))
 	for _, id := range chatIDs {
@@ -42,6 +55,7 @@ func newTestResolver(adminID int64, chatIDs ...int64) (*AdminGroupsResolver, *co
 	api := &countingTelegramAPI{adminID: adminID}
 	r := NewAdminGroupsResolver(
 		&stubGroupRepoAnnounce{groups: groups},
+		identityUserRepo{},
 		api,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
@@ -127,6 +141,7 @@ func newBlockingResolver(api *blockingTelegramAPI, chatIDs ...int64) *AdminGroup
 	}
 	return NewAdminGroupsResolver(
 		&stubGroupRepoAnnounce{groups: groups},
+		identityUserRepo{},
 		api,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)

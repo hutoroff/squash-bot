@@ -12,7 +12,7 @@ import (
 func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GameID           int64  `json:"game_id"`
-		AuthorTelegramID int64  `json:"author_telegram_id"`
+		AuthorUserID     int64  `json:"author_user_id"`
 		OpponentPlayerID int64  `json:"opponent_player_id"`
 		WinnerPlayerID   *int64 `json:"winner_player_id"`
 		Score            string `json:"score"`
@@ -22,13 +22,13 @@ func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.GameID == 0 || req.AuthorTelegramID == 0 || req.OpponentPlayerID == 0 {
-		writeError(w, http.StatusBadRequest, "game_id, author_telegram_id, and opponent_player_id are required")
+	if req.GameID == 0 || req.AuthorUserID == 0 || req.OpponentPlayerID == 0 {
+		writeError(w, http.StatusBadRequest, "game_id, author_user_id, and opponent_player_id are required")
 		return
 	}
 
 	result, err := h.gameResultSvc.Submit(r.Context(),
-		req.GameID, req.AuthorTelegramID, req.OpponentPlayerID,
+		req.GameID, req.AuthorUserID, req.OpponentPlayerID,
 		req.WinnerPlayerID, req.Score, req.ActorDisplay,
 	)
 	if err != nil {
@@ -107,15 +107,15 @@ func (h *Handler) approveGameResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, err := h.gameResultSvc.Approve(r.Context(), id, req.ActorTelegramID, req.ActorDisplay)
+	result, err := h.gameResultSvc.Approve(r.Context(), id, req.ActorUserID, req.ActorDisplay)
 	if err != nil {
 		h.handleResultDecisionError(w, err)
 		return
@@ -131,15 +131,15 @@ func (h *Handler) rejectGameResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, err := h.gameResultSvc.Reject(r.Context(), id, req.ActorTelegramID, req.ActorDisplay)
+	result, err := h.gameResultSvc.Reject(r.Context(), id, req.ActorUserID, req.ActorDisplay)
 	if err != nil {
 		h.handleResultDecisionError(w, err)
 		return
@@ -155,15 +155,15 @@ func (h *Handler) cancelGameResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ActorTelegramID int64  `json:"actor_telegram_id"`
-		ActorDisplay    string `json:"actor_display"`
+		ActorUserID  int64  `json:"actor_user_id"`
+		ActorDisplay string `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, err := h.gameResultSvc.CancelByAuthor(r.Context(), id, req.ActorTelegramID, req.ActorDisplay)
+	result, err := h.gameResultSvc.CancelByAuthor(r.Context(), id, req.ActorUserID, req.ActorDisplay)
 	if err != nil {
 		h.handleResultDecisionError(w, err)
 		return
@@ -171,11 +171,11 @@ func (h *Handler) cancelGameResult(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// getRecentCompletedGames handles GET /api/v1/players/{tgID}/recent-completed-games?group_id=X&days=14
+// getRecentCompletedGames handles GET /api/v1/users/{userID}/recent-completed-games?group_id=X&days=14
 func (h *Handler) getRecentCompletedGames(w http.ResponseWriter, r *http.Request) {
-	tgID, err := parseID(r.PathValue("tgID"))
+	userID, err := parseID(r.PathValue("userID"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid telegram_id")
+		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
 	groupID, err := parseID(r.URL.Query().Get("group_id"))
@@ -184,7 +184,7 @@ func (h *Handler) getRecentCompletedGames(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	games, err := h.gameService.GetRecentCompletedGamesForPlayer(r.Context(), tgID, groupID)
+	games, err := h.gameService.GetRecentCompletedGamesForPlayer(r.Context(), userID, groupID)
 	if err != nil {
 		h.logger.Error("getRecentCompletedGames", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())

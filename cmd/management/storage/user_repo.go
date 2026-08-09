@@ -303,24 +303,6 @@ func (r *UserRepo) IsServerOwner(ctx context.Context, userID int64) (bool, error
 	return owner, err
 }
 
-// IsServerOwnerByTelegramID is the DB-backed authorization check used by the
-// legacy Telegram-ID-keyed routes (audit, groups) until they're rekeyed to
-// user_id in Step 3. Returns false, not an error, when the Telegram ID has
-// no identity yet.
-func (r *UserRepo) IsServerOwnerByTelegramID(ctx context.Context, tgID int64) (bool, error) {
-	var owner bool
-	const q = `
-		SELECT u.is_server_owner
-		FROM user_identities ui
-		JOIN users u ON u.id = ui.user_id
-		WHERE ui.provider = $1 AND ui.external_id = $2`
-	err := r.pool.QueryRow(ctx, q, models.IdentityProviderTelegram, strconv.FormatInt(tgID, 10)).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	return owner, err
-}
-
 // TelegramID returns the Telegram external ID linked to userID.
 // Returns pgx.ErrNoRows if the user has no telegram identity.
 func (r *UserRepo) TelegramID(ctx context.Context, userID int64) (int64, error) {

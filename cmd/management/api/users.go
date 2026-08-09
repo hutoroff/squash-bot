@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -19,7 +18,8 @@ type userRepository interface {
 	List(ctx context.Context) ([]*storage.UserSummary, error)
 	SetServerOwner(ctx context.Context, userID int64, enabled bool) error
 	IsServerOwner(ctx context.Context, userID int64) (bool, error)
-	IsServerOwnerByTelegramID(ctx context.Context, tgID int64) (bool, error)
+	SetDMLanguage(ctx context.Context, userID int64, language string) error
+	SetResultsOptOut(ctx context.Context, userID int64, optOut bool) error
 }
 
 type resolveIdentityRequest struct {
@@ -55,8 +55,7 @@ func (h *Handler) resolveIdentity(w http.ResponseWriter, r *http.Request) {
 	// Telegram user IDs are positive 64-bit integers. Validate now so a
 	// malformed/zero/negative/overflowing value can't create a persistent
 	// identity that UserRepo.TelegramID later fails to parse.
-	tgID, err := strconv.ParseInt(req.ExternalID, 10, 64)
-	if err != nil || tgID <= 0 {
+	if tgID, err := strconv.ParseInt(req.ExternalID, 10, 64); err != nil || tgID <= 0 {
 		writeError(w, http.StatusBadRequest, "external_id must be a positive telegram user ID")
 		return
 	}
@@ -68,11 +67,13 @@ func (h *Handler) resolveIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	playerID, err := h.lookupPlayerID(r.Context(), user.ID, tgID)
-	if err != nil {
+	var playerID *int64
+	if id, ok, err := h.playerRepo.PlayerIDByUserID(r.Context(), user.ID); err != nil {
 		h.logger.Error("resolveIdentity: player lookup", "user_id", user.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	} else if ok {
+		playerID = &id
 	}
 
 	writeJSON(w, http.StatusOK, resolveIdentityResponse{
@@ -81,27 +82,6 @@ func (h *Handler) resolveIdentity(w http.ResponseWriter, r *http.Request) {
 		DisplayName:   user.DisplayName,
 		IsServerOwner: user.IsServerOwner,
 	})
-}
-
-// lookupPlayerID resolves the player ID for a resolved user. Prefers the
-// user_id link; falls back to the legacy telegram_id column since
-// PlayerRepo.Upsert doesn't populate user_id until it's rekeyed in Step 3 —
-// without the fallback, a player created during that transition would
-// wrongly report player_id: null on every resolve.
-func (h *Handler) lookupPlayerID(ctx context.Context, userID, telegramID int64) (*int64, error) {
-	if id, ok, err := h.playerRepo.PlayerIDByUserID(ctx, userID); err != nil {
-		return nil, fmt.Errorf("player id by user id: %w", err)
-	} else if ok {
-		return &id, nil
-	}
-	player, err := h.playerRepo.GetByTelegramID(ctx, telegramID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("player by telegram id: %w", err)
-	}
-	return &player.ID, nil
 }
 
 // getUser handles GET /api/v1/users/{userID}.
@@ -219,5 +199,74 @@ func (h *Handler) setUserServerOwner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditSvc.RecordUserRoleChanged(r.Context(), req.ActorUserID, req.ActorDisplay, userID, target.DisplayName, req.Enabled)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setUserDMLanguage handles PATCH /api/v1/users/{userID}/dm-language.
+// Body: {"language": "en"|"de"|"ru"}. Returns 204 on success.
+func (h *Handler) setUserDMLanguage(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req struct {
+		Language string `json:"language"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.Language {
+	case "en", "de", "ru":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported language; use en, de, or ru")
+		return
+	}
+
+	if err := h.userRepo.SetDMLanguage(r.Context(), userID, req.Language); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		h.logger.Error("setUserDMLanguage", "user_id", userID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setUserResultsOptOut handles PATCH /api/v1/users/{userID}/results-opt-out.
+// Body: {"opt_out": bool}. Returns 204 on success.
+func (h *Handler) setUserResultsOptOut(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req struct {
+		OptOut *bool `json:"opt_out"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OptOut == nil {
+		writeError(w, http.StatusBadRequest, "opt_out field is required")
+		return
+	}
+
+	if err := h.userRepo.SetResultsOptOut(r.Context(), userID, *req.OptOut); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		h.logger.Error("setUserResultsOptOut", "user_id", userID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

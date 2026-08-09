@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -93,9 +94,10 @@ func (r *GuestRepo) RemoveLatestGuest(ctx context.Context, gameID, invitedByPlay
 func (r *GuestRepo) GetByGame(ctx context.Context, gameID int64) ([]*models.GuestParticipation, error) {
 	const q = `
 		SELECT gp.id, gp.game_id, gp.invited_by_player_id, gp.created_at,
-		       p.id, p.telegram_id, p.username, p.first_name, p.last_name, p.created_at
+		       p.id, p.user_id, ti.external_id, ti.username, ti.first_name, ti.last_name, p.created_at
 		FROM guest_participations gp
 		JOIN players p ON p.id = gp.invited_by_player_id
+		LEFT JOIN user_identities ti ON ti.user_id = p.user_id AND ti.provider = 'telegram'
 		WHERE gp.game_id = $1
 		ORDER BY gp.created_at, gp.id`
 	slog.Debug("GuestRepo.GetByGame", "game_id", gameID)
@@ -110,11 +112,17 @@ func (r *GuestRepo) GetByGame(ctx context.Context, gameID int64) ([]*models.Gues
 	for rows.Next() {
 		var g models.GuestParticipation
 		var p models.Player
+		var externalID *string
 		if err := rows.Scan(
 			&g.ID, &g.GameID, &g.InvitedByPlayerID, &g.CreatedAt,
-			&p.ID, &p.TelegramID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
+			&p.ID, &p.UserID, &externalID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan guest: %w", err)
+		}
+		if externalID != nil {
+			if tgID, err := strconv.ParseInt(*externalID, 10, 64); err == nil {
+				p.TelegramID = tgID
+			}
 		}
 		g.InvitedBy = &p
 		guests = append(guests, &g)

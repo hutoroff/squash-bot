@@ -64,11 +64,11 @@ type mockPlayerRepo struct {
 	players map[int64]*models.Player // keyed by player ID
 }
 
-func (m *mockPlayerRepo) Upsert(_ context.Context, p *models.Player) (*models.Player, error) {
-	return p, nil
+func (m *mockPlayerRepo) Upsert(_ context.Context, userID int64) (*models.Player, error) {
+	return &models.Player{UserID: userID}, nil
 }
 
-func (m *mockPlayerRepo) GetByTelegramID(_ context.Context, _ int64) (*models.Player, error) {
+func (m *mockPlayerRepo) GetByUserID(_ context.Context, _ int64) (*models.Player, error) {
 	return nil, nil
 }
 

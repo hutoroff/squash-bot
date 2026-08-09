@@ -17,13 +17,14 @@ import (
 
 // fakeUserRepo is an in-memory stub of userRepository for handler tests.
 type fakeUserRepo struct {
-	byID              map[int64]*models.User
-	ownerByTelegramID map[int64]bool
-	list              []*storage.UserSummary
-	listErr           error
-	resolveUser       *models.User
-	resolveErr        error
-	setOwnerErr       error
+	byID         map[int64]*models.User
+	list         []*storage.UserSummary
+	listErr      error
+	resolveUser  *models.User
+	resolveErr   error
+	setOwnerErr  error
+	setDMLangErr error
+	setOptOutErr error
 }
 
 func (f *fakeUserRepo) ResolveIdentity(_ context.Context, _, _, _, _, _, _ string) (*models.User, error) {
@@ -60,8 +61,28 @@ func (f *fakeUserRepo) IsServerOwner(_ context.Context, userID int64) (bool, err
 	return u.IsServerOwner, nil
 }
 
-func (f *fakeUserRepo) IsServerOwnerByTelegramID(_ context.Context, tgID int64) (bool, error) {
-	return f.ownerByTelegramID[tgID], nil
+func (f *fakeUserRepo) SetDMLanguage(_ context.Context, userID int64, language string) error {
+	if f.setDMLangErr != nil {
+		return f.setDMLangErr
+	}
+	u, ok := f.byID[userID]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	u.DMLanguage = language
+	return nil
+}
+
+func (f *fakeUserRepo) SetResultsOptOut(_ context.Context, userID int64, optOut bool) error {
+	if f.setOptOutErr != nil {
+		return f.setOptOutErr
+	}
+	u, ok := f.byID[userID]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	u.ResultsOptOut = optOut
+	return nil
 }
 
 func newUsersTestHandler(repo *fakeUserRepo) *Handler {

@@ -67,17 +67,17 @@ func (r *stubResultRepo) ListByGameID(_ context.Context, _ int64) ([]*models.Gam
 // ── mock PlayerRepository ────────────────────────────────────────────────────
 
 type stubPlayerRepo struct {
-	byTgID    map[int64]*models.Player // telegramID → Player
+	byUserID  map[int64]*models.Player // userID → Player
 	byID      map[int64]*models.Player // DB id → Player
 	upsertErr error
 }
 
-func (r *stubPlayerRepo) Upsert(_ context.Context, p *models.Player) (*models.Player, error) {
-	return p, r.upsertErr
+func (r *stubPlayerRepo) Upsert(_ context.Context, userID int64) (*models.Player, error) {
+	return r.byUserID[userID], r.upsertErr
 }
 
-func (r *stubPlayerRepo) GetByTelegramID(_ context.Context, tgID int64) (*models.Player, error) {
-	p, ok := r.byTgID[tgID]
+func (r *stubPlayerRepo) GetByUserID(_ context.Context, userID int64) (*models.Player, error) {
+	p, ok := r.byUserID[userID]
 	if !ok {
 		return nil, pgx.ErrNoRows
 	}
@@ -144,7 +144,7 @@ func (r *stubGameRepoForResults) GetUpcomingGamesByChatIDs(_ context.Context, _ 
 func (r *stubGameRepoForResults) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoForResults) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoForResults) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoForResults) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
@@ -208,13 +208,13 @@ func defaultFixture() (
 		game: &models.Game{ID: 10, ChatID: -1001},
 	}
 	playerRepo := &stubPlayerRepo{
-		byTgID: map[int64]*models.Player{
-			100: {ID: 1, TelegramID: 100},
-			200: {ID: 2, TelegramID: 200},
+		byUserID: map[int64]*models.Player{
+			100: {ID: 1, UserID: 100, TelegramID: 100},
+			200: {ID: 2, UserID: 200, TelegramID: 200},
 		},
 		byID: map[int64]*models.Player{
-			1: {ID: 1, TelegramID: 100},
-			2: {ID: 2, TelegramID: 200},
+			1: {ID: 1, UserID: 100, TelegramID: 100},
+			2: {ID: 2, UserID: 200, TelegramID: 200},
 		},
 	}
 	partRepo := &grPartRepo{
@@ -312,8 +312,8 @@ func TestSubmit_ValidSubmission(t *testing.T) {
 func TestSubmit_OpponentNotRegistered(t *testing.T) {
 	rr, gr, pr, pp := defaultFixture()
 	// Add a third player who exists but is NOT in the game participations.
-	pr.byTgID[300] = &models.Player{ID: 3, TelegramID: 300}
-	pr.byID[3] = &models.Player{ID: 3, TelegramID: 300}
+	pr.byUserID[300] = &models.Player{ID: 3, UserID: 300, TelegramID: 300}
+	pr.byID[3] = &models.Player{ID: 3, UserID: 300, TelegramID: 300}
 	svc := newResultSvc(rr, gr, pr, pp)
 
 	// opponent=3 is a valid player but not registered in game 10

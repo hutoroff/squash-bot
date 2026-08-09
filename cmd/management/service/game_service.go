@@ -142,8 +142,8 @@ func (s *GameService) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []i
 	return s.gameRepo.GetUpcomingGamesByChatIDs(ctx, chatIDs)
 }
 
-func (s *GameService) GetNextGameForTelegramUser(ctx context.Context, telegramID int64) (*models.Game, error) {
-	return s.gameRepo.GetNextGameForTelegramUser(ctx, telegramID)
+func (s *GameService) GetNextGameForUser(ctx context.Context, userID int64) (*models.Game, error) {
+	return s.gameRepo.GetNextGameForUser(ctx, userID)
 }
 
 func (s *GameService) UpdateCourts(ctx context.Context, gameID int64, courts string) error {
@@ -159,24 +159,24 @@ func (s *GameService) ListGroupIDsForPlayer(ctx context.Context, playerID int64)
 	return s.gameRepo.ListGroupIDsForPlayer(ctx, playerID)
 }
 
-// PlayerCanAccessGame reports whether the given Telegram user is associated with
+// PlayerCanAccessGame reports whether the given user is associated with
 // gameID's group — i.e. has a participation record in some game within that
 // group. Used to authorize the web service's per-game endpoints (IDOR guard).
-func (s *GameService) PlayerCanAccessGame(ctx context.Context, telegramID, gameID int64) (bool, error) {
-	return s.gameRepo.PlayerCanAccessGame(ctx, telegramID, gameID)
+func (s *GameService) PlayerCanAccessGame(ctx context.Context, userID, gameID int64) (bool, error) {
+	return s.gameRepo.PlayerCanAccessGame(ctx, userID, gameID)
 }
 
-// GetRecentCompletedGamesForPlayer returns past games for a player (by Telegram ID)
-// in a specific group within the configured result-submission window. Used by the
+// GetRecentCompletedGamesForPlayer returns past games for a user in a
+// specific group within the configured result-submission window. Used by the
 // /result wizard game picker.
-func (s *GameService) GetRecentCompletedGamesForPlayer(ctx context.Context, tgID, groupID int64) ([]models.PlayerGame, error) {
-	return s.gameRepo.GetRecentCompletedGamesForPlayer(ctx, tgID, groupID, s.resultWindowDays)
+func (s *GameService) GetRecentCompletedGamesForPlayer(ctx context.Context, userID, groupID int64) ([]models.PlayerGame, error) {
+	return s.gameRepo.GetRecentCompletedGamesForPlayer(ctx, userID, groupID, s.resultWindowDays)
 }
 
 // PublishGame sends the game announcement to the group, pins it silently, sets message_id, and records audit.
 // Returns ErrGameNotFound if the game doesn't exist, ErrGameAlreadyPublished if already published.
 // On send failure, returns an error without touching the DB — the game stays unpublished.
-func (s *GameService) PublishGame(ctx context.Context, gameID, actorTgID int64, actorDisplay string) (*models.Game, error) {
+func (s *GameService) PublishGame(ctx context.Context, gameID, actorUserID int64, actorDisplay string) (*models.Game, error) {
 	game, err := s.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -242,7 +242,7 @@ func (s *GameService) PublishGame(ctx context.Context, gameID, actorTgID int64, 
 		return nil, fmt.Errorf("persist message_id: %w", err)
 	}
 
-	s.auditSvc.RecordGamePublished(ctx, gameID, game.ChatID, actorTgID, actorDisplay)
+	s.auditSvc.RecordGamePublished(ctx, gameID, game.ChatID, actorUserID, actorDisplay)
 
 	updated, err := s.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
@@ -257,7 +257,7 @@ func (s *GameService) PublishGame(ctx context.Context, gameID, actorTgID int64, 
 // Returns ErrGameNotFound when the game doesn't exist, ErrAutoBookingNotAvailable when the
 // game has no venue or the venue's auto-booking is disabled.
 // Sanity check: rejects games whose time is exactly 00:00 (likely unset).
-func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count int, actorTgID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error) {
+func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count int, actorUserID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error) {
 	game, err := s.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -349,7 +349,7 @@ func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count in
 		}
 
 		if s.auditSvc != nil {
-			s.auditSvc.RecordCourtsAutoBooked(ctx, game.ChatID, actorTgID, actorDisplay, gameID,
+			s.auditSvc.RecordCourtsAutoBooked(ctx, game.ChatID, actorUserID, actorDisplay, gameID,
 				game.Venue.Name, gameDateStr, len(res.BookedLabels), count, res.BookedLabels)
 		}
 

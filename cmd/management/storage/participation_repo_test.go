@@ -22,13 +22,7 @@ func seedGameAndPlayer(t *testing.T, ctx context.Context) (gameID, playerID int6
 	if err != nil {
 		t.Fatalf("seed game: %v", err)
 	}
-	p, err := playerRepo.Upsert(ctx, &models.Player{
-		TelegramID: 200001,
-		Username:   strPtr("testuser"),
-	})
-	if err != nil {
-		t.Fatalf("seed player: %v", err)
-	}
+	p := mustCreatePlayer(t, ctx, playerRepo, 200001, "testuser")
 	return g.ID, p.ID
 }
 
@@ -92,8 +86,8 @@ func TestParticipationRepo_GetByGame_WithPlayerData(t *testing.T) {
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2"))
 
-	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 201, Username: strPtr("player1")})
-	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 202, FirstName: strPtr("John"), LastName: strPtr("Doe")})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 201, "player1")
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 202, "")
 
 	_ = partRepo.Upsert(ctx, g.ID, p1.ID, models.StatusRegistered)
 	_ = partRepo.Upsert(ctx, g.ID, p2.ID, models.StatusSkipped)
@@ -178,8 +172,8 @@ func TestParticipationRepo_DeleteByGameAndPlayer_DoesNotAffectOtherPlayers(t *te
 	partRepo := storage.NewParticipationRepo(testPool)
 
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
-	p1, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 210001})
-	p2, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 210002})
+	p1 := mustCreatePlayer(t, ctx, playerRepo, 210001, "")
+	p2 := mustCreatePlayer(t, ctx, playerRepo, 210002, "")
 
 	_ = partRepo.Upsert(ctx, g.ID, p1.ID, models.StatusRegistered)
 	_ = partRepo.Upsert(ctx, g.ID, p2.ID, models.StatusRegistered)
@@ -210,11 +204,11 @@ func TestParticipationRepo_GetRegisteredCount(t *testing.T) {
 	g, _ := gameRepo.Create(ctx, newGame(-1, time.Now().Add(24*time.Hour), "1,2,3"))
 
 	for i := int64(0); i < 3; i++ {
-		p, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 300 + i})
+		p := mustCreatePlayer(t, ctx, playerRepo, 300+i, "")
 		_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 	}
 	// One player skips
-	skipped, _ := playerRepo.Upsert(ctx, &models.Player{TelegramID: 399})
+	skipped := mustCreatePlayer(t, ctx, playerRepo, 399, "")
 	_ = partRepo.Upsert(ctx, g.ID, skipped.ID, models.StatusSkipped)
 
 	count, err := partRepo.GetRegisteredCount(ctx, g.ID)

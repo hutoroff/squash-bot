@@ -18,7 +18,7 @@ import (
 // ── request-validation tests (no service needed) ──────────────────────────────
 
 func TestSubmitGameResult_MissingGameID_Returns400(t *testing.T) {
-	body := `{"author_telegram_id":1,"opponent_player_id":2}`
+	body := `{"author_user_id":1,"opponent_player_id":2}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/game-results", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -30,7 +30,7 @@ func TestSubmitGameResult_MissingGameID_Returns400(t *testing.T) {
 	}
 }
 
-func TestSubmitGameResult_MissingAuthorTelegramID_Returns400(t *testing.T) {
+func TestSubmitGameResult_MissingAuthorUserID_Returns400(t *testing.T) {
 	body := `{"game_id":1,"opponent_player_id":2}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/game-results", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -39,12 +39,12 @@ func TestSubmitGameResult_MissingAuthorTelegramID_Returns400(t *testing.T) {
 	h.submitGameResult(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("missing author_telegram_id: want 400, got %d", w.Code)
+		t.Errorf("missing author_user_id: want 400, got %d", w.Code)
 	}
 }
 
 func TestSubmitGameResult_MissingOpponentPlayerID_Returns400(t *testing.T) {
-	body := `{"game_id":1,"author_telegram_id":42}`
+	body := `{"game_id":1,"author_user_id":42}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/game-results", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -76,8 +76,8 @@ func TestSubmitGameResult_InvalidJSON_Returns400(t *testing.T) {
 // full handler → service call chain without duplicating handler logic.
 func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 	playerRepo := &apiStubPlayerRepo{
-		byTgID: map[int64]*models.Player{
-			42: {ID: 1, TelegramID: 42},
+		byUserID: map[int64]*models.Player{
+			42: {ID: 1, UserID: 42, TelegramID: 42},
 		},
 	}
 	gameRepo := &apiStubGameRepo{
@@ -96,7 +96,7 @@ func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 		nil,
 	)
 
-	body := `{"game_id":7,"author_telegram_id":42,"opponent_player_id":2}`
+	body := `{"game_id":7,"author_user_id":42,"opponent_player_id":2}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/game-results", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -117,14 +117,14 @@ func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 // ── stubs ─────────────────────────────────────────────────────────────────────
 
 type apiStubPlayerRepo struct {
-	byTgID map[int64]*models.Player
+	byUserID map[int64]*models.Player
 }
 
-func (r *apiStubPlayerRepo) Upsert(_ context.Context, p *models.Player) (*models.Player, error) {
-	return p, nil
+func (r *apiStubPlayerRepo) Upsert(_ context.Context, userID int64) (*models.Player, error) {
+	return r.byUserID[userID], nil
 }
-func (r *apiStubPlayerRepo) GetByTelegramID(_ context.Context, tgID int64) (*models.Player, error) {
-	p, ok := r.byTgID[tgID]
+func (r *apiStubPlayerRepo) GetByUserID(_ context.Context, userID int64) (*models.Player, error) {
+	p, ok := r.byUserID[userID]
 	if !ok {
 		return nil, pgx.ErrNoRows
 	}
@@ -166,7 +166,7 @@ func (r *apiStubGameRepo) GetUpcomingGamesByChatIDs(_ context.Context, _ []int64
 func (r *apiStubGameRepo) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *apiStubGameRepo) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *apiStubGameRepo) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *apiStubGameRepo) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

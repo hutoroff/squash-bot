@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
-	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
@@ -18,15 +17,13 @@ func TestPlayerRepo_Upsert_Create(t *testing.T) {
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
+	userID, err := testutil.CreateTestUser(ctx, testPool, 100001, "alice")
+	if err != nil {
+		t.Fatalf("CreateTestUser: %v", err)
+	}
 	repo := storage.NewPlayerRepo(testPool)
 
-	player := &models.Player{
-		TelegramID: 100001,
-		Username:   strPtr("alice"),
-		FirstName:  strPtr("Alice"),
-		LastName:   strPtr("Smith"),
-	}
-	got, err := repo.Upsert(ctx, player)
+	got, err := repo.Upsert(ctx, userID)
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
@@ -34,79 +31,74 @@ func TestPlayerRepo_Upsert_Create(t *testing.T) {
 	if got.ID == 0 {
 		t.Error("expected non-zero ID")
 	}
+	if got.UserID != userID {
+		t.Errorf("UserID: got %d, want %d", got.UserID, userID)
+	}
 	if got.TelegramID != 100001 {
 		t.Errorf("TelegramID: got %d, want 100001", got.TelegramID)
 	}
 	if got.Username == nil || *got.Username != "alice" {
 		t.Errorf("Username: got %v, want alice", got.Username)
 	}
-	if got.FirstName == nil || *got.FirstName != "Alice" {
-		t.Errorf("FirstName: got %v, want Alice", got.FirstName)
-	}
-	if got.LastName == nil || *got.LastName != "Smith" {
-		t.Errorf("LastName: got %v, want Smith", got.LastName)
-	}
 }
 
-func TestPlayerRepo_Upsert_UpdatesExisting(t *testing.T) {
+func TestPlayerRepo_Upsert_IsLazyAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
+	userID, err := testutil.CreateTestUser(ctx, testPool, 100002, "bob")
+	if err != nil {
+		t.Fatalf("CreateTestUser: %v", err)
+	}
 	repo := storage.NewPlayerRepo(testPool)
 
-	// First insert
-	original := &models.Player{TelegramID: 100002, Username: strPtr("bob"), FirstName: strPtr("Bob")}
-	first, _ := repo.Upsert(ctx, original)
-
-	// Update via upsert (same telegram_id, different username)
-	updated := &models.Player{TelegramID: 100002, Username: strPtr("robert"), FirstName: strPtr("Robert"), LastName: strPtr("Jones")}
-	second, err := repo.Upsert(ctx, updated)
+	first, err := repo.Upsert(ctx, userID)
 	if err != nil {
-		t.Fatalf("Upsert (update): %v", err)
+		t.Fatalf("Upsert (first): %v", err)
 	}
 
+	second, err := repo.Upsert(ctx, userID)
+	if err != nil {
+		t.Fatalf("Upsert (second): %v", err)
+	}
 	if second.ID != first.ID {
-		t.Errorf("ID changed on upsert: got %d, want %d", second.ID, first.ID)
-	}
-	if second.Username == nil || *second.Username != "robert" {
-		t.Errorf("Username not updated: got %v", second.Username)
-	}
-	if second.FirstName == nil || *second.FirstName != "Robert" {
-		t.Errorf("FirstName not updated: got %v", second.FirstName)
-	}
-	if second.LastName == nil || *second.LastName != "Jones" {
-		t.Errorf("LastName not updated: got %v", second.LastName)
+		t.Errorf("ID changed on repeat upsert: got %d, want %d", second.ID, first.ID)
 	}
 }
 
-func TestPlayerRepo_GetByTelegramID(t *testing.T) {
+func TestPlayerRepo_GetByUserID(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
-	repo := storage.NewPlayerRepo(testPool)
-
-	_, _ = repo.Upsert(ctx, &models.Player{TelegramID: 100003, Username: strPtr("charlie")})
-
-	got, err := repo.GetByTelegramID(ctx, 100003)
+	userID, err := testutil.CreateTestUser(ctx, testPool, 100003, "charlie")
 	if err != nil {
-		t.Fatalf("GetByTelegramID: %v", err)
+		t.Fatalf("CreateTestUser: %v", err)
+	}
+	repo := storage.NewPlayerRepo(testPool)
+	if _, err := repo.Upsert(ctx, userID); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	got, err := repo.GetByUserID(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetByUserID: %v", err)
 	}
 	if got.TelegramID != 100003 {
 		t.Errorf("TelegramID: got %d, want 100003", got.TelegramID)
 	}
 }
 
-func TestPlayerRepo_GetByTelegramID_NotFound(t *testing.T) {
+func TestPlayerRepo_GetByUserID_NotFound(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, testPool); err != nil {
 		t.Fatal(err)
 	}
 	repo := storage.NewPlayerRepo(testPool)
 
-	_, err := repo.GetByTelegramID(ctx, 999999)
+	_, err := repo.GetByUserID(ctx, 999999)
 	if err == nil {
-		t.Error("expected error for unknown telegram_id, got nil")
+		t.Error("expected error for unknown user_id, got nil")
 	}
 }

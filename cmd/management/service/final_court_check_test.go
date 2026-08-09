@@ -34,7 +34,7 @@ func (r *stubGameRepoFCC) UpdateMessageID(_ context.Context, _, _ int64) error {
 func (r *stubGameRepoFCC) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoFCC) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoFCC) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoFCC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

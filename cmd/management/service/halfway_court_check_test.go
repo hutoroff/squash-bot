@@ -33,7 +33,7 @@ func (r *stubGameRepoHCC) UpdateMessageID(_ context.Context, _, _ int64) error {
 func (r *stubGameRepoHCC) UpdateCourts(_ context.Context, _ int64, _ string, _ int) error {
 	return nil
 }
-func (r *stubGameRepoHCC) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (r *stubGameRepoHCC) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (r *stubGameRepoHCC) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {

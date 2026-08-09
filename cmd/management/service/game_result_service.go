@@ -38,8 +38,8 @@ type GameResultService struct {
 	playerRepo        PlayerRepository
 	participationRepo ParticipationRepository
 	auditSvc          *AuditService
-	ratingSvc         *RatingService        // nil if not configured
-	userPrefs         UserPreferencesReader // nil disables opt-out check (unit tests)
+	ratingSvc         *RatingService // nil if not configured
+	userRepo          UserRepository // nil disables opt-out check (unit tests)
 	resultWindowDays  int
 }
 
@@ -51,7 +51,7 @@ func NewGameResultService(
 	participationRepo ParticipationRepository,
 	auditSvc *AuditService,
 	resultWindowDays int,
-	userPrefs UserPreferencesReader,
+	userRepo UserRepository,
 ) *GameResultService {
 	return &GameResultService{
 		pool:              pool,
@@ -60,7 +60,7 @@ func NewGameResultService(
 		playerRepo:        playerRepo,
 		participationRepo: participationRepo,
 		auditSvc:          auditSvc,
-		userPrefs:         userPrefs,
+		userRepo:          userRepo,
 		resultWindowDays:  resultWindowDays,
 	}
 }
@@ -82,19 +82,19 @@ func (s *GameResultService) enrich(ctx context.Context, res *models.GameResult) 
 }
 
 // Submit creates a new pending game result.
-// authorTgID is the Telegram ID of the submitter; opponentPlayerID is the DB player ID.
+// authorUserID is the canonical user ID of the submitter; opponentPlayerID is the DB player ID.
 // winnerPlayerID nil = draw. score "" = not provided.
 // Returns the persisted result (with AutoApproveAt set to SubmittedAt+48h).
 func (s *GameResultService) Submit(
 	ctx context.Context,
 	gameID int64,
-	authorTgID int64,
+	authorUserID int64,
 	opponentPlayerID int64,
 	winnerPlayerID *int64,
 	score string,
 	actorDisplay string,
 ) (*models.GameResult, error) {
-	author, err := s.playerRepo.GetByTelegramID(ctx, authorTgID)
+	author, err := s.playerRepo.GetByUserID(ctx, authorUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrGameResultNotInGame
@@ -103,12 +103,12 @@ func (s *GameResultService) Submit(
 	}
 
 	// Check if the author has opted out of results.
-	if s.userPrefs != nil {
-		authorPrefs, err := s.userPrefs.GetByTelegramID(ctx, authorTgID)
+	if s.userRepo != nil {
+		authorUser, err := s.userRepo.GetByID(ctx, authorUserID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("get author preferences: %w", err)
+			return nil, fmt.Errorf("get author user: %w", err)
 		}
-		if authorPrefs != nil && authorPrefs.ResultsOptOut {
+		if authorUser != nil && authorUser.ResultsOptOut {
 			return nil, ErrAuthorOptedOut
 		}
 	}
@@ -168,12 +168,12 @@ func (s *GameResultService) Submit(
 	}
 
 	// Check if the opponent has opted out of results.
-	if s.userPrefs != nil {
-		oppPrefs, err := s.userPrefs.GetByTelegramID(ctx, oppPlayer.TelegramID)
+	if s.userRepo != nil {
+		oppUser, err := s.userRepo.GetByID(ctx, oppPlayer.UserID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("get opponent preferences: %w", err)
+			return nil, fmt.Errorf("get opponent user: %w", err)
 		}
-		if oppPrefs != nil && oppPrefs.ResultsOptOut {
+		if oppUser != nil && oppUser.ResultsOptOut {
 			return nil, ErrOpponentOptedOut
 		}
 	}
@@ -206,7 +206,7 @@ func (s *GameResultService) Submit(
 	res.Author = author
 	res.Opponent = oppPlayer
 
-	s.auditSvc.RecordGameResultSubmitted(ctx, id, game.ChatID, authorTgID, actorDisplay)
+	s.auditSvc.RecordGameResultSubmitted(ctx, id, game.ChatID, authorUserID, actorDisplay)
 	return res, nil
 }
 
@@ -228,24 +228,24 @@ func (s *GameResultService) SetApprovalMessage(ctx context.Context, id, chatID i
 	return s.resultRepo.SetApprovalMessage(ctx, id, chatID, messageID)
 }
 
-// Approve marks the result approved. opponentTgID must match the stored opponent.
-func (s *GameResultService) Approve(ctx context.Context, id, opponentTgID int64, actorDisplay string) (*models.GameResult, error) {
-	return s.decide(ctx, id, opponentTgID, actorDisplay, models.GameResultApproved, false)
+// Approve marks the result approved. actorUserID must match the stored opponent.
+func (s *GameResultService) Approve(ctx context.Context, id, actorUserID int64, actorDisplay string) (*models.GameResult, error) {
+	return s.decide(ctx, id, actorUserID, actorDisplay, models.GameResultApproved, false)
 }
 
-// Reject marks the result rejected. opponentTgID must match the stored opponent.
-func (s *GameResultService) Reject(ctx context.Context, id, opponentTgID int64, actorDisplay string) (*models.GameResult, error) {
-	return s.decide(ctx, id, opponentTgID, actorDisplay, models.GameResultRejected, false)
+// Reject marks the result rejected. actorUserID must match the stored opponent.
+func (s *GameResultService) Reject(ctx context.Context, id, actorUserID int64, actorDisplay string) (*models.GameResult, error) {
+	return s.decide(ctx, id, actorUserID, actorDisplay, models.GameResultRejected, false)
 }
 
 // CancelByAuthor allows the submitting player to cancel a pending result.
-func (s *GameResultService) CancelByAuthor(ctx context.Context, id, authorTgID int64, actorDisplay string) (*models.GameResult, error) {
-	return s.decide(ctx, id, authorTgID, actorDisplay, models.GameResultCanceled, true)
+func (s *GameResultService) CancelByAuthor(ctx context.Context, id, actorUserID int64, actorDisplay string) (*models.GameResult, error) {
+	return s.decide(ctx, id, actorUserID, actorDisplay, models.GameResultCanceled, true)
 }
 
 func (s *GameResultService) decide(
 	ctx context.Context,
-	id, actorTgID int64,
+	id, actorUserID int64,
 	actorDisplay string,
 	newStatus models.GameResultStatus,
 	authorAction bool,
@@ -259,7 +259,7 @@ func (s *GameResultService) decide(
 	}
 
 	// Resolve actor player record.
-	actor, err := s.playerRepo.GetByTelegramID(ctx, actorTgID)
+	actor, err := s.playerRepo.GetByUserID(ctx, actorUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrGameResultForbidden
@@ -290,11 +290,11 @@ func (s *GameResultService) decide(
 
 	switch newStatus {
 	case models.GameResultApproved:
-		s.auditSvc.RecordGameResultApproved(ctx, id, res.GroupID, actorTgID, actorDisplay)
+		s.auditSvc.RecordGameResultApproved(ctx, id, res.GroupID, actorUserID, actorDisplay)
 	case models.GameResultRejected:
-		s.auditSvc.RecordGameResultRejected(ctx, id, res.GroupID, actorTgID, actorDisplay)
+		s.auditSvc.RecordGameResultRejected(ctx, id, res.GroupID, actorUserID, actorDisplay)
 	case models.GameResultCanceled:
-		s.auditSvc.RecordGameResultCanceled(ctx, id, res.GroupID, actorTgID, actorDisplay)
+		s.auditSvc.RecordGameResultCanceled(ctx, id, res.GroupID, actorUserID, actorDisplay)
 	}
 	return res, nil
 }

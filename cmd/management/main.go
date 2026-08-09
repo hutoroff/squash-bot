@@ -93,7 +93,6 @@ func main() {
 	gameResultRepo := storage.NewGameResultRepo(pool)
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
 	ratingChangeRepo := storage.NewRatingChangeRepo(pool)
-	userPrefsRepo := storage.NewUserPreferencesRepo(pool)
 	userRepo := storage.NewUserRepo(pool)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
@@ -143,7 +142,7 @@ func main() {
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
-	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays, userPrefsRepo)
+	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays, userRepo)
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
 	gameResultSvc.SetRatingService(ratingSvc)
 
@@ -177,8 +176,8 @@ func main() {
 	stateRepo := storage.NewServiceStateRepo(pool)
 	service.AnnounceChangelog(ctx, tgAPI, groupRepo, stateRepo, loc, logger, Version)
 
-	adminResolver := service.NewAdminGroupsResolver(groupRepo, tgAPI, logger)
-	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userPrefsRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
+	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
+	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

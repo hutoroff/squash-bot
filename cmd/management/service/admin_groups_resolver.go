@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -20,12 +22,16 @@ type adminGroupsCacheEntry struct {
 	at     time.Time
 }
 
-// AdminGroupsResolver resolves which groups a Telegram user administers.
-// Results are cached per Telegram ID for ttl, because resolving requires one
+// AdminGroupsResolver resolves which groups a user administers. Group-admin
+// authorization stays Telegram-derived (GetChatAdministrators); the resolver
+// translates the canonical userID to its Telegram external_id first, since
+// that's the only identity Telegram itself knows about.
+// Results are cached per userID for ttl, because resolving requires one
 // GetChatAdministrators call per known group and is on the hot path of every
 // settings and audit request.
 type AdminGroupsResolver struct {
 	groupRepo GroupRepository
+	userRepo  UserRepository
 	tgAPI     TelegramAPI
 	logger    *slog.Logger
 	ttl       time.Duration
@@ -33,14 +39,15 @@ type AdminGroupsResolver struct {
 	mu    sync.Mutex
 	cache map[int64]adminGroupsCacheEntry
 
-	// sf collapses concurrent cold-cache lookups for the same Telegram ID into
+	// sf collapses concurrent cold-cache lookups for the same userID into
 	// one scan; the settings page fires several authorized requests at once.
 	sf singleflight.Group
 }
 
-func NewAdminGroupsResolver(groupRepo GroupRepository, tgAPI TelegramAPI, logger *slog.Logger) *AdminGroupsResolver {
+func NewAdminGroupsResolver(groupRepo GroupRepository, userRepo UserRepository, tgAPI TelegramAPI, logger *slog.Logger) *AdminGroupsResolver {
 	return &AdminGroupsResolver{
 		groupRepo: groupRepo,
+		userRepo:  userRepo,
 		tgAPI:     tgAPI,
 		logger:    logger,
 		ttl:       adminGroupsCacheTTL,
@@ -48,18 +55,27 @@ func NewAdminGroupsResolver(groupRepo GroupRepository, tgAPI TelegramAPI, logger
 	}
 }
 
-// AdminGroupsFor returns the chat IDs of groups in which tgID is an administrator.
-// Per-group errors are logged and skipped so a single unreachable group does not
-// fail the whole query.
-func (r *AdminGroupsResolver) AdminGroupsFor(ctx context.Context, tgID int64) ([]int64, error) {
+// AdminGroupsFor returns the chat IDs of groups in which userID is an
+// administrator. Returns an empty slice (not an error) when the user has no
+// telegram identity. Per-group errors are logged and skipped so a single
+// unreachable group does not fail the whole query.
+func (r *AdminGroupsResolver) AdminGroupsFor(ctx context.Context, userID int64) ([]int64, error) {
 	r.mu.Lock()
-	if e, ok := r.cache[tgID]; ok && time.Since(e.at) < r.ttl {
+	if e, ok := r.cache[userID]; ok && time.Since(e.at) < r.ttl {
 		r.mu.Unlock()
 		return e.groups, nil
 	}
 	r.mu.Unlock()
 
-	v, err, _ := r.sf.Do(strconv.FormatInt(tgID, 10), func() (any, error) {
+	tgID, err := r.userRepo.TelegramID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []int64{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	v, err, _ := r.sf.Do(strconv.FormatInt(userID, 10), func() (any, error) {
 		groups, err := r.groupRepo.GetAll(ctx)
 		if err != nil {
 			return nil, err
@@ -87,7 +103,7 @@ func (r *AdminGroupsResolver) AdminGroupsFor(ctx context.Context, tgID int64) ([
 		// cached — otherwise a missing group stays missing for the whole TTL.
 		if !partial {
 			r.mu.Lock()
-			r.cache[tgID] = adminGroupsCacheEntry{groups: adminGroups, at: time.Now()}
+			r.cache[userID] = adminGroupsCacheEntry{groups: adminGroups, at: time.Now()}
 			r.mu.Unlock()
 		}
 		return adminGroups, nil

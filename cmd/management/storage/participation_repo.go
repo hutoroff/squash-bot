@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,9 +34,10 @@ func (r *ParticipationRepo) Upsert(ctx context.Context, gameID, playerID int64, 
 func (r *ParticipationRepo) GetByGame(ctx context.Context, gameID int64) ([]*models.GameParticipation, error) {
 	const q = `
 		SELECT gp.id, gp.game_id, gp.player_id, gp.status, gp.created_at,
-		       p.id, p.telegram_id, p.username, p.first_name, p.last_name, p.created_at
+		       p.id, p.user_id, ti.external_id, ti.username, ti.first_name, ti.last_name, p.created_at
 		FROM game_participations gp
 		JOIN players p ON p.id = gp.player_id
+		LEFT JOIN user_identities ti ON ti.user_id = p.user_id AND ti.provider = 'telegram'
 		WHERE gp.game_id = $1
 		ORDER BY gp.created_at`
 
@@ -51,12 +53,18 @@ func (r *ParticipationRepo) GetByGame(ctx context.Context, gameID int64) ([]*mod
 	for rows.Next() {
 		var gp models.GameParticipation
 		var p models.Player
+		var externalID *string
 		err := rows.Scan(
 			&gp.ID, &gp.GameID, &gp.PlayerID, &gp.Status, &gp.CreatedAt,
-			&p.ID, &p.TelegramID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
+			&p.ID, &p.UserID, &externalID, &p.Username, &p.FirstName, &p.LastName, &p.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan participation: %w", err)
+		}
+		if externalID != nil {
+			if tgID, err := strconv.ParseInt(*externalID, 10, 64); err == nil {
+				p.TelegramID = tgID
+			}
 		}
 		gp.Player = &p
 		participations = append(participations, &gp)

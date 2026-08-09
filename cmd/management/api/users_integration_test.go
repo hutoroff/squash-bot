@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
-	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -40,11 +39,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestResolveIdentity_FindsPlayerCreatedBeforeUserIDRekey guards the Step 2 →
-// Step 3 transition window: PlayerRepo.Upsert doesn't populate players.user_id
-// until it's rekeyed, so a player created via the old path must still be
-// found by resolve through the legacy telegram_id fallback.
-func TestResolveIdentity_FindsPlayerCreatedBeforeUserIDRekey(t *testing.T) {
+// TestResolveIdentity_FindsExistingPlayer confirms resolve reports the
+// player_id of a user who has already joined a game.
+func TestResolveIdentity_FindsExistingPlayer(t *testing.T) {
 	ctx := context.Background()
 	if err := testutil.Truncate(ctx, apiTestPool); err != nil {
 		t.Fatal(err)
@@ -54,8 +51,11 @@ func TestResolveIdentity_FindsPlayerCreatedBeforeUserIDRekey(t *testing.T) {
 	userRepo := storage.NewUserRepo(apiTestPool)
 
 	const tgID = int64(600001)
-	username := "alice"
-	player, err := playerRepo.Upsert(ctx, &models.Player{TelegramID: tgID, Username: &username})
+	userID, err := testutil.CreateTestUser(ctx, apiTestPool, tgID, "alice")
+	if err != nil {
+		t.Fatalf("CreateTestUser: %v", err)
+	}
+	player, err := playerRepo.Upsert(ctx, userID)
 	if err != nil {
 		t.Fatalf("Upsert player: %v", err)
 	}
@@ -79,10 +79,13 @@ func TestResolveIdentity_FindsPlayerCreatedBeforeUserIDRekey(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if resp.PlayerID == nil {
-		t.Fatal("expected player_id to be found via telegram_id fallback, got nil")
+		t.Fatal("expected player_id to be found, got nil")
 	}
 	if *resp.PlayerID != player.ID {
 		t.Errorf("PlayerID: got %d, want %d", *resp.PlayerID, player.ID)
+	}
+	if resp.UserID != userID {
+		t.Errorf("UserID: got %d, want %d", resp.UserID, userID)
 	}
 }
 

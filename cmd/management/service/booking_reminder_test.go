@@ -70,7 +70,7 @@ func (m *mockGameRepo) UpdateCourts(_ context.Context, _ int64, newCourts string
 	m.updateCourtsArg = newCourts
 	return m.updateCourtsErr
 }
-func (m *mockGameRepo) GetNextGameForTelegramUser(_ context.Context, _ int64) (*models.Game, error) {
+func (m *mockGameRepo) GetNextGameForUser(_ context.Context, _ int64) (*models.Game, error) {
 	return nil, nil
 }
 func (m *mockGameRepo) GetGamesForPlayer(_ context.Context, _ int64) ([]models.PlayerGame, error) {
