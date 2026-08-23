@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -11,8 +12,10 @@ import (
 )
 
 // GameNotifier edits the Telegram group message for a game to reflect current
-// participation state. It is invoked on-demand whenever a participation changes
-// (join, skip, add guest, remove guest) — not on a schedule.
+// game and participation state. It is invoked after participation, court, and
+// scheduler-driven changes.
+const gameEditLockCount = 64
+
 type GameNotifier struct {
 	api       TelegramAPI
 	gameRepo  GameRepository
@@ -21,6 +24,11 @@ type GameNotifier struct {
 	groupRepo GroupRepository
 	loc       *time.Location // service-default timezone fallback
 	logger    *slog.Logger
+
+	// Serialize the complete fetch-render-send sequence per game. Without this,
+	// an edit that fetched old state before a court update can finish after the
+	// court-update edit and restore the stale announcement.
+	editLocks [gameEditLockCount]sync.Mutex
 }
 
 func NewGameNotifier(
@@ -45,8 +53,13 @@ func NewGameNotifier(
 
 // EditGameMessage fetches the current game state and edits the Telegram group
 // message to reflect it. It is a no-op when the game has no message_id yet.
-// Errors are logged but not returned — callers should fire this in a goroutine.
+// Errors are logged but not returned; callers may invoke it synchronously or in
+// a goroutine.
 func (n *GameNotifier) EditGameMessage(ctx context.Context, gameID int64) {
+	lock := &n.editLocks[uint64(gameID)%gameEditLockCount]
+	lock.Lock()
+	defer lock.Unlock()
+
 	game, err := n.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
 		n.logger.Error("GameNotifier.EditGameMessage: get game", "err", err, "game_id", gameID)

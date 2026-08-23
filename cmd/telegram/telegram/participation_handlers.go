@@ -26,7 +26,9 @@ func (b *Bot) handleJoin(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 		return
 	}
 	b.answerCallback(cb.ID, "")
-	b.scheduleGameMessageEdit(gameID)
+	// The management service owns the announcement refresh for participation
+	// mutations. Scheduling a second edit here can race with scheduler updates
+	// and restore a stale pre-cancellation court list.
 }
 
 func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
@@ -48,7 +50,7 @@ func (b *Bot) handleSkip(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID
 		return
 	}
 	b.answerCallback(cb.ID, "")
-	b.scheduleGameMessageEdit(gameID)
+	// The management service refreshes the announcement after persisting the change.
 }
 
 func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
@@ -72,7 +74,7 @@ func (b *Bot) handleGuestAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, ga
 		return
 	}
 	b.answerCallback(cb.ID, "")
-	b.scheduleGameMessageEdit(gameID)
+	// The management service refreshes the announcement after persisting the change.
 }
 
 func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery, gameID int64) {
@@ -94,7 +96,7 @@ func (b *Bot) handleGuestRemove(ctx context.Context, cb *tgbotapi.CallbackQuery,
 		return
 	}
 	b.answerCallback(cb.ID, "")
-	b.scheduleGameMessageEdit(gameID)
+	// The management service refreshes the announcement after persisting the change.
 }
 
 // scheduleGameMessageEdit enqueues a coalesced re-render of the game's group
