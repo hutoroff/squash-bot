@@ -9,8 +9,8 @@ import (
 func TestPrepareWizardVenueSportSelection(t *testing.T) {
 	single := &newGameWizard{}
 	prepareWizardVenue(single, &models.Venue{Sports: []models.VenueSport{{Sport: "padel", Courts: "1,2"}}})
-	if single.step != wizardStepCourtPick || single.sport != "padel" {
-		t.Fatalf("single sport should skip picker: step=%v sport=%q", single.step, single.sport)
+	if single.step != wizardStepCourtPick || single.sport != "padel" || len(single.venueCourts) != 2 {
+		t.Fatalf("single sport should skip picker: step=%v sport=%q courts=%v", single.step, single.sport, single.venueCourts)
 	}
 
 	multiple := &newGameWizard{}

@@ -190,6 +190,27 @@ func TestVenueWizardStep_BookingOpensDays_IsAfterAutoBookingCourts(t *testing.T)
 	}
 }
 
+func TestFilterAutoBookingCourts(t *testing.T) {
+	if got := filterAutoBookingCourts("3,1,2", "1,2"); got != "1,2" {
+		t.Fatalf("filterAutoBookingCourts() = %q, want %q", got, "1,2")
+	}
+	if got := filterAutoBookingCourts("3,4", "1,2"); got != "" {
+		t.Fatalf("filterAutoBookingCourts() = %q, want empty", got)
+	}
+}
+
+func TestSportCallbacksRegistered(t *testing.T) {
+	router := (&Bot{}).buildCallbackRouter()
+	for _, action := range []string{
+		"ng_sport", "venue_wiz_sport", "venue_sports", "venue_sport_add",
+		"venue_sport_del", "venue_sport_del_ok", "venue_sport_courts", "venue_sport_ppc",
+	} {
+		if router[action] == nil {
+			t.Errorf("callback %q is not registered", action)
+		}
+	}
+}
+
 // ── maskLogin ─────────────────────────────────────────────────────────────────
 
 func TestMaskLogin_StandardEmail(t *testing.T) {

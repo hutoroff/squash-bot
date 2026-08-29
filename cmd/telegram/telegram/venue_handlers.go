@@ -638,6 +638,9 @@ func (b *Bot) processVenueSportEdit(ctx context.Context, msg *tgbotapi.Message, 
 		} else {
 			venue.Sports[index].Courts = courts
 		}
+		if state.sport == string(sport.Default) {
+			venue.AutoBookingCourts = filterAutoBookingCourts(venue.AutoBookingCourts, courts)
+		}
 	} else {
 		if index < 0 {
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -696,11 +699,21 @@ func (b *Bot) handleVenueSportDelete(ctx context.Context, cb *tgbotapi.CallbackQ
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.Tf(i18n.MsgVenueConfirmDelete, gameformat.SportName(name, lz)), &kb)
 		return
 	}
+	removed := false
 	for i := range venue.Sports {
 		if venue.Sports[i].Sport == name {
 			venue.Sports = append(venue.Sports[:i], venue.Sports[i+1:]...)
+			removed = true
 			break
 		}
+	}
+	if !removed {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		b.renderVenueSports(cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
+		return
+	}
+	if name == string(sport.Default) {
+		venue.AutoBookingCourts = ""
 	}
 	ru, err := b.resolveUser(ctx, cb.From)
 	if err != nil {
@@ -917,14 +930,7 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 
 	// When courts change, drop any auto-booking courts no longer present in the new list.
 	if state.field == venueEditFieldCourts && venue.AutoBookingCourts != "" {
-		newCourtSet := makeStringSet(venue.Courts)
-		var valid []string
-		for _, c := range splitCSV(venue.AutoBookingCourts) {
-			if newCourtSet[c] {
-				valid = append(valid, c)
-			}
-		}
-		venue.AutoBookingCourts = strings.Join(valid, ",")
+		venue.AutoBookingCourts = filterAutoBookingCourts(venue.AutoBookingCourts, venue.Courts)
 	}
 
 	ru, err := b.resolveUser(ctx, msg.From)
@@ -1418,6 +1424,17 @@ func makeStringSet(s string) map[string]bool {
 		set[c] = true
 	}
 	return set
+}
+
+func filterAutoBookingCourts(autoBookingCourts, courts string) string {
+	allowed := makeStringSet(courts)
+	var filtered []string
+	for _, court := range splitCSV(autoBookingCourts) {
+		if allowed[court] {
+			filtered = append(filtered, court)
+		}
+	}
+	return strings.Join(filtered, ",")
 }
 
 // splitCSV splits a comma-separated string into a trimmed slice, omitting empty parts.
