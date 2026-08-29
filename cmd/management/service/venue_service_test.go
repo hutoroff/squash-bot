@@ -102,3 +102,34 @@ func TestVenueService_DeleteVenue_ActiveBookings_Blocked(t *testing.T) {
 		t.Errorf("want ErrVenueHasActiveBookings, got %v", err)
 	}
 }
+
+func TestVenueService_UpdateVenue_OmittedFractionPreservesSavedValue(t *testing.T) {
+	repo := &stubVenueRepo{
+		venue: &models.Venue{ID: 10, GroupID: 20, PreventiveCancellationFraction: "1/3"},
+		err:   errors.New("unexpected read"),
+	}
+	svc := NewVenueService(repo, nil)
+
+	updated, err := svc.UpdateVenue(context.Background(), &models.Venue{
+		ID: 10, GroupID: 20, Name: "Court A", Courts: "1", TimeSlots: "18:00",
+		GracePeriodHours: 24, GameDays: "2", BookingOpensDays: 14, AutoBookingCourtsCount: 3,
+	}, nil)
+	if err != nil {
+		t.Fatalf("UpdateVenue: %v", err)
+	}
+	if updated.PreventiveCancellationFraction != "1/3" {
+		t.Errorf("fraction: got %q, want %q", updated.PreventiveCancellationFraction, "1/3")
+	}
+}
+
+func TestVenueService_RejectsInvalidFraction(t *testing.T) {
+	svc := NewVenueService(&stubVenueRepo{}, nil)
+	venue := &models.Venue{PreventiveCancellationFraction: "3/4"}
+	if _, err := svc.CreateVenue(context.Background(), venue); !errors.Is(err, ErrInvalidVenue) {
+		t.Errorf("CreateVenue: got %v, want ErrInvalidVenue", err)
+	}
+	fraction := "3/4"
+	if _, err := svc.UpdateVenue(context.Background(), &models.Venue{}, &fraction); !errors.Is(err, ErrInvalidVenue) {
+		t.Errorf("UpdateVenue: got %v, want ErrInvalidVenue", err)
+	}
+}

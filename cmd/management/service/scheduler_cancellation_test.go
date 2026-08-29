@@ -1236,7 +1236,10 @@ func (r *stubGuestRepoPC) GetCountByGame(_ context.Context, _ int64) (int, error
 	return r.count, nil
 }
 
-type stubGroupRepoPC struct{ group *models.Group }
+type stubGroupRepoPC struct {
+	group *models.Group
+	err   error
+}
 
 func (r *stubGroupRepoPC) Upsert(_ context.Context, _ int64, _ string, _ bool) error    { return nil }
 func (r *stubGroupRepoPC) SetLanguage(_ context.Context, _ int64, _ string) error       { return nil }
@@ -1248,7 +1251,7 @@ func (r *stubGroupRepoPC) SetLeaderboardNotificationsEnabled(_ context.Context, 
 func (r *stubGroupRepoPC) Remove(_ context.Context, _ int64) error         { return nil }
 func (r *stubGroupRepoPC) Exists(_ context.Context, _ int64) (bool, error) { return true, nil }
 func (r *stubGroupRepoPC) GetByID(_ context.Context, _ int64) (*models.Group, error) {
-	return r.group, nil
+	return r.group, r.err
 }
 func (r *stubGroupRepoPC) GetAll(_ context.Context) ([]models.Group, error) { return nil, nil }
 func (r *stubGroupRepoPC) SetAutoBookingAllowed(_ context.Context, _ int64, _ bool) ([]int64, error) {

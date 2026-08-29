@@ -84,6 +84,9 @@ func (r *stubVenueRepo) GetByGroupID(_ context.Context, _ int64) ([]*models.Venu
 	return nil, r.err
 }
 func (r *stubVenueRepo) Update(_ context.Context, v *models.Venue) (*models.Venue, error) {
+	if v.PreventiveCancellationFraction == "" && r.venue != nil {
+		v.PreventiveCancellationFraction = r.venue.PreventiveCancellationFraction
+	}
 	return v, nil
 }
 func (r *stubVenueRepo) Delete(_ context.Context, _, _ int64) error                { return nil }

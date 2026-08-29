@@ -38,7 +38,7 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
@@ -156,7 +156,7 @@ func (r *GameRepo) GetUpcomingGamesForFinalCheck(ctx context.Context) ([]*models
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
@@ -198,7 +198,7 @@ func (r *GameRepo) GetUpcomingGamesForHalfwayCheck(ctx context.Context) ([]*mode
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
@@ -276,7 +276,7 @@ func (r *GameRepo) GetNextGameForUser(ctx context.Context, userID int64) (*model
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		JOIN game_participations gp ON gp.game_id = g.id
@@ -307,7 +307,7 @@ func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Ga
 		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
 		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
-		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.last_booking_reminder_at,
+		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
 		LEFT JOIN venues v ON v.id = g.venue_id
@@ -599,26 +599,27 @@ func scanGame(s scanner) (*models.Game, error) {
 func scanGameWithVenue(s scanner) (*models.Game, error) {
 	var g models.Game
 	var (
-		venueID                  *int64
-		venueGroupID             *int64
-		venueName                *string
-		venueCourts              *string
-		venueSlots               *string
-		venueAddr                *string
-		venueCreated             *time.Time
-		venueGracePeriodHours    *int
-		venueGameDays            *string
-		venueBookingOpensDays    *int
-		venueLastBookingReminder *time.Time
-		venuePreferredGameTime   *string
-		venueLastAutoBookingAt   *time.Time
-		venueAutoBookingCourts   *string
+		venueID                             *int64
+		venueGroupID                        *int64
+		venueName                           *string
+		venueCourts                         *string
+		venueSlots                          *string
+		venueAddr                           *string
+		venueCreated                        *time.Time
+		venueGracePeriodHours               *int
+		venueGameDays                       *string
+		venueBookingOpensDays               *int
+		venuePreventiveCancellationFraction *string
+		venueLastBookingReminder            *time.Time
+		venuePreferredGameTime              *string
+		venueLastAutoBookingAt              *time.Time
+		venueAutoBookingCourts              *string
 	)
 	err := s.Scan(
 		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 		&venueID, &venueGroupID, &venueName, &venueCourts, &venueSlots, &venueAddr, &venueCreated,
-		&venueGracePeriodHours, &venueGameDays, &venueBookingOpensDays, &venueLastBookingReminder,
+		&venueGracePeriodHours, &venueGameDays, &venueBookingOpensDays, &venuePreventiveCancellationFraction, &venueLastBookingReminder,
 		&venuePreferredGameTime, &venueLastAutoBookingAt, &venueAutoBookingCourts,
 	)
 	if err != nil {
@@ -645,6 +646,10 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 		if venueBookingOpensDays != nil {
 			bookingDays = *venueBookingOpensDays
 		}
+		preventiveCancellationFraction := models.PreventiveCancellationFractionDefault
+		if venuePreventiveCancellationFraction != nil {
+			preventiveCancellationFraction = *venuePreventiveCancellationFraction
+		}
 		preferredGameTime := ""
 		if venuePreferredGameTime != nil {
 			preferredGameTime = *venuePreferredGameTime
@@ -654,20 +659,21 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 			autoBookingCourts = *venueAutoBookingCourts
 		}
 		g.Venue = &models.Venue{
-			ID:                    *venueID,
-			GroupID:               *venueGroupID,
-			Name:                  *venueName,
-			Courts:                *venueCourts,
-			TimeSlots:             *venueSlots,
-			Address:               addr,
-			CreatedAt:             createdAt,
-			GracePeriodHours:      gracePeriod,
-			GameDays:              gameDays,
-			BookingOpensDays:      bookingDays,
-			LastBookingReminderAt: venueLastBookingReminder,
-			PreferredGameTimes:    preferredGameTime,
-			LastAutoBookingAt:     venueLastAutoBookingAt,
-			AutoBookingCourts:     autoBookingCourts,
+			ID:                             *venueID,
+			GroupID:                        *venueGroupID,
+			Name:                           *venueName,
+			Courts:                         *venueCourts,
+			TimeSlots:                      *venueSlots,
+			Address:                        addr,
+			CreatedAt:                      createdAt,
+			GracePeriodHours:               gracePeriod,
+			GameDays:                       gameDays,
+			BookingOpensDays:               bookingDays,
+			PreventiveCancellationFraction: preventiveCancellationFraction,
+			LastBookingReminderAt:          venueLastBookingReminder,
+			PreferredGameTimes:             preferredGameTime,
+			LastAutoBookingAt:              venueLastAutoBookingAt,
+			AutoBookingCourts:              autoBookingCourts,
 		}
 	}
 	return &g, nil

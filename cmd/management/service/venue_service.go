@@ -12,7 +12,10 @@ import (
 
 // ErrVenueHasActiveBookings is returned when trying to delete a venue that still
 // has active (non-canceled) court bookings.
-var ErrVenueHasActiveBookings = errors.New("venue has active court bookings and cannot be deleted")
+var (
+	ErrVenueHasActiveBookings = errors.New("venue has active court bookings and cannot be deleted")
+	ErrInvalidVenue           = errors.New("invalid venue")
+)
 
 type VenueService struct {
 	repo             VenueRepository
@@ -69,26 +72,29 @@ func validateAutoBookingCourts(autoBookingCourts string) error {
 	return nil
 }
 
-func (s *VenueService) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int) (*models.Venue, error) {
-	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
-		return nil, err
+func validatePreventiveCancellationFraction(fraction string) error {
+	if !models.IsPreventiveCancellationFraction(fraction) {
+		return fmt.Errorf("preventive_cancellation_fraction must be 1/3, 1/2, or 2/3")
 	}
-	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
-		return nil, err
+	return nil
+}
+
+func validateVenue(venue *models.Venue) error {
+	if err := validatePreferredGameTimes(venue.PreferredGameTimes, venue.TimeSlots); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidVenue, err)
 	}
-	venue := &models.Venue{
-		GroupID:                groupID,
-		Name:                   name,
-		Courts:                 courts,
-		TimeSlots:              timeSlots,
-		Address:                address,
-		GracePeriodHours:       gracePeriodHours,
-		GameDays:               gameDays,
-		BookingOpensDays:       bookingOpensDays,
-		PreferredGameTimes:     preferredGameTimes,
-		AutoBookingCourts:      autoBookingCourts,
-		AutoBookingEnabled:     autoBookingEnabled,
-		AutoBookingCourtsCount: autoBookingCourtsCount,
+	if err := validateAutoBookingCourts(venue.AutoBookingCourts); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidVenue, err)
+	}
+	return nil
+}
+
+func (s *VenueService) CreateVenue(ctx context.Context, venue *models.Venue) (*models.Venue, error) {
+	if err := validatePreventiveCancellationFraction(venue.PreventiveCancellationFraction); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidVenue, err)
+	}
+	if err := validateVenue(venue); err != nil {
+		return nil, err
 	}
 	created, err := s.repo.Create(ctx, venue)
 	if err != nil {
@@ -109,27 +115,16 @@ func (s *VenueService) GetVenueByIDAndGroupID(ctx context.Context, id, groupID i
 	return s.repo.GetByIDAndGroupID(ctx, id, groupID)
 }
 
-func (s *VenueService) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int) (*models.Venue, error) {
-	if err := validatePreferredGameTimes(preferredGameTimes, timeSlots); err != nil {
-		return nil, err
+func (s *VenueService) UpdateVenue(ctx context.Context, venue *models.Venue, preventiveCancellationFraction *string) (*models.Venue, error) {
+	venue.PreventiveCancellationFraction = ""
+	if preventiveCancellationFraction != nil {
+		if err := validatePreventiveCancellationFraction(*preventiveCancellationFraction); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidVenue, err)
+		}
+		venue.PreventiveCancellationFraction = *preventiveCancellationFraction
 	}
-	if err := validateAutoBookingCourts(autoBookingCourts); err != nil {
+	if err := validateVenue(venue); err != nil {
 		return nil, err
-	}
-	venue := &models.Venue{
-		ID:                     id,
-		GroupID:                groupID,
-		Name:                   name,
-		Courts:                 courts,
-		TimeSlots:              timeSlots,
-		Address:                address,
-		GracePeriodHours:       gracePeriodHours,
-		GameDays:               gameDays,
-		BookingOpensDays:       bookingOpensDays,
-		PreferredGameTimes:     preferredGameTimes,
-		AutoBookingCourts:      autoBookingCourts,
-		AutoBookingEnabled:     autoBookingEnabled,
-		AutoBookingCourtsCount: autoBookingCourtsCount,
 	}
 	updated, err := s.repo.Update(ctx, venue)
 	if err != nil {

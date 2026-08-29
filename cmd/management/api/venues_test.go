@@ -1,19 +1,46 @@
 package api
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
+
+type venueRepoForAPI struct{}
+
+func (venueRepoForAPI) Create(_ context.Context, v *models.Venue) (*models.Venue, error) {
+	return v, nil
+}
+func (venueRepoForAPI) GetByID(context.Context, int64) (*models.Venue, error) { return nil, nil }
+func (venueRepoForAPI) GetByIDAndGroupID(context.Context, int64, int64) (*models.Venue, error) {
+	return nil, nil
+}
+func (venueRepoForAPI) GetByGroupID(context.Context, int64) ([]*models.Venue, error) { return nil, nil }
+func (venueRepoForAPI) Update(_ context.Context, v *models.Venue) (*models.Venue, error) {
+	return v, nil
+}
+func (venueRepoForAPI) Delete(context.Context, int64, int64) error            { return nil }
+func (venueRepoForAPI) SetLastBookingReminderAt(context.Context, int64) error { return nil }
+func (venueRepoForAPI) SetLastAutoBookingAt(context.Context, int64) error     { return nil }
 
 // newTestHandler returns a Handler with only the logger set.
 // The venueService is intentionally nil — all tests in this file exercise
 // validation paths that return before the service is ever called.
 func newTestHandler() *Handler {
 	return &Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+func newVenueTestHandler() *Handler {
+	h := newTestHandler()
+	h.venueService = service.NewVenueService(venueRepoForAPI{}, nil)
+	return h
 }
 
 // ── createVenue validation ────────────────────────────────────────────────────
@@ -47,6 +74,51 @@ func TestCreateVenue_NegativeBookingOpensDays(t *testing.T) {
 	}
 }
 
+func TestCreateVenue_PreventiveCancellationFraction(t *testing.T) {
+	for _, fraction := range []string{"1/3", "1/2", "2/3"} {
+		t.Run(fraction, func(t *testing.T) {
+			body := `{"group_id":1,"name":"Court A","courts":"1","preventive_cancellation_fraction":"` + fraction + `"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/venues", strings.NewReader(body))
+			w := httptest.NewRecorder()
+
+			newVenueTestHandler().createVenue(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Errorf("fraction %q: want 201, got %d", fraction, w.Code)
+			}
+		})
+	}
+}
+
+func TestCreateVenue_InvalidPreventiveCancellationFraction(t *testing.T) {
+	body := `{"group_id":1,"name":"Court A","courts":"1","preventive_cancellation_fraction":"3/4"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/venues", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	newTestHandler().createVenue(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid fraction: want 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateVenue_PreventiveCancellationFraction(t *testing.T) {
+	for _, fraction := range []string{"1/3", "1/2", "2/3"} {
+		t.Run(fraction, func(t *testing.T) {
+			body := `{"group_id":1,"name":"Court A","courts":"1","preventive_cancellation_fraction":"` + fraction + `"}`
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/venues/1", strings.NewReader(body))
+			req.SetPathValue("id", "1")
+			w := httptest.NewRecorder()
+
+			newVenueTestHandler().updateVenue(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("fraction %q: want 200, got %d", fraction, w.Code)
+			}
+		})
+	}
+}
+
 // ── updateVenue validation ────────────────────────────────────────────────────
 
 // TestUpdateVenue_NegativeGracePeriodHours verifies the same rejection for the
@@ -76,5 +148,18 @@ func TestUpdateVenue_NegativeBookingOpensDays(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("booking_opens_days=-14: want 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateVenue_InvalidPreventiveCancellationFraction(t *testing.T) {
+	body := `{"group_id":1,"name":"Court A","courts":"1","preventive_cancellation_fraction":"3/4"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/venues/1", strings.NewReader(body))
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	newTestHandler().updateVenue(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid fraction: want 400, got %d", w.Code)
 	}
 }

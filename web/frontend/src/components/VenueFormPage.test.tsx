@@ -53,6 +53,7 @@ function makeVenue(overrides: Partial<Venue> = {}): Venue {
     game_days: '2',
     grace_period_hours: 24,
     booking_opens_days: 14,
+    preventive_cancellation_fraction: '1/2',
     auto_booking_enabled: true,
     preferred_game_times: '19:00',
     auto_booking_courts: '2,1',
@@ -152,10 +153,30 @@ describe('VenueFormPage — new venue', () => {
       expect(screen.getByText(/server owner has blocked auto-booking/)).toBeInTheDocument())
     expect(screen.getByLabelText(/Book courts automatically/)).toBeDisabled()
   })
+
+  it('shows the fraction selector only with auto-booking and submits its value', async () => {
+    vi.mocked(venuesApi.createVenue).mockResolvedValue(makeVenue())
+    renderNew()
+
+    await userEvent.type(await screen.findByLabelText('Name'), 'SquashPoint')
+    expect(screen.queryByLabelText('Preventive cancellation')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText(/Book courts automatically/))
+    const fraction = screen.getByLabelText('Preventive cancellation')
+    expect(fraction).toHaveValue('1/2')
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+    await userEvent.selectOptions(fraction, '1/3')
+    await userEvent.type(screen.getByPlaceholderText('Court number'), '1')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Add' })[0])
+    await userEvent.click(screen.getByRole('button', { name: 'Save venue' }))
+
+    await waitFor(() => expect(venuesApi.createVenue).toHaveBeenCalled())
+    expect(vi.mocked(venuesApi.createVenue).mock.calls[0][1].preventive_cancellation_fraction).toBe('1/3')
+  })
 })
 
 describe('VenueFormPage — edit venue', () => {
   it('loads the venue into the structured editors', async () => {
+    vi.mocked(venuesApi.fetchVenue).mockResolvedValue(makeVenue({ preventive_cancellation_fraction: '2/3' }))
     renderEdit()
 
     await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('SquashPoint'))
@@ -163,6 +184,7 @@ describe('VenueFormPage — edit venue', () => {
     expect(screen.getByRole('button', { name: 'Mon' })).toHaveAttribute('aria-pressed', 'false')
     // Court priority keeps the stored order, not the court list order.
     expect(screen.getByLabelText('Move court 2 up')).toBeInTheDocument()
+    expect(screen.getByLabelText('Preventive cancellation')).toHaveValue('2/3')
   })
 
   it('only offers preferred times from the venue time slots', async () => {

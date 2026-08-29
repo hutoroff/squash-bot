@@ -104,6 +104,7 @@ export interface Venue {
   game_days: string
   grace_period_hours: number
   booking_opens_days: number
+  preventive_cancellation_fraction: PreventiveCancellationFraction
   auto_booking_enabled: boolean
   /** Comma-separated HH:MM times; must be a subset of time_slots */
   preferred_game_times: string
@@ -112,6 +113,8 @@ export interface Venue {
   auto_booking_courts_count: number
   created_at: string
 }
+
+export type PreventiveCancellationFraction = '1/3' | '1/2' | '2/3'
 
 /** Payload for creating or updating a venue — group_id is forced server-side. */
 export type VenueInput = Omit<Venue, 'id' | 'group_id' | 'created_at'>

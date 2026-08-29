@@ -55,6 +55,7 @@ function makeVenue(overrides: Partial<Venue> = {}): Venue {
     game_days: '2',
     grace_period_hours: 24,
     booking_opens_days: 14,
+    preventive_cancellation_fraction: '1/2',
     auto_booking_enabled: true,
     preferred_game_times: '19:00',
     auto_booking_courts: '',
