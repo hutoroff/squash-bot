@@ -134,6 +134,10 @@ func (j *AutoBookingJob) processAutoBookingForVenue(
 	if !venue.AutoBookingEnabled {
 		return false
 	}
+	if len(venue.Sports) > 0 && venue.CourtsFor(string(sport.Default)) == "" {
+		j.logger.Warn("auto-booking: skipping venue without squash configuration", "venue_id", venue.ID)
+		return false
+	}
 	courtsCount := venue.AutoBookingCourtsCount
 	if courtsCount == 0 {
 		j.logger.Warn("auto-booking: skipping venue with no courts per game configured", "venue_id", venue.ID)

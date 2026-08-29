@@ -205,7 +205,7 @@ func defaultFixture() (
 ) {
 	resultRepo := &stubResultRepo{}
 	gameRepo := &stubGameRepoForResults{
-		game: &models.Game{ID: 10, ChatID: -1001},
+		game: &models.Game{ID: 10, ChatID: -1001, PlayersPerCourt: 2},
 	}
 	playerRepo := &stubPlayerRepo{
 		byUserID: map[int64]*models.Player{
@@ -241,11 +241,13 @@ func TestSubmit_BadScoreFormat(t *testing.T) {
 }
 
 func TestSubmit_ResultsNotSupported(t *testing.T) {
-	rr, gr, pr, pp := defaultFixture()
-	gr.game.PlayersPerCourt = 4
-	_, err := newResultSvc(rr, gr, pr, pp).Submit(context.Background(), 10, 100, 2, nil, "", "@alice")
-	if !errors.Is(err, ErrResultsNotSupported) {
-		t.Fatalf("got %v, want ErrResultsNotSupported", err)
+	for _, playersPerCourt := range []int{0, 4, 6} {
+		rr, gr, pr, pp := defaultFixture()
+		gr.game.PlayersPerCourt = playersPerCourt
+		_, err := newResultSvc(rr, gr, pr, pp).Submit(context.Background(), 10, 100, 2, nil, "", "@alice")
+		if !errors.Is(err, ErrResultsNotSupported) {
+			t.Errorf("players_per_court=%d: got %v, want ErrResultsNotSupported", playersPerCourt, err)
+		}
 	}
 }
 

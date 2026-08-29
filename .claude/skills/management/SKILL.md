@@ -219,7 +219,8 @@ GET    /api/v1/users/{userID}/next-game            — getNextGame
 GET    /api/v1/users/{userID}/games                — listPlayerGames; returns [] for a user with no player
                                                      row yet (never joined a game) instead of 404
 GET    /api/v1/users/{userID}/recent-completed-games — getRecentCompletedGames (query: group_id); see the
-                                                     result-window note below (unchanged semantics, re-keyed)
+                                                     result-window note below; excludes games where
+                                                     players_per_court != 2
 GET    /api/v1/users/{userID}/groups-with-results  — getPlayerGroupsWithResults; groups where the user has
                                                      a player_ratings row with games_played > 0
 GET    /api/v1/users/{userID}/admin-groups         — listAdminGroups: groups userID may administer.
@@ -243,10 +244,11 @@ GET    /api/v1/groups                              — listGroups (response incl
 GET    /api/v1/groups/{chatID}                     — getGroup (response includes added_at)
 
 POST   /api/v1/venues                              — createVenue; rejects auto_booking_enabled=true
-                                                     when group auto_booking_allowed=false (400)
+                                                     when group auto_booking_allowed=false or the venue
+                                                     has no squash entry (400)
 GET    /api/v1/venues                              — listVenues (query: groupId)
 GET    /api/v1/venues/{id}                         — getVenue
-PATCH  /api/v1/venues/{id}                         — updateVenue; same auto_booking_allowed guard as create
+PATCH  /api/v1/venues/{id}                         — updateVenue; same auto-booking guards as create
 DELETE /api/v1/venues/{id}                         — deleteVenue; 409 Conflict if venue has active court_bookings
 GET    /api/v1/venues/{id}/booking-readiness       — bookingReadiness; query: group_id (required, enforces ownership);
                                                      200 {ready bool, max_courts int, reason string};
@@ -258,7 +260,8 @@ GET    /api/v1/venues/{id}/credentials             — listCredentials (query: g
 DELETE /api/v1/venues/{id}/credentials/{cid}       — removeCredential (query: group_id); 409 Conflict if credential has active court_bookings
 GET    /api/v1/venues/{id}/credentials/priorities  — listCredentialPriorities (query: group_id)
 
-POST   /api/v1/game-results                        — submitGameResult
+POST   /api/v1/game-results                        — submitGameResult; 409 results_not_supported unless
+                                                     players_per_court == 2
 GET    /api/v1/game-results/{id}                   — getGameResult
 POST   /api/v1/game-results/{id}/approval-message  — setGameResultApprovalMessage
 POST   /api/v1/game-results/{id}/approve           — approveGameResult; synchronously applies Glicko-2
@@ -301,7 +304,7 @@ Best-effort audit logger. All `Record*` methods call `s.repo.Insert` and silentl
 
 | Event type | Visibility | Triggered by |
 |---|---|---|
-| `game.created` | group_admin | Admin creates game |
+| `game.created` | group_admin | Admin creates game; metadata includes the snapshotted sport |
 | `game.courts_reserved` | group_admin | Admin updates courts |
 | `participation.joined` | player | Player joins |
 | `participation.skipped` | player | Player skips |
@@ -429,9 +432,9 @@ Group notification scenarios:
 - `all_canceled` — all courts canceled, game will not happen
 - `even_no_cancel` — even count < capacity, nothing canceled (booking service absent or no owned bookings)
 
-**HalfwayCourtCheckJob** (`halfway_court_check.go`): Releases courts much earlier than the other two jobs — at the midpoint between when the courts were booked and the grace-period deadline — as a conservative early release (only half of the currently-unneeded courts, rounded down; players may still join before the deadline proper). Reuses `CancellationReminderJob.cancelUnusedCourts`/`loadCourtBookingEntries` via the `halfwayCourtCanceler` interface (widens `unusedCourtCanceler`), so it shares all court-selection, per-credential cancellation, and DB-update logic with `CancellationReminderJob`.
+**HalfwayCourtCheckJob** (`halfway_court_check.go`): Releases courts much earlier than the other two jobs — at the venue's configured point between booking-opening midnight and the grace-period deadline — as a conservative early release (only half of the currently-unneeded courts, rounded down; players may still join before the deadline proper). Reuses `CancellationReminderJob.cancelUnusedCourts`/`loadCourtBookingEntries` via the `halfwayCourtCanceler` interface (widens `unusedCourtCanceler`), so it shares all court-selection, per-credential cancellation, and DB-update logic with `CancellationReminderJob`.
 
-Per game: if `now` is past `game_date − gracePeriod·h`, marks done immediately (the reminder/final-check jobs own cleanup from here). Otherwise loads active `court_bookings` entries for the game; if none exist yet (auto-booking may not have run), skips **without** marking done so it's retried next poll. `bookedAt = min(created_at)` over those entries; `halfwayAt = bookedAt + (deadline − bookedAt)/2`, gated by `±pollWindow` (or `force`). `unneeded = (capacity − count) / 2` (same formula as the other jobs); `courtsToCancel = floor(unneeded / 2)` — zero marks done and sends nothing. Sends a group notification only when courts were actually canceled (reply to the pinned announcement); cancellation failures DM group admins via `notifyAdminsCancellationFailure`. Can never cancel all courts (`floor(c/2) < c` for `c ≥ 1`), so there is no "game will not happen" scenario.
+Per game: if `now` is past `game_date − gracePeriod·h`, marks done immediately (the reminder/final-check jobs own cleanup from here). Otherwise loads active `court_bookings` entries for the game; if none exist yet (auto-booking may not have run), skips **without** marking done so it's retried next poll. The configured `1/3`, `1/2`, or `2/3` point is calculated from group-local booking-opening midnight to the deadline and gated by `±pollWindow` (or `force`). `unneeded = (capacity − count) / players_per_court`; `courtsToCancel = floor(unneeded / 2)` — zero marks done and sends nothing. Sends a group notification only when courts were actually canceled (reply to the pinned announcement); cancellation failures DM group admins via `notifyAdminsCancellationFailure`. Can never cancel all courts (`floor(c/2) < c` for `c ≥ 1`), so there is no "game will not happen" scenario.
 
 **BookingReminderJob**: Fires in the `[10:00, 10:05)` window per group timezone for venues with matching `game_days`. Deduplicates via `last_booking_reminder_at` (date-scoped). Injected with `*GameService` to call `PublishGame`.
 
@@ -486,7 +489,7 @@ Owns the 1-v-1 game-result submission and approval lifecycle. Constructor takes 
 
 | Method | Purpose |
 |--------|---------|
-| `Submit(ctx, gameID, authorUserID, opponentPlayerID, winnerPlayerID *int64, score, actorDisplay)` | Resolves the author's player row via `playerRepo.GetByUserID(authorUserID)`, checks `userRepo.GetByID(authorUserID).ResultsOptOut` (→ `ErrAuthorOptedOut`), validates author ≠ opponent, validates both are `registered` in the game, validates score format (`^\d+:\d+$`, winner's side ≥ loser's). Creates a `pending` row; returns it with `AutoApproveAt = SubmittedAt + 48h` populated. Errors: `ErrGameResultNotInGame`, `ErrGameResultBadScore`, `ErrGameResultSamePlayer`, `ErrGameNotFound`, `ErrAuthorOptedOut`. |
+| `Submit(ctx, gameID, authorUserID, opponentPlayerID, winnerPlayerID *int64, score, actorDisplay)` | Resolves the author's player row via `playerRepo.GetByUserID(authorUserID)`, requires the game to have exactly two players per unit (→ `ErrResultsNotSupported`), checks `userRepo.GetByID(authorUserID).ResultsOptOut` (→ `ErrAuthorOptedOut`), validates author ≠ opponent, validates both are `registered` in the game, validates score format (`^\d+:\d+$`, winner's side ≥ loser's). Creates a `pending` row; returns it with `AutoApproveAt = SubmittedAt + 48h` populated. Errors: `ErrGameResultNotInGame`, `ErrGameResultBadScore`, `ErrGameResultSamePlayer`, `ErrGameNotFound`, `ErrAuthorOptedOut`, `ErrResultsNotSupported`. |
 | `Get(ctx, id)` | Fetches by ID and populates `Author` / `Opponent` from `playerRepo` (best-effort enrichment, errors ignored). |
 | `SetApprovalMessage(ctx, id, chatID, messageID)` | Stores the opponent DM `chat_id` + `message_id` so `AutoApproveResultsJob` can edit the card on timeout. |
 | `Approve(ctx, id, actorUserID, actorDisplay)` | Verifies caller (by user ID) is the opponent. Calls `commitDecision`: when `pool` and `ratingSvc` are wired, opens a tx and runs `resultRepo.DecideInTx` + `ratingSvc.ApplyInTx` together. On any failure the whole tx rolls back and the row stays pending. Records `RecordGameResultApproved` on success (best-effort, outside tx). |

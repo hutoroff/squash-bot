@@ -125,7 +125,7 @@ func (s *GameResultService) Submit(
 		}
 		return nil, fmt.Errorf("get game: %w", err)
 	}
-	if game.PlayersPerCourt != 0 && game.PlayersPerCourt != 2 {
+	if game.PlayersPerCourt != 2 {
 		return nil, ErrResultsNotSupported
 	}
 

@@ -78,6 +78,17 @@ func TestGroupIDPtr_NonZero(t *testing.T) {
 	}
 }
 
+// ── game events ──────────────────────────────────────────────────────────────
+
+func TestRecordGameCreatedIncludesSport(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGameCreated(context.Background(), 10, 20, 99, "@alice", "A,B", time.Now(), "bowling")
+
+	if got := repo.inserted[0].Metadata["sport"]; got != "bowling" {
+		t.Fatalf("sport metadata = %v, want bowling", got)
+	}
+}
+
 // ── participation events ──────────────────────────────────────────────────────
 
 func TestRecordPlayerJoined(t *testing.T) {

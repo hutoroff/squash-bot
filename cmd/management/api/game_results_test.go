@@ -81,7 +81,7 @@ func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 		},
 	}
 	gameRepo := &apiStubGameRepo{
-		game:        &models.Game{ID: 7, ChatID: -1001},
+		game:        &models.Game{ID: 7, ChatID: -1001, PlayersPerCourt: 2},
 		notInWindow: true,
 	}
 	auditSvc := service.NewAuditService(&apiStubAuditRepo{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -111,6 +111,26 @@ func TestSubmitGameResult_WindowClosed_Returns400(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "window_closed") {
 		t.Errorf("want body to contain window_closed, got: %s", w.Body.String())
+	}
+}
+
+func TestSubmitGameResult_UnsupportedGame_Returns409(t *testing.T) {
+	playerRepo := &apiStubPlayerRepo{byUserID: map[int64]*models.Player{
+		42: {ID: 1, UserID: 42, TelegramID: 42},
+	}}
+	svc := service.NewGameResultService(nil, &apiStubResultRepo{},
+		&apiStubGameRepo{game: &models.Game{ID: 7, PlayersPerCourt: 4}},
+		playerRepo, &apiStubPartRepo{},
+		service.NewAuditService(&apiStubAuditRepo{}, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		14, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/game-results", strings.NewReader(
+		`{"game_id":7,"author_user_id":42,"opponent_player_id":2}`))
+	w := httptest.NewRecorder()
+
+	(&Handler{gameResultSvc: svc, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}).submitGameResult(w, req)
+
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "results_not_supported") {
+		t.Fatalf("want 409 results_not_supported, got status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

@@ -61,12 +61,8 @@ func groupIDPtr(groupID int64) *int64 {
 
 // Game events
 
-func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string, gameDate time.Time, sport ...string) {
+func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string, gameDate time.Time, sport string) {
 	uid, display := userActor(actorUserID, actorDisplay)
-	sportName := "squash"
-	if len(sport) > 0 && sport[0] != "" {
-		sportName = sport[0]
-	}
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameCreated,
 		Visibility:   models.AuditVisibilityGroupAdmin,
@@ -77,7 +73,7 @@ func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, a
 		SubjectType:  models.AuditSubjectGame,
 		SubjectID:    fmt.Sprintf("%d", gameID),
 		Description:  fmt.Sprintf("Game created for %s (courts: %s)", gameDate.Format("2006-01-02"), courts),
-		Metadata:     map[string]any{"game_date": gameDate.Format("2006-01-02"), "courts": courts, "sport": sportName},
+		Metadata:     map[string]any{"game_date": gameDate.Format("2006-01-02"), "courts": courts, "sport": sport},
 	})
 }
 

@@ -560,8 +560,13 @@ func TestGameRepo_GetRecentCompletedGamesForPlayer_Window(t *testing.T) {
 	laterToday, _ := gameRepo.Create(ctx, newGame(chatID, now.Add(2*time.Hour), "1,2"))
 	// ineligible: tomorrow
 	tomorrow, _ := gameRepo.Create(ctx, newGame(chatID, justPast.AddDate(0, 0, 1), "1,2"))
+	// ineligible in the picker: results only support two players per unit
+	unsupportedGame := newGame(chatID, justPast.Add(-time.Minute), "A,B")
+	unsupportedGame.Sport = "padel"
+	unsupportedGame.PlayersPerCourt = 4
+	unsupported, _ := gameRepo.Create(ctx, unsupportedGame)
 
-	for _, g := range []*models.Game{justPlayed, midWindow, tooOld, laterToday, tomorrow} {
+	for _, g := range []*models.Game{justPlayed, midWindow, tooOld, laterToday, tomorrow, unsupported} {
 		_ = partRepo.Upsert(ctx, g.ID, p.ID, models.StatusRegistered)
 	}
 
@@ -587,6 +592,9 @@ func TestGameRepo_GetRecentCompletedGamesForPlayer_Window(t *testing.T) {
 	}
 	if got[tomorrow.ID] {
 		t.Error("tomorrow's game must be excluded")
+	}
+	if got[unsupported.ID] {
+		t.Error("games with players_per_court != 2 must be excluded")
 	}
 
 	for _, tc := range []struct {

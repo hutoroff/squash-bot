@@ -40,6 +40,7 @@ func newTestHandler() *Handler {
 func newVenueTestHandler() *Handler {
 	h := newTestHandler()
 	h.venueService = service.NewVenueService(venueRepoForAPI{}, nil)
+	h.groupRepo = &stubGroupRepo{groups: []models.Group{{ChatID: 1, AutoBookingAllowed: true}}}
 	return h
 }
 
@@ -99,6 +100,18 @@ func TestCreateVenue_InvalidPreventiveCancellationFraction(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid fraction: want 400, got %d", w.Code)
+	}
+}
+
+func TestCreateVenue_AutoBookingWithoutSquash_Returns400(t *testing.T) {
+	body := `{"group_id":1,"name":"Bowling Hall","sports":[{"sport":"bowling","courts":"A,B"}],"auto_booking_enabled":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/venues", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	newVenueTestHandler().createVenue(w, req)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "auto-booking requires squash") {
+		t.Fatalf("want 400 auto-booking requires squash, got status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

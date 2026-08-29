@@ -290,7 +290,7 @@ Driven by the `/result` private command. Steps:
 | Step | Constant | Picker fills |
 |------|----------|--------------|
 | 1 | `resultStepGroup` | group (skipped when the player has rated games in exactly one group) |
-| 2 | `resultStepGame` | past game within the result window in that group (`GET /api/v1/players/{tgID}/recent-completed-games?group_id=…`). Eligibility = game's local day (group tz) is today or up to `RESULT_WINDOW_DAYS` (default 14) ago; the `completed` flag is not considered. The window is management-side config — no `days` query param. |
+| 2 | `resultStepGame` | past game with `players_per_court == 2` within the result window in that group (`GET /api/v1/players/{tgID}/recent-completed-games?group_id=…`). Eligibility = game's local day (group tz) is today or up to `RESULT_WINDOW_DAYS` (default 14) ago; the `completed` flag is not considered. The window is management-side config — no `days` query param. |
 | 3 | `resultStepOpponent` | opponent — registered participants of the chosen game, minus the author |
 | 4 | `resultStepWinner` | "🏆 me" / "🏆 @opponent" / "🤝 draw" |
 | 5 | `resultStepScore` | optional `N:M` text input or "skip" button |
