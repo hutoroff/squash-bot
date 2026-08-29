@@ -13,16 +13,15 @@ import (
 
 // halfwayCourtCanceler is satisfied by *CancellationReminderJob. Widens
 // unusedCourtCanceler with loadCourtBookingEntries, which HalfwayCourtCheckJob
-// needs to compute the earliest court_bookings.created_at for a game.
+// needs to confirm a game has active court bookings before cancellation.
 type halfwayCourtCanceler interface {
 	unusedCourtCanceler
 	loadCourtBookingEntries(ctx context.Context, game *models.Game) ([]*models.CourtBooking, error)
 }
 
-// HalfwayCourtCheckJob fires at the midpoint between when a game's courts were
-// booked and its grace-period deadline. It releases half (rounded down) of the
-// currently-unneeded courts — a conservative early release, since players may
-// still join before the deadline. Existing jobs clean up the rest later.
+// HalfwayCourtCheckJob fires at a venue-configured point between booking opening
+// and the grace-period deadline. It releases half (rounded down) of the
+// currently-unneeded courts; existing jobs clean up the rest later.
 type HalfwayCourtCheckJob struct {
 	api       TelegramAPI
 	gameRepo  GameRepository
@@ -33,6 +32,7 @@ type HalfwayCourtCheckJob struct {
 	canceler  halfwayCourtCanceler
 	loc       *time.Location
 	logger    *slog.Logger
+	now       func() time.Time
 }
 
 func NewHalfwayCourtCheckJob(
@@ -66,6 +66,9 @@ func (j *HalfwayCourtCheckJob) runHalfwayCourtCheck(force bool) {
 	j.logger.Debug("halfway court check started")
 	ctx := context.Background()
 	now := time.Now()
+	if j.now != nil {
+		now = j.now()
+	}
 
 	games, err := j.gameRepo.GetUpcomingGamesForHalfwayCheck(ctx)
 	if err != nil {
@@ -97,6 +100,15 @@ func (j *HalfwayCourtCheckJob) runHalfwayCourtCheck(force bool) {
 			// No venue linked, so no court_bookings can exist yet; retry later without marking done.
 			continue
 		}
+		groupTZ, tzOK := groupTZByID(ctx, j.groupRepo, game.ChatID, j.loc, j.logger)
+		if !tzOK {
+			j.logger.Warn("halfway court check: skipping court cancellation (timezone unavailable)", "game_id", game.ID)
+			continue
+		}
+		bookingOpensAt := bookingOpensAt(game.GameDate, game.Venue.BookingOpensDays, groupTZ)
+		if !force && now.Before(preventiveCancellationAt(bookingOpensAt, deadline, game.Venue.PreventiveCancellationFraction)) {
+			continue
+		}
 
 		entries, err := j.canceler.loadCourtBookingEntries(ctx, game)
 		if err != nil {
@@ -109,20 +121,27 @@ func (j *HalfwayCourtCheckJob) runHalfwayCourtCheck(force bool) {
 			continue
 		}
 
-		bookedAt := entries[0].CreatedAt
-		for _, e := range entries[1:] {
-			if e.CreatedAt.Before(bookedAt) {
-				bookedAt = e.CreatedAt
-			}
-		}
-
-		// Fire on the first poll at or after the midpoint rather than inside a
-		// narrow window, so a game published late still gets checked.
-		halfwayAt := bookedAt.Add(deadline.Sub(bookedAt) / 2)
-		if !force && now.Before(halfwayAt) {
-			continue
-		}
 		j.processHalfwayCheck(ctx, game)
+	}
+}
+
+func bookingOpensAt(gameDate time.Time, days int, loc *time.Location) time.Time {
+	local := gameDate.In(loc)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -days)
+}
+
+func preventiveCancellationAt(bookingOpensAt, deadline time.Time, fraction string) time.Time {
+	if !models.IsPreventiveCancellationFraction(fraction) {
+		fraction = models.PreventiveCancellationFractionDefault
+	}
+	window := deadline.Sub(bookingOpensAt)
+	switch fraction {
+	case "1/3":
+		return bookingOpensAt.Add(window / 3)
+	case "2/3":
+		return bookingOpensAt.Add(window / 3 * 2)
+	default:
+		return bookingOpensAt.Add(window / 2)
 	}
 }
 

@@ -119,6 +119,40 @@ func makeHCCJob(
 	}
 }
 
+func TestPreventiveCancellationAt(t *testing.T) {
+	bookingOpens := time.Date(2026, time.January, 10, 0, 0, 0, 0, time.UTC)
+	deadline := bookingOpens.Add(24 * time.Hour)
+	for _, tc := range []struct {
+		fraction string
+		wantHour int
+	}{
+		{"1/3", 8},
+		{"1/2", 12},
+		{"2/3", 16},
+		{"", 12},
+	} {
+		t.Run(tc.fraction, func(t *testing.T) {
+			got := preventiveCancellationAt(bookingOpens, deadline, tc.fraction)
+			if got.Hour() != tc.wantHour {
+				t.Errorf("trigger hour: got %d, want %d", got.Hour(), tc.wantHour)
+			}
+		})
+	}
+}
+
+func TestBookingOpensAt_UsesGroupCalendarAcrossDST(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gameDate := time.Date(2026, time.March, 30, 18, 0, 0, 0, loc)
+	got := bookingOpensAt(gameDate, 2, loc)
+	want := time.Date(2026, time.March, 28, 0, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Errorf("booking opening: got %s, want %s", got, want)
+	}
+}
+
 // ── processHalfwayCheck tests ──────────────────────────────────────────────────
 
 // TestHalfwayCheck_UnneededOdd_CancelsFloor verifies the example from the plan:
@@ -297,14 +331,37 @@ func TestHalfwayCheck_PastDeadline_MarksDoneWithoutLoadingEntries(t *testing.T) 
 	}
 }
 
+func TestHalfwayCheck_TimezoneLookupFailureRetries(t *testing.T) {
+	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
+	game := &models.Game{
+		ID: 47, ChatID: 100, MessageID: int64Ptr(555),
+		GameDate: time.Date(2026, time.January, 12, 0, 0, 0, 0, time.UTC),
+		Venue:    &models.Venue{ID: 1, GracePeriodHours: 24, BookingOpensDays: 2},
+	}
+	gameRepo := &stubGameRepoHCC{games: []*models.Game{game}}
+	canceler := &mockHalfwayCanceler{}
+	job := &HalfwayCourtCheckJob{
+		gameRepo: gameRepo, groupRepo: &stubGroupRepoPC{err: errors.New("temporary database error")},
+		canceler: canceler, loc: time.UTC, logger: noopLogger(), now: func() time.Time { return now },
+	}
+
+	job.runHalfwayCourtCheck(false)
+
+	if len(gameRepo.markedIDs) != 0 {
+		t.Errorf("expected game to remain retryable, got marked IDs %v", gameRepo.markedIDs)
+	}
+	if canceler.loadCalls != 0 {
+		t.Errorf("expected no booking load without timezone, got %d", canceler.loadCalls)
+	}
+}
+
 // TestHalfwayCheck_MidpointGate_InWindow verifies that a game is processed
-// once now has reached the computed midpoint between the earliest
-// court_bookings.created_at and the grace-period deadline.
+// once now reaches the configured booking-window point.
 func TestHalfwayCheck_MidpointGate_InWindow(t *testing.T) {
 	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
-	now := time.Now()
-	// deadline = now + 1h, bookedAt = now - 1h → halfwayAt = now, already reached.
-	gameDate := now.Add(1*time.Hour + 24*time.Hour)
+	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
+	// booking opens Jan 10 00:00; deadline Jan 11 00:00; 1/2 is exactly now.
+	gameDate := time.Date(2026, time.January, 12, 0, 0, 0, 0, time.UTC)
 	game := &models.Game{
 		ID:          42,
 		ChatID:      100,
@@ -312,15 +369,13 @@ func TestHalfwayCheck_MidpointGate_InWindow(t *testing.T) {
 		GameDate:    gameDate,
 		Courts:      "1,2",
 		CourtsCount: 2,
-		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24},
+		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24, BookingOpensDays: 2, PreventiveCancellationFraction: "1/2"},
 	}
 	gameRepo := &stubGameRepoHCC{games: []*models.Game{game}}
 	api := &adminCaptureSendAPI{}
 	canceler := &mockHalfwayCanceler{
-		entries: []*models.CourtBooking{
-			{CourtLabel: "1", MatchID: "m1", CreatedAt: now.Add(-1 * time.Hour)},
-		},
-		result: &courtCancellationResult{},
+		entries: []*models.CourtBooking{{CourtLabel: "1", MatchID: "m1"}},
+		result:  &courtCancellationResult{},
 	}
 
 	job := &HalfwayCourtCheckJob{
@@ -332,6 +387,7 @@ func TestHalfwayCheck_MidpointGate_InWindow(t *testing.T) {
 		canceler:  canceler,
 		loc:       time.UTC,
 		logger:    noopLogger(),
+		now:       func() time.Time { return now },
 	}
 	job.runHalfwayCourtCheck(false)
 
@@ -340,12 +396,12 @@ func TestHalfwayCheck_MidpointGate_InWindow(t *testing.T) {
 	}
 }
 
-// TestHalfwayCheck_MidpointGate_OutOfWindow verifies that a game whose midpoint
-// is still ahead is skipped without marking done or calling the canceler.
+// TestHalfwayCheck_MidpointGate_OutOfWindow verifies that a game whose selected
+// booking-window point is still ahead is skipped without marking done or calling the canceler.
 func TestHalfwayCheck_MidpointGate_OutOfWindow(t *testing.T) {
 	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
-	now := time.Now()
-	gameDate := now.Add(10*time.Hour + 24*time.Hour)
+	now := time.Date(2026, time.January, 10, 11, 59, 0, 0, time.UTC)
+	gameDate := time.Date(2026, time.January, 12, 0, 0, 0, 0, time.UTC)
 	game := &models.Game{
 		ID:          43,
 		ChatID:      100,
@@ -353,15 +409,12 @@ func TestHalfwayCheck_MidpointGate_OutOfWindow(t *testing.T) {
 		GameDate:    gameDate,
 		Courts:      "1,2",
 		CourtsCount: 2,
-		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24},
+		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24, BookingOpensDays: 2, PreventiveCancellationFraction: "1/2"},
 	}
 	gameRepo := &stubGameRepoHCC{games: []*models.Game{game}}
 	api := &adminCaptureSendAPI{}
 	canceler := &mockHalfwayCanceler{
-		entries: []*models.CourtBooking{
-			// bookedAt = now - 4h → deadline (now+10h) - bookedAt (now-4h) = 14h; halfway = bookedAt + 7h = now+3h.
-			{CourtLabel: "1", MatchID: "m1", CreatedAt: now.Add(-4 * time.Hour)},
-		},
+		entries: []*models.CourtBooking{{CourtLabel: "1", MatchID: "m1"}},
 	}
 
 	job := &HalfwayCourtCheckJob{
@@ -373,6 +426,7 @@ func TestHalfwayCheck_MidpointGate_OutOfWindow(t *testing.T) {
 		canceler:  canceler,
 		loc:       time.UTC,
 		logger:    noopLogger(),
+		now:       func() time.Time { return now },
 	}
 	job.runHalfwayCourtCheck(false)
 
@@ -426,28 +480,25 @@ func TestHalfwayCheck_Unpublished_SkipsWithoutMarking(t *testing.T) {
 	}
 }
 
-// TestHalfwayCheck_PastMidpoint_CatchesUp verifies that a game whose midpoint
-// passed long ago — e.g. it was published only after the midpoint — is still
+// TestHalfwayCheck_PastMidpoint_CatchesUp verifies that a game whose trigger
+// passed long ago is still
 // processed on the next poll instead of being skipped forever.
 func TestHalfwayCheck_PastMidpoint_CatchesUp(t *testing.T) {
 	group := &models.Group{ChatID: 100, Language: "en", Timezone: "UTC"}
-	now := time.Now()
-	// deadline = now + 1h, bookedAt = now - 9h → halfwayAt = now - 4h, long past.
+	now := time.Date(2026, time.January, 10, 13, 0, 0, 0, time.UTC)
 	game := &models.Game{
 		ID:          46,
 		ChatID:      100,
 		MessageID:   int64Ptr(555),
-		GameDate:    now.Add(1*time.Hour + 24*time.Hour),
+		GameDate:    time.Date(2026, time.January, 12, 0, 0, 0, 0, time.UTC),
 		Courts:      "1,2",
 		CourtsCount: 2,
-		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24},
+		Venue:       &models.Venue{ID: 1, GracePeriodHours: 24, BookingOpensDays: 2, PreventiveCancellationFraction: "1/2"},
 	}
 	gameRepo := &stubGameRepoHCC{games: []*models.Game{game}}
 	canceler := &mockHalfwayCanceler{
-		entries: []*models.CourtBooking{
-			{CourtLabel: "1", MatchID: "m1", CreatedAt: now.Add(-9 * time.Hour)},
-		},
-		result: &courtCancellationResult{},
+		entries: []*models.CourtBooking{{CourtLabel: "1", MatchID: "m1"}},
+		result:  &courtCancellationResult{},
 	}
 
 	job := &HalfwayCourtCheckJob{
@@ -459,6 +510,7 @@ func TestHalfwayCheck_PastMidpoint_CatchesUp(t *testing.T) {
 		canceler:  canceler,
 		loc:       time.UTC,
 		logger:    noopLogger(),
+		now:       func() time.Time { return now },
 	}
 	job.runHalfwayCourtCheck(false)
 

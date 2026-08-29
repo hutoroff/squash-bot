@@ -28,6 +28,7 @@ const EMPTY_VENUE: VenueInput = {
   game_days: '',
   grace_period_hours: 24,
   booking_opens_days: 14,
+  preventive_cancellation_fraction: '1/2',
   auto_booking_enabled: false,
   preferred_game_times: '',
   auto_booking_courts: '',
@@ -94,6 +95,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
         game_days: v.game_days,
         grace_period_hours: v.grace_period_hours,
         booking_opens_days: v.booking_opens_days,
+        preventive_cancellation_fraction: v.preventive_cancellation_fraction,
         auto_booking_enabled: v.auto_booking_enabled,
         preferred_game_times: v.preferred_game_times,
         auto_booking_courts: v.auto_booking_courts,
@@ -319,6 +321,22 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
               onChange={e => set('auto_booking_enabled', e.target.checked)}
             />
           </Field>
+
+          {form.auto_booking_enabled && (
+            <Field
+              label="Preventive cancellation"
+              help="Release unused courts at this point between booking opening and the grace-period deadline."
+            >
+              <select
+                value={form.preventive_cancellation_fraction}
+                onChange={e => set('preventive_cancellation_fraction', e.target.value as VenueInput['preventive_cancellation_fraction'])}
+              >
+                <option value="1/3">One third</option>
+                <option value="1/2">One half</option>
+                <option value="2/3">Two thirds</option>
+              </select>
+            </Field>
+          )}
 
           <div className="field">
             <span className="field__label">Preferred game times</span>

@@ -9,24 +9,45 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type venueRequest struct {
+	GroupID                        int64   `json:"group_id"`
+	Name                           string  `json:"name"`
+	Courts                         string  `json:"courts"`
+	TimeSlots                      string  `json:"time_slots"`
+	Address                        string  `json:"address"`
+	GracePeriodHours               int     `json:"grace_period_hours"`
+	GameDays                       string  `json:"game_days"`
+	BookingOpensDays               int     `json:"booking_opens_days"`
+	PreventiveCancellationFraction *string `json:"preventive_cancellation_fraction"`
+	PreferredGameTimes             string  `json:"preferred_game_times"`
+	AutoBookingCourts              string  `json:"auto_booking_courts"`
+	AutoBookingEnabled             bool    `json:"auto_booking_enabled"`
+	AutoBookingCourtsCount         int     `json:"auto_booking_courts_count"`
+	ActorUserID                    int64   `json:"actor_user_id"`
+	ActorDisplay                   string  `json:"actor_display"`
+}
+
+func (r venueRequest) venue(id int64) *models.Venue {
+	return &models.Venue{
+		ID:                     id,
+		GroupID:                r.GroupID,
+		Name:                   r.Name,
+		Courts:                 r.Courts,
+		TimeSlots:              r.TimeSlots,
+		Address:                r.Address,
+		GracePeriodHours:       r.GracePeriodHours,
+		GameDays:               r.GameDays,
+		BookingOpensDays:       r.BookingOpensDays,
+		PreferredGameTimes:     r.PreferredGameTimes,
+		AutoBookingCourts:      r.AutoBookingCourts,
+		AutoBookingEnabled:     r.AutoBookingEnabled,
+		AutoBookingCourtsCount: r.AutoBookingCourtsCount,
+	}
+}
+
 // createVenue handles POST /api/v1/venues
 func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		GroupID                int64  `json:"group_id"`
-		Name                   string `json:"name"`
-		Courts                 string `json:"courts"`
-		TimeSlots              string `json:"time_slots"`
-		Address                string `json:"address"`
-		GracePeriodHours       int    `json:"grace_period_hours"`
-		GameDays               string `json:"game_days"`
-		BookingOpensDays       int    `json:"booking_opens_days"`
-		PreferredGameTimes     string `json:"preferred_game_times"`
-		AutoBookingCourts      string `json:"auto_booking_courts"`
-		AutoBookingEnabled     bool   `json:"auto_booking_enabled"`
-		AutoBookingCourtsCount int    `json:"auto_booking_courts_count"`
-		ActorUserID            int64  `json:"actor_user_id"`
-		ActorDisplay           string `json:"actor_display"`
-	}
+	var req venueRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -49,7 +70,6 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
 	}
-
 	if req.AutoBookingEnabled {
 		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
 		if err != nil {
@@ -67,11 +87,17 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	venue, err := h.venueService.CreateVenue(r.Context(),
-		req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
-		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTimes, req.AutoBookingCourts, req.AutoBookingEnabled, req.AutoBookingCourtsCount,
-	)
+	venueInput := req.venue(0)
+	venueInput.PreventiveCancellationFraction = models.PreventiveCancellationFractionDefault
+	if req.PreventiveCancellationFraction != nil {
+		venueInput.PreventiveCancellationFraction = *req.PreventiveCancellationFraction
+	}
+	venue, err := h.venueService.CreateVenue(r.Context(), venueInput)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidVenue) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		h.logger.Error("createVenue", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -130,22 +156,7 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid venue id")
 		return
 	}
-	var req struct {
-		GroupID                int64  `json:"group_id"`
-		Name                   string `json:"name"`
-		Courts                 string `json:"courts"`
-		TimeSlots              string `json:"time_slots"`
-		Address                string `json:"address"`
-		GracePeriodHours       int    `json:"grace_period_hours"`
-		GameDays               string `json:"game_days"`
-		BookingOpensDays       int    `json:"booking_opens_days"`
-		PreferredGameTimes     string `json:"preferred_game_times"`
-		AutoBookingCourts      string `json:"auto_booking_courts"`
-		AutoBookingEnabled     bool   `json:"auto_booking_enabled"`
-		AutoBookingCourtsCount int    `json:"auto_booking_courts_count"`
-		ActorUserID            int64  `json:"actor_user_id"`
-		ActorDisplay           string `json:"actor_display"`
-	}
+	var req venueRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -168,7 +179,6 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
 	}
-
 	if req.AutoBookingEnabled {
 		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
 		if err != nil {
@@ -186,11 +196,12 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	venue, err := h.venueService.UpdateVenue(r.Context(),
-		id, req.GroupID, req.Name, req.Courts, req.TimeSlots, req.Address,
-		req.GracePeriodHours, req.GameDays, req.BookingOpensDays, req.PreferredGameTimes, req.AutoBookingCourts, req.AutoBookingEnabled, req.AutoBookingCourtsCount,
-	)
+	venue, err := h.venueService.UpdateVenue(r.Context(), req.venue(id), req.PreventiveCancellationFraction)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidVenue) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		h.logger.Error("updateVenue", "err", err, "id", id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
