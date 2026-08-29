@@ -322,6 +322,26 @@ func TestProcessAutoBookingForVenue_Disabled_DoesNotCallListMatches(t *testing.T
 	}
 }
 
+func TestProcessAutoBookingForVenue_WithoutSquash_Skips(t *testing.T) {
+	client := &mockBookingClient{}
+	job := &AutoBookingJob{bookingClient: client, logger: noopLogger()}
+	venue := &models.Venue{
+		ID:                     1,
+		AutoBookingEnabled:     true,
+		Courts:                 "stale-legacy-value",
+		Sports:                 []models.VenueSport{{Sport: "bowling", Courts: "A,B"}},
+		AutoBookingCourtsCount: 1,
+		PreferredGameTimes:     "18:00",
+	}
+
+	if job.processAutoBookingForVenue(context.Background(), -1001, venue, time.Now().UTC(), time.UTC, i18n.New(i18n.En)) {
+		t.Fatal("venue without squash must be skipped")
+	}
+	if client.listCalls != 0 {
+		t.Fatalf("booking service called %d times", client.listCalls)
+	}
+}
+
 func TestProcessAutoBookingForVenue_ZeroCourtsCount_SkipsWithoutCallingBookingService(t *testing.T) {
 	client := &mockBookingClient{}
 	s := &AutoBookingJob{

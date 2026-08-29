@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
@@ -118,5 +119,37 @@ func TestGameKeyboard_ButtonsHaveText(t *testing.T) {
 				t.Errorf("row %d, button %d: text is empty", i, j)
 			}
 		}
+	}
+}
+
+func TestSportName_InvalidFallsBackToSquash(t *testing.T) {
+	lz := i18n.New(i18n.En)
+	if got, want := gameformat.SportName("future_sport", lz), gameformat.SportName("squash", lz); got != want {
+		t.Fatalf("SportName fallback = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGameMessage_SportAware(t *testing.T) {
+	for _, tc := range []struct {
+		name, sport, courts, header, unit string
+		lang                              i18n.Lang
+		playersPerCourt                   int
+	}{
+		{"padel", "padel", "1,2", "🎾 Padel Game", "🎾 Courts", i18n.En, 4},
+		{"table tennis", "table_tennis", "A,B", "🏓 Tischtennis-Spiel", "🎾 Tische", i18n.De, 2},
+		{"bowling", "bowling", "3,4", "🎳 Боулинг", "🎾 Дорожки", i18n.Ru, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			game := &models.Game{
+				GameDate: time.Date(2026, 9, 1, 18, 0, 0, 0, time.UTC), Courts: tc.courts,
+				CourtsCount: 2, Sport: tc.sport, PlayersPerCourt: tc.playersPerCourt,
+			}
+			got := gameformat.FormatGameMessage(game, nil, nil, time.UTC, game.GameDate, i18n.New(tc.lang))
+			for _, want := range []string{tc.header, tc.unit, fmt.Sprintf("%d", game.Capacity())} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("message missing %q:\n%s", want, got)
+				}
+			}
+		})
 	}
 }

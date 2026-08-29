@@ -61,7 +61,7 @@ func groupIDPtr(groupID int64) *int64 {
 
 // Game events
 
-func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string, gameDate time.Time) {
+func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay, courts string, gameDate time.Time, sport string) {
 	uid, display := userActor(actorUserID, actorDisplay)
 	s.record(ctx, &models.AuditEvent{
 		EventType:    models.AuditEventGameCreated,
@@ -73,7 +73,7 @@ func (s *AuditService) RecordGameCreated(ctx context.Context, gameID, groupID, a
 		SubjectType:  models.AuditSubjectGame,
 		SubjectID:    fmt.Sprintf("%d", gameID),
 		Description:  fmt.Sprintf("Game created for %s (courts: %s)", gameDate.Format("2006-01-02"), courts),
-		Metadata:     map[string]any{"game_date": gameDate.Format("2006-01-02"), "courts": courts},
+		Metadata:     map[string]any{"game_date": gameDate.Format("2006-01-02"), "courts": courts, "sport": sport},
 	})
 }
 

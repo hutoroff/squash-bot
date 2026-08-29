@@ -156,4 +156,3 @@ func illinoisIter(a, delta, phi, v, tau float64) float64 {
 	}
 	return A
 }
-

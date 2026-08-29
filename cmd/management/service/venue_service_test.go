@@ -82,6 +82,16 @@ func TestValidateAutoBookingCourts_DuplicateCourt(t *testing.T) {
 	}
 }
 
+func TestValidateVenue_AutoBookingRequiresSquash(t *testing.T) {
+	err := validateVenue(&models.Venue{
+		AutoBookingEnabled: true,
+		Sports:             []models.VenueSport{{Sport: "bowling", Courts: "A,B"}},
+	})
+	if !errors.Is(err, ErrInvalidVenue) {
+		t.Fatalf("got %v, want ErrInvalidVenue", err)
+	}
+}
+
 func TestValidateAutoBookingCourts_LargeIDNotSubsetConstraint(t *testing.T) {
 	// Eversports IDs (77385) are no longer required to be in venue.Courts (1,2,3).
 	// This was the root cause of the auto-booking failure: the old validator

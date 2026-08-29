@@ -39,7 +39,7 @@ func (r *GuestRepo) AddGuest(ctx context.Context, gameID, invitedByPlayerID int6
 
 	// Read the game's capacity and current occupancy in one query.
 	const countQ = `
-		SELECT g.courts_count * 2,
+		SELECT g.courts_count * g.players_per_court,
 		       (SELECT COUNT(*) FROM game_participations WHERE game_id = $1 AND status = 'registered') +
 		       (SELECT COUNT(*) FROM guest_participations  WHERE game_id = $1)
 		FROM games g

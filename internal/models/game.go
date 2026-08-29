@@ -10,6 +10,8 @@ type PlayerGame struct {
 	GameDate            time.Time `json:"game_date"`
 	CourtsCount         int       `json:"courts_count"`
 	Courts              string    `json:"courts"`
+	Sport               string    `json:"sport"`
+	PlayersPerCourt     int       `json:"players_per_court"`
 	Completed           bool      `json:"completed"`
 	ParticipationStatus string    `json:"participation_status"`
 	// ParticipantCount is the total number of registered players plus guests.
@@ -27,9 +29,19 @@ type Game struct {
 	GameDate          time.Time `json:"game_date"`
 	CourtsCount       int       `json:"courts_count"`
 	Courts            string    `json:"courts"`
+	Sport             string    `json:"sport"`
+	PlayersPerCourt   int       `json:"players_per_court"`
 	VenueID           *int64    `json:"venue_id,omitempty"`
 	Venue             *Venue    `json:"venue,omitempty"`
 	NotifiedDayBefore bool      `json:"notified_day_before"`
 	Completed         bool      `json:"completed"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+func (g *Game) Capacity() int {
+	playersPerCourt := g.PlayersPerCourt
+	if playersPerCourt == 0 {
+		playersPerCourt = 2
+	}
+	return g.CourtsCount * playersPerCourt
 }

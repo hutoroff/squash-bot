@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
@@ -159,11 +160,12 @@ func (j *HalfwayCourtCheckJob) processHalfwayCheck(ctx context.Context, game *mo
 	}
 
 	count := registeredCount + guestCount
-	capacity := game.CourtsCount * 2
+	capacity := game.Capacity()
+	playersPerCourt := capacity / game.CourtsCount
 
 	unneeded := 0
 	if count < capacity {
-		unneeded = (capacity - count) / 2
+		unneeded = (capacity - count) / playersPerCourt
 	}
 	courtsToCancel := unneeded / 2
 
@@ -218,10 +220,11 @@ func (j *HalfwayCourtCheckJob) processHalfwayCheck(ctx context.Context, game *mo
 
 	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")
 	newCourtsCount := result.remainingCount
-	newCapacity := newCourtsCount * 2
+	newCapacity := newCourtsCount * playersPerCourt
 	canceledStr := formatCanceledCourts(result.canceledCourts)
 
-	text := lz.Tf(i18n.SchedHalfwayCheckCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+	unit := gameformat.UnitName(game.Sport, lz)
+	text := lz.Tf(i18n.SchedHalfwayCheckCanceled, unit, canceledStr, gameDateTime, count, newCapacity, newCourtsCount, unit)
 
 	j.logger.Info("halfway court check: courts released",
 		"game_id", game.ID,

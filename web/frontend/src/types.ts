@@ -97,7 +97,8 @@ export interface Venue {
   name: string
   address?: string
   /** Comma-separated court numbers, e.g. "1,2,3" */
-  courts: string
+  courts?: string
+  sports: VenueSport[]
   /** Comma-separated HH:MM times, e.g. "18:00,19:00" */
   time_slots: string
   /** Comma-separated Go time.Weekday ints, e.g. "0,3" = Sunday+Wednesday */
@@ -112,6 +113,14 @@ export interface Venue {
   auto_booking_courts: string
   auto_booking_courts_count: number
   created_at: string
+}
+
+export type Sport = 'squash' | 'badminton' | 'table_tennis' | 'tennis' | 'padel' | 'bowling'
+
+export interface VenueSport {
+  sport: Sport
+  courts: string
+  players_per_court?: number
 }
 
 export type PreventiveCancellationFraction = '1/3' | '1/2' | '2/3'
@@ -157,6 +166,8 @@ export interface Game {
   courts_count: number
   /** Comma-separated court names, e.g. "Court 1,Court 2" */
   courts: string
+  sport: Sport
+  players_per_court: number
   completed: boolean
   participation_status: ParticipationStatus | null
   /** Total registered players plus guests — matches actual capacity consumption. */

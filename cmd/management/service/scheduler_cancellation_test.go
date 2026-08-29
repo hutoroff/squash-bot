@@ -493,21 +493,21 @@ func TestCourtsToCancel_Calculation(t *testing.T) {
 	tests := []struct {
 		count    int
 		capacity int
+		perCourt int
 		want     int
 	}{
-		{count: 4, capacity: 4, want: 0}, // exact match
-		{count: 6, capacity: 4, want: 0}, // over capacity
-		{count: 3, capacity: 4, want: 0}, // 1 empty spot — not a full court
-		{count: 2, capacity: 4, want: 1}, // 2 empty → 1 court
-		{count: 0, capacity: 4, want: 2}, // 4 empty → 2 courts
-		{count: 4, capacity: 8, want: 2}, // 4 empty → 2 courts
-		{count: 5, capacity: 8, want: 1}, // 3 empty → 1 court (floor(3/2)=1)
+		{count: 4, capacity: 4, perCourt: 2, want: 0},
+		{count: 3, capacity: 4, perCourt: 2, want: 0},
+		{count: 2, capacity: 4, perCourt: 2, want: 1},
+		{count: 4, capacity: 8, perCourt: 4, want: 1},
+		{count: 5, capacity: 12, perCourt: 4, want: 1},
+		{count: 6, capacity: 12, perCourt: 6, want: 1},
 	}
 
 	for _, tc := range tests {
 		courtsToCancel := 0
 		if tc.count < tc.capacity {
-			courtsToCancel = (tc.capacity - tc.count) / 2
+			courtsToCancel = (tc.capacity - tc.count) / tc.perCourt
 		}
 		if courtsToCancel != tc.want {
 			t.Errorf("count=%d capacity=%d: got courtsToCancel=%d, want %d",

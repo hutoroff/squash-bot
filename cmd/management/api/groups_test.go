@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 func newGroupsHandler(ownerIDs ...int64) *Handler {
@@ -86,14 +87,19 @@ func TestSetGroupAutoBookingAllowed_EmptyOwnerSet(t *testing.T) {
 
 // ── listAdminGroups ───────────────────────────────────────────────────────────
 
-// stubGroupRepo implements service.GroupRepository; only GetAll is exercised here.
+// stubGroupRepo implements service.GroupRepository for API handler tests.
 type stubGroupRepo struct {
 	groups []models.Group
 }
 
 func (r *stubGroupRepo) GetAll(_ context.Context) ([]models.Group, error) { return r.groups, nil }
-func (r *stubGroupRepo) GetByID(_ context.Context, _ int64) (*models.Group, error) {
-	return nil, nil
+func (r *stubGroupRepo) GetByID(_ context.Context, chatID int64) (*models.Group, error) {
+	for i := range r.groups {
+		if r.groups[i].ChatID == chatID {
+			return &r.groups[i], nil
+		}
+	}
+	return nil, pgx.ErrNoRows
 }
 func (r *stubGroupRepo) Upsert(_ context.Context, _ int64, _ string, _ bool) error    { return nil }
 func (r *stubGroupRepo) SetLanguage(_ context.Context, _ int64, _ string) error       { return nil }

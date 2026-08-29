@@ -4,11 +4,13 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
@@ -53,6 +55,46 @@ func TestGameService_CreateGame_SingleCourt(t *testing.T) {
 	}
 	if game.CourtsCount != 1 {
 		t.Errorf("CourtsCount: got %d, want 1", game.CourtsCount)
+	}
+}
+
+func TestGameService_CreateGame_NonDefaultSportRequiresVenue(t *testing.T) {
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
+	_, err := svc.CreateGame(context.Background(), -1, time.Now().Add(time.Hour), "1", nil, "badminton")
+	if !errors.Is(err, service.ErrInvalidGame) {
+		t.Fatalf("got %v, want ErrInvalidGame", err)
+	}
+}
+
+func TestGameService_CreateGame_ResolvesSportCapacity(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	const groupID = int64(-1002)
+	if err := storage.NewGroupRepo(testPool).Upsert(ctx, groupID, "Multi-sport", true); err != nil {
+		t.Fatal(err)
+	}
+	bowlingPlayers := 5
+	venue, err := service.NewVenueService(storage.NewVenueRepo(testPool), nil).CreateVenue(ctx, &models.Venue{
+		GroupID: groupID, Name: "Sports Hall", PreventiveCancellationFraction: "1/2",
+		Sports: []models.VenueSport{{Sport: "padel", Courts: "1,2"}, {Sport: "bowling", Courts: "A,B", PlayersPerCourt: &bowlingPlayers}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
+	for _, tc := range []struct {
+		sport, courts string
+		wantCapacity  int
+	}{{"padel", "1,2", 8}, {"bowling", "A,B", 10}} {
+		game, err := svc.CreateGame(ctx, groupID, time.Now().Add(time.Hour), tc.courts, &venue.ID, tc.sport)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := game.Capacity(); got != tc.wantCapacity {
+			t.Fatalf("%s capacity = %d, want %d", tc.sport, got, tc.wantCapacity)
+		}
 	}
 }
 

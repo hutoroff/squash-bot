@@ -513,6 +513,11 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 				lz.Tf(i18n.MsgResultOpponentOptedOut, oppDisplay), nil)
 			return
 		}
+		if errors.Is(err, client.ErrResultsNotSupported) {
+			b.answerCallback(cb.ID, lz.T(i18n.MsgResultsNotSupported))
+			b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgResultsNotSupported), nil)
+			return
+		}
 		slog.Error("handleResultSubmit: submit", "err", err)
 		b.answerCallback(cb.ID, "")
 		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgSomethingWentWrong), nil)

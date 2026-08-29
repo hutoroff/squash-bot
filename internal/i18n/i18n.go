@@ -32,12 +32,27 @@ func Normalize(code string) Lang {
 // Translation key constants.
 const (
 	// Game message (formatter)
-	GameHeader      = "game.header"
-	GameCourts      = "game.courts"
-	GamePlayers     = "game.players"
-	GameGuestLine   = "game.guest_line"
-	GameLastUpdated = "game.last_updated"
-	GameCompleted   = "game.completed"
+	GameHeaderSquash      = "game.header.squash"
+	GameHeaderBadminton   = "game.header.badminton"
+	GameHeaderTableTennis = "game.header.table_tennis"
+	GameHeaderTennis      = "game.header.tennis"
+	GameHeaderPadel       = "game.header.padel"
+	GameHeaderBowling     = "game.header.bowling"
+	GameHeader            = GameHeaderSquash
+	SportSquash           = "sport.squash"
+	SportBadminton        = "sport.badminton"
+	SportTableTennis      = "sport.table_tennis"
+	SportTennis           = "sport.tennis"
+	SportPadel            = "sport.padel"
+	SportBowling          = "sport.bowling"
+	UnitCourts            = "unit.courts"
+	UnitTables            = "unit.tables"
+	UnitLanes             = "unit.lanes"
+	GameCourts            = "game.courts"
+	GamePlayers           = "game.players"
+	GameGuestLine         = "game.guest_line"
+	GameLastUpdated       = "game.last_updated"
+	GameCompleted         = "game.completed"
 
 	// Scheduler notifications
 	SchedOverCapacity    = "sched.over_capacity"
@@ -227,6 +242,7 @@ const (
 	MsgNewGameTimePast           = "msg.new_game_time_past"
 	MsgNewGameEnterCourts        = "msg.new_game_enter_courts"
 	MsgNewGameSelectVenue        = "msg.new_game_select_venue"
+	MsgNewGameSelectSport        = "msg.new_game_select_sport"
 	MsgNewGameNoVenue            = "msg.new_game_no_venue"
 	MsgNewGameSelectCourts       = "msg.new_game_select_courts"
 	MsgNewGameConfirmCourts      = "msg.new_game_confirm_courts"
@@ -236,29 +252,36 @@ const (
 	MsgNewGameNoVenuesConfigured = "msg.new_game_no_venues_configured"
 
 	// Venue management
-	MsgVenueList             = "msg.venue_list"
-	MsgVenueNoVenues         = "msg.venue_no_venues"
-	MsgVenueCreated          = "msg.venue_created"
-	MsgVenueUpdated          = "msg.venue_updated"
-	MsgVenueDeleted          = "msg.venue_deleted"
-	MsgVenueNotFound         = "msg.venue_not_found"
-	MsgVenueAskName          = "msg.venue_ask_name"
-	MsgVenueAskCourts        = "msg.venue_ask_courts"
-	MsgVenueAskTimeSlots     = "msg.venue_ask_time_slots"
-	MsgVenueAskAddress       = "msg.venue_ask_address"
-	MsgVenueSkipAddress      = "msg.venue_skip_address"
-	MsgVenueEditMenu         = "msg.venue_edit_menu"
-	MsgVenueConfirmDelete    = "msg.venue_confirm_delete"
-	MsgVenueInvalidTimeSlots = "msg.venue_invalid_time_slots"
-	BtnVenueEditName         = "btn.venue_edit_name"
-	BtnVenueEditCourts       = "btn.venue_edit_courts"
-	BtnVenueEditTimeSlots    = "btn.venue_edit_time_slots"
-	BtnVenueEditAddress      = "btn.venue_edit_address"
-	BtnVenueDelete           = "btn.venue_delete"
-	BtnVenueAdd              = "btn.venue_add"
-	BtnVenueConfirmDelete    = "btn.venue_confirm_delete"
-	BtnVenueEditGameDays     = "btn.venue_edit_game_days"
-	BtnVenueEditGracePeriod  = "btn.venue_edit_grace_period"
+	MsgVenueList              = "msg.venue_list"
+	MsgVenueNoVenues          = "msg.venue_no_venues"
+	MsgVenueCreated           = "msg.venue_created"
+	MsgVenueUpdated           = "msg.venue_updated"
+	MsgVenueDeleted           = "msg.venue_deleted"
+	MsgVenueNotFound          = "msg.venue_not_found"
+	MsgVenueAskName           = "msg.venue_ask_name"
+	MsgVenueAskCourts         = "msg.venue_ask_courts"
+	MsgVenueAskTimeSlots      = "msg.venue_ask_time_slots"
+	MsgVenueAskAddress        = "msg.venue_ask_address"
+	MsgVenueSkipAddress       = "msg.venue_skip_address"
+	MsgVenueEditMenu          = "msg.venue_edit_menu"
+	MsgVenueConfirmDelete     = "msg.venue_confirm_delete"
+	MsgVenueInvalidTimeSlots  = "msg.venue_invalid_time_slots"
+	BtnVenueEditName          = "btn.venue_edit_name"
+	BtnVenueEditCourts        = "btn.venue_edit_courts"
+	BtnVenueSports            = "btn.venue_sports"
+	BtnVenueAddSport          = "btn.venue_add_sport"
+	BtnVenueRemoveSport       = "btn.venue_remove_sport"
+	BtnVenuePlayersPerUnit    = "btn.venue_players_per_unit"
+	MsgVenueSports            = "msg.venue_sports"
+	MsgVenueCannotRemoveSport = "msg.venue_cannot_remove_sport"
+	MsgVenueAskPlayersPerUnit = "msg.venue_ask_players_per_unit"
+	BtnVenueEditTimeSlots     = "btn.venue_edit_time_slots"
+	BtnVenueEditAddress       = "btn.venue_edit_address"
+	BtnVenueDelete            = "btn.venue_delete"
+	BtnVenueAdd               = "btn.venue_add"
+	BtnVenueConfirmDelete     = "btn.venue_confirm_delete"
+	BtnVenueEditGameDays      = "btn.venue_edit_game_days"
+	BtnVenueEditGracePeriod   = "btn.venue_edit_grace_period"
 
 	MsgVenueAskGameDays        = "msg.venue_ask_game_days"
 	MsgVenueAskGracePeriod     = "msg.venue_ask_grace_period"
@@ -447,6 +470,7 @@ const (
 	MsgResultsOptOutDisabled = "msg.results_optout_disabled"
 	// Shown when the opponent tapped in the picker has opted out. Args: %s = display name.
 	MsgResultOpponentOptedOut = "msg.result_opponent_opted_out"
+	MsgResultsNotSupported    = "msg.results_not_supported"
 	// Shown when the /result author themselves has opted out.
 	MsgResultSelfOptedOut = "msg.result_self_opted_out"
 
@@ -492,33 +516,36 @@ const (
 var translations = map[Lang]map[string]string{
 	En: {
 		// Game message
-		GameHeader:      "🏸 Squash Game",
-		GameCourts:      "🎾 Courts: %s (capacity: %d players)",
+		GameHeaderSquash: "Squash Game", GameHeaderBadminton: "Badminton Game", GameHeaderTableTennis: "Table Tennis Game",
+		GameHeaderTennis: "Tennis Game", GameHeaderPadel: "Padel Game", GameHeaderBowling: "Bowling",
+		SportSquash: "Squash", SportBadminton: "Badminton", SportTableTennis: "Table tennis", SportTennis: "Tennis", SportPadel: "Padel", SportBowling: "Bowling",
+		UnitCourts: "Courts", UnitTables: "Tables", UnitLanes: "Lanes",
+		GameCourts:      "🎾 %s: %s (capacity: %d players)",
 		GamePlayers:     "Players (%d/%d):",
 		GameGuestLine:   "+1 (by %s)",
 		GameLastUpdated: "Last updated: %s",
 		GameCompleted:   "Game completed ✓",
 
 		// Scheduler
-		SchedOverCapacity:    "⚠️ Too many players! %d registered but only %d spots (%d courts). Consider booking an extra court.",
-		SchedUnderCapacity:   "📢 Free spots available! %d/%d players registered (%d courts). Invite more friends!",
-		SchedWeeklyReminder:  "👋 Reminder: no squash game has been scheduled for this week yet. Don't forget to create one!",
+		SchedOverCapacity:    "⚠️ Too many players! %d registered but only %d spots (%d %s). Consider booking another unit.",
+		SchedUnderCapacity:   "📢 Free spots available! %d/%d players registered (%d %s). Invite more friends!",
+		SchedWeeklyReminder:  "👋 Reminder: no game has been scheduled for this week yet. Don't forget to create one!",
 		SchedBookingReminder: "📅 Booking reminder for *%s*: game in %d days — courts booking is open now! Don't forget to reserve your courts.",
 
 		SchedCancellationFailDM: "⚠️ Automatic court cancellation failed for game on %s: %s. Please cancel courts manually.",
 
-		SchedReminderAllGood:      "✅ Upcoming game on %s — all good! %d/%d players, %d courts are booked.",
-		SchedReminderCanceled:     "✅ Courts #%s canceled. Game on %s is all set! %d/%d players, %d courts are booked.",
-		SchedReminderOddNoCancel:  "⚠️ 1 free spot for the game on %s. %d/%d players, %d courts are booked.",
-		SchedReminderOddCanceled:  "⚠️ Courts #%s canceled. 1 free spot for the game on %s. %d/%d players, %d courts booked.",
-		SchedReminderAllCanceled:  "❌ All courts (%s) canceled for the game on %s. The game will not happen.",
-		SchedReminderEvenNoCancel: "⚠️ Upcoming game on %s — %d/%d players, %d courts are booked. Please cancel unused courts.",
+		SchedReminderAllGood:      "✅ Upcoming game on %s — all good! %d/%d players, %d %s are booked.",
+		SchedReminderCanceled:     "✅ %s #%s canceled. Game on %s is all set! %d/%d players, %d %s are booked.",
+		SchedReminderOddNoCancel:  "⚠️ %d free spot(s) for the game on %s. %d/%d players, %d %s are booked.",
+		SchedReminderOddCanceled:  "⚠️ %s #%s canceled. %d free spot(s) for the game on %s. %d/%d players, %d %s booked.",
+		SchedReminderAllCanceled:  "❌ All %s (%s) canceled for the game on %s. The game will not happen.",
+		SchedReminderEvenNoCancel: "⚠️ Upcoming game on %s — %d/%d players, %d %s are booked. Please cancel unused units.",
 
-		SchedFinalCheckAllCanceled: "⏰ Last-minute check: all courts (%s) released for game on %s. The game will not happen.",
-		SchedFinalCheckCanceled:    "⏰ Last-minute check: courts #%s released. Game on %s is set! %d/%d players, %d courts remain.",
-		SchedFinalCheckOddCanceled: "⏰ Last-minute check: courts #%s released. 1 free spot for game on %s. %d/%d players, %d courts remain.",
+		SchedFinalCheckAllCanceled: "⏰ Last-minute check: all %s (%s) released for game on %s. The game will not happen.",
+		SchedFinalCheckCanceled:    "⏰ Last-minute check: %s #%s released. Game on %s is set! %d/%d players, %d %s remain.",
+		SchedFinalCheckOddCanceled: "⏰ Last-minute check: %s #%s released. %d free spot(s) for game on %s. %d/%d players, %d %s remain.",
 
-		SchedHalfwayCheckCanceled: "📉 Early check: courts #%s released for game on %s. %d/%d players, %d courts remain.",
+		SchedHalfwayCheckCanceled: "📉 Early check: %s #%s released for game on %s. %d/%d players, %d %s remain.",
 
 		// Keyboard buttons
 		BtnImIn:     "I'm in",
@@ -547,7 +574,7 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "No guests to kick",
 		MsgSelectGuestToKick:         "Select a guest to kick:",
 		MsgGuestKicked:               "Guest kicked ✓",
-		MsgManageGameHeader:          "*Manage game:*\n📅 %s · %s\n🎾 Courts: %s\nPlayers: %d/%d, Guests: %d",
+		MsgManageGameHeader:          "*Manage game:*\n📅 %s · %s\n🎾 %s: %s\nPlayers: %d/%d, Guests: %d",
 		MsgSendGameDetails:           "Send game details after the command:\n/new\\_game\nYYYY-MM-DD HH:MM\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Management commands work in private messages. Start a chat with me and use /help.",
 		MsgFailedVerifyPermissions:   "Failed to verify permissions",
@@ -598,7 +625,7 @@ var translations = map[Lang]map[string]string{
 		MsgFailedVerifyPermissionsPeriod: "Failed to verify permissions.",
 		MsgLostAdminAccessPeriod:         "You no longer have admin access to this group.",
 		MsgUpcomingGames:                 "*Upcoming games:*\n\n",
-		MsgGameCourtsCapacity:            "🎾 Courts: %s — capacity %d\n",
+		MsgGameCourtsCapacity:            "🎾 %s: %s — capacity %d\n",
 		MsgGroupLabel:                    "Group: %s\n\n",
 		MsgManageGameBtn:                 "Manage: %s %s",
 
@@ -646,6 +673,7 @@ var translations = map[Lang]map[string]string{
 		MsgNewGameTimePast:           "That time is already in the past. Please enter a future time (e.g. 19:30):",
 		MsgNewGameEnterCourts:        "Game on %s at %s.\n\nEnter the courts (e.g. 2,3 or 2 3):",
 		MsgNewGameSelectVenue:        "Game on %s.\n\nSelect a venue:",
+		MsgNewGameSelectSport:        "Select a sport:",
 		MsgNewGameNoVenue:            "No venue / manual",
 		MsgNewGameSelectCourts:       "Select courts for the game (tap to toggle):",
 		MsgNewGameConfirmCourts:      "✓ Confirm (%s)",
@@ -677,6 +705,13 @@ var translations = map[Lang]map[string]string{
 		MsgVenuePreferredTimeLine:        "Preferred time: %s",
 		BtnVenueEditName:                 "✏️ Name",
 		BtnVenueEditCourts:               "🎾 Courts",
+		BtnVenueSports:                   "🏅 Sports",
+		BtnVenueAddSport:                 "+ Add sport",
+		BtnVenueRemoveSport:              "Remove",
+		BtnVenuePlayersPerUnit:           "Players/unit",
+		MsgVenueSports:                   "*Venue sports*",
+		MsgVenueCannotRemoveSport:        "The last sport, or squash while auto-booking is enabled, cannot be removed.",
+		MsgVenueAskPlayersPerUnit:        "Send players per unit, or `-` to use the sport default.",
 		BtnVenueEditTimeSlots:            "🕐 Time Slots",
 		BtnVenueEditAddress:              "📍 Address",
 		BtnVenueDelete:                   "🗑 Delete",
@@ -866,38 +901,42 @@ var translations = map[Lang]map[string]string{
 		MsgResultsOptOutEnabled:     "You will no longer appear in leaderboards or receive result requests.",
 		MsgResultsOptOutDisabled:    "Results & leaderboard re-enabled ✓",
 		MsgResultOpponentOptedOut:   "%s has opted out of the results system and cannot be selected.",
+		MsgResultsNotSupported:      "Results are only supported for two-player-per-court games.",
 		MsgResultSelfOptedOut:       "You have opted out of the results system. Go to /settings to re-enable it.",
 	},
 
 	De: {
 		// Game message
-		GameHeader:      "🏸 Squash-Spiel",
-		GameCourts:      "🎾 Plätze: %s (Kapazität: %d Spieler)",
+		GameHeaderSquash: "Squash-Spiel", GameHeaderBadminton: "Badminton-Spiel", GameHeaderTableTennis: "Tischtennis-Spiel",
+		GameHeaderTennis: "Tennis-Spiel", GameHeaderPadel: "Padel-Spiel", GameHeaderBowling: "Bowling",
+		SportSquash: "Squash", SportBadminton: "Badminton", SportTableTennis: "Tischtennis", SportTennis: "Tennis", SportPadel: "Padel", SportBowling: "Bowling",
+		UnitCourts: "Plätze", UnitTables: "Tische", UnitLanes: "Bahnen",
+		GameCourts:      "🎾 %s: %s (Kapazität: %d Spieler)",
 		GamePlayers:     "Spieler (%d/%d):",
 		GameGuestLine:   "+1 (von %s)",
 		GameLastUpdated: "Zuletzt aktualisiert: %s",
 		GameCompleted:   "Spiel beendet ✓",
 
 		// Scheduler
-		SchedOverCapacity:    "⚠️ Zu viele Spieler! %d angemeldet, aber nur %d Plätze (%d Plätze). Erwäge, einen weiteren Platz zu buchen.",
-		SchedUnderCapacity:   "📢 Freie Plätze verfügbar! %d/%d Spieler angemeldet (%d Plätze). Lade mehr Freunde ein!",
-		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Squash-Spiel geplant. Vergiss nicht, eines zu erstellen!",
+		SchedOverCapacity:    "⚠️ Zu viele Spieler! %d angemeldet, aber nur %d Plätze (%d %s). Buche eine weitere Einheit.",
+		SchedUnderCapacity:   "📢 Freie Plätze verfügbar! %d/%d Spieler angemeldet (%d %s). Lade mehr Freunde ein!",
+		SchedWeeklyReminder:  "👋 Erinnerung: Für diese Woche ist noch kein Spiel geplant. Vergiss nicht, eines zu erstellen!",
 		SchedBookingReminder: "📅 Buchungserinnerung für *%s*: Spiel in %d Tagen — Buchung ist jetzt offen! Vergiss nicht, deine Plätze zu reservieren.",
 
 		SchedCancellationFailDM: "⚠️ Automatische Stornierung fehlgeschlagen für Spiel am %s: %s. Bitte Plätze manuell stornieren.",
 
-		SchedReminderAllGood:      "✅ Spiel am %s — alles gut! %d/%d Spieler, %d Plätze sind reserviert.",
-		SchedReminderCanceled:     "✅ Plätze #%s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze sind reserviert.",
-		SchedReminderOddNoCancel:  "⚠️ 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze sind reserviert.",
-		SchedReminderOddCanceled:  "⚠️ Plätze #%s storniert. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze sind reserviert.",
-		SchedReminderAllCanceled:  "❌ Alle Plätze (%s) für das Spiel am %s storniert. Das Spiel findet nicht statt.",
-		SchedReminderEvenNoCancel: "⚠️ Spiel am %s — %d/%d Spieler, %d Plätze sind reserviert. Bitte ungenutzte Plätze stornieren.",
+		SchedReminderAllGood:      "✅ Spiel am %s — alles gut! %d/%d Spieler, %d %s sind reserviert.",
+		SchedReminderCanceled:     "✅ %s #%s storniert. Spiel am %s ist bereit! %d/%d Spieler, %d %s sind reserviert.",
+		SchedReminderOddNoCancel:  "⚠️ %d freie Plätze für das Spiel am %s. %d/%d Spieler, %d %s sind reserviert.",
+		SchedReminderOddCanceled:  "⚠️ %s #%s storniert. %d freie Plätze für das Spiel am %s. %d/%d Spieler, %d %s sind reserviert.",
+		SchedReminderAllCanceled:  "❌ Alle %s (%s) für das Spiel am %s storniert. Das Spiel findet nicht statt.",
+		SchedReminderEvenNoCancel: "⚠️ Spiel am %s — %d/%d Spieler, %d %s sind reserviert. Bitte ungenutzte Einheiten stornieren.",
 
-		SchedFinalCheckAllCanceled: "⏰ Letzter Check: alle Plätze (%s) für das Spiel am %s freigegeben. Das Spiel findet nicht statt.",
-		SchedFinalCheckCanceled:    "⏰ Letzter Check: Plätze #%s freigegeben. Spiel am %s ist bereit! %d/%d Spieler, %d Plätze verbleiben.",
-		SchedFinalCheckOddCanceled: "⏰ Letzter Check: Plätze #%s freigegeben. 1 freier Platz für das Spiel am %s. %d/%d Spieler, %d Plätze verbleiben.",
+		SchedFinalCheckAllCanceled: "⏰ Letzter Check: alle %s (%s) für das Spiel am %s freigegeben. Das Spiel findet nicht statt.",
+		SchedFinalCheckCanceled:    "⏰ Letzter Check: %s #%s freigegeben. Spiel am %s ist bereit! %d/%d Spieler, %d %s verbleiben.",
+		SchedFinalCheckOddCanceled: "⏰ Letzter Check: %s #%s freigegeben. %d freie Plätze für das Spiel am %s. %d/%d Spieler, %d %s verbleiben.",
 
-		SchedHalfwayCheckCanceled: "📉 Frühzeitiger Check: Plätze #%s für das Spiel am %s freigegeben. %d/%d Spieler, %d Plätze verbleiben.",
+		SchedHalfwayCheckCanceled: "📉 Frühzeitiger Check: %s #%s für das Spiel am %s freigegeben. %d/%d Spieler, %d %s verbleiben.",
 
 		// Keyboard buttons
 		BtnImIn:     "Ich bin dabei",
@@ -926,7 +965,7 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "Keine Gäste zum Entfernen",
 		MsgSelectGuestToKick:         "Gast zum Entfernen auswählen:",
 		MsgGuestKicked:               "Gast entfernt ✓",
-		MsgManageGameHeader:          "*Spiel verwalten:*\n📅 %s · %s\n🎾 Plätze: %s\nSpieler: %d/%d, Gäste: %d",
+		MsgManageGameHeader:          "*Spiel verwalten:*\n📅 %s · %s\n🎾 %s: %s\nSpieler: %d/%d, Gäste: %d",
 		MsgSendGameDetails:           "Spieldetails nach dem Befehl senden:\n/new\\_game\nJJJJ-MM-TT HH:MM\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Verwaltungsbefehle funktionieren in privaten Nachrichten. Starte einen Chat mit mir und verwende /help.",
 		MsgFailedVerifyPermissions:   "Berechtigungen konnten nicht überprüft werden",
@@ -977,7 +1016,7 @@ var translations = map[Lang]map[string]string{
 		MsgFailedVerifyPermissionsPeriod: "Berechtigungen konnten nicht überprüft werden.",
 		MsgLostAdminAccessPeriod:         "Du hast keinen Admin-Zugriff mehr auf diese Gruppe.",
 		MsgUpcomingGames:                 "*Bevorstehende Spiele:*\n\n",
-		MsgGameCourtsCapacity:            "🎾 Plätze: %s — Kapazität %d\n",
+		MsgGameCourtsCapacity:            "🎾 %s: %s — Kapazität %d\n",
 		MsgGroupLabel:                    "Gruppe: %s\n\n",
 		MsgManageGameBtn:                 "Verwalten: %s %s",
 
@@ -1025,6 +1064,7 @@ var translations = map[Lang]map[string]string{
 		MsgNewGameTimePast:           "Diese Uhrzeit liegt bereits in der Vergangenheit. Bitte gib eine zukünftige Uhrzeit ein (z.B. 19:30):",
 		MsgNewGameEnterCourts:        "Spiel am %s um %s.\n\nGib die Plätze ein (z.B. 2,3 oder 2 3):",
 		MsgNewGameSelectVenue:        "Spiel am %s.\n\nWähle einen Veranstaltungsort:",
+		MsgNewGameSelectSport:        "Wähle eine Sportart:",
 		MsgNewGameNoVenue:            "Kein Ort / manuell",
 		MsgNewGameSelectCourts:       "Plätze für das Spiel auswählen (tippen zum Umschalten):",
 		MsgNewGameConfirmCourts:      "✓ Bestätigen (%s)",
@@ -1056,6 +1096,13 @@ var translations = map[Lang]map[string]string{
 		MsgVenuePreferredTimeLine:        "Bevorzugte Zeit: %s",
 		BtnVenueEditName:                 "✏️ Name",
 		BtnVenueEditCourts:               "🎾 Plätze",
+		BtnVenueSports:                   "🏅 Sportarten",
+		BtnVenueAddSport:                 "+ Sportart hinzufügen",
+		BtnVenueRemoveSport:              "Entfernen",
+		BtnVenuePlayersPerUnit:           "Spieler/Einheit",
+		MsgVenueSports:                   "*Sportarten des Ortes*",
+		MsgVenueCannotRemoveSport:        "Die letzte Sportart oder Squash bei aktiver Auto-Buchung kann nicht entfernt werden.",
+		MsgVenueAskPlayersPerUnit:        "Spieler pro Einheit senden oder `-` für den Standardwert.",
 		BtnVenueEditTimeSlots:            "🕐 Zeitfenster",
 		BtnVenueEditAddress:              "📍 Adresse",
 		BtnVenueDelete:                   "🗑 Löschen",
@@ -1241,38 +1288,42 @@ var translations = map[Lang]map[string]string{
 		MsgResultsOptOutEnabled:     "Du wirst nicht mehr in der Rangliste erscheinen und keine Ergebnisanfragen erhalten.",
 		MsgResultsOptOutDisabled:    "Ergebnisse & Rangliste wieder aktiviert ✓",
 		MsgResultOpponentOptedOut:   "%s hat sich vom Ergebnissystem abgemeldet und kann nicht ausgewählt werden.",
+		MsgResultsNotSupported:      "Ergebnisse werden nur für Spiele mit zwei Spielern pro Platz unterstützt.",
 		MsgResultSelfOptedOut:       "Du hast dich vom Ergebnissystem abgemeldet. Gehe zu /settings, um es wieder zu aktivieren.",
 	},
 
 	Ru: {
 		// Game message
-		GameHeader:      "🏸 Игра в сквош",
-		GameCourts:      "🎾 Корты: %s (вместимость: %d игроков)",
+		GameHeaderSquash: "Игра в сквош", GameHeaderBadminton: "Игра в бадминтон", GameHeaderTableTennis: "Настольный теннис",
+		GameHeaderTennis: "Игра в теннис", GameHeaderPadel: "Игра в падел", GameHeaderBowling: "Боулинг",
+		SportSquash: "Сквош", SportBadminton: "Бадминтон", SportTableTennis: "Настольный теннис", SportTennis: "Теннис", SportPadel: "Падел", SportBowling: "Боулинг",
+		UnitCourts: "Корты", UnitTables: "Столы", UnitLanes: "Дорожки",
+		GameCourts:      "🎾 %s: %s (вместимость: %d игроков)",
 		GamePlayers:     "Игроки (%d/%d):",
 		GameGuestLine:   "+1 (от %s)",
 		GameLastUpdated: "Обновлено: %s",
 		GameCompleted:   "Игра завершена ✓",
 
 		// Scheduler
-		SchedOverCapacity:    "⚠️ Слишком много игроков! Записалось %d, но только %d мест (%d корта). Рассмотрите бронирование дополнительного корта.",
-		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d корта). Приглашайте друзей!",
-		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры в сквош. Не забудь создать!",
+		SchedOverCapacity:    "⚠️ Слишком много игроков! Записалось %d, но только %d мест (%d %s). Забронируйте ещё одну единицу.",
+		SchedUnderCapacity:   "📢 Есть свободные места! Зарегистрировалось %d/%d игроков (%d %s). Приглашайте друзей!",
+		SchedWeeklyReminder:  "👋 Напоминание: на эту неделю ещё не запланировано ни одной игры. Не забудь создать!",
 		SchedBookingReminder: "📅 Напоминание о бронировании для *%s*: игра через %d дней — бронирование открыто сейчас! Не забудь зарезервировать корты.",
 
 		SchedCancellationFailDM: "⚠️ Автоматическая отмена кортов не удалась для игры %s: %s. Пожалуйста, отмените корты вручную.",
 
-		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, %d корт(а) забронировано.",
-		SchedReminderCanceled:     "✅ Корт(ы) #%s отменены. Игра %s — всё в порядке! %d/%d игроков, %d корт(а) забронировано.",
-		SchedReminderOddNoCancel:  "⚠️ 1 свободное место на игру %s. %d/%d игроков, %d корт(а) забронировано.",
-		SchedReminderOddCanceled:  "⚠️ Корт(ы) #%s отменены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) забронировано.",
-		SchedReminderAllCanceled:  "❌ Все корты (%s) отменены для игры %s. Игра не состоится.",
-		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, %d корт(а) забронировано. Отмените незаполненные корты.",
+		SchedReminderAllGood:      "✅ Игра %s — всё отлично! %d/%d игроков, забронировано: %d %s.",
+		SchedReminderCanceled:     "✅ %s #%s отменены. Игра %s — всё в порядке! %d/%d игроков, забронировано: %d %s.",
+		SchedReminderOddNoCancel:  "⚠️ Свободных мест: %d, игра %s. %d/%d игроков, забронировано: %d %s.",
+		SchedReminderOddCanceled:  "⚠️ %s #%s отменены. Свободных мест: %d, игра %s. %d/%d игроков, забронировано: %d %s.",
+		SchedReminderAllCanceled:  "❌ Все %s (%s) отменены для игры %s. Игра не состоится.",
+		SchedReminderEvenNoCancel: "⚠️ Игра %s — %d/%d игроков, забронировано: %d %s. Отмените незаполненные единицы.",
 
-		SchedFinalCheckAllCanceled: "⏰ Финальная проверка: все корты (%s) освобождены для игры %s. Игра не состоится.",
-		SchedFinalCheckCanceled:    "⏰ Финальная проверка: корт(ы) #%s освобождены. Игра %s — всё готово! %d/%d игроков, %d корт(а) остались.",
-		SchedFinalCheckOddCanceled: "⏰ Финальная проверка: корт(ы) #%s освобождены. 1 свободное место на игру %s. %d/%d игроков, %d корт(а) остались.",
+		SchedFinalCheckAllCanceled: "⏰ Финальная проверка: все %s (%s) освобождены для игры %s. Игра не состоится.",
+		SchedFinalCheckCanceled:    "⏰ Финальная проверка: %s #%s освобождены. Игра %s — всё готово! %d/%d игроков, осталось: %d %s.",
+		SchedFinalCheckOddCanceled: "⏰ Финальная проверка: %s #%s освобождены. Свободных мест: %d, игра %s. %d/%d игроков, осталось: %d %s.",
 
-		SchedHalfwayCheckCanceled: "📉 Ранняя проверка: корт(ы) #%s освобождены для игры %s. %d/%d игроков, %d корт(а) остались.",
+		SchedHalfwayCheckCanceled: "📉 Ранняя проверка: %s #%s освобождены для игры %s. %d/%d игроков, осталось: %d %s.",
 
 		// Keyboard buttons
 		BtnImIn:     "Я играю",
@@ -1301,7 +1352,7 @@ var translations = map[Lang]map[string]string{
 		MsgNoGuestsToKick:            "Нет гостей для удаления",
 		MsgSelectGuestToKick:         "Выбери гостя для удаления:",
 		MsgGuestKicked:               "Гость удалён ✓",
-		MsgManageGameHeader:          "*Управление игрой:*\n📅 %s · %s\n🎾 Корты: %s\nИгроки: %d/%d, Гостей: %d",
+		MsgManageGameHeader:          "*Управление игрой:*\n📅 %s · %s\n🎾 %s: %s\nИгроки: %d/%d, Гостей: %d",
 		MsgSendGameDetails:           "Отправь детали игры после команды:\n/new\\_game\nГГГГ-ММ-ДД ЧЧ:ММ\ncourts: 2,3,4",
 		MsgManagementPrivateOnly:     "Команды управления работают в личных сообщениях. Напиши мне в личку и используй /help.",
 		MsgFailedVerifyPermissions:   "Не удалось проверить права",
@@ -1352,7 +1403,7 @@ var translations = map[Lang]map[string]string{
 		MsgFailedVerifyPermissionsPeriod: "Не удалось проверить права.",
 		MsgLostAdminAccessPeriod:         "У тебя больше нет прав администратора в этой группе.",
 		MsgUpcomingGames:                 "*Предстоящие игры:*\n\n",
-		MsgGameCourtsCapacity:            "🎾 Корты: %s — вместимость %d\n",
+		MsgGameCourtsCapacity:            "🎾 %s: %s — вместимость %d\n",
 		MsgGroupLabel:                    "Группа: %s\n\n",
 		MsgManageGameBtn:                 "Управлять: %s %s",
 
@@ -1400,6 +1451,7 @@ var translations = map[Lang]map[string]string{
 		MsgNewGameTimePast:           "Это время уже прошло. Введи будущее время (например 19:30):",
 		MsgNewGameEnterCourts:        "Игра %s в %s.\n\nВведи корты (например 2,3 или 2 3):",
 		MsgNewGameSelectVenue:        "Игра %s.\n\nВыбери площадку:",
+		MsgNewGameSelectSport:        "Выбери вид спорта:",
 		MsgNewGameNoVenue:            "Без площадки / вручную",
 		MsgNewGameSelectCourts:       "Выбери корты для игры (нажми для переключения):",
 		MsgNewGameConfirmCourts:      "✓ Подтвердить (%s)",
@@ -1431,6 +1483,13 @@ var translations = map[Lang]map[string]string{
 		MsgVenuePreferredTimeLine:        "Предпочт. время: %s",
 		BtnVenueEditName:                 "✏️ Название",
 		BtnVenueEditCourts:               "🎾 Корты",
+		BtnVenueSports:                   "🏅 Виды спорта",
+		BtnVenueAddSport:                 "+ Добавить спорт",
+		BtnVenueRemoveSport:              "Удалить",
+		BtnVenuePlayersPerUnit:           "Игроков/единицу",
+		MsgVenueSports:                   "*Виды спорта площадки*",
+		MsgVenueCannotRemoveSport:        "Нельзя удалить последний вид спорта или сквош при включённом автобронировании.",
+		MsgVenueAskPlayersPerUnit:        "Отправь число игроков на единицу или `-` для значения по умолчанию.",
 		BtnVenueEditTimeSlots:            "🕐 Временные слоты",
 		BtnVenueEditAddress:              "📍 Адрес",
 		BtnVenueDelete:                   "🗑 Удалить",
@@ -1616,6 +1675,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultsOptOutEnabled:     "Вы больше не будете появляться в рейтинге и получать запросы на результаты.",
 		MsgResultsOptOutDisabled:    "Результаты и рейтинг снова включены ✓",
 		MsgResultOpponentOptedOut:   "%s отказался от системы результатов и не может быть выбран.",
+		MsgResultsNotSupported:      "Результаты доступны только для игр с двумя игроками на корт.",
 		MsgResultSelfOptedOut:       "Вы отказались от системы результатов. Перейдите в /settings, чтобы снова включить её.",
 	},
 }

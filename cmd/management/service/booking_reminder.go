@@ -11,6 +11,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 )
 
 // BookingReminderJob fires at 10:00–10:05 in each group's timezone on configured game days.
@@ -240,11 +241,13 @@ func (j *BookingReminderJob) createGameAndAnnounce(
 
 	venueID := venue.ID
 	created, err := j.gameRepo.Create(ctx, &models.Game{
-		ChatID:      chatID,
-		GameDate:    gameDate,
-		Courts:      result.Courts,
-		CourtsCount: result.CourtsCount,
-		VenueID:     &venueID,
+		ChatID:          chatID,
+		GameDate:        gameDate,
+		Courts:          result.Courts,
+		CourtsCount:     result.CourtsCount,
+		Sport:           string(sport.Default),
+		PlayersPerCourt: playersPerCourtFor(venue, sport.Default),
+		VenueID:         &venueID,
 	})
 	if err != nil {
 		j.logger.Error("booking reminder: create game", "venue_id", venue.ID, "err", err)

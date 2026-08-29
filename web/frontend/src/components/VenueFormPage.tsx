@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import type { BookingReadiness, User, VenueCredential, VenueInput } from '../types'
+import type { BookingReadiness, Sport, User, VenueCredential, VenueInput, VenueSport } from '../types'
 import { fetchGroup } from '../api/groups'
 import {
   addCredential,
@@ -13,7 +13,7 @@ import {
   updateVenue,
 } from '../api/venues'
 import { ApiError } from '../api/http'
-import { READINESS_TEXT, WEEKDAYS, joinList, splitList } from '../settingsLabels'
+import { READINESS_TEXT, SPORTS, WEEKDAYS, joinList, splitList } from '../settingsLabels'
 import Field from './Field'
 
 interface VenueFormPageProps {
@@ -24,6 +24,7 @@ const EMPTY_VENUE: VenueInput = {
   name: '',
   address: '',
   courts: '',
+  sports: [{ sport: 'squash', courts: '' }],
   time_slots: '',
   game_days: '',
   grace_period_hours: 24,
@@ -90,7 +91,8 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
       tasks.push(fetchVenue(chatID, venueID).then(v => setForm({
         name: v.name,
         address: v.address ?? '',
-        courts: v.courts,
+        courts: v.courts ?? '',
+        sports: v.sports?.length ? v.sports : [{ sport: 'squash', courts: v.courts ?? '' }],
         time_slots: v.time_slots,
         game_days: v.game_days,
         grace_period_hours: v.grace_period_hours,
@@ -110,7 +112,8 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
 
   // ── structured editors ─────────────────────────────────────────────────────
 
-  const courts = splitList(form.courts)
+  const squash = form.sports.find(s => s.sport === 'squash')
+  const courts = splitList(squash?.courts ?? '')
   const timeSlots = splitList(form.time_slots)
   const preferred = splitList(form.preferred_game_times)
   const priority = splitList(form.auto_booking_courts)
@@ -135,14 +138,34 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
     }))
   }
 
-  // Removing a court must also drop it from the auto-booking priority list.
-  const setCourts = (list: string[]) => {
-    setForm(prev => ({
+  const updateSport = (index: number, patch: Partial<VenueSport>) => setForm(prev => {
+    const current = prev.sports[index]
+    if (current.sport === 'squash' && prev.auto_booking_enabled && patch.sport && patch.sport !== 'squash') {
+      return prev
+    }
+    let autoBookingCourts = prev.auto_booking_courts
+    if (patch.sport && patch.sport !== current.sport && (current.sport === 'squash' || patch.sport === 'squash')) {
+      autoBookingCourts = ''
+    } else if (current.sport === 'squash' && patch.courts !== undefined) {
+      const courts = splitList(patch.courts)
+      autoBookingCourts = joinList(splitList(autoBookingCourts).filter(c => courts.includes(c)))
+    }
+    return {
       ...prev,
-      courts: joinList(list),
-      auto_booking_courts: joinList(splitList(prev.auto_booking_courts).filter(c => list.includes(c))),
-    }))
-  }
+      sports: prev.sports.map((s, i) => i === index ? { ...s, ...patch } : s),
+      auto_booking_courts: autoBookingCourts,
+    }
+  })
+
+  const removeSport = (index: number) => setForm(prev => {
+    const removed = prev.sports[index]
+    if (prev.sports.length === 1 || (removed.sport === 'squash' && prev.auto_booking_enabled)) return prev
+    return {
+      ...prev,
+      sports: prev.sports.filter((_, i) => i !== index),
+      auto_booking_courts: removed.sport === 'squash' ? '' : prev.auto_booking_courts,
+    }
+  })
 
   const moveCourt = (index: number, delta: number) => {
     const next = [...priority]
@@ -156,8 +179,21 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!form.name.trim() || courts.length === 0) {
-      setError('Name and at least one court are required.')
+    if (!form.name.trim() || form.sports.length === 0 || form.sports.some(s => splitList(s.courts).length === 0)) {
+      setError('Name and at least one court are required for every sport.')
+      return
+    }
+    if (new Set(form.sports.map(s => s.sport)).size !== form.sports.length) {
+      setError('Each sport can only be added once.')
+      return
+    }
+    if (form.sports.some(s => s.players_per_court !== undefined &&
+      (!Number.isInteger(s.players_per_court) || s.players_per_court < 1 || s.players_per_court > SPORTS[s.sport].maxPlayers))) {
+      setError('Players per unit is outside the allowed range.')
+      return
+    }
+    if (form.auto_booking_enabled && !squash) {
+      setError('Auto-booking requires squash at this venue.')
       return
     }
     if (form.auto_booking_enabled && form.auto_booking_courts_count < 1) {
@@ -232,19 +268,65 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
             <input value={form.address ?? ''} onChange={e => set('address', e.target.value)} />
           </Field>
 
-          <div className="field">
-            <span className="field__label">Courts</span>
-            <ChipList
-              values={courts}
-              onRemove={c => setCourts(courts.filter(x => x !== c))}
-              addPlaceholder="Court number"
-              addType="number"
-              onAdd={value => !courts.includes(value) && setCourts([...courts, value])}
-            />
-            <p className="field__help">
-              The court numbers this venue has. Auto-booking only ever books courts from this list.
-            </p>
-          </div>
+          {form.sports.map((venueSport, index) => {
+            const info = SPORTS[venueSport.sport]
+            const units = splitList(venueSport.courts)
+            return (
+              <div className="field" key={`${venueSport.sport}-${index}`}>
+                <span className="field__label">Sport</span>
+                <div className="chip-row">
+                  {(Object.keys(SPORTS) as Sport[]).map(name => (
+                    <button
+                      type="button"
+                      key={name}
+                      aria-pressed={venueSport.sport === name}
+                      className={'chip' + (venueSport.sport === name ? ' chip--on' : '')}
+                      disabled={form.sports.some((s, i) => i !== index && s.sport === name) ||
+                        (venueSport.sport === 'squash' && form.auto_booking_enabled && name !== 'squash')}
+                      onClick={() => updateSport(index, { sport: name, players_per_court: undefined })}
+                    >
+                      {SPORTS[name].emoji} {SPORTS[name].label}
+                    </button>
+                  ))}
+                </div>
+                <span className="field__label">{info.unit[0].toUpperCase() + info.unit.slice(1)}s</span>
+                <ChipList
+                  values={units}
+                  onRemove={unit => updateSport(index, { courts: joinList(units.filter(x => x !== unit)) })}
+                  addPlaceholder={`${info.unit[0].toUpperCase() + info.unit.slice(1)} number`}
+                  addType="text"
+                  onAdd={value => !units.includes(value) && updateSport(index, { courts: joinList([...units, value]) })}
+                />
+                <label>
+                  Players per {info.unit}{' '}
+                  <input
+                    type="number" min={1} max={info.maxPlayers}
+                    placeholder={String(info.defaultPlayers)}
+                    value={venueSport.players_per_court ?? ''}
+                    onChange={e => updateSport(index, { players_per_court: e.target.value ? Number(e.target.value) : undefined })}
+                  />
+                </label>
+                <p className="field__help">Default: {info.defaultPlayers}; maximum: {info.maxPlayers}.</p>
+                {form.sports.length > 1 && !(venueSport.sport === 'squash' && form.auto_booking_enabled) && (
+                  <button type="button" className="settings-button settings-button--danger" onClick={() => removeSport(index)}>
+                    Remove sport
+                  </button>
+                )}
+              </div>
+            )
+          })}
+          {form.sports.length < Object.keys(SPORTS).length && (
+            <button
+              type="button"
+              className="settings-button"
+              onClick={() => {
+                const next = (Object.keys(SPORTS) as Sport[]).find(name => !form.sports.some(s => s.sport === name))!
+                set('sports', [...form.sports, { sport: next, courts: '' }])
+              }}
+            >
+              + Add sport
+            </button>
+          )}
 
           <div className="field">
             <span className="field__label">Time slots</span>
@@ -316,7 +398,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
           >
             <input
               type="checkbox"
-              disabled={!autoBookingAllowed}
+              disabled={!autoBookingAllowed || !squash}
               checked={form.auto_booking_enabled}
               onChange={e => set('auto_booking_enabled', e.target.checked)}
             />
@@ -397,7 +479,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
 
           <Field
             label="Courts per game"
-            help="How many courts to book for each game. Two players fit on one court."
+            help="How many squash courts to book for each game. Squash uses two players per court by default."
           >
             <input
               type="number" min={1}
@@ -504,7 +586,7 @@ interface ChipListProps {
   values: string[]
   onRemove: (value: string) => void
   onAdd: (value: string) => void
-  addType: 'time' | 'number'
+  addType: 'time' | 'text'
   addPlaceholder?: string
 }
 
@@ -529,7 +611,6 @@ function ChipList({ values, onRemove, onAdd, addType, addPlaceholder }: ChipList
       ))}
       <input
         type={addType}
-        min={addType === 'number' ? 1 : undefined}
         placeholder={addPlaceholder}
         value={draft}
         onChange={e => setDraft(e.target.value)}

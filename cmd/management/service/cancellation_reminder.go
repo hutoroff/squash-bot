@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
@@ -110,13 +111,14 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 	}
 
 	count := registeredCount + guestCount
-	capacity := game.CourtsCount * 2
+	capacity := game.Capacity()
+	playersPerCourt := capacity / game.CourtsCount
 	lz := groupLang(ctx, j.groupRepo, game.ChatID)
 
-	// Determine how many courts can be fully freed (each court needs 2 players).
+	// Determine how many units can be fully freed.
 	courtsToCancel := 0
 	if count < capacity {
-		courtsToCancel = (capacity - count) / 2
+		courtsToCancel = (capacity - count) / playersPerCourt
 	}
 
 	// Attempt automatic court cancellation when a booking client is configured.
@@ -147,25 +149,27 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 
 	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")
 	newCourtsCount := result.remainingCount
-	newCapacity := newCourtsCount * 2
+	newCapacity := newCourtsCount * playersPerCourt
 	canceledStr := formatCanceledCourts(result.canceledCourts)
 
-	scenario := determineScenario(count, newCourtsCount, result.canceledCourts)
+	scenario := determineScenario(count, newCourtsCount, result.canceledCourts, playersPerCourt)
+	freeSpots := playersPerCourt - count%playersPerCourt
+	unit := gameformat.UnitName(game.Sport, lz)
 
 	var text string
 	switch scenario {
 	case "all_canceled":
-		text = lz.Tf(i18n.SchedReminderAllCanceled, canceledStr, gameDateTime)
+		text = lz.Tf(i18n.SchedReminderAllCanceled, unit, canceledStr, gameDateTime)
 	case "canceled_balanced":
-		text = lz.Tf(i18n.SchedReminderCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedReminderCanceled, unit, canceledStr, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	case "odd_canceled":
-		text = lz.Tf(i18n.SchedReminderOddCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedReminderOddCanceled, unit, canceledStr, freeSpots, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	case "odd_no_cancel":
-		text = lz.Tf(i18n.SchedReminderOddNoCancel, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedReminderOddNoCancel, freeSpots, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	case "even_no_cancel":
-		text = lz.Tf(i18n.SchedReminderEvenNoCancel, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedReminderEvenNoCancel, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	default: // all_good
-		text = lz.Tf(i18n.SchedReminderAllGood, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedReminderAllGood, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	}
 
 	j.logger.Info("cancellation reminder",
@@ -229,20 +233,25 @@ func notifyAdminsCancellationFailure(ctx context.Context, api TelegramAPI, logge
 // count is the total registered player count.
 // newCourtsCount is the courts count after any cancellations.
 // canceledCourts are the court IDs that were successfully canceled (nil = none).
-func determineScenario(count, newCourtsCount int, canceledCourts []int) string {
+func determineScenario(count, newCourtsCount int, canceledCourts []int, perCourt ...int) string {
 	didCancel := len(canceledCourts) > 0
-	newCapacity := newCourtsCount * 2
+	playersPerCourt := 2
+	if len(perCourt) > 0 {
+		playersPerCourt = perCourt[0]
+	}
+	newCapacity := newCourtsCount * playersPerCourt
+	rem := count % playersPerCourt
 
 	switch {
 	case newCourtsCount == 0:
 		return "all_canceled"
 	case didCancel && count == newCapacity:
 		return "canceled_balanced"
-	case count < newCapacity && count%2 == 1 && didCancel:
+	case count < newCapacity && rem != 0 && didCancel:
 		return "odd_canceled"
-	case count < newCapacity && count%2 == 1:
+	case count < newCapacity && rem != 0:
 		return "odd_no_cancel"
-	case count < newCapacity && count%2 == 0:
+	case count < newCapacity:
 		return "even_no_cancel"
 	default: // count >= newCapacity
 		return "all_good"

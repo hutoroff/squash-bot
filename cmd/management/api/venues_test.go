@@ -13,14 +13,14 @@ import (
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
-type venueRepoForAPI struct{}
+type venueRepoForAPI struct{ existing *models.Venue }
 
 func (venueRepoForAPI) Create(_ context.Context, v *models.Venue) (*models.Venue, error) {
 	return v, nil
 }
 func (venueRepoForAPI) GetByID(context.Context, int64) (*models.Venue, error) { return nil, nil }
-func (venueRepoForAPI) GetByIDAndGroupID(context.Context, int64, int64) (*models.Venue, error) {
-	return nil, nil
+func (r venueRepoForAPI) GetByIDAndGroupID(context.Context, int64, int64) (*models.Venue, error) {
+	return r.existing, nil
 }
 func (venueRepoForAPI) GetByGroupID(context.Context, int64) ([]*models.Venue, error) { return nil, nil }
 func (venueRepoForAPI) Update(_ context.Context, v *models.Venue) (*models.Venue, error) {
@@ -40,6 +40,7 @@ func newTestHandler() *Handler {
 func newVenueTestHandler() *Handler {
 	h := newTestHandler()
 	h.venueService = service.NewVenueService(venueRepoForAPI{}, nil)
+	h.groupRepo = &stubGroupRepo{groups: []models.Group{{ChatID: 1, AutoBookingAllowed: true}}}
 	return h
 }
 
@@ -102,6 +103,18 @@ func TestCreateVenue_InvalidPreventiveCancellationFraction(t *testing.T) {
 	}
 }
 
+func TestCreateVenue_AutoBookingWithoutSquash_Returns400(t *testing.T) {
+	body := `{"group_id":1,"name":"Bowling Hall","sports":[{"sport":"bowling","courts":"A,B"}],"auto_booking_enabled":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/venues", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	newVenueTestHandler().createVenue(w, req)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "auto-booking requires squash") {
+		t.Fatalf("want 400 auto-booking requires squash, got status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestUpdateVenue_PreventiveCancellationFraction(t *testing.T) {
 	for _, fraction := range []string{"1/3", "1/2", "2/3"} {
 		t.Run(fraction, func(t *testing.T) {
@@ -161,5 +174,24 @@ func TestUpdateVenue_InvalidPreventiveCancellationFraction(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid fraction: want 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateVenue_LegacyCourtsPreservesOtherSports(t *testing.T) {
+	repo := venueRepoForAPI{existing: &models.Venue{Sports: []models.VenueSport{
+		{Sport: "squash", Courts: "1,2"},
+		{Sport: "bowling", Courts: "A,B"},
+	}}}
+	h := newTestHandler()
+	h.venueService = service.NewVenueService(repo, nil)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/venues/1", strings.NewReader(
+		`{"group_id":1,"name":"Sports Hall","courts":"3,4"}`))
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.updateVenue(w, req)
+
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"sport":"bowling","courts":"A,B"`) || !strings.Contains(w.Body.String(), `"sport":"squash","courts":"3,4"`) {
+		t.Fatalf("legacy update did not preserve sports: status=%d body=%s", w.Code, w.Body.String())
 	}
 }

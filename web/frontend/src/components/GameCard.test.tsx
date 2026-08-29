@@ -37,6 +37,8 @@ function makeGame(overrides: Partial<Game> = {}): Game {
     game_date: '2026-04-20T10:00:00Z',
     courts_count: 2,
     courts: 'Court 1,Court 2',
+    sport: 'squash',
+    players_per_court: 2,
     completed: false,
     participation_status: null,
     participant_count: 0,
@@ -101,6 +103,17 @@ describe('GameCard', () => {
       mockFetch.mockReturnValue(new Promise(() => {}))
       render(<GameCard game={makeGame({ participant_count: 3, courts_count: 2 })} user={makeUser()} />)
       expect(screen.getByText('Players (3 / 4)')).toBeInTheDocument()
+    })
+
+    it('uses the sport capacity and emoji', () => {
+      render(<GameCard game={makeGame({ sport: 'bowling', players_per_court: 6 })} user={makeUser()} />)
+      expect(screen.getByText('Players (0 / 12)')).toBeInTheDocument()
+      expect(screen.getByText(/🎳/)).toBeInTheDocument()
+    })
+
+    it('falls back to squash rendering for an unknown sport', () => {
+      render(<GameCard game={makeGame({ sport: 'future_sport' as Game['sport'] })} user={makeUser()} />)
+      expect(screen.getByText(/🏸/)).toBeInTheDocument()
     })
 
     it('updates count from fetch result', async () => {

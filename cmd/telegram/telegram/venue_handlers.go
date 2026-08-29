@@ -12,8 +12,10 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 )
 
 // gameDaysDisplayOrder is the order weekdays appear in the game-day picker keyboard.
@@ -21,6 +23,17 @@ var gameDaysDisplayOrder = []time.Weekday{
 	time.Monday, time.Tuesday, time.Wednesday,
 	time.Thursday, time.Friday, time.Saturday,
 	time.Sunday,
+}
+
+func venueParams(venue *models.Venue, actorUserID int64, actorDisplay string) client.VenueParams {
+	return client.VenueParams{
+		GroupID: venue.GroupID, Name: venue.Name, Courts: venue.Courts, Sports: venue.Sports,
+		TimeSlots: venue.TimeSlots, Address: venue.Address, GracePeriodHours: venue.GracePeriodHours,
+		GameDays: venue.GameDays, BookingOpensDays: venue.BookingOpensDays,
+		PreferredGameTimes: venue.PreferredGameTimes, AutoBookingCourts: venue.AutoBookingCourts,
+		AutoBookingEnabled: venue.AutoBookingEnabled, AutoBookingCourtsCount: venue.AutoBookingCourtsCount,
+		ActorUserID: actorUserID, ActorDisplay: actorDisplay,
+	}
 }
 
 // ── /venues command ───────────────────────────────────────────────────────────
@@ -161,9 +174,18 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			return
 		}
 		wiz.name = text
-		wiz.step = venueStepCourts
+		wiz.step = venueStepSport
 		b.pendingVenueWizard.Store(msg.Chat.ID, wiz)
-		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueAskCourts))
+		var rows [][]tgbotapi.InlineKeyboardButton
+		for _, name := range sport.All() {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(
+				gameformat.SportName(string(name), lz), "venue_wiz_sport:"+string(name))))
+		}
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgNewGameSelectSport), &keyboard)
+
+	case venueStepSport:
+		// Sport is selected with an inline button.
 
 	case venueStepCourts:
 		courts := normalizeCourts(text)
@@ -293,7 +315,13 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
 			return
 		}
-		venue, err := b.client.CreateVenue(ctx, wiz.groupID, wiz.name, wiz.courts, wiz.timeSlots, wiz.address, wiz.gracePeriod, gameDaysStr, wiz.bookingOpensDays, preferredGameTimes, wiz.autoBookingCourts, wiz.autoBookingEnabled, wiz.autoBookingCourtsCount, ru.UserID, ru.DisplayName)
+		venue, err := b.client.CreateVenue(ctx, venueParams(&models.Venue{
+			GroupID: wiz.groupID, Name: wiz.name, Courts: wiz.courts,
+			Sports: []models.VenueSport{{Sport: wiz.sport, Courts: wiz.courts}}, TimeSlots: wiz.timeSlots, Address: wiz.address,
+			GracePeriodHours: wiz.gracePeriod, GameDays: gameDaysStr, BookingOpensDays: wiz.bookingOpensDays,
+			PreferredGameTimes: preferredGameTimes, AutoBookingCourts: wiz.autoBookingCourts,
+			AutoBookingEnabled: wiz.autoBookingEnabled, AutoBookingCourtsCount: wiz.autoBookingCourtsCount,
+		}, ru.UserID, ru.DisplayName))
 		if err != nil {
 			slog.Error("processVenueWizard: create venue", "err", err)
 			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -304,6 +332,27 @@ func (b *Bot) processVenueWizard(ctx context.Context, msg *tgbotapi.Message, wiz
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueCreated))
 		b.sendVenueList(ctx, msg.Chat.ID, 0, wiz.groupID, lz)
 	}
+}
+
+func (b *Bot) handleVenueWizSport(ctx context.Context, cb *tgbotapi.CallbackQuery, name string) {
+	lz := b.userLocalizer(ctx, cb.From)
+	raw, ok := b.pendingVenueWizard.Load(cb.Message.Chat.ID)
+	if !ok || !sport.Valid(name) {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wiz := raw.(*venueWizard)
+	if wiz.step != venueStepSport {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	wiz.sport = name
+	if name != string(sport.Default) {
+		wiz.autoBookingAllowed = false
+	}
+	wiz.step = venueStepCourts
+	b.answerCallback(cb.ID, "")
+	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgVenueAskCourts), nil)
 }
 
 // ── Edit venue ────────────────────────────────────────────────────────────────
@@ -333,6 +382,12 @@ func (b *Bot) handleVenueEditMenu(ctx context.Context, cb *tgbotapi.CallbackQuer
 }
 
 func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Venue, lz *i18n.Localizer, abAllowed bool) {
+	courtsCallback := fmt.Sprintf("venue_edit_courts:%d:%d", venue.ID, venue.GroupID)
+	if len(venue.Sports) == 1 {
+		courtsCallback = fmt.Sprintf("venue_sport_courts:%d:%s", venue.ID, venue.Sports[0].Sport)
+	} else if len(venue.Sports) > 1 {
+		courtsCallback = fmt.Sprintf("venue_sports:%d", venue.ID)
+	}
 	timeSlots := venue.TimeSlots
 	if timeSlots == "" {
 		timeSlots = "—"
@@ -377,7 +432,7 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditName), fmt.Sprintf("venue_edit_name:%d:%d", venue.ID, venue.GroupID)),
-			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditCourts), fmt.Sprintf("venue_edit_courts:%d:%d", venue.ID, venue.GroupID)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditCourts), courtsCallback),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditTimeSlots), fmt.Sprintf("venue_edit_slots:%d:%d", venue.ID, venue.GroupID)),
@@ -391,6 +446,9 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueEditBookingOpensDays), fmt.Sprintf("venue_edit_booking_opens_days:%d:%d", venue.ID, venue.GroupID)),
 		),
 	)
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueSports), fmt.Sprintf("venue_sports:%d", venue.ID)),
+	))
 	// Only show "Preferred Time" button when time slots are configured.
 	if venue.TimeSlots != "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -430,6 +488,244 @@ func (b *Bot) renderVenueEditMenu(chatID int64, messageID int, venue *models.Ven
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	b.editText(chatID, messageID, text, &keyboard)
+}
+
+func (b *Bot) handleVenueSports(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	venueID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	lz := b.userLocalizer(ctx, cb.From)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+	if ok, _ := b.isAdminInGroup(cb.From.ID, venue.GroupID); !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+	b.answerCallback(cb.ID, "")
+	b.renderVenueSports(cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
+}
+
+func (b *Bot) renderVenueSports(chatID int64, messageID int, venue *models.Venue, lz *i18n.Localizer) {
+	var text strings.Builder
+	text.WriteString(lz.T(i18n.MsgVenueSports))
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, venueSport := range venue.Sports {
+		players := sport.Get(sport.Sport(venueSport.Sport)).DefaultPlayersPerCourt
+		if venueSport.PlayersPerCourt != nil {
+			players = *venueSport.PlayersPerCourt
+		}
+		text.WriteString(fmt.Sprintf("\n%s: %s · %d/%s", gameformat.SportName(venueSport.Sport, lz), escapeMarkdown(venueSport.Courts), players, strings.ToLower(gameformat.UnitName(venueSport.Sport, lz))))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(gameformat.SportName(venueSport.Sport, lz), fmt.Sprintf("venue_sport_courts:%d:%s", venue.ID, venueSport.Sport)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenuePlayersPerUnit), fmt.Sprintf("venue_sport_ppc:%d:%s", venue.ID, venueSport.Sport)),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueRemoveSport), fmt.Sprintf("venue_sport_del:%d:%s", venue.ID, venueSport.Sport)),
+		))
+	}
+	if len(venue.Sports) < len(sport.All()) {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueAddSport), fmt.Sprintf("venue_sport_add:%d", venue.ID)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_edit:%d", venue.ID)),
+	))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.editText(chatID, messageID, text.String(), &kb)
+}
+
+func splitVenueSport(rawID string) (int64, string, bool) {
+	parts := strings.SplitN(rawID, ":", 2)
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	return id, parts[1], err == nil && sport.Valid(parts[1])
+}
+
+func (b *Bot) handleVenueSportAdd(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	venueID, err := strconv.ParseInt(rawID, 10, 64)
+	lz := b.userLocalizer(ctx, cb.From)
+	if err != nil {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+	if admin, _ := b.isAdminInGroup(cb.From.ID, venue.GroupID); !admin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+	configured := make(map[string]bool, len(venue.Sports))
+	for _, venueSport := range venue.Sports {
+		configured[venueSport.Sport] = true
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, name := range sport.All() {
+		if !configured[string(name)] {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(
+				gameformat.SportName(string(name), lz), fmt.Sprintf("venue_sport_courts:%d:%s", venueID, name))))
+		}
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_sports:%d", venueID)),
+	))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.answerCallback(cb.ID, "")
+	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgNewGameSelectSport), &kb)
+}
+
+func (b *Bot) handleVenueSportStartEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID, field string) {
+	venueID, name, ok := splitVenueSport(rawID)
+	lz := b.userLocalizer(ctx, cb.From)
+	if !ok {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+	if admin, _ := b.isAdminInGroup(cb.From.ID, venue.GroupID); !admin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+	b.pendingVenueSportEdit.Store(cb.Message.Chat.ID, &venueSportEditState{venueID: venueID, groupID: venue.GroupID, sport: name, field: field})
+	b.answerCallback(cb.ID, "")
+	prompt := lz.T(i18n.MsgVenueAskCourts)
+	if field == "ppc" {
+		prompt = lz.T(i18n.MsgVenueAskPlayersPerUnit)
+	}
+	b.editText(cb.Message.Chat.ID, cb.Message.MessageID, prompt, nil)
+}
+
+func (b *Bot) processVenueSportEdit(ctx context.Context, msg *tgbotapi.Message, state *venueSportEditState) {
+	lz := b.userLocalizer(ctx, msg.From)
+	venue, err := b.client.GetVenueByID(ctx, state.venueID)
+	if err != nil || venue.GroupID != state.groupID {
+		b.pendingVenueSportEdit.Delete(msg.Chat.ID)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+	if admin, _ := b.isAdminInGroup(msg.From.ID, state.groupID); !admin {
+		b.pendingVenueSportEdit.Delete(msg.Chat.ID)
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+	index := -1
+	for i := range venue.Sports {
+		if venue.Sports[i].Sport == state.sport {
+			index = i
+			break
+		}
+	}
+	if state.field == "courts" {
+		courts := normalizeCourts(strings.TrimSpace(msg.Text))
+		if courts == "" {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidCourtsFormat))
+			return
+		}
+		if index < 0 {
+			venue.Sports = append(venue.Sports, models.VenueSport{Sport: state.sport, Courts: courts})
+		} else {
+			venue.Sports[index].Courts = courts
+		}
+		if state.sport == string(sport.Default) {
+			venue.AutoBookingCourts = filterAutoBookingCourts(venue.AutoBookingCourts, courts)
+		}
+	} else {
+		if index < 0 {
+			b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+			return
+		}
+		if strings.TrimSpace(msg.Text) == "-" {
+			venue.Sports[index].PlayersPerCourt = nil
+		} else {
+			players, err := strconv.Atoi(strings.TrimSpace(msg.Text))
+			if err != nil || players < 1 || players > sport.Get(sport.Sport(state.sport)).MaxPlayersPerCourt {
+				b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgInvalidFormat))
+				return
+			}
+			venue.Sports[index].PlayersPerCourt = &players
+		}
+	}
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil {
+		return
+	}
+	if _, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName)); err != nil {
+		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	b.pendingVenueSportEdit.Delete(msg.Chat.ID)
+	b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgVenueUpdated))
+	b.sendVenueList(ctx, msg.Chat.ID, 0, venue.GroupID, lz)
+}
+
+func (b *Bot) handleVenueSportDelete(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string, confirmed bool) {
+	venueID, name, ok := splitVenueSport(rawID)
+	lz := b.userLocalizer(ctx, cb.From)
+	if !ok {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	venue, err := b.client.GetVenueByID(ctx, venueID)
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueNotFound))
+		return
+	}
+	if admin, _ := b.isAdminInGroup(cb.From.ID, venue.GroupID); !admin {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgOnlyAdminCanUse))
+		return
+	}
+	if len(venue.Sports) == 1 || (name == string(sport.Default) && venue.AutoBookingEnabled) {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgVenueCannotRemoveSport))
+		return
+	}
+	if !confirmed {
+		kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnVenueConfirmDelete), "venue_sport_del_ok:"+rawID),
+			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnBack), fmt.Sprintf("venue_sports:%d", venueID)),
+		))
+		b.answerCallback(cb.ID, "")
+		b.editText(cb.Message.Chat.ID, cb.Message.MessageID, lz.Tf(i18n.MsgVenueConfirmDelete, gameformat.SportName(name, lz)), &kb)
+		return
+	}
+	removed := false
+	for i := range venue.Sports {
+		if venue.Sports[i].Sport == name {
+			venue.Sports = append(venue.Sports[:i], venue.Sports[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		b.renderVenueSports(cb.Message.Chat.ID, cb.Message.MessageID, venue, lz)
+		return
+	}
+	if name == string(sport.Default) {
+		venue.AutoBookingCourts = ""
+	}
+	ru, err := b.resolveUser(ctx, cb.From)
+	if err != nil {
+		return
+	}
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
+	if err != nil {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
+		return
+	}
+	b.answerCallback(cb.ID, "")
+	b.renderVenueSports(cb.Message.Chat.ID, cb.Message.MessageID, updated, lz)
 }
 
 func (b *Bot) handleVenueStartEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, venueID, groupID int64, field venueEditField) {
@@ -543,6 +839,12 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 			return
 		}
 		venue.Courts = courts
+		for i := range venue.Sports {
+			if venue.Sports[i].Sport == string(sport.Default) || len(venue.Sports) == 1 {
+				venue.Sports[i].Courts = courts
+				break
+			}
+		}
 	case venueEditFieldTimeSlots:
 		if text == "-" || text == lz.T(i18n.MsgVenueSkipAddress) {
 			venue.TimeSlots = ""
@@ -628,14 +930,7 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 
 	// When courts change, drop any auto-booking courts no longer present in the new list.
 	if state.field == venueEditFieldCourts && venue.AutoBookingCourts != "" {
-		newCourtSet := makeStringSet(venue.Courts)
-		var valid []string
-		for _, c := range splitCSV(venue.AutoBookingCourts) {
-			if newCourtSet[c] {
-				valid = append(valid, c)
-			}
-		}
-		venue.AutoBookingCourts = strings.Join(valid, ",")
+		venue.AutoBookingCourts = filterAutoBookingCourts(venue.AutoBookingCourts, venue.Courts)
 	}
 
 	ru, err := b.resolveUser(ctx, msg.From)
@@ -644,7 +939,7 @@ func (b *Bot) processVenueEdit(ctx context.Context, msg *tgbotapi.Message, state
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
 	if err != nil {
 		slog.Error("processVenueEdit: update venue", "err", err)
 		b.reply(msg.Chat.ID, msg.MessageID, lz.T(i18n.MsgSomethingWentWrong))
@@ -799,7 +1094,7 @@ func (b *Bot) handleVenueDayConfirm(ctx context.Context, cb *tgbotapi.CallbackQu
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
 			return
 		}
-		updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
+		updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
 		if err != nil {
 			slog.Error("handleVenueDayConfirm: update venue", "err", err)
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -943,7 +1238,7 @@ func (b *Bot) handleVenuePtimeSet(ctx context.Context, cb *tgbotapi.CallbackQuer
 		return
 	}
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
 	if err != nil {
 		slog.Error("handleVenuePtimeSet: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -1027,7 +1322,7 @@ func (b *Bot) handleVenuePtimeConfirm(ctx context.Context, cb *tgbotapi.Callback
 		return
 	}
 
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
 	if err != nil {
 		slog.Error("handleVenuePtimeConfirm: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
@@ -1129,6 +1424,17 @@ func makeStringSet(s string) map[string]bool {
 		set[c] = true
 	}
 	return set
+}
+
+func filterAutoBookingCourts(autoBookingCourts, courts string) string {
+	allowed := makeStringSet(courts)
+	var filtered []string
+	for _, court := range splitCSV(autoBookingCourts) {
+		if allowed[court] {
+			filtered = append(filtered, court)
+		}
+	}
+	return strings.Join(filtered, ",")
 }
 
 // splitCSV splits a comma-separated string into a trimmed slice, omitting empty parts.
@@ -1274,7 +1580,7 @@ func (b *Bot) handleVenueToggleAutoBooking(ctx context.Context, cb *tgbotapi.Cal
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 		return
 	}
-	updated, err := b.client.UpdateVenue(ctx, venue.ID, venue.GroupID, venue.Name, venue.Courts, venue.TimeSlots, venue.Address, venue.GracePeriodHours, venue.GameDays, venue.BookingOpensDays, venue.PreferredGameTimes, venue.AutoBookingCourts, venue.AutoBookingEnabled, venue.AutoBookingCourtsCount, ru.UserID, ru.DisplayName)
+	updated, err := b.client.UpdateVenue(ctx, venue.ID, venueParams(venue, ru.UserID, ru.DisplayName))
 	if err != nil {
 		slog.Error("handleVenueToggleAutoBooking: update venue", "err", err)
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
