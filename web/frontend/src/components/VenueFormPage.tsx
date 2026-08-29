@@ -139,16 +139,31 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
   }
 
   const updateSport = (index: number, patch: Partial<VenueSport>) => setForm(prev => {
-    const sports = prev.sports.map((s, i) => i === index ? { ...s, ...patch } : s)
-    const squashCourts = prev.sports[index].sport === 'squash' && patch.courts !== undefined
-      ? splitList(patch.courts)
-      : null
+    const current = prev.sports[index]
+    if (current.sport === 'squash' && prev.auto_booking_enabled && patch.sport && patch.sport !== 'squash') {
+      return prev
+    }
+    let autoBookingCourts = prev.auto_booking_courts
+    if (patch.sport && patch.sport !== current.sport && (current.sport === 'squash' || patch.sport === 'squash')) {
+      autoBookingCourts = ''
+    } else if (current.sport === 'squash' && patch.courts !== undefined) {
+      const courts = splitList(patch.courts)
+      autoBookingCourts = joinList(splitList(autoBookingCourts).filter(c => courts.includes(c)))
+    }
     return {
       ...prev,
-      sports,
-      auto_booking_courts: squashCourts
-        ? joinList(splitList(prev.auto_booking_courts).filter(c => squashCourts.includes(c)))
-        : prev.auto_booking_courts,
+      sports: prev.sports.map((s, i) => i === index ? { ...s, ...patch } : s),
+      auto_booking_courts: autoBookingCourts,
+    }
+  })
+
+  const removeSport = (index: number) => setForm(prev => {
+    const removed = prev.sports[index]
+    if (prev.sports.length === 1 || (removed.sport === 'squash' && prev.auto_booking_enabled)) return prev
+    return {
+      ...prev,
+      sports: prev.sports.filter((_, i) => i !== index),
+      auto_booking_courts: removed.sport === 'squash' ? '' : prev.auto_booking_courts,
     }
   })
 
@@ -172,7 +187,8 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
       setError('Each sport can only be added once.')
       return
     }
-    if (form.sports.some(s => s.players_per_court && (s.players_per_court < 1 || s.players_per_court > SPORTS[s.sport].maxPlayers))) {
+    if (form.sports.some(s => s.players_per_court !== undefined &&
+      (!Number.isInteger(s.players_per_court) || s.players_per_court < 1 || s.players_per_court > SPORTS[s.sport].maxPlayers))) {
       setError('Players per unit is outside the allowed range.')
       return
     }
@@ -265,7 +281,8 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
                       key={name}
                       aria-pressed={venueSport.sport === name}
                       className={'chip' + (venueSport.sport === name ? ' chip--on' : '')}
-                      disabled={form.sports.some((s, i) => i !== index && s.sport === name)}
+                      disabled={form.sports.some((s, i) => i !== index && s.sport === name) ||
+                        (venueSport.sport === 'squash' && form.auto_booking_enabled && name !== 'squash')}
                       onClick={() => updateSport(index, { sport: name, players_per_court: undefined })}
                     >
                       {SPORTS[name].emoji} {SPORTS[name].label}
@@ -291,7 +308,7 @@ export default function VenueFormPage(_props: VenueFormPageProps) {
                 </label>
                 <p className="field__help">Default: {info.defaultPlayers}; maximum: {info.maxPlayers}.</p>
                 {form.sports.length > 1 && !(venueSport.sport === 'squash' && form.auto_booking_enabled) && (
-                  <button type="button" className="settings-button settings-button--danger" onClick={() => set('sports', form.sports.filter((_, i) => i !== index))}>
+                  <button type="button" className="settings-button settings-button--danger" onClick={() => removeSport(index)}>
                     Remove sport
                   </button>
                 )}

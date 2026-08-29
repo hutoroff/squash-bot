@@ -177,6 +177,23 @@ func TestGamesRoutes_AccessDenied(t *testing.T) {
 
 // ── handleGetParticipants ─────────────────────────────────────────────────────
 
+func TestHandleListGamesIncludesSportCapacity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"id":7,"sport":"bowling","players_per_court":6}]`)
+	}))
+	t.Cleanup(srv.Close)
+	g, auth := testGamesHandler(t, srv)
+	req := httptest.NewRequest(http.MethodGet, "/api/games", nil)
+	req.AddCookie(validSessionCookie(t, auth, 42, "alice"))
+	w := httptest.NewRecorder()
+
+	g.handleListGames(w, req)
+
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"sport":"bowling"`) || !strings.Contains(w.Body.String(), `"players_per_court":6`) {
+		t.Fatalf("sport capacity fields missing: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleGetParticipants_HappyPath(t *testing.T) {
 	const partsJSON = `[{"id":1,"player":{"telegram_id":42,"username":"alice"},"status":"registered"}]`
 	const guestsJSON = `[{"id":1,"invited_by":{"telegram_id":42}}]`

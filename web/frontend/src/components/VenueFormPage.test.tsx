@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import VenueFormPage from './VenueFormPage'
@@ -200,6 +200,57 @@ describe('VenueFormPage — edit venue', () => {
     await waitFor(() => expect(screen.getByText('Lanes')).toBeInTheDocument())
     expect(screen.getAllByText('Sport')).toHaveLength(2)
     expect(screen.getByDisplayValue('5')).toHaveAttribute('max', '6')
+  })
+
+  it('does not allow replacing squash while auto-booking is enabled', async () => {
+    renderEdit()
+
+    expect(await screen.findByRole('button', { name: /Badminton/ })).toBeDisabled()
+  })
+
+  it('clears court priority when squash is replaced', async () => {
+    vi.mocked(venuesApi.fetchVenue).mockResolvedValue(makeVenue({ auto_booking_enabled: false }))
+    vi.mocked(venuesApi.updateVenue).mockResolvedValue(makeVenue())
+    renderEdit()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Badminton/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save venue' }))
+
+    await waitFor(() => expect(venuesApi.updateVenue).toHaveBeenCalled())
+    const sent = vi.mocked(venuesApi.updateVenue).mock.calls[0][2]
+    expect(sent.sports[0].sport).toBe('badminton')
+    expect(sent.auto_booking_courts).toBe('')
+  })
+
+  it('clears court priority when squash is removed', async () => {
+    vi.mocked(venuesApi.fetchVenue).mockResolvedValue(makeVenue({
+      auto_booking_enabled: false,
+      sports: [
+        { sport: 'squash', courts: '1,2' },
+        { sport: 'bowling', courts: 'A,B' },
+      ],
+    }))
+    vi.mocked(venuesApi.updateVenue).mockResolvedValue(makeVenue())
+    renderEdit()
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Remove sport' }))[0])
+    await userEvent.click(screen.getByRole('button', { name: 'Save venue' }))
+
+    await waitFor(() => expect(venuesApi.updateVenue).toHaveBeenCalled())
+    const sent = vi.mocked(venuesApi.updateVenue).mock.calls[0][2]
+    expect(sent.sports.map(s => s.sport)).toEqual(['bowling'])
+    expect(sent.auto_booking_courts).toBe('')
+  })
+
+  it('rejects a fractional players-per-unit override', async () => {
+    vi.mocked(venuesApi.fetchVenue).mockResolvedValue(makeVenue({ auto_booking_enabled: false }))
+    renderEdit()
+
+    fireEvent.change(await screen.findByLabelText('Players per court'), { target: { value: '1.5' } })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save venue' }).closest('form')!)
+
+    expect(await screen.findByText(/outside the allowed range/)).toBeInTheDocument()
+    expect(venuesApi.updateVenue).not.toHaveBeenCalled()
   })
 
   it('only offers preferred times from the venue time slots', async () => {
