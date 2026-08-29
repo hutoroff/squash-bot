@@ -1,11 +1,11 @@
 # Squash Bot
 
-A Telegram bot for coordinating squash games among a group of friends. The bot posts game announcements, lets players register with inline buttons, tracks capacity, and cleans up after each game.
+A Telegram bot for coordinating squash, badminton, table-tennis, tennis, padel, and bowling games. The bot posts game announcements, lets players register with inline buttons, tracks capacity, and cleans up after each game.
 
 ## What It Does
 
-- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → group → venue → courts → time)
-- Admin manages venues (courts, time slots, address) for their group via `/venues`
+- Admin creates a game via `/newgame` in private chat using a step-by-step wizard (date picker → group → venue → sport → units → time)
+- Admin manages venue sports, units, time slots, and address for their group via `/venues`
 - Bot posts a formatted announcement to the group chat and pins it
 - Players tap "I'm in" or "I'll skip" — the message updates in place
 - Players can add guests (+1) linked to their name
@@ -100,7 +100,7 @@ Add the bot to a Telegram group and grant it admin rights (required for pinning 
 ### 4. Configure venues
 
 In private chat with the bot, run `/venues`. You can add one or more venues for your group. Each venue stores:
-- **Name**, **courts** (comma-separated), **time slots** (preset HH:MM options), **address** (optional)
+- **Name**, one or more **sports** with their courts/tables/lanes and optional players-per-unit override, **time slots** (preset HH:MM options), and **address** (optional)
 - **Game days** — weekdays when games are played (toggle keyboard; press Confirm with nothing selected to skip). Used for booking and auto-booking reminders.
 - **Preferred game times** — one or more of the configured time slots selected as defaults (toggle keyboard; highlighted ⭐ in the new-game wizard). Used by auto-booking to book courts at each selected time when booking opens; one auto-booking result and one game are created per slot.
 - **Auto-booking courts** — ordered subset of court numbers (from the **courts** list) to prioritize when auto-booking. Enter court numbers in priority order, comma-separated (e.g. `5,6`). Leave blank to book any available court. Courts are matched by the number in their Eversports name (e.g. "Court 5" → `5`).
@@ -123,7 +123,7 @@ Everything above can also be managed in the web UI (port 8082) — the bot's men
   - **Notifications** — changelog announcements and the daily leaderboard post
   - **Auto-booking** — the server-owner master switch; group admins see whether the owner has allowed it
   - **Venues** — one card per venue with its schedule and an auto-booking readiness badge, plus add/edit/delete
-- **Venue form** covers every venue field, with structured editors instead of comma-separated typing: weekday chips for game days, time chips for slots and preferred times, and an ordered pick-list for auto-booking court priority. Booking credentials are managed at the bottom of the form when editing an existing venue; passwords are write-only, exactly as in the bot.
+- **Venue form** covers every venue field, including multiple sports, their units, and players-per-unit overrides. It uses structured editors for game days, time slots, preferred times, and auto-booking court priority.
 - **My settings** holds your personal preferences: the language the bot uses in DMs, and whether it asks you to submit game results.
 - **Users** (server owners only) lists every user — display name, linked identity providers, and creation date — and lets you grant or revoke the server-owner role. Revoking the last remaining server owner is blocked.
 
@@ -136,15 +136,17 @@ In private chat with the bot, run `/newgame`. The bot will guide you through a w
 **Single-group admin:**
 1. **Pick a date** — tap one of the date buttons (today + next 13 days)
 2. **Select a venue** — skipped automatically if only one venue exists
-3. **Toggle courts** — tap courts to select/deselect, then confirm
-4. **Select a time slot** — or tap "Custom time" to type a time manually
+3. **Select a sport** — skipped automatically if the venue has only one
+4. **Toggle courts/tables/lanes** — tap units to select/deselect, then confirm
+5. **Select a time slot** — or tap "Custom time" to type a time manually
 
 **Multi-group admin:**
 1. **Pick a date** — tap one of the date buttons
 2. **Pick a group** — choose which group to post the game in
 3. **Select a venue** — skipped automatically if only one venue exists for that group
-4. **Toggle courts** — tap courts to select/deselect, then confirm
-5. **Select a time slot** — or tap "Custom time" to type a time manually
+4. **Select a sport** — skipped automatically if the venue has only one
+5. **Toggle courts/tables/lanes** — tap units to select/deselect, then confirm
+6. **Select a time slot** — or tap "Custom time" to type a time manually
 
 If the selected group has no venues configured, the wizard shows an error and you can pick a different group or add venues first via `/venues`.
 
@@ -371,7 +373,7 @@ crontab -e
 | `/leaderboard` | Anyone with a rating | DM the leaderboard for a group in which the player has played a rated game. Auto-picks the group when there is exactly one; shows a picker otherwise. |
 | `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
-| `/venues`   | Group admins    | Manage venues (courts, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
+| `/venues`   | Group admins    | Manage venues (sports, units, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
 
 ## Localisation
@@ -464,7 +466,7 @@ Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `noti
 
 **Halfway court check**: fires on the first poll at or after the venue's Web-only preventive cancellation point: 1/3, 1/2 (default), or 2/3 of the interval from booking opening to the grace-period deadline (`game_date - venue.grace_period_hours`). Booking opening is local midnight on the game's calendar date minus `booking_opens_days`, in the group's timezone. Releases half (rounded down) of the currently-unneeded courts. Deduped via `halfway_court_check_done` flag. Reuses the same court-selection and cancellation logic as the cancellation reminder below. Skipped (without marking done) until the game has at least one active court booking, so it's retried automatically once auto-booking runs. Sends a group notification only when courts were actually canceled; cancellation failures DM group admins. The cancellation reminder (below) and a final check just before the grace-period deadline are unaffected and still clean up any remaining excess courts closer to the game.
 
-**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused courts (each unused court has 2 empty spots) before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback: booked courts are split into runs of adjacent IDs; the smallest run is picked first (tie-break: lowest first court ID); the last court in the run is canceled. Always sends one of four notification scenarios: all good (no cancellation needed), balanced (courts canceled, all seats filled), 1 free spot (odd player count), or all canceled (game will not happen).
+**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused units using the game's snapshotted players-per-unit before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback. Notifications report the remaining free spots and the sport's unit noun.
 
 **Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). For venues with auto-booking enabled: fetches all `auto_booking_results` for the target date. For each result with a linked game: if the game is still unpublished (`message_id = NULL`), **publishes it** (sends pinned announcement, sets `message_id`); if already published, skips. If the game record is missing (DB error), falls back to a DM to group admins. If no results exist (auto-booking didn't run or failed), DMs all group admins with a booking reminder instead. For venues without auto-booking: checks whether a game already exists on the target date; if so, skips silently; otherwise DMs group admins.
 
@@ -474,7 +476,7 @@ Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `noti
 
 **Timezone**: set per group via `/groups` → 🕐 Timezone → select from curated list of 18 IANA timezones. Default is UTC.
 
-Capacity per game = `courts_count × 2`.
+Capacity per game = `courts_count × players_per_court`; the resolved value is snapshotted when the game is created. Eversports auto-booking stays squash-only, and 1v1 results require two players per unit.
 
 ## Group Management
 

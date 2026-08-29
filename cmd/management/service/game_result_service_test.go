@@ -240,6 +240,15 @@ func TestSubmit_BadScoreFormat(t *testing.T) {
 	}
 }
 
+func TestSubmit_ResultsNotSupported(t *testing.T) {
+	rr, gr, pr, pp := defaultFixture()
+	gr.game.PlayersPerCourt = 4
+	_, err := newResultSvc(rr, gr, pr, pp).Submit(context.Background(), 10, 100, 2, nil, "", "@alice")
+	if !errors.Is(err, ErrResultsNotSupported) {
+		t.Fatalf("got %v, want ErrResultsNotSupported", err)
+	}
+}
+
 func TestSubmit_WinnerNotInGame(t *testing.T) {
 	rr, gr, pr, pp := defaultFixture()
 	svc := newResultSvc(rr, gr, pr, pp)

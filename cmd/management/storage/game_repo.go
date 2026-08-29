@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,23 +22,29 @@ func NewGameRepo(pool *pgxpool.Pool) *GameRepo {
 }
 
 func (r *GameRepo) Create(ctx context.Context, game *models.Game) (*models.Game, error) {
+	if game.Sport == "" {
+		game.Sport = string(sport.Default)
+	}
+	if game.PlayersPerCourt == 0 {
+		game.PlayersPerCourt = sport.Get(sport.Sport(game.Sport)).DefaultPlayersPerCourt
+	}
 	const q = `
-		INSERT INTO games (chat_id, game_date, courts_count, courts, venue_id)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		INSERT INTO games (chat_id, game_date, courts_count, courts, sport, players_per_court, venue_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		          notified_day_before, completed, created_at`
 
 	slog.Debug("GameRepo.Create", "chat_id", game.ChatID, "game_date", game.GameDate)
 
-	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount, game.Courts, game.VenueID)
+	row := r.pool.QueryRow(ctx, q, game.ChatID, game.GameDate, game.CourtsCount, game.Courts, game.Sport, game.PlayersPerCourt, game.VenueID)
 	return scanGame(row)
 }
 
 func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.id, v.group_id, v.name, COALESCE((SELECT courts FROM venue_sports WHERE venue_id = v.id AND sport = 'squash'), ''), v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
@@ -52,7 +59,7 @@ func (r *GameRepo) GetByID(ctx context.Context, id int64) (*models.Game, error) 
 
 func (r *GameRepo) GetUpcomingGames(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE completed = false AND game_date > now()
@@ -87,7 +94,7 @@ func (r *GameRepo) UpdateMessageID(ctx context.Context, gameID, messageID int64)
 // GetGamesForDayBefore returns games scheduled in [from, to) where notified_day_before is false.
 func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE game_date >= $1 AND game_date < $2
@@ -116,7 +123,7 @@ func (r *GameRepo) GetGamesForDayBefore(ctx context.Context, from, to time.Time)
 // GetGamesForDayAfter returns games scheduled in [from, to) where completed is false and message_id is set.
 func (r *GameRepo) GetGamesForDayAfter(ctx context.Context, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE game_date >= $1 AND game_date < $2
@@ -153,9 +160,9 @@ func (r *GameRepo) MarkNotifiedDayBefore(ctx context.Context, gameID int64) erro
 // is false, with venue data joined. Used by FinalCourtCheckJob.
 func (r *GameRepo) GetUpcomingGamesForFinalCheck(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.id, v.group_id, v.name, COALESCE((SELECT courts FROM venue_sports WHERE venue_id = v.id AND sport = 'squash'), ''), v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
@@ -195,9 +202,9 @@ func (r *GameRepo) MarkFinalCourtCheckDone(ctx context.Context, gameID int64) er
 // is false, with venue data joined. Used by HalfwayCourtCheckJob.
 func (r *GameRepo) GetUpcomingGamesForHalfwayCheck(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.id, v.group_id, v.name, COALESCE((SELECT courts FROM venue_sports WHERE venue_id = v.id AND sport = 'squash'), ''), v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
@@ -243,7 +250,7 @@ func (r *GameRepo) MarkCompleted(ctx context.Context, gameID int64) error {
 // GetUpcomingGamesByChatIDs returns upcoming games for the given chat IDs.
 func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int64) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE completed = false AND game_date > now()
@@ -273,9 +280,9 @@ func (r *GameRepo) GetUpcomingGamesByChatIDs(ctx context.Context, chatIDs []int6
 // Returns nil, nil if the user has no upcoming registered games.
 func (r *GameRepo) GetNextGameForUser(ctx context.Context, userID int64) (*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.id, v.group_id, v.name, COALESCE((SELECT courts FROM venue_sports WHERE venue_id = v.id AND sport = 'squash'), ''), v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
@@ -304,9 +311,9 @@ func (r *GameRepo) GetNextGameForUser(ctx context.Context, userID int64) (*model
 // with their venue data joined. Used by the cancellation reminder scheduler.
 func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Game, error) {
 	const q = `
-		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.venue_id,
+		SELECT g.id, g.chat_id, g.message_id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.venue_id,
 		       g.notified_day_before, g.completed, g.created_at,
-		       v.id, v.group_id, v.name, v.courts, v.time_slots, v.address, v.created_at,
+		       v.id, v.group_id, v.name, COALESCE((SELECT courts FROM venue_sports WHERE venue_id = v.id AND sport = 'squash'), ''), v.time_slots, v.address, v.created_at,
 		       v.grace_period_hours, v.game_days, v.booking_opens_days, v.preventive_cancellation_fraction, v.last_booking_reminder_at,
 		       v.preferred_game_times, v.last_auto_booking_at, v.auto_booking_courts
 		FROM games g
@@ -339,7 +346,7 @@ func (r *GameRepo) GetUpcomingUnnotifiedGames(ctx context.Context) ([]*models.Ga
 // Used by the per-group day-after cleanup scheduler.
 func (r *GameRepo) GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE chat_id = $1
@@ -371,7 +378,7 @@ func (r *GameRepo) GetUncompletedGamesByGroupAndDay(ctx context.Context, chatID 
 // caller does not need further queries.
 func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]models.PlayerGame, error) {
 	const q = `
-		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
+		SELECT g.id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.completed,
 		       gp.status,
 		       (SELECT COUNT(*) FROM game_participations gp2
 		        WHERE gp2.game_id = g.id AND gp2.status = 'registered')
@@ -399,7 +406,7 @@ func (r *GameRepo) GetGamesForPlayer(ctx context.Context, playerID int64) ([]mod
 	for rows.Next() {
 		var pg models.PlayerGame
 		if err := rows.Scan(
-			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Completed,
+			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Sport, &pg.PlayersPerCourt, &pg.Completed,
 			&pg.ParticipationStatus, &pg.ParticipantCount,
 			&pg.VenueName, &pg.VenueAddress,
 			&pg.GroupTitle, &pg.Timezone,
@@ -466,7 +473,7 @@ func (r *GameRepo) PlayerCanAccessGame(ctx context.Context, userID, gameID int64
 // on "24 h after the day's last game start".
 func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID int64, from, to time.Time) ([]*models.Game, error) {
 	const q = `
-		SELECT id, chat_id, message_id, game_date, courts_count, courts, venue_id,
+		SELECT id, chat_id, message_id, game_date, courts_count, courts, sport, players_per_court, venue_id,
 		       notified_day_before, completed, created_at
 		FROM games
 		WHERE chat_id = $1
@@ -500,7 +507,7 @@ func (r *GameRepo) GetCompletedGamesByGroupAndDay(ctx context.Context, chatID in
 // window predicate in GameInResultWindow.
 func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, userID, groupID int64, days int) ([]models.PlayerGame, error) {
 	const q = `
-		SELECT g.id, g.game_date, g.courts_count, g.courts, g.completed,
+		SELECT g.id, g.game_date, g.courts_count, g.courts, g.sport, g.players_per_court, g.completed,
 		       gp.status,
 		       (SELECT COUNT(*) FROM game_participations gp2
 		        WHERE gp2.game_id = g.id AND gp2.status = 'registered')
@@ -516,6 +523,7 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, userID,
 		LEFT JOIN venues v ON v.id = g.venue_id
 		LEFT JOIN bot_groups bg ON bg.chat_id = g.chat_id
 		WHERE g.chat_id = $2
+		  AND g.players_per_court = 2
 		  AND g.game_date <= NOW()
 		  AND (NOW() AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
 		      - (g.game_date AT TIME ZONE COALESCE(NULLIF(bg.timezone, ''), 'UTC'))::date
@@ -534,7 +542,7 @@ func (r *GameRepo) GetRecentCompletedGamesForPlayer(ctx context.Context, userID,
 	for rows.Next() {
 		var pg models.PlayerGame
 		if err := rows.Scan(
-			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Completed,
+			&pg.ID, &pg.GameDate, &pg.CourtsCount, &pg.Courts, &pg.Sport, &pg.PlayersPerCourt, &pg.Completed,
 			&pg.ParticipationStatus, &pg.ParticipantCount,
 			&pg.VenueName, &pg.VenueAddress,
 			&pg.GroupTitle, &pg.Timezone,
@@ -585,7 +593,7 @@ type scanner interface {
 func scanGame(s scanner) (*models.Game, error) {
 	var g models.Game
 	err := s.Scan(
-		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
+		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.Sport, &g.PlayersPerCourt, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 	)
 	if err != nil {
@@ -616,7 +624,7 @@ func scanGameWithVenue(s scanner) (*models.Game, error) {
 		venueAutoBookingCourts              *string
 	)
 	err := s.Scan(
-		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.VenueID,
+		&g.ID, &g.ChatID, &g.MessageID, &g.GameDate, &g.CourtsCount, &g.Courts, &g.Sport, &g.PlayersPerCourt, &g.VenueID,
 		&g.NotifiedDayBefore, &g.Completed, &g.CreatedAt,
 		&venueID, &venueGroupID, &venueName, &venueCourts, &venueSlots, &venueAddr, &venueCreated,
 		&venueGracePeriodHours, &venueGameDays, &venueBookingOpensDays, &venuePreventiveCancellationFraction, &venueLastBookingReminder,

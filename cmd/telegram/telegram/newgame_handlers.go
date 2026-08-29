@@ -9,7 +9,10 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 )
 
 func (b *Bot) handleGroupSelection(ctx context.Context, cb *tgbotapi.CallbackQuery, key pendingGameKey, groupID int64) {
@@ -127,7 +130,7 @@ func (b *Bot) handleNewGameGroupVenue(ctx context.Context, cb *tgbotapi.Callback
 	b.createAndAnnounceGame(ctx, state.replyChatID, state.replyMsgID, state.groupID, state.gameDate, state.courts, &venueID, cb.From, lz)
 }
 
-func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, venueID *int64, actor *tgbotapi.User, userLz *i18n.Localizer) {
+func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, replyMsgID int, groupID int64, gameDate time.Time, courts string, venueID *int64, actor *tgbotapi.User, userLz *i18n.Localizer, requestedSport ...string) {
 	ru, err := b.resolveUser(ctx, actor)
 	if err != nil {
 		slog.Error("createAndAnnounceGame: resolve user", "err", err)
@@ -135,7 +138,11 @@ func (b *Bot) createAndAnnounceGame(ctx context.Context, replyChatID int64, repl
 		return
 	}
 
-	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts, venueID, ru.UserID, ru.DisplayName)
+	sportName := string(sport.Default)
+	if len(requestedSport) > 0 && requestedSport[0] != "" {
+		sportName = requestedSport[0]
+	}
+	game, err := b.client.CreateGame(ctx, groupID, gameDate, courts, sportName, venueID, ru.UserID, ru.DisplayName)
 	if err != nil {
 		slog.Error("create game", "err", err)
 		b.reply(replyChatID, replyMsgID, userLz.T(i18n.MsgFailedCreateGame))
@@ -253,19 +260,15 @@ func (b *Bot) handleNewGameDate(ctx context.Context, cb *tgbotapi.CallbackQuery,
 			v := venues[0]
 			venueID := v.ID
 			wizard := &newGameWizard{
-				gameDate:           date,
-				dateStr:            dateStr,
-				loc:                loc,
-				step:               wizardStepCourtPick,
-				venueID:            &venueID,
-				venueCourts:        splitCSV(v.Courts),
-				selectedCourts:     make(map[string]bool),
-				timeSlots:          splitCSV(v.TimeSlots),
-				preferredGameTimes: v.PreferredGameTimes,
+				gameDate: date,
+				dateStr:  dateStr,
+				loc:      loc,
+				venueID:  &venueID,
 			}
+			prepareWizardVenue(wizard, v)
 			b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 			b.answerCallback(cb.ID, "")
-			b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+			b.renderSportOrCourts(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
 			return
 		}
 		// Multiple venues — show picker without a manual fallback option.
@@ -393,13 +396,9 @@ func (b *Bot) handleNewGameGroup(ctx context.Context, cb *tgbotapi.CallbackQuery
 		v := venues[0]
 		venueID := v.ID
 		wizard.venueID = &venueID
-		wizard.venueCourts = splitCSV(v.Courts)
-		wizard.selectedCourts = make(map[string]bool)
-		wizard.timeSlots = splitCSV(v.TimeSlots)
-		wizard.preferredGameTimes = v.PreferredGameTimes
-		wizard.step = wizardStepCourtPick
+		prepareWizardVenue(wizard, v)
 		b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
-		b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+		b.renderSportOrCourts(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
 		return
 	}
 
@@ -434,7 +433,7 @@ func (b *Bot) processNewGameWizard(ctx context.Context, msg *tgbotapi.Message, w
 		b.processNewGameWizardTime(ctx, msg, wizard, lz)
 	case wizardStepCourts:
 		b.processNewGameWizardCourts(ctx, msg, wizard, lz)
-	case wizardStepGroup, wizardStepVenue, wizardStepCourtPick:
+	case wizardStepGroup, wizardStepVenue, wizardStepSport, wizardStepCourtPick:
 		// These steps use inline keyboard callbacks; text input is ignored.
 	}
 }
@@ -469,7 +468,7 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 				return // wizard intact — user can retry
 			}
 			b.pendingNewGameWizard.Delete(msg.Chat.ID)
-			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, msg.From, lz)
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, msg.From, lz, wizard.sport)
 			return
 		}
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
@@ -479,7 +478,7 @@ func (b *Bot) processNewGameWizardTime(ctx context.Context, msg *tgbotapi.Messag
 			return
 		}
 		if len(adminGroupIDs) == 1 {
-			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, msg.From, lz)
+			b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, msg.From, lz, wizard.sport)
 			return
 		}
 		// Multiple groups, no pre-selection.
@@ -533,7 +532,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 			return // wizard intact — user can retry courts input
 		}
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, wizard.gameDate, courts, wizard.venueID, msg.From, lz)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, wizard.groupID, wizard.gameDate, courts, wizard.venueID, msg.From, lz, wizard.sport)
 		return
 	}
 
@@ -546,7 +545,7 @@ func (b *Bot) processNewGameWizardCourts(ctx context.Context, msg *tgbotapi.Mess
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, wizard.venueID, msg.From, lz)
+		b.createAndAnnounceGame(ctx, msg.Chat.ID, msg.MessageID, adminGroupIDs[0], wizard.gameDate, courts, wizard.venueID, msg.From, lz, wizard.sport)
 		return
 	}
 
@@ -605,15 +604,68 @@ func (b *Bot) handleNewGameVenue(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 
 	wizard.venueID = &venueID
-	wizard.venueCourts = splitCSV(venue.Courts)
-	wizard.selectedCourts = make(map[string]bool)
-	wizard.timeSlots = splitCSV(venue.TimeSlots)
-	wizard.preferredGameTimes = venue.PreferredGameTimes
-	wizard.step = wizardStepCourtPick
+	prepareWizardVenue(wizard, venue)
 	b.pendingNewGameWizard.Store(cb.Message.Chat.ID, wizard)
 	b.answerCallback(cb.ID, "")
 
-	b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+	b.renderSportOrCourts(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+}
+
+func prepareWizardVenue(wizard *newGameWizard, venue *models.Venue) {
+	wizard.venueSports = venue.Sports
+	if len(wizard.venueSports) == 0 {
+		wizard.venueSports = []models.VenueSport{{Sport: string(sport.Default), Courts: venue.Courts}}
+	}
+	wizard.timeSlots = splitCSV(venue.TimeSlots)
+	wizard.preferredGameTimes = venue.PreferredGameTimes
+	wizard.selectedCourts = make(map[string]bool)
+	if len(wizard.venueSports) == 1 {
+		wizard.sport = wizard.venueSports[0].Sport
+		wizard.venueCourts = splitCSV(wizard.venueSports[0].Courts)
+		wizard.step = wizardStepCourtPick
+		return
+	}
+	wizard.step = wizardStepSport
+}
+
+func (b *Bot) renderSportOrCourts(chatID int64, messageID int, wizard *newGameWizard, lz *i18n.Localizer) {
+	if wizard.step == wizardStepSport {
+		var rows [][]tgbotapi.InlineKeyboardButton
+		for _, venueSport := range wizard.venueSports {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(
+				gameformat.SportName(venueSport.Sport, lz), "ng_sport:"+venueSport.Sport)))
+		}
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+		b.editText(chatID, messageID, lz.T(i18n.MsgNewGameSelectSport), &keyboard)
+		return
+	}
+	b.renderCourtPickKeyboard(chatID, messageID, wizard, lz)
+}
+
+func (b *Bot) handleNewGameSport(ctx context.Context, cb *tgbotapi.CallbackQuery, name string) {
+	lz := b.userLocalizer(ctx, cb.From)
+	raw, ok := b.pendingNewGameWizard.Load(cb.Message.Chat.ID)
+	if !ok {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wizard := raw.(*newGameWizard)
+	if wizard.step != wizardStepSport {
+		b.answerCallback(cb.ID, "")
+		return
+	}
+	for _, venueSport := range wizard.venueSports {
+		if venueSport.Sport == name {
+			wizard.sport = name
+			wizard.venueCourts = splitCSV(venueSport.Courts)
+			wizard.selectedCourts = make(map[string]bool)
+			wizard.step = wizardStepCourtPick
+			b.answerCallback(cb.ID, "")
+			b.renderCourtPickKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, wizard, lz)
+			return
+		}
+	}
+	b.answerCallback(cb.ID, lz.T(i18n.MsgSomethingWentWrong))
 }
 
 func (b *Bot) renderCourtPickKeyboard(chatID int64, messageID int, wizard *newGameWizard, lz *i18n.Localizer) {
@@ -817,7 +869,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 		edit := tgbotapi.NewEditMessageText(cb.Message.Chat.ID, cb.Message.MessageID, lz.T(i18n.MsgCreatingGame))
 		edit.ReplyMarkup = &emptyKeyboard
 		b.api.Send(edit) //nolint:errcheck
-		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, cb.From, lz)
+		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, wizard.groupID, gameDate, courts, wizard.venueID, cb.From, lz, wizard.sport)
 		return
 	}
 
@@ -836,7 +888,7 @@ func (b *Bot) handleNewGameTimeSlot(ctx context.Context, cb *tgbotapi.CallbackQu
 	}
 
 	if len(adminGroupIDs) == 1 {
-		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, cb.From, lz)
+		b.createAndAnnounceGame(ctx, cb.Message.Chat.ID, cb.Message.MessageID, adminGroupIDs[0], gameDate, courts, wizard.venueID, cb.From, lz, wizard.sport)
 		return
 	}
 

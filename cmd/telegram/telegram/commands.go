@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
@@ -307,7 +308,7 @@ func formatGamesListMessage(games []*models.Game, groups []models.Group, lz *i18
 			datePrefix = lz.T(i18n.MsgUnpublishedMarker) + " "
 		}
 		sb.WriteString(fmt.Sprintf("%s📅 %s · %s\n", datePrefix, lz.FormatGameDate(localDate), localDate.Format("15:04")))
-		sb.WriteString(lz.Tf(i18n.MsgGameCourtsCapacity, escapeMarkdown(game.Courts), game.CourtsCount*2))
+		sb.WriteString(lz.Tf(i18n.MsgGameCourtsCapacity, gameformat.UnitName(game.Sport, lz), escapeMarkdown(game.Courts), game.Capacity()))
 		sb.WriteString(lz.Tf(i18n.MsgGroupLabel, escapeMarkdown(title)))
 
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(

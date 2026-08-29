@@ -34,7 +34,8 @@ Key directories:
 - `cmd/web` — web UI (`web`) entry point
 - `internal/config` — environment-driven config (`TelegramConfig` / `ManagementConfig` / `BookingConfig` / `WebConfig`)
 - `internal/i18n` — localisation: `Lang` type, `Normalize()`, `Localizer` (T/Tf/FormatGameDate/FormatUpdatedAt), translation maps for en/de/ru
-- `internal/models` — core domain models (User, UserIdentity, Game, Player, GameParticipation, GuestParticipation, Group, Venue, VenueCredential, PlayerGame, AuditEvent); `User` is the canonical identity (one or more `UserIdentity` rows per provider), `Player.UserID` links a game participant back to it
+- `internal/sport` — supported-sport registry (default/max players per unit, unit kind, emoji)
+- `internal/models` — core domain models; venues contain per-sport unit lists and games snapshot sport plus resolved players-per-unit for capacity calculations
 - `cmd/management/api` — HTTP handlers for the management service REST API
 - `cmd/management/service` — business logic layer; defines repository and Telegram interfaces (`TelegramAPI`, `Notifier`, `GameRepository`, `VenueCredentialRepository`, …); four focused job structs (`CancellationReminderJob`, `BookingReminderJob`, `DayAfterCleanupJob`, `AutoBookingJob`) orchestrated by a thin `Scheduler`; `ParticipationService` fires async Telegram edits via the injected `Notifier`; `VenueCredentialService` manages AES-256-GCM encrypted per-venue booking credentials; `Encryptor` (encryptor.go) provides `Encrypt`/`Decrypt` using `CREDENTIALS_ENCRYPTION_KEY`; shared timezone/language helpers in `group_resolver.go`
 - `cmd/management/storage` — SQL repository implementations satisfying the interfaces defined in the service package

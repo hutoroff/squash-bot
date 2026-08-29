@@ -22,7 +22,7 @@ func TestSchedReminderEvenNoCancel_Wording(t *testing.T) {
 	for _, lang := range []i18n.Lang{i18n.En, i18n.De, i18n.Ru} {
 		lz := i18n.New(lang)
 		// 2 players, 6-person capacity (3 courts) — even count, under capacity, nothing canceled.
-		msg := lz.Tf(i18n.SchedReminderEvenNoCancel, "15.04 18:00", 2, 6, 3)
+		msg := lz.Tf(i18n.SchedReminderEvenNoCancel, "15.04 18:00", 2, 6, 3, "courts")
 
 		// Must be a warning, not a success confirmation.
 		if strings.Contains(msg, "✅") {

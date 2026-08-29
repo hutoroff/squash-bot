@@ -99,6 +99,8 @@ func (g *GamesHandler) handleListGames(w http.ResponseWriter, r *http.Request) {
 		GameDate            string `json:"game_date"`
 		CourtsCount         int    `json:"courts_count"`
 		Courts              string `json:"courts"`
+		Sport               string `json:"sport"`
+		PlayersPerCourt     int    `json:"players_per_court"`
 		Completed           bool   `json:"completed"`
 		ParticipationStatus string `json:"participation_status"`
 		ParticipantCount    int    `json:"participant_count"`

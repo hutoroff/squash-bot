@@ -11,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 )
 
 // autoBookingCourtDuration is the duration of a court booking created automatically.
@@ -298,11 +299,13 @@ func (j *AutoBookingJob) createUnpublishedGame(
 
 	venueID := venue.ID
 	created, err := j.gameRepo.Create(ctx, &models.Game{
-		ChatID:      chatID,
-		GameDate:    gameDateWithTime,
-		Courts:      courts,
-		CourtsCount: courtsCount,
-		VenueID:     &venueID,
+		ChatID:          chatID,
+		GameDate:        gameDateWithTime,
+		Courts:          courts,
+		CourtsCount:     courtsCount,
+		Sport:           string(sport.Default),
+		PlayersPerCourt: playersPerCourtFor(venue, sport.Default),
+		VenueID:         &venueID,
 		// MessageID intentionally nil — game is unpublished until BookingReminderJob or manual publish.
 	})
 	if err != nil {
@@ -320,6 +323,15 @@ func (j *AutoBookingJob) createUnpublishedGame(
 	j.logger.Info("auto-booking: unpublished game created",
 		"game_id", created.ID, "venue_id", venue.ID,
 		"game_date", gameDate.Format(time.DateOnly), "game_time", gameTime)
+}
+
+func playersPerCourtFor(venue *models.Venue, name sport.Sport) int {
+	for _, venueSport := range venue.Sports {
+		if venueSport.Sport == string(name) && venueSport.PlayersPerCourt != nil {
+			return *venueSport.PlayersPerCourt
+		}
+	}
+	return sport.Get(name).DefaultPlayersPerCourt
 }
 
 // notifyAutoBookingGameCreateFailed DMs group admins when booking succeeded but game DB insert failed.

@@ -107,6 +107,8 @@ ServiceStateRepository — Get(ctx, key) (string, error), Set(ctx, key, value st
                    — backed by `service_state` table (TEXT key PK, TEXT value); `pgx.ErrNoRows` when key absent
 VenueRepository  — Create, GetByID, GetByIDAndGroupID, GetByGroupID, Update, Delete,
                    SetLastBookingReminderAt, SetLastAutoBookingAt
+
+Sports are defined in `internal/sport`. `venue_sports` stores venue unit lists and optional players-per-unit overrides; games snapshot `sport` and resolved `players_per_court`. Capacity uses `Game.Capacity()`. Results require two players per unit, and Eversports auto-booking remains squash-only.
 VenueCredentialRepository — Create(venueID, login, encPassword, priority, maxCourts),
                    ListByVenueID, ListWithPasswordByVenueID, GetWithPasswordByID(id),
                    Delete(id, venueID), ExistsByLogin(venueID, login),

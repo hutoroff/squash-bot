@@ -8,16 +8,22 @@ func IsPreventiveCancellationFraction(value string) bool {
 	return value == "1/3" || value == "1/2" || value == "2/3"
 }
 
-// Venue represents a physical location where squash games take place.
-// A venue is owned by a specific group and defines available courts and time slots.
+type VenueSport struct {
+	Sport           string `json:"sport"`
+	Courts          string `json:"courts"`
+	PlayersPerCourt *int   `json:"players_per_court,omitempty"`
+}
+
+// Venue represents a physical location where games take place.
 type Venue struct {
-	ID        int64     `json:"id"`
-	GroupID   int64     `json:"group_id"`
-	Name      string    `json:"name"`
-	Courts    string    `json:"courts"`     // comma-separated court identifiers, e.g. "1,2,3,4,5,6"
-	TimeSlots string    `json:"time_slots"` // comma-separated HH:MM times, e.g. "18:00,19:00,20:00"
-	Address   string    `json:"address,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64        `json:"id"`
+	GroupID   int64        `json:"group_id"`
+	Name      string       `json:"name"`
+	Courts    string       `json:"courts"` // derived legacy alias for squash courts
+	Sports    []VenueSport `json:"sports"`
+	TimeSlots string       `json:"time_slots"` // comma-separated HH:MM times, e.g. "18:00,19:00,20:00"
+	Address   string       `json:"address,omitempty"`
+	CreatedAt time.Time    `json:"created_at"`
 
 	// Scheduling configuration
 	GracePeriodHours               int        `json:"grace_period_hours"`                 // hours before game when cancellation window closes (default 24)
@@ -30,4 +36,13 @@ type Venue struct {
 	AutoBookingEnabled             bool       `json:"auto_booking_enabled"`               // whether automatic court booking is enabled for this venue
 	AutoBookingCourts              string     `json:"auto_booking_courts"`                // ordered comma-separated court IDs for auto-booking; subset of courts (empty = all courts eligible)
 	AutoBookingCourtsCount         int        `json:"auto_booking_courts_count"`          // how many courts to book per game; 0 = skip booking (default 3)
+}
+
+func (v *Venue) CourtsFor(sport string) string {
+	for _, venueSport := range v.Sports {
+		if venueSport.Sport == sport {
+			return venueSport.Courts
+		}
+	}
+	return ""
 }

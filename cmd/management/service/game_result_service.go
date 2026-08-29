@@ -24,6 +24,7 @@ var (
 	ErrGameResultWindowClosed = errors.New("game is outside the result submission window")
 	ErrOpponentOptedOut       = errors.New("opponent has opted out of game results")
 	ErrAuthorOptedOut         = errors.New("author has opted out of game results")
+	ErrResultsNotSupported    = errors.New("results are not supported for this game")
 
 	scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 )
@@ -123,6 +124,9 @@ func (s *GameResultService) Submit(
 			return nil, ErrGameNotFound
 		}
 		return nil, fmt.Errorf("get game: %w", err)
+	}
+	if game.PlayersPerCourt != 0 && game.PlayersPerCourt != 2 {
+		return nil, ErrResultsNotSupported
 	}
 
 	// Reject games outside the submission window (future, or older than the

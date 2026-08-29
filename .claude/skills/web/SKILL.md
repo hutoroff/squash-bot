@@ -244,13 +244,13 @@ so the frontend maps them to text.
 | `/` | `GamesPage` | |
 | `/groups` | `GroupsPage` | visible to everyone; empty state for non-admins (no more 403) |
 | `/groups/:chatId` | `GroupSettingsPage` | General / Notifications / Auto-booking / Venues; optimistic toggles with rollback; master switch owner-only |
-| `/groups/:chatId/venues/new`, `/:venueId` | `VenueFormPage` | full-object save; chip editors for courts, time slots, game days, preferred times; credentials section in edit mode only |
+| `/groups/:chatId/venues/new`, `/:venueId` | `VenueFormPage` | full-object save; per-sport unit/player editors plus schedule and booking settings; credentials in edit mode |
 | `/settings` | `SettingsPage` | DM language + results opt-out |
 | `/audit` | `AuditPage` | |
 | `/users` | `UsersPage` | server-owner only (route conditionally rendered in `App.tsx`, nav link conditionally rendered in `Dashboard.tsx`, both gated on `user.is_server_owner`); lists every user with an owner-role checkbox; a 409 from `setServerOwner` shows "Cannot remove the last server owner." and rolls back the optimistic toggle; a `Set<userID>` (not a single ID) tracks in-flight saves so toggling two different rows concurrently can't let one request's completion re-enable a checkbox whose own save is still pending |
 
 Shared bits: `components/Field.tsx` (label + permanent help text — every settings field has one),
-`settingsLabels.ts` (`LANGUAGES`, `WEEKDAYS` indexed by Go `time.Weekday`, `READINESS_TEXT`,
+`settingsLabels.ts` (`SPORTS`, `LANGUAGES`, `WEEKDAYS` indexed by Go `time.Weekday`, `READINESS_TEXT`,
 `splitList`/`joinList` for the comma-separated storage columns, `scheduleSummary`).
 Timezones come from native `Intl.supportedValuesOf('timeZone')` — no hardcoded list, no dependency.
 

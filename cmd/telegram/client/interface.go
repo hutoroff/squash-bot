@@ -27,7 +27,7 @@ type ManagementClient interface {
 	SetUserResultsOptOut(ctx context.Context, userID int64, optOut bool) error
 
 	// Games
-	CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorUserID int64, actorDisplay string) (*models.Game, error)
+	CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts, sport string, venueID *int64, actorUserID int64, actorDisplay string) (*models.Game, error)
 	GetGameByID(ctx context.Context, id int64) (*models.Game, error)
 	UpdateMessageID(ctx context.Context, gameID, messageID int64) error
 	UpdateCourts(ctx context.Context, gameID, groupID int64, courts, actorDisplay string, actorUserID int64) error
@@ -57,10 +57,10 @@ type ManagementClient interface {
 	SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, allowed bool, actorUserID int64, actorDisplay string) error
 
 	// Venues
-	CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error)
+	CreateVenue(ctx context.Context, params VenueParams) (*models.Venue, error)
 	GetVenuesByGroup(ctx context.Context, groupID int64) ([]*models.Venue, error)
 	GetVenueByID(ctx context.Context, id int64) (*models.Venue, error)
-	UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error)
+	UpdateVenue(ctx context.Context, id int64, params VenueParams) (*models.Venue, error)
 	DeleteVenue(ctx context.Context, id, groupID, actorUserID int64, actorDisplay string) error
 
 	// Venue credentials

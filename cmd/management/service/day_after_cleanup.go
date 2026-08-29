@@ -149,7 +149,7 @@ func (j *DayAfterCleanupJob) processDayAfter(ctx context.Context, game *models.G
 
 // formatCompletedMessage renders the final game message without interactive buttons.
 func formatCompletedMessage(game *models.Game, participants []*models.GameParticipation, guests []*models.GuestParticipation, loc *time.Location, lz *i18n.Localizer) string {
-	capacity := game.CourtsCount * 2
+	capacity := game.Capacity()
 
 	var registered []*models.GameParticipation
 	for _, p := range participants {
@@ -162,9 +162,9 @@ func formatCompletedMessage(game *models.Game, participants []*models.GamePartic
 	localDate := game.GameDate.In(loc)
 
 	var sb strings.Builder
-	sb.WriteString(lz.T(i18n.GameHeader) + "\n\n")
+	sb.WriteString(gameformat.GameHeader(game.Sport, lz) + "\n\n")
 	sb.WriteString(fmt.Sprintf("📅 %s · %s\n", lz.FormatGameDate(localDate), localDate.Format("15:04")))
-	sb.WriteString(lz.Tf(i18n.GameCourts, game.Courts, capacity) + "\n\n")
+	sb.WriteString(lz.Tf(i18n.GameCourts, gameformat.UnitName(game.Sport, lz), game.Courts, capacity) + "\n\n")
 	sb.WriteString(lz.Tf(i18n.GamePlayers, totalCount, capacity) + "\n")
 
 	num := 1

@@ -9,6 +9,7 @@ import {
   removeGuest,
   ApiError,
 } from '../api/games'
+import { SPORTS } from '../settingsLabels'
 
 interface GameCardProps {
   game: Game
@@ -39,7 +40,8 @@ export default function GameCard({ game, user }: GameCardProps) {
   const [actionLoading, setActionLoading] = useState(false)
 
   const { weekday, date, time } = formatGameDate(game.game_date, game.timezone)
-  const capacity = game.courts_count * 2
+  const sport = SPORTS[game.sport] ?? SPORTS.squash
+  const capacity = game.courts_count * (game.players_per_court ?? 2)
   const courts = game.courts.split(',').map(c => c.trim()).filter(Boolean)
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function GameCard({ game, user }: GameCardProps) {
 
       {/* Courts */}
       <div className="game-card__courts">
-        🎾 {courts.join(' · ')}
+        {sport.emoji} {courts.join(' · ')}
       </div>
 
       {/* Group */}

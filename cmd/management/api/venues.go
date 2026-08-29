@@ -6,42 +6,46 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
 )
 
 type venueRequest struct {
-	GroupID                        int64   `json:"group_id"`
-	Name                           string  `json:"name"`
-	Courts                         string  `json:"courts"`
-	TimeSlots                      string  `json:"time_slots"`
-	Address                        string  `json:"address"`
-	GracePeriodHours               int     `json:"grace_period_hours"`
-	GameDays                       string  `json:"game_days"`
-	BookingOpensDays               int     `json:"booking_opens_days"`
-	PreventiveCancellationFraction *string `json:"preventive_cancellation_fraction"`
-	PreferredGameTimes             string  `json:"preferred_game_times"`
-	AutoBookingCourts              string  `json:"auto_booking_courts"`
-	AutoBookingEnabled             bool    `json:"auto_booking_enabled"`
-	AutoBookingCourtsCount         int     `json:"auto_booking_courts_count"`
-	ActorUserID                    int64   `json:"actor_user_id"`
-	ActorDisplay                   string  `json:"actor_display"`
+	GroupID                        int64               `json:"group_id"`
+	Name                           string              `json:"name"`
+	Courts                         string              `json:"courts"`
+	Sports                         []models.VenueSport `json:"sports"`
+	TimeSlots                      string              `json:"time_slots"`
+	Address                        string              `json:"address"`
+	GracePeriodHours               int                 `json:"grace_period_hours"`
+	GameDays                       string              `json:"game_days"`
+	BookingOpensDays               int                 `json:"booking_opens_days"`
+	PreventiveCancellationFraction *string             `json:"preventive_cancellation_fraction"`
+	PreferredGameTimes             string              `json:"preferred_game_times"`
+	AutoBookingCourts              string              `json:"auto_booking_courts"`
+	AutoBookingEnabled             bool                `json:"auto_booking_enabled"`
+	AutoBookingCourtsCount         int                 `json:"auto_booking_courts_count"`
+	ActorUserID                    int64               `json:"actor_user_id"`
+	ActorDisplay                   string              `json:"actor_display"`
 }
 
 func (r venueRequest) venue(id int64) *models.Venue {
 	return &models.Venue{
-		ID:                     id,
-		GroupID:                r.GroupID,
-		Name:                   r.Name,
-		Courts:                 r.Courts,
-		TimeSlots:              r.TimeSlots,
-		Address:                r.Address,
-		GracePeriodHours:       r.GracePeriodHours,
-		GameDays:               r.GameDays,
-		BookingOpensDays:       r.BookingOpensDays,
-		PreferredGameTimes:     r.PreferredGameTimes,
-		AutoBookingCourts:      r.AutoBookingCourts,
-		AutoBookingEnabled:     r.AutoBookingEnabled,
-		AutoBookingCourtsCount: r.AutoBookingCourtsCount,
+		ID:                             id,
+		GroupID:                        r.GroupID,
+		Name:                           r.Name,
+		Courts:                         r.Courts,
+		Sports:                         r.Sports,
+		TimeSlots:                      r.TimeSlots,
+		Address:                        r.Address,
+		GracePeriodHours:               r.GracePeriodHours,
+		GameDays:                       r.GameDays,
+		BookingOpensDays:               r.BookingOpensDays,
+		PreferredGameTimes:             r.PreferredGameTimes,
+		AutoBookingCourts:              r.AutoBookingCourts,
+		AutoBookingEnabled:             r.AutoBookingEnabled,
+		AutoBookingCourtsCount:         r.AutoBookingCourtsCount,
+		PreventiveCancellationFraction: models.PreventiveCancellationFractionDefault,
 	}
 }
 
@@ -52,7 +56,7 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.GroupID == 0 || req.Name == "" || req.Courts == "" {
+	if req.GroupID == 0 || req.Name == "" || (req.Courts == "" && len(req.Sports) == 0) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
@@ -69,6 +73,10 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
+	}
+	if req.PreventiveCancellationFraction != nil && !models.IsPreventiveCancellationFraction(*req.PreventiveCancellationFraction) {
+		writeError(w, http.StatusBadRequest, "invalid preventive_cancellation_fraction")
+		return
 	}
 	if req.AutoBookingEnabled {
 		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
@@ -88,7 +96,6 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	venueInput := req.venue(0)
-	venueInput.PreventiveCancellationFraction = models.PreventiveCancellationFractionDefault
 	if req.PreventiveCancellationFraction != nil {
 		venueInput.PreventiveCancellationFraction = *req.PreventiveCancellationFraction
 	}
@@ -161,7 +168,7 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.GroupID == 0 || req.Name == "" || req.Courts == "" {
+	if req.GroupID == 0 || req.Name == "" || (req.Courts == "" && len(req.Sports) == 0) {
 		writeError(w, http.StatusBadRequest, "group_id, name, and courts are required")
 		return
 	}
@@ -178,6 +185,10 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BookingOpensDays == 0 {
 		req.BookingOpensDays = 14
+	}
+	if req.PreventiveCancellationFraction != nil && !models.IsPreventiveCancellationFraction(*req.PreventiveCancellationFraction) {
+		writeError(w, http.StatusBadRequest, "invalid preventive_cancellation_fraction")
+		return
 	}
 	if req.AutoBookingEnabled {
 		group, err := h.groupRepo.GetByID(r.Context(), req.GroupID)
@@ -196,7 +207,28 @@ func (h *Handler) updateVenue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	venue, err := h.venueService.UpdateVenue(r.Context(), req.venue(id), req.PreventiveCancellationFraction)
+	venueInput := req.venue(id)
+	if req.Sports == nil {
+		existing, lookupErr := h.venueService.GetVenueByIDAndGroupID(r.Context(), id, req.GroupID)
+		if lookupErr != nil {
+			writeError(w, http.StatusNotFound, "venue not found")
+			return
+		}
+		if existing != nil {
+			venueInput.Sports = existing.Sports
+		}
+		updatedSquash := false
+		for i := range venueInput.Sports {
+			if venueInput.Sports[i].Sport == string(sport.Default) {
+				venueInput.Sports[i].Courts = req.Courts
+				updatedSquash = true
+			}
+		}
+		if !updatedSquash {
+			venueInput.Sports = append(venueInput.Sports, models.VenueSport{Sport: string(sport.Default), Courts: req.Courts})
+		}
+	}
+	venue, err := h.venueService.UpdateVenue(r.Context(), venueInput, req.PreventiveCancellationFraction)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidVenue) {
 			writeError(w, http.StatusBadRequest, err.Error())

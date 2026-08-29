@@ -99,11 +99,12 @@ func (c *Client) SetUserResultsOptOut(ctx context.Context, userID int64, optOut 
 
 // ── Games ─────────────────────────────────────────────────────────────────────
 
-func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, actorUserID int64, actorDisplay string) (*models.Game, error) {
+func (c *Client) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts, sport string, venueID *int64, actorUserID int64, actorDisplay string) (*models.Game, error) {
 	body := map[string]any{
 		"chat_id":       chatID,
 		"game_date":     gameDate,
 		"courts":        courts,
+		"sport":         sport,
 		"venue_id":      venueID,
 		"actor_user_id": actorUserID,
 		"actor_display": actorDisplay,
@@ -406,33 +407,27 @@ func (c *Client) SetGroupAutoBookingAllowed(ctx context.Context, chatID int64, a
 
 // ── Venues ────────────────────────────────────────────────────────────────────
 
-type venueBody struct {
-	GroupID                int64  `json:"group_id"`
-	Name                   string `json:"name"`
-	Courts                 string `json:"courts"`
-	TimeSlots              string `json:"time_slots"`
-	Address                string `json:"address,omitempty"`
-	GracePeriodHours       int    `json:"grace_period_hours"`
-	GameDays               string `json:"game_days"`
-	BookingOpensDays       int    `json:"booking_opens_days"`
-	PreferredGameTimes     string `json:"preferred_game_times"`
-	AutoBookingCourts      string `json:"auto_booking_courts"`
-	AutoBookingEnabled     bool   `json:"auto_booking_enabled"`
-	AutoBookingCourtsCount int    `json:"auto_booking_courts_count"`
-	ActorUserID            int64  `json:"actor_user_id,omitempty"`
-	ActorDisplay           string `json:"actor_display,omitempty"`
+type VenueParams struct {
+	GroupID                int64               `json:"group_id"`
+	Name                   string              `json:"name"`
+	Courts                 string              `json:"courts"`
+	Sports                 []models.VenueSport `json:"sports,omitempty"`
+	TimeSlots              string              `json:"time_slots"`
+	Address                string              `json:"address,omitempty"`
+	GracePeriodHours       int                 `json:"grace_period_hours"`
+	GameDays               string              `json:"game_days"`
+	BookingOpensDays       int                 `json:"booking_opens_days"`
+	PreferredGameTimes     string              `json:"preferred_game_times"`
+	AutoBookingCourts      string              `json:"auto_booking_courts"`
+	AutoBookingEnabled     bool                `json:"auto_booking_enabled"`
+	AutoBookingCourtsCount int                 `json:"auto_booking_courts_count"`
+	ActorUserID            int64               `json:"actor_user_id,omitempty"`
+	ActorDisplay           string              `json:"actor_display,omitempty"`
 }
 
-func (c *Client) CreateVenue(ctx context.Context, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error) {
-	body := venueBody{
-		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
-		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
-		ActorUserID: actorUserID, ActorDisplay: actorDisplay,
-	}
+func (c *Client) CreateVenue(ctx context.Context, params VenueParams) (*models.Venue, error) {
 	var venue models.Venue
-	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", body, &venue); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/v1/venues", params, &venue); err != nil {
 		return nil, err
 	}
 	return &venue, nil
@@ -455,16 +450,9 @@ func (c *Client) GetVenueByID(ctx context.Context, id int64) (*models.Venue, err
 	return &venue, nil
 }
 
-func (c *Client) UpdateVenue(ctx context.Context, id, groupID int64, name, courts, timeSlots, address string, gracePeriodHours int, gameDays string, bookingOpensDays int, preferredGameTimes, autoBookingCourts string, autoBookingEnabled bool, autoBookingCourtsCount int, actorUserID int64, actorDisplay string) (*models.Venue, error) {
-	body := venueBody{
-		GroupID: groupID, Name: name, Courts: courts, TimeSlots: timeSlots, Address: address,
-		GracePeriodHours: gracePeriodHours, GameDays: gameDays, BookingOpensDays: bookingOpensDays,
-		PreferredGameTimes: preferredGameTimes, AutoBookingCourts: autoBookingCourts,
-		AutoBookingEnabled: autoBookingEnabled, AutoBookingCourtsCount: autoBookingCourtsCount,
-		ActorUserID: actorUserID, ActorDisplay: actorDisplay,
-	}
+func (c *Client) UpdateVenue(ctx context.Context, id int64, params VenueParams) (*models.Venue, error) {
 	var venue models.Venue
-	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), body, &venue); err != nil {
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/venues/"+strconv.FormatInt(id, 10), params, &venue); err != nil {
 		return nil, err
 	}
 	return &venue, nil
@@ -818,6 +806,8 @@ var ErrGameResultNotPending = errors.New("game result is not pending")
 // ErrResultOpponentOptedOut is returned by SubmitGameResult when the opponent has opted out.
 var ErrResultOpponentOptedOut = errors.New("opponent has opted out of game results")
 
+var ErrResultsNotSupported = errors.New("results are not supported for this game")
+
 func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
 	body := map[string]any{
 		"game_id":            gameID,
@@ -841,6 +831,9 @@ func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorUserID, opp
 		httpErr, _ := parsedErr.(*HTTPError)
 		if httpErr != nil && httpErr.Message == "opponent_opted_out" {
 			return nil, ErrResultOpponentOptedOut
+		}
+		if httpErr != nil && httpErr.Message == "results_not_supported" {
+			return nil, ErrResultsNotSupported
 		}
 		return nil, parsedErr
 	}

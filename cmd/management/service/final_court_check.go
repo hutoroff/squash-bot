@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
@@ -108,11 +109,12 @@ func (j *FinalCourtCheckJob) processFinalCheck(ctx context.Context, game *models
 	}
 
 	count := registeredCount + guestCount
-	capacity := game.CourtsCount * 2
+	capacity := game.Capacity()
+	playersPerCourt := capacity / game.CourtsCount
 
 	courtsToCancel := 0
 	if count < capacity {
-		courtsToCancel = (capacity - count) / 2
+		courtsToCancel = (capacity - count) / playersPerCourt
 	}
 
 	if courtsToCancel == 0 {
@@ -171,19 +173,21 @@ func (j *FinalCourtCheckJob) processFinalCheck(ctx context.Context, game *models
 
 	gameDateTime := game.GameDate.In(displayLoc).Format("02.01 15:04")
 	newCourtsCount := result.remainingCount
-	newCapacity := newCourtsCount * 2
+	newCapacity := newCourtsCount * playersPerCourt
 	canceledStr := formatCanceledCourts(result.canceledCourts)
+	freeSpots := playersPerCourt - count%playersPerCourt
 
-	scenario := determineScenario(count, newCourtsCount, result.canceledCourts)
+	scenario := determineScenario(count, newCourtsCount, result.canceledCourts, playersPerCourt)
 
 	var text string
+	unit := gameformat.UnitName(game.Sport, lz)
 	switch scenario {
 	case "all_canceled":
-		text = lz.Tf(i18n.SchedFinalCheckAllCanceled, canceledStr, gameDateTime)
+		text = lz.Tf(i18n.SchedFinalCheckAllCanceled, unit, canceledStr, gameDateTime)
 	case "odd_canceled":
-		text = lz.Tf(i18n.SchedFinalCheckOddCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedFinalCheckOddCanceled, unit, canceledStr, freeSpots, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	default: // canceled_balanced and any unexpected scenario
-		text = lz.Tf(i18n.SchedFinalCheckCanceled, canceledStr, gameDateTime, count, newCapacity, newCourtsCount)
+		text = lz.Tf(i18n.SchedFinalCheckCanceled, unit, canceledStr, gameDateTime, count, newCapacity, newCourtsCount, unit)
 	}
 
 	j.logger.Info("final court check: courts released",

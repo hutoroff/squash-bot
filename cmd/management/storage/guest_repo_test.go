@@ -314,3 +314,27 @@ func TestGuestRepo_GetCountByGame(t *testing.T) {
 		t.Errorf("count after adding 2: got %d, want 2", count)
 	}
 }
+
+func TestGuestRepo_AddGuest_UsesPlayersPerCourt(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	game := newGame(-1, time.Now().Add(24*time.Hour), "1")
+	game.Sport = "padel"
+	game.PlayersPerCourt = 4
+	g, err := storage.NewGameRepo(testPool).Create(ctx, game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := mustCreatePlayer(t, ctx, storage.NewPlayerRepo(testPool), 400008, "padel_inviter")
+	repo := storage.NewGuestRepo(testPool)
+	for i := 0; i < 4; i++ {
+		if added, err := repo.AddGuest(ctx, g.ID, p.ID); err != nil || !added {
+			t.Fatalf("guest %d: added=%v err=%v", i+1, added, err)
+		}
+	}
+	if added, err := repo.AddGuest(ctx, g.ID, p.ID); err != nil || added {
+		t.Fatalf("over capacity: added=%v err=%v", added, err)
+	}
+}

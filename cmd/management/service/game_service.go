@@ -11,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,6 +19,7 @@ var (
 	ErrGameNotFound            = errors.New("game not found")
 	ErrGameAlreadyPublished    = errors.New("game already published")
 	ErrAutoBookingNotAvailable = errors.New("auto-booking not available for this game")
+	ErrInvalidGame             = errors.New("invalid game")
 )
 
 // BookGameCourtsResult is returned by BookGameCourts.
@@ -104,20 +106,46 @@ func (s *GameService) SetNotifier(n Notifier) {
 	s.notifier = n
 }
 
-func (s *GameService) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64) (*models.Game, error) {
+func (s *GameService) CreateGame(ctx context.Context, chatID int64, gameDate time.Time, courts string, venueID *int64, requestedSport ...string) (*models.Game, error) {
+	sportName := string(sport.Default)
+	if len(requestedSport) > 0 && requestedSport[0] != "" {
+		sportName = requestedSport[0]
+	}
+	if !sport.Valid(sportName) {
+		return nil, fmt.Errorf("%w: invalid sport %q", ErrInvalidGame, sportName)
+	}
+	playersPerCourt := sport.Get(sport.Sport(sportName)).DefaultPlayersPerCourt
 	if venueID != nil {
-		if _, err := s.venueRepo.GetByIDAndGroupID(ctx, *venueID, chatID); err != nil {
-			return nil, fmt.Errorf("venue %d does not belong to group %d", *venueID, chatID)
+		venue, err := s.venueRepo.GetByIDAndGroupID(ctx, *venueID, chatID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: venue %d does not belong to group %d", ErrInvalidGame, *venueID, chatID)
 		}
+		found := false
+		for _, venueSport := range venue.Sports {
+			if venueSport.Sport == sportName {
+				found = true
+				if venueSport.PlayersPerCourt != nil {
+					playersPerCourt = *venueSport.PlayersPerCourt
+				}
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: sport %q is not configured for venue %d", ErrInvalidGame, sportName, *venueID)
+		}
+	} else if sportName != string(sport.Default) {
+		return nil, fmt.Errorf("%w: sport requires a venue", ErrInvalidGame)
 	}
 
 	courtsCount := len(strings.Split(courts, ","))
 	game := &models.Game{
-		ChatID:      chatID,
-		GameDate:    gameDate,
-		Courts:      courts,
-		CourtsCount: courtsCount,
-		VenueID:     venueID,
+		ChatID:          chatID,
+		GameDate:        gameDate,
+		Courts:          courts,
+		CourtsCount:     courtsCount,
+		Sport:           sportName,
+		PlayersPerCourt: playersPerCourt,
+		VenueID:         venueID,
 	}
 	created, err := s.gameRepo.Create(ctx, game)
 	if err != nil {

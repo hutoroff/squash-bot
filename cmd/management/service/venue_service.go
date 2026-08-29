@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 )
 
 // ErrVenueHasActiveBookings is returned when trying to delete a venue that still
@@ -80,6 +81,26 @@ func validatePreventiveCancellationFraction(fraction string) error {
 }
 
 func validateVenue(venue *models.Venue) error {
+	if len(venue.Sports) == 0 && venue.Courts != "" {
+		venue.Sports = []models.VenueSport{{Sport: string(sport.Default), Courts: venue.Courts}}
+	}
+	if len(venue.Sports) == 0 {
+		return fmt.Errorf("%w: at least one sport is required", ErrInvalidVenue)
+	}
+	seen := make(map[string]bool, len(venue.Sports))
+	for _, venueSport := range venue.Sports {
+		if !sport.Valid(venueSport.Sport) || venueSport.Courts == "" || seen[venueSport.Sport] {
+			return fmt.Errorf("%w: invalid or duplicate sport %q", ErrInvalidVenue, venueSport.Sport)
+		}
+		seen[venueSport.Sport] = true
+		if venueSport.PlayersPerCourt != nil && (*venueSport.PlayersPerCourt < 1 || *venueSport.PlayersPerCourt > sport.Get(sport.Sport(venueSport.Sport)).MaxPlayersPerCourt) {
+			return fmt.Errorf("%w: players_per_court for %s must be between 1 and %d", ErrInvalidVenue, venueSport.Sport, sport.Get(sport.Sport(venueSport.Sport)).MaxPlayersPerCourt)
+		}
+	}
+	venue.Courts = venue.CourtsFor(string(sport.Default))
+	if venue.AutoBookingEnabled && !seen[string(sport.Default)] {
+		return fmt.Errorf("%w: auto-booking requires squash", ErrInvalidVenue)
+	}
 	if err := validatePreferredGameTimes(venue.PreferredGameTimes, venue.TimeSlots); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidVenue, err)
 	}

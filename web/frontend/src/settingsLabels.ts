@@ -1,4 +1,13 @@
-import type { BookingReadinessReason } from './types'
+import type { BookingReadinessReason, Sport } from './types'
+
+export const SPORTS: Record<Sport, { label: string; emoji: string; unit: string; defaultPlayers: number; maxPlayers: number }> = {
+  squash: { label: 'Squash', emoji: '🏸', unit: 'court', defaultPlayers: 2, maxPlayers: 4 },
+  badminton: { label: 'Badminton', emoji: '🏸', unit: 'court', defaultPlayers: 2, maxPlayers: 4 },
+  table_tennis: { label: 'Table tennis', emoji: '🏓', unit: 'table', defaultPlayers: 2, maxPlayers: 4 },
+  tennis: { label: 'Tennis', emoji: '🎾', unit: 'court', defaultPlayers: 2, maxPlayers: 4 },
+  padel: { label: 'Padel', emoji: '🎾', unit: 'court', defaultPlayers: 4, maxPlayers: 4 },
+  bowling: { label: 'Bowling', emoji: '🎳', unit: 'lane', defaultPlayers: 6, maxPlayers: 6 },
+}
 
 /** The three languages the bot speaks (i18n.Normalize maps everything to these). */
 export const LANGUAGES = [

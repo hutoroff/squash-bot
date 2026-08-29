@@ -32,6 +32,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.pendingNewGameWizard.Delete(msg.Chat.ID)
 		b.pendingVenueWizard.Delete(msg.Chat.ID)
 		b.pendingVenueEdit.Delete(msg.Chat.ID)
+		b.pendingVenueSportEdit.Delete(msg.Chat.ID)
 		b.pendingVenueGameDaysEdit.Delete(msg.Chat.ID)
 		b.pendingVenuePreferredTimeEdit.Delete(msg.Chat.ID)
 		b.pendingGroupVenuePick.Delete(msg.Chat.ID)
@@ -57,6 +58,10 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		if raw, ok := b.pendingVenueEdit.Load(msg.Chat.ID); ok {
 			b.processVenueEdit(ctx, msg, raw.(*venueEditState))
+			return
+		}
+		if raw, ok := b.pendingVenueSportEdit.Load(msg.Chat.ID); ok {
+			b.processVenueSportEdit(ctx, msg, raw.(*venueSportEditState))
 			return
 		}
 		if raw, ok := b.pendingVenueCredAdd.Load(msg.Chat.ID); ok {

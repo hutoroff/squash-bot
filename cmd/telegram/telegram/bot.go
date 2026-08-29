@@ -10,6 +10,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/internal/i18n"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // pendingGameKey uniquely identifies a pending group-selection request.
@@ -36,6 +37,7 @@ type wizardStep int
 const (
 	wizardStepGroup     wizardStep = iota // waiting for group selection (multi-group admin)
 	wizardStepVenue                       // waiting for venue selection (button)
+	wizardStepSport                       // waiting for sport selection (button)
 	wizardStepCourtPick                   // waiting for court toggle + confirm (buttons)
 	wizardStepTime                        // waiting for time text input or slot button
 	wizardStepCourts                      // waiting for courts text input (no-venue path)
@@ -49,7 +51,9 @@ type newGameWizard struct {
 	dateStr            string         // raw "YYYY-MM-DD" from the date picker; used to re-parse in group timezone
 	loc                *time.Location // group timezone; set once the group is known, falls back to bot loc
 	step               wizardStep
-	venueID            *int64          // set when a venue is selected
+	venueID            *int64 // set when a venue is selected
+	sport              string
+	venueSports        []models.VenueSport
 	venueCourts        []string        // available courts from the selected venue
 	selectedCourts     map[string]bool // toggle state for court picker
 	timeSlots          []string        // available time slots from the selected venue
@@ -61,6 +65,7 @@ type venueWizardStep int
 
 const (
 	venueStepName venueWizardStep = iota
+	venueStepSport
 	venueStepCourts
 	venueStepTimeSlots
 	venueStepPreferredTime // only shown when time_slots are set
@@ -78,6 +83,7 @@ type venueWizard struct {
 	groupID                int64
 	step                   venueWizardStep
 	name                   string
+	sport                  string
 	courts                 string
 	timeSlots              string
 	selectedPreferredTimes map[string]bool // chosen from timeSlots; nil = no preference
@@ -112,6 +118,13 @@ type venueEditState struct {
 	venueID int64
 	groupID int64
 	field   venueEditField
+}
+
+type venueSportEditState struct {
+	venueID int64
+	groupID int64
+	sport   string
+	field   string
 }
 
 // venueGameDaysEditState holds the toggle state when editing game days for an existing venue.
@@ -256,6 +269,7 @@ type Bot struct {
 	pendingNewGameWizard            sync.Map      // map[chatID int64]*newGameWizard
 	pendingVenueWizard              sync.Map      // map[chatID int64]*venueWizard
 	pendingVenueEdit                sync.Map      // map[chatID int64]*venueEditState
+	pendingVenueSportEdit           sync.Map      // map[chatID int64]*venueSportEditState
 	pendingVenueGameDaysEdit        sync.Map      // map[chatID int64]*venueGameDaysEditState
 	pendingVenuePreferredTimeEdit   sync.Map      // map[chatID int64]*venuePreferredTimeEditState
 	pendingGroupVenuePick           sync.Map      // map[chatID int64]*groupVenuePickState

@@ -36,3 +36,44 @@ func TestVenueRepo_UpdateOmittedFractionPreservesStoredValue(t *testing.T) {
 		t.Errorf("fraction: got %q, want %q", updated.PreventiveCancellationFraction, "1/3")
 	}
 }
+
+func TestVenueRepo_RoundTripsSports(t *testing.T) {
+	mustTruncate(t)
+	ctx := context.Background()
+	const groupID = int64(-400201)
+	if err := storage.NewGroupRepo(testPool).Upsert(ctx, groupID, "Sports Group", true); err != nil {
+		t.Fatal(err)
+	}
+	players := 5
+	venue, err := storage.NewVenueRepo(testPool).Create(ctx, &models.Venue{
+		GroupID: groupID, Name: "Multi", PreventiveCancellationFraction: "1/2",
+		Sports: []models.VenueSport{{Sport: "squash", Courts: "1,2"}, {Sport: "bowling", Courts: "A,B", PlayersPerCourt: &players}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if venue.Courts != "1,2" || venue.CourtsFor("bowling") != "A,B" || len(venue.Sports) != 2 {
+		t.Fatalf("unexpected venue: %+v", venue)
+	}
+}
+
+func TestVenueRepo_RejectsInvalidSportsAtDatabaseBoundary(t *testing.T) {
+	mustTruncate(t)
+	ctx := context.Background()
+	const groupID = int64(-400202)
+	if err := storage.NewGroupRepo(testPool).Upsert(ctx, groupID, "Guarded Sports", true); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	for _, venueSport := range []models.VenueSport{
+		{Sport: "future_sport", Courts: "1"},
+		{Sport: "squash", Courts: "1", PlayersPerCourt: &zero},
+	} {
+		_, err := storage.NewVenueRepo(testPool).Create(ctx, &models.Venue{
+			GroupID: groupID, Name: "Invalid", Sports: []models.VenueSport{venueSport},
+		})
+		if err == nil {
+			t.Fatalf("database accepted invalid sport: %+v", venueSport)
+		}
+	}
+}

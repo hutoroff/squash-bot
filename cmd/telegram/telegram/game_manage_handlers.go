@@ -75,7 +75,7 @@ func (b *Bot) renderManageScreen(ctx context.Context, cb *tgbotapi.CallbackQuery
 	localDate := game.GameDate.In(b.loc)
 	text := lz.Tf(i18n.MsgManageGameHeader,
 		lz.FormatGameDate(localDate), localDate.Format("15:04"),
-		escapeMarkdown(game.Courts), registered, game.CourtsCount*2, len(guests))
+		gameformat.UnitName(game.Sport, lz), escapeMarkdown(game.Courts), registered, game.Capacity(), len(guests))
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	if game.MessageID == nil {

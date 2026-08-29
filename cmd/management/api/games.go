@@ -9,6 +9,7 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,6 +19,7 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		ChatID       int64     `json:"chat_id"`
 		GameDate     time.Time `json:"game_date"`
 		Courts       string    `json:"courts"`
+		Sport        string    `json:"sport"`
 		VenueID      *int64    `json:"venue_id"`
 		ActorUserID  int64     `json:"actor_user_id"`
 		ActorDisplay string    `json:"actor_display"`
@@ -30,15 +32,26 @@ func (h *Handler) createGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "chat_id and courts are required")
 		return
 	}
+	if req.Sport == "" {
+		req.Sport = string(sport.Default)
+	}
+	if !sport.Valid(req.Sport) {
+		writeError(w, http.StatusBadRequest, "invalid sport")
+		return
+	}
 
-	game, err := h.gameService.CreateGame(r.Context(), req.ChatID, req.GameDate, req.Courts, req.VenueID)
+	game, err := h.gameService.CreateGame(r.Context(), req.ChatID, req.GameDate, req.Courts, req.VenueID, req.Sport)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidGame) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		h.logger.Error("createGame", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if req.ActorUserID != 0 {
-		h.auditSvc.RecordGameCreated(r.Context(), game.ID, req.ChatID, req.ActorUserID, req.ActorDisplay, game.Courts, game.GameDate)
+		h.auditSvc.RecordGameCreated(r.Context(), game.ID, req.ChatID, req.ActorUserID, req.ActorDisplay, game.Courts, game.GameDate, game.Sport)
 	}
 	writeJSON(w, http.StatusCreated, game)
 }

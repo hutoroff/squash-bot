@@ -47,6 +47,8 @@ func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "opponent_opted_out")
 		case errors.Is(err, service.ErrAuthorOptedOut):
 			writeError(w, http.StatusConflict, "author_opted_out")
+		case errors.Is(err, service.ErrResultsNotSupported):
+			writeError(w, http.StatusConflict, "results_not_supported")
 		default:
 			h.logger.Error("submitGameResult", "err", err)
 			writeError(w, http.StatusInternalServerError, err.Error())

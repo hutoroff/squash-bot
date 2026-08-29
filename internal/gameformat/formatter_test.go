@@ -120,3 +120,10 @@ func TestGameKeyboard_ButtonsHaveText(t *testing.T) {
 		}
 	}
 }
+
+func TestSportName_InvalidFallsBackToSquash(t *testing.T) {
+	lz := i18n.New(i18n.En)
+	if got, want := gameformat.SportName("future_sport", lz), gameformat.SportName("squash", lz); got != want {
+		t.Fatalf("SportName fallback = %q, want %q", got, want)
+	}
+}

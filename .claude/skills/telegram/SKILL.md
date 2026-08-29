@@ -78,6 +78,7 @@ type Bot struct {
     pendingNewGameWizard          sync.Map  // chatID → *newGameWizard
     pendingVenueWizard            sync.Map  // chatID → *venueWizard
     pendingVenueEdit              sync.Map  // chatID → *venueEditState
+    pendingVenueSportEdit         sync.Map  // chatID → *venueSportEditState
     pendingVenueGameDaysEdit      sync.Map  // chatID → *venueGameDaysEditState
     pendingVenuePreferredTimeEdit sync.Map  // chatID → *venuePreferredTimeEditState
     pendingGroupVenuePick         sync.Map  // chatID → *groupVenuePickState
@@ -188,12 +189,13 @@ manage_book:<gameID>:<count>             (book N courts via BookGameCourts)
 manage_book_cancel:<gameID>              (dismiss book-count picker, re-render manage screen)
 publish_game (sends unpublished game to group via POST /api/v1/games/{id}/publish)
 select_group (3-part: originChatID:originMsgID:groupID)
-ng_date, ng_group, ng_venue, ng_court_toggle, ng_court_confirm
+ng_date, ng_group, ng_venue, ng_sport, ng_court_toggle, ng_court_confirm
 ng_timeslot, ng_time_custom, ng_gvenue
 group_cfg, changelog_cfg, leaderboard_cfg, set_lang_group, set_lang, set_tz_pick, set_tz, toggle_changelog, toggle_leaderboard_notify
 venue_list, venue_add, venue_edit, venue_edit_name, venue_edit_courts
 venue_edit_slots, venue_edit_addr, venue_edit_gamedays, venue_edit_graceperiod
 venue_edit_preferred_time, venue_edit_auto_booking_courts, venue_edit_booking_opens_days
+venue_sports, venue_sport_add, venue_sport_courts, venue_sport_ppc, venue_sport_del, venue_sport_del_ok
 venue_delete, venue_delete_ok, venue_day_toggle, venue_day_confirm
 venue_wiz_ptime, venue_ptime_toggle, venue_ptime_confirm, venue_ptime_set
 res_group, res_game, res_opp, res_winner, res_score_skip,
@@ -215,8 +217,10 @@ type newGameWizard struct {
     gameDate       time.Time
     dateStr        string          // raw YYYY-MM-DD for re-parsing in group timezone
     loc            *time.Location  // group timezone
-    step           wizardStep      // Group → Venue → CourtPick → Time → Courts
+    step           wizardStep      // Group → Venue → Sport → CourtPick → Time → Courts
     venueID        *int64
+    sport          string
+    venueSports    []models.VenueSport
     venueCourts    []string
     selectedCourts map[string]bool
     timeSlots       []string
@@ -224,21 +228,21 @@ type newGameWizard struct {
 }
 ```
 
-Steps: `wizardStepGroup` → `wizardStepVenue` → `wizardStepCourtPick` → `wizardStepTime` → `wizardStepCourts`
+Steps: `wizardStepGroup` → `wizardStepVenue` → `wizardStepSport` (skipped for single-sport venues) → `wizardStepCourtPick` → `wizardStepTime` → `wizardStepCourts`
 
-Callbacks: `ng_date`, `ng_group`, `ng_venue`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`, `ng_gvenue`
+Callbacks: `ng_date`, `ng_group`, `ng_venue`, `ng_sport`, `ng_court_toggle`, `ng_court_confirm`, `ng_timeslot`, `ng_time_custom`, `ng_gvenue`
 
 Any slash command in private chat clears `pendingNewGameWizard` (and all other pending state).
 
 ### Venue Creation Wizard (`venue_handlers.go`)
 State: `pendingVenueWizard sync.Map` (chatID → `*venueWizard`)
 
-Steps: `venueStepName` → `venueStepCourts` → `venueStepTimeSlots` → `venueStepPreferredTime` → `venueStepAddress` → `venueStepGameDays` → `venueStepGracePeriod` → [if `autoBookingAllowed`] `venueStepAutoBookingEnabled` → `venueStepAutoBookingCourts` → `venueStepBookingOpensDays` [else → `venueStepBookingOpensDays`]
+Steps: `venueStepName` → `venueStepSport` → `venueStepCourts` → `venueStepTimeSlots` → `venueStepPreferredTime` → `venueStepAddress` → `venueStepGameDays` → `venueStepGracePeriod` → [if squash and `autoBookingAllowed`] `venueStepAutoBookingEnabled` → `venueStepAutoBookingCourts` → `venueStepBookingOpensDays` [else → `venueStepBookingOpensDays`]
 
 The wizard fetches `group.AutoBookingAllowed` via `GetGroupByID` at start and stores it on the `venueWizard` struct. When `autoBookingAllowed` is false, auto-booking steps are skipped entirely and `autoBookingEnabled` stays false.
 
 ### Venue Edit (`venue_handlers.go`)
-State: `pendingVenueEdit sync.Map` (chatID → `*venueEditState`)
+State: `pendingVenueEdit sync.Map` (chatID → `*venueEditState`) and `pendingVenueSportEdit` for per-sport unit/player edits.
 
 ```go
 type venueEditState struct {
@@ -336,8 +340,8 @@ Works in private chat only.
 
 1. Admin sends `/venues` → venue list for their group (or group picker if multiple groups).
 2. Each venue row: "Edit" and "Delete" buttons; "Add Venue" at bottom.
-3. **Add venue wizard**: name → courts (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game times (toggle keyboard: tap slots to toggle ✓ + "✓ Done" confirm / "✕ No preference" skip; skipped if no time slots entered) → address (`-` to skip) → game days (toggle keyboard: tap days + "✓ Confirm") → grace period (int or `-` for default 24) → auto-booking enabled ("Enable"/"Disable" inline) → auto-booking courts (ordered subset or `-`; only shown when enabled) → booking opens days (int or `-` for default 14) → venue created.
-4. **Edit venue**: opens edit menu with current values. Free-text fields (Name, Courts, Time Slots, Address, Grace Period, Auto-booking Courts, Booking Opens Days): admin sends new value as a message. Inline-keyboard fields: Game Days (toggle + Confirm), Preferred Times (toggle keyboard pre-seeded from current `preferred_game_times` + "✓ Done" / "✕ Clear"). When `auto_booking_enabled = true`, a "🔑 Credentials" button also appears. When the group's `auto_booking_allowed` is false, the edit menu suppresses the auto-booking status line, toggle button, courts/count buttons, and credentials button.
+3. **Add venue wizard**: name → sport → units (comma-separated) → time slots (HH:MM, `-` to skip) → preferred game times → address → game days → grace period → squash-only auto-booking settings → booking opens days → venue created.
+4. **Edit venue**: opens edit menu with current values. The Sports submenu adds/removes sports and edits their units or players-per-unit override; it prevents removing the last sport or auto-booking squash. Other free-text and inline fields retain their existing flows. When the group's `auto_booking_allowed` is false, the edit menu suppresses auto-booking controls.
 5. **Delete venue**: two-step confirmation. Blocked with user-friendly message if venue has active `court_bookings` (HTTP 409 → `MsgVenueHasActiveBookings`). Linked games keep `venue_id` as NULL (ON DELETE SET NULL in DB).
 6. **Credential management**: "🔑 Credentials" lists stored credentials (masked login, priority, max_courts) with "Add" / "Delete". Only shown when `auto_booking_enabled = true`. Requires `CREDENTIALS_ENCRYPTION_KEY` on management service (else 503). Add-credential wizard: login → priority (current values shown) → max courts (int or `-` for default 3) → password (message deleted immediately before any API call). Deletion is two-step; blocked with user-friendly message if credential has active court bookings (HTTP 409 → `MsgVenueCredHasActiveBookings`).
 

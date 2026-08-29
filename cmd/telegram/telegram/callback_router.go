@@ -130,6 +130,7 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"ng_date":          b.handleNewGameDate,
 		"ng_group":         b.handleNewGameGroup,
 		"ng_venue":         b.handleNewGameVenue,
+		"ng_sport":         b.handleNewGameSport,
 		"ng_court_toggle":  b.handleNewGameCourtToggle,
 		"ng_court_confirm": b.handleNewGameCourtConfirm,
 		"ng_timeslot":      b.handleNewGameTimeSlot,
@@ -188,9 +189,23 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		},
 
 		// ── Venue management ──────────────────────────────────────────────────────
-		"venue_list": int64H(b.handleVenueList),
-		"venue_add":  int64H(b.handleVenueAdd),
-		"venue_edit": int64H(b.handleVenueEditMenu),
+		"venue_list":      int64H(b.handleVenueList),
+		"venue_add":       int64H(b.handleVenueAdd),
+		"venue_edit":      int64H(b.handleVenueEditMenu),
+		"venue_sports":    b.handleVenueSports,
+		"venue_sport_add": b.handleVenueSportAdd,
+		"venue_sport_courts": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleVenueSportStartEdit(ctx, cb, rawID, "courts")
+		},
+		"venue_sport_ppc": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleVenueSportStartEdit(ctx, cb, rawID, "ppc")
+		},
+		"venue_sport_del": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleVenueSportDelete(ctx, cb, rawID, false)
+		},
+		"venue_sport_del_ok": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+			b.handleVenueSportDelete(ctx, cb, rawID, true)
+		},
 		"venue_edit_name": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)
 			if !ok {
@@ -292,6 +307,7 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 			b.handleVenueDayConfirm(ctx, cb)
 		},
 		"venue_wiz_autobooking": b.handleVenueWizAutoBookingPick,
+		"venue_wiz_sport":       b.handleVenueWizSport,
 		"venue_toggle_autobooking": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			venueID, groupID, ok := parseVenueGroup(rawID, cb.Data)
 			if !ok {

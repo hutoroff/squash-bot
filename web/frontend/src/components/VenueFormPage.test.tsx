@@ -49,6 +49,7 @@ function makeVenue(overrides: Partial<Venue> = {}): Venue {
     name: 'SquashPoint',
     address: 'Main St 1',
     courts: '1,2,3',
+    sports: [{ sport: 'squash', courts: '1,2,3' }],
     time_slots: '18:00,19:00',
     game_days: '2',
     grace_period_hours: 24,
@@ -187,6 +188,20 @@ describe('VenueFormPage — edit venue', () => {
     expect(screen.getByLabelText('Preventive cancellation')).toHaveValue('2/3')
   })
 
+  it('renders separate unit editors for multiple sports', async () => {
+    vi.mocked(venuesApi.fetchVenue).mockResolvedValue(makeVenue({
+      sports: [
+        { sport: 'squash', courts: '1,2' },
+        { sport: 'bowling', courts: 'A,B', players_per_court: 5 },
+      ],
+    }))
+    renderEdit()
+
+    await waitFor(() => expect(screen.getByText('Lanes')).toBeInTheDocument())
+    expect(screen.getAllByText('Sport')).toHaveLength(2)
+    expect(screen.getByDisplayValue('5')).toHaveAttribute('max', '6')
+  })
+
   it('only offers preferred times from the venue time slots', async () => {
     renderEdit()
 
@@ -207,6 +222,17 @@ describe('VenueFormPage — edit venue', () => {
     const sent = vi.mocked(venuesApi.updateVenue).mock.calls[0][2]
     expect(sent.time_slots).toBe('18:00')
     expect(sent.preferred_game_times).toBe('')
+  })
+
+  it('drops a removed squash court from auto-booking priority', async () => {
+    vi.mocked(venuesApi.updateVenue).mockResolvedValue(makeVenue())
+    renderEdit()
+
+    await userEvent.click(await screen.findByLabelText('Remove 2'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save venue' }))
+
+    await waitFor(() => expect(venuesApi.updateVenue).toHaveBeenCalled())
+    expect(vi.mocked(venuesApi.updateVenue).mock.calls[0][2].auto_booking_courts).toBe('1')
   })
 
   it('shows a single banner when credential storage is off', async () => {
