@@ -18,10 +18,10 @@ type BookingFailure struct {
 
 // BookFreeCourtsResult summarises the outcome of a bookFreeCourts call.
 type BookFreeCourtsResult struct {
-	BookedLabels      []string
+	BookedLabels        []string
 	BookedCourtBookings []*models.CourtBooking
-	Failures          []BookingFailure
-	Requested         int
+	Failures            []BookingFailure
+	Requested           int
 }
 
 // bookingDeps groups the external dependencies required by bookFreeCourts.

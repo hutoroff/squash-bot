@@ -27,6 +27,8 @@ type counters struct {
 	step1       atomic.Int64
 	payOffline  atomic.Int64
 	createMatch atomic.Int64
+	mpFee       atomic.Int64
+	track       atomic.Int64
 }
 
 // newTestClient returns a Client talking to an httptest server built from mux.
@@ -300,6 +302,89 @@ func TestCreateBooking_PayOfflineHTMLDoesNotRetry(t *testing.T) {
 	}
 	if got := ctr.payOffline.Load(); got != 1 {
 		t.Errorf("pay-offline calls = %d, want 1", got)
+	}
+}
+
+// TestCreateBooking_Step1GatewayTimeoutDoesNotRetry protects an ambiguous
+// reservation outcome. A gateway timeout does not prove that Eversports failed
+// before reserving the slot, so retrying could create a duplicate booking.
+func TestCreateBooking_Step1GatewayTimeoutDoesNotRetry(t *testing.T) {
+	var ctr counters
+	mux := http.NewServeMux()
+	registerGraphQL(mux, &ctr, nil)
+	mux.HandleFunc("POST "+courtBookingEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		ctr.step1.Add(1)
+		http.Error(w, "upstream timed out after forwarding request", http.StatusGatewayTimeout)
+	})
+
+	c := newTestClient(t, mux)
+	start := time.Date(2026, 8, 10, 20, 45, 0, 0, time.UTC)
+	_, err := c.CreateBooking(context.Background(), "facility-uuid", "court-uuid", "sport-uuid", start, start.Add(45*time.Minute))
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous gateway timeout")
+	}
+	if errors.Is(err, errUnauthorized) {
+		t.Error("gateway timeout must not be classified as safely retryable authentication failure")
+	}
+	if got := ctr.step1.Load(); got != 1 {
+		t.Errorf("step 1 attempts = %d, want 1 (ambiguous reservation outcome must not be retried)", got)
+	}
+	if got := ctr.payOffline.Load(); got != 0 {
+		t.Errorf("pay-offline calls = %d, want 0 after step 1 failed", got)
+	}
+}
+
+// TestCreateBooking_PostPaymentFailuresPreserveBookingResult verifies partial
+// success semantics: after reservation and payment succeed, optional match and
+// tracking failures must not turn a real booking into a retryable failure.
+func TestCreateBooking_PostPaymentFailuresPreserveBookingResult(t *testing.T) {
+	var ctr counters
+	mux := http.NewServeMux()
+	registerGraphQL(mux, &ctr, nil)
+	mux.HandleFunc("POST "+courtBookingEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		ctr.step1.Add(1)
+		fmt.Fprint(w, `{"bookingUuid":"booking-uuid","bookingId":42,"payment":{"id":7},"success":true,"status":"CONFIRMED"}`)
+	})
+	mux.HandleFunc("POST /checkout/api/payment/{id}/pay-offline", func(w http.ResponseWriter, _ *http.Request) {
+		ctr.payOffline.Add(1)
+		fmt.Fprint(w, `{}`)
+	})
+	mux.HandleFunc("POST "+createFromBookingEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		ctr.createMatch.Add(1)
+		http.Error(w, "match service unavailable", http.StatusBadGateway)
+	})
+	mux.HandleFunc("POST "+mpFeeEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		ctr.mpFee.Add(1)
+		http.Error(w, "tracking unavailable", http.StatusServiceUnavailable)
+	})
+	mux.HandleFunc("POST "+trackCheckoutEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		ctr.track.Add(1)
+		http.Error(w, "tracking unavailable", http.StatusServiceUnavailable)
+	})
+
+	c := newTestClient(t, mux)
+	start := time.Date(2026, 8, 10, 20, 45, 0, 0, time.UTC)
+	result, err := c.CreateBooking(context.Background(), "facility-uuid", "court-uuid", "sport-uuid", start, start.Add(45*time.Minute))
+	if err != nil {
+		t.Fatalf("CreateBooking returned an error after reservation/payment succeeded: %v", err)
+	}
+	if result.BookingUUID != "booking-uuid" || result.BookingID != 42 || result.MatchID != "" {
+		t.Errorf("booking result = %+v, want confirmed booking with an absent best-effort match ID", result)
+	}
+	if got := ctr.step1.Load(); got != 1 {
+		t.Errorf("step 1 attempts = %d, want 1", got)
+	}
+	if got := ctr.payOffline.Load(); got != 1 {
+		t.Errorf("pay-offline calls = %d, want 1", got)
+	}
+	if got := ctr.createMatch.Load(); got != 1 {
+		t.Errorf("create-match calls = %d, want 1", got)
+	}
+	if got := ctr.mpFee.Load(); got != 1 {
+		t.Errorf("MP-fee calls = %d, want 1", got)
+	}
+	if got := ctr.track.Load(); got != 1 {
+		t.Errorf("checkout tracking calls = %d, want 1", got)
 	}
 }
 

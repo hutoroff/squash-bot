@@ -1,6 +1,6 @@
 # Sports Booking Service
 
-**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It reverse-engineers the Eversports internal API to support listing, creating, and cancelling court bookings.
+**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. It reverse-engineers the Eversports internal API to support listing, creating, and cancelling court bookings. There is no service-level default account. For session/checkout development constraints, see [Booking internals](services/booking.md).
 
 ## Environment Variables
 
@@ -38,32 +38,38 @@ The service caches one `*eversports.Client` per unique `email:password` pair in 
 
 ## Running Locally
 
+These are manually authorized operator examples, **not agent verification commands**. They contact real Eversports accounts and the mutations can create or cancel actual bookings. Use local test doubles for development. Booking timestamps must retain the facility's local offset, not `Z`/UTC.
+
 ```bash
-INTERNAL_API_SECRET=test \
+# Set the same generated secret in the service and caller shells (minimum 32 characters).
+export INTERNAL_API_SECRET="$(openssl rand -hex 32)"
+
+INTERNAL_API_SECRET="$INTERNAL_API_SECRET" \
   EVERSPORTS_FACILITY_ID=76443 \
   EVERSPORTS_FACILITY_SLUG=squash-house-berlin-03 \
   EVERSPORTS_FACILITY_UUID=6266968c-b0fd-4115-ad3b-ae225cc880f1 \
   go run cmd/booking/main.go
 
+# In the caller shell, with the same INTERNAL_API_SECRET:
 # List court slots for a date (credentials passed per-request via headers)
-curl -H "Authorization: Bearer test" \
+curl -H "Authorization: Bearer $INTERNAL_API_SECRET" \
   -H "X-Eversports-Email: you@example.com" \
   -H "X-Eversports-Password: secret" \
   "http://localhost:8081/api/v1/eversports/matches?date=2026-04-12"
 
 # Fetch single booking detail by match UUID
-curl -H "Authorization: Bearer test" \
+curl -H "Authorization: Bearer $INTERNAL_API_SECRET" \
   -H "X-Eversports-Email: you@example.com" \
   -H "X-Eversports-Password: secret" \
-  http://localhost:8081/api/v1/eversports/matches/<uuid>
+  "http://localhost:8081/api/v1/eversports/matches/<uuid>"
 
 # Create a booking (credentials in JSON body)
-curl -X POST -H "Authorization: Bearer test" -H "Content-Type: application/json" \
-  -d '{"courtUuid":"<court-uuid>","start":"2026-04-12T06:45:00Z","end":"2026-04-12T07:30:00Z","email":"you@example.com","password":"secret"}' \
+curl -X POST -H "Authorization: Bearer $INTERNAL_API_SECRET" -H "Content-Type: application/json" \
+  -d '{"courtUuid":"<court-uuid>","start":"2026-04-12T08:45:00+02:00","end":"2026-04-12T09:30:00+02:00","email":"you@example.com","password":"secret"}' \
   http://localhost:8081/api/v1/eversports/matches
 
 # Cancel a booking (credentials in JSON body)
-curl -X DELETE -H "Authorization: Bearer test" -H "Content-Type: application/json" \
+curl -X DELETE -H "Authorization: Bearer $INTERNAL_API_SECRET" -H "Content-Type: application/json" \
   -d '{"email":"you@example.com","password":"secret"}' \
-  http://localhost:8081/api/v1/eversports/matches/<uuid>
+  "http://localhost:8081/api/v1/eversports/matches/<uuid>"
 ```

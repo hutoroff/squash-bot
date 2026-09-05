@@ -1,0 +1,8 @@
+title = "squash_bot prospective-change scan"
+
+[extend]
+useDefault = true
+
+# No project-wide exceptions. If a known synthetic fixture is flagged, add a
+# reviewed rule-scoped allowlist with condition = "AND", an exact file path,
+# and an exact synthetic value. Never exempt all tests or environment templates.
