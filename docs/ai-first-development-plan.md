@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Steps 1–4 implemented locally (2026-09-05), ready for owner review. Step 5 is not implemented. See [implementation progress](#11-implementation-progress).
+**Status:** Steps 1–5 implemented locally (2026-09-05), ready for owner review. Dependency security findings remain open; the milestone does not claim a clean vulnerability baseline or host containment. See [implementation progress](#11-implementation-progress) and [security triage](security-checks.md).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -318,9 +318,9 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] The stale service/database lifecycle test is repaired and selected by CI.
 - [x] High-value regression gaps have new meaningful tests.
 - [x] Local review produces concise final-state evidence, without PR publication.
-- [ ] Local security checks have an explicit result/triage path.
-- [ ] No service versions, application changelogs, GitHub settings, host isolation, or release behavior were changed incidentally.
-- [ ] The accepted lack of technical containment remains explicit.
+- [x] Local security checks have an explicit result/triage path; existing dependency findings still fail and remain open.
+- [x] No service versions, application changelogs, GitHub settings, host isolation, or release behavior were changed incidentally.
+- [x] The accepted lack of technical containment remains explicit.
 
 Completion means a better verified, lower-friction local agent workflow. It does not mean autonomous production authority, complete E2E coverage, or immunity to agent mistakes.
 
@@ -370,7 +370,7 @@ No application tests were rerun for this documentation/agent-resource-only step;
 - Repaired the historical `e2e`-tagged test against current canonical identity, constructor, participation, capacity, and repository contracts. It now uses the shared Testcontainers PostgreSQL helper instead of a fixed host port/Compose project and is documented as a service/database lifecycle test rather than browser/transport end-to-end coverage.
 - Reused `make bootstrap` and `make check` in the existing `build-and-test` CI job while preserving the `build-and-test` and `frontend-test` job names expected by release verification.
 - Added an explicit frontend application type-check command and resolved the assessment's four tracked `gofmt` findings without semantic changes. Updated setup, verification, service-test, invariant, and plan references to describe the implemented interface and remaining gaps.
-- `make check-security` currently pins `govulncheck` and audits all locked frontend npm dependencies. Increment 5's prospective-change secret scan and explicit security-debt triage remain unimplemented.
+- At the Step 2 boundary, `make check-security` pinned `govulncheck` and audited frontend npm dependencies. The prospective-change secret scan and explicit security-debt triage were deferred to Step 5.
 
 Validation on the final affected code paths:
 
@@ -418,4 +418,25 @@ Validation on the final procedural/documentation state:
 | Diff scope and whitespace | Only shared task/review procedures and their plan/index references changed; whitespace checks passed. |
 
 No application code or executable check target changed, so application tests were not rerun. No application startup, runtime `.env`, dependency, service version, changelog, commit, push, PR, release, deployment, GitHub setting, host permission, or global agent setting is part of this step.
+
+### Step 5 — implemented locally, 2026-09-05
+
+- Added `make check-secrets`, using pinned Gitleaks v8.30.0 against separate index/worktree snapshots and non-ignored untracked candidates. Matching is local, findings print locations/rule IDs rather than values, temporary snapshots are removed, and scanner errors cannot become a clean result. Private credential candidates fail without being read; test files and `.env.example` are not blanket-excluded. No project-wide suppressions were added.
+- Extended `make check-security` to attempt secret, Go and npm checks independently with explicit result labels and bounded subprocesses. Retained govulncheck v1.7.0 and npm's high/critical exit threshold, made the lockfile-only npm scope explicit, and kept lower-severity findings visible. No automatic fix or dependency upgrade was added.
+- Added offline Node/Git helper regressions to the fast/full check path and a separately selected real-Gitleaks synthetic smoke test. They use disposable local files/indexes, no accounts or Git commits.
+- Added repository-local exclusions for personal agent settings, credential copies, session/package caches, retaining shared skill/adaptor and extension-source visibility. No existing personal settings or host configuration was read or changed.
+- Added [security scope and triage](security-checks.md), recording existing Go/npm findings with concrete runtime and build/test follow-ups, no vulnerability waivers, and an explicit distinction between a threshold pass and zero findings. Updated setup/workflow guidance on executable tool/skill additions and the unchanged host-credential risk.
+
+Validation on the final affected implementation:
+
+| Check | Result |
+|---|---|
+| `node --test scripts/checks/*.test.mjs` | PASS: 13 offline helper tests, including distinct staged/worktree contents, exclusions, symlink handling, private candidates, scanner failures/redaction, dependency failures, and repository-only ignore rules. |
+| `node --test scripts/checks/secrets.integration.mjs` | PASS: pinned Gitleaks detects synthetic staged/unstaged/untracked/template/test tokens without echoing their values; clean replacements pass. Inline allow-comments cannot bypass the scan. |
+| `make check-secrets` | PASS: prospective local candidate scan; unchanged files and committed history are explicitly outside scope. |
+| `make check-security` | FAIL as expected from existing debt: secret scan passes; Go reports 14 reachable advisories across 5 modules; npm reports 10 vulnerable-package findings (1 low, 4 moderate, 5 high). Both dependency failures remain visible and nonzero. |
+| `make check` | PASS: helper regressions, build/format/diff/vet/type/unit checks, 107 frontend tests, race-enabled Go tests, PostgreSQL integration tests, and service/database lifecycle suite. |
+| Static documentation/scope checks | Local links/anchors, shared skill adapters, shell/JavaScript syntax, whitespace, and intended scope checked. Service versions, changelogs, application dependency manifests/locks, and release workflows are unchanged. |
+
+No real credential file, application startup, Telegram/Eversports operation, host/global setting change, application dependency upgrade, service version, changelog, Git commit, push, PR, release, deployment, or GitHub setting change is part of this step. Security debt is documented for owner-directed follow-up, not fixed or accepted by this milestone.
 

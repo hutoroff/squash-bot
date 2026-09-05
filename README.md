@@ -216,7 +216,7 @@ make doctor     # checks Go, Node, npm, Docker, and generated assets
 make check      # full build, fast/race/integration/lifecycle verification
 ```
 
-Use `make check-fast` for the Docker-free edit loop after bootstrap, and `make check-security` for the separate pinned vulnerability checks. Focused `go test` and `npm test` commands remain available.
+Use `make check-fast` for the Docker-free edit loop after bootstrap. `make check-secrets` scans prospective local files with pinned Gitleaks; `make check-security` also runs pinned Go vulnerability analysis and the locked npm dependency audit. Security checks fail on blocking findings or incomplete verification; existing dependency findings are not silently waived. See [security scope and triage](docs/security-checks.md). Focused `go test` and `npm test` commands remain available.
 
 Docker-backed suites fail explicitly when Docker is unavailable. The historical `e2e`-tagged suite is now a service/database lifecycle test selected by `make check` and CI; it does not exercise browser, HTTP transport, Telegram, or Eversports. See [development and verification](docs/development.md) for the exact target contract and remaining limitations.
 
@@ -224,7 +224,7 @@ Docker-backed suites fail explicitly when Docker is unavailable. The historical 
 
 Pi, Codex, and Claude Code share [AGENTS.md](AGENTS.md), focused [project references](docs/README.md), and on-demand skills in `.agents/skills/`. Claude Code uses thin adapters rather than a second knowledge base. See [agent setup and the local review workflow](docs/agent-workflow.md).
 
-Agents implement and verify locally; the owner reviews the diff before deciding to commit or create a PR. No automatic publication or new host isolation is configured. The unified local verification commands and remaining planned increments are tracked in the [implementation plan](docs/ai-first-development-plan.md).
+Agents implement and verify locally; the owner reviews the diff before deciding to commit or create a PR. No automatic publication or new host isolation is configured. The local verification interface, safeguards, and milestone results are tracked in the [implementation plan](docs/ai-first-development-plan.md).
 
 ## Versioning & Releases
 

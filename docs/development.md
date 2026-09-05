@@ -29,13 +29,16 @@ make check
 |---|---|
 | `make doctor` | Reports prerequisites and missing/potentially stale generated assets. Does not install, build, or start services. |
 | `make bootstrap` | Installs locked frontend dependencies and builds embedded assets. Downloads may require internet. |
-| `make check-fast` | Requires current embedded assets; checks repository-wide Go formatting, staged/unstaged diff whitespace, Go vet, application TypeScript, Go unit tests, and frontend tests. It does not require Docker. |
+| `make check-fast` | Requires current embedded assets; checks repository-wide Go formatting, staged/unstaged diff whitespace, offline local-helper tests, Go vet, application TypeScript, Go unit tests, and frontend tests. It does not require Docker. |
 | `make check` | Rebuilds frontend assets, builds all Go packages, runs `check-fast`, race-enabled Go tests, PostgreSQL integration tests, and the historical `e2e`-tagged service/database lifecycle test. Every required failure or unavailable Docker daemon returns nonzero. |
-| `make check-security` | Separately runs pinned `govulncheck` v1.7.0 and npm's audit of all locked frontend dependencies. It may download tools/advisories and returns nonzero for scanner errors or findings at the configured threshold. Secret/change-set scanning remains planned for Increment 5. |
+| `make check-secrets` | Runs pinned Gitleaks v8.30.0 on changed index/worktree and non-ignored untracked candidate files, with location-only output. Does not need frontend assets or Docker. |
+| `make check-security` | Separately attempts the secret scan, pinned `govulncheck` v1.7.0, and npm's audit of all locked frontend dependencies. Reports each result and returns nonzero for findings at the configured threshold or incomplete verification. Downloads/advisory queries may require internet. |
 
 Generated ignored build/test caches are expected. The targets do not format files, delete Docker resources they did not create, alter Git history, commit, push, or publish. Testcontainers cleanup removes only containers started by the tests.
 
 Missing assets and stale frontend inputs are diagnosed before `check-fast`; use `make check` to rebuild them. Full verification distinguishes this prerequisite error from test failures through labeled steps. The Go test commands have 120-second package timeouts and all scripts set `CI=1` for noninteractive execution.
+
+Security scope, tool requirements, synthetic regression commands, result handling, and open dependency findings are documented in [Local security checks and triage](security-checks.md). Security checks remain separate from `make check`; a green application test run does not imply a clean security result.
 
 ## Focused checks
 

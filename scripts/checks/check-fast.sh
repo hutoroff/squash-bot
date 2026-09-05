@@ -32,6 +32,9 @@ step "Checking diff whitespace"
 git diff --check
 git diff --cached --check
 
+step "Testing local check helpers"
+node --test scripts/checks/*.test.mjs
+
 step "Running go vet"
 go vet ./...
 

@@ -79,7 +79,8 @@ go test -count=1 -timeout 120s ./cmd/management/service -run TestPublishGame
 make check-fast
 make check
 
-# Separate pinned vulnerability checks.
+# Separate pinned secret/dependency checks.
+make check-secrets
 make check-security
 ```
 
@@ -87,6 +88,7 @@ make check-security
 - Docker-backed suites use disposable PostgreSQL via Testcontainers and fail explicitly if Docker is unavailable.
 - The historical `e2e` build tag now selects a service/database lifecycle test, not browser/HTTP/Telegram/Eversports end-to-end coverage.
 - Frontend tests use Vitest + Testing Library; test files are currently excluded from TypeScript checking. See [frontend test conventions](docs/services/web.md#frontend-tests).
+- Security checks are separate from `make check`; see [scope, open findings, and triage](docs/security-checks.md). Never report a scanner/network failure or known dependency debt as clean.
 - Documentation-only changes need link/path/adapter checks and diff review, not unnecessary application tests. For executable behavior changes run relevant tests plus broader checks; explain any omitted verification.
 - Do not fix unrelated failures or weaken checks to get a green result. Re-run affected checks after the final edit.
 

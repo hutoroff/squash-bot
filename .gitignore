@@ -28,6 +28,19 @@ coverage.txt
 .env.*
 !.env.example
 
+# Personal agent settings, credential copies, sessions and installed packages.
+# Shared skills/adapters and reviewed extension source remain trackable.
+/.claude/settings.local.json
+/.claude/.credentials.json
+/.pi/settings.json
+/.pi/auth.json
+/.pi/sessions/
+/.pi/npm/
+/.pi/git/
+/.codex/config.toml
+/.codex/auth.json
+/.codex/sessions/
+
 # IDE
 .idea/
 .vscode/

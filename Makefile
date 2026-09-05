@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: doctor bootstrap check-fast check check-security
+.PHONY: doctor bootstrap check-fast check check-secrets check-security
 
 doctor:
 	@./scripts/checks/doctor.sh
@@ -16,6 +16,9 @@ check-fast:
 
 check:
 	@./scripts/checks/check.sh
+
+check-secrets:
+	@node scripts/checks/secrets.mjs
 
 check-security:
 	@./scripts/checks/check-security.sh
