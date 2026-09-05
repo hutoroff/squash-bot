@@ -23,7 +23,7 @@ A Telegram bot for coordinating squash, badminton, table-tennis, tennis, padel, 
 
 | Component     | Technology                                    |
 |---------------|-----------------------------------------------|
-| Language      | Go 1.21+                                      |
+| Language      | Go 1.25+ (see `go.mod`)                       |
 | Database      | PostgreSQL 15                                 |
 | Telegram API  | go-telegram-bot-api v5                        |
 | DB Driver     | pgx v5 (connection pool)                      |
@@ -104,13 +104,13 @@ In private chat with the bot, run `/venues`. You can add one or more venues for 
 - **Game days** — weekdays when games are played (toggle keyboard; press Confirm with nothing selected to skip). Used for booking and auto-booking reminders.
 - **Preferred game times** — one or more of the configured time slots selected as defaults (toggle keyboard; highlighted ⭐ in the new-game wizard). Used by auto-booking to book courts at each selected time when booking opens; one auto-booking result and one game are created per slot.
 - **Auto-booking courts** — ordered subset of court numbers (from the **courts** list) to prioritize when auto-booking. Enter court numbers in priority order, comma-separated (e.g. `5,6`). Leave blank to book any available court. Courts are matched by the number in their Eversports name (e.g. "Court 5" → `5`).
-- **Games to book** — how many preferred time slots auto-booking processes per day. Must be a positive integer; `0` (default) skips auto-booking entirely for this venue. Only shown in the wizard and edit menu when auto-booking is enabled.
+- **Courts per game** — how many courts auto-booking attempts for each configured preferred time slot (`auto_booking_courts_count`, default 3). A stored value of `0` skips auto-booking. This limits courts per slot, not the number of games.
 - **Grace period** — hours before the game when the cancellation reminder fires (default 24h).
 - **Booking opens (days)** — how many days ahead court booking opens (default 14). Shown in the booking reminder DM and used by auto-booking to compute the target date.
 - **Preventive cancellation point** — Web UI only: release unused courts at 1/3, 1/2 (default), or 2/3 of the interval from booking opening to the grace-period deadline. Telegram edits preserve this setting.
 - **Booking credentials** — per-venue login/password pairs for the booking platform. The "🔑 Credentials" button appears in the venue edit menu only when auto-booking is enabled. Multiple credentials can be stored with user-assigned priority (lower = higher priority) and a per-credential court cap (`max_courts`, default 3) that limits how many courts one account books before the next credential takes over. Passwords are encrypted at rest (AES-256-GCM); they cannot be viewed or edited after creation — only added or deleted. A credential with an uncanceled booking dated today or later cannot be deleted; the bot shows a modal explaining this. Historical booking rows do not block deletion. When a credential fails during auto-booking it is excluded for the duration of `CREDENTIAL_ERROR_COOLDOWN` (default 24h) and the bot moves to the next credential automatically. The `CREDENTIALS_ENCRYPTION_KEY` environment variable must be set on the management service to enable this feature.
 
-Auto-booking features (the enable toggle, courts, games-to-book, and credentials) are only available when the server owner has allowed auto-booking for the group. Server owners can toggle this per group via the web UI's Groups page. Disabling auto-booking at the group level cascades: all venues in the group have `auto_booking_enabled` set to false, and the venue wizard and edit menu hide auto-booking controls.
+Auto-booking features (the enable toggle, preferred courts, courts-per-game setting, and credentials) are only available when the server owner has allowed auto-booking for the group. Server owners can toggle this per group via the web UI's Groups page. Disabling auto-booking at the group level cascades: all venues in the group have `auto_booking_enabled` set to false, and the venue wizard and edit menu hide auto-booking controls.
 
 **At least one venue must be configured before you can create games.** Once venues are set up, the game creation wizard uses them for guided court and time selection.
 
@@ -188,13 +188,13 @@ TELEGRAM_BOT_TOKEN=<token> \
 # → http://localhost:8082
 ```
 
-For faster frontend iteration, run the Vite dev server instead:
+For frontend component/style iteration, you can run the Vite dev server:
 
 ```bash
 cd web/frontend && npm run dev   # hot-reload dev server on http://localhost:5173
 ```
 
-The Vite dev server talks directly to the browser; the Go backend is not involved during frontend development.
+The current Vite configuration has no API proxy or fake authentication. This is not a replacement for a working authenticated Go-backed application; use component tests for isolated behavior checks and the Go backend with rebuilt assets for explicitly authorized full-stack testing.
 
 #### Telegram Login Widget — BotFather domain setup
 
@@ -209,12 +209,20 @@ The Login Widget only works on domains that are explicitly registered with Teleg
 ## Testing
 
 ```bash
-go test ./...                                      # all Go tests
-go test -tags integration -timeout 120s ./...      # integration tests (requires test DB)
-
-# Frontend tests (Vitest + Testing Library)
-cd web/frontend && npm test
+# Required in a clean checkout: build assets embedded by the Go web package
+go generate ./web/...
+go test -count=1 -timeout 120s ./...
+go test -count=1 -tags integration -timeout 120s ./...  # requires Docker; starts disposable PostgreSQL
+npm --prefix web/frontend test
 ```
+
+**Current limitations:** integration suites can exit successfully without running when Docker is unavailable; inspect their output. The separate `tests/e2e` suite is currently stale and does not compile. See [development and verification](docs/development.md) for focused checks and known gaps.
+
+### Agent-assisted development
+
+Pi, Codex, and Claude Code share [AGENTS.md](AGENTS.md), focused [project references](docs/README.md), and on-demand skills in `.agents/skills/`. Claude Code uses thin adapters rather than a second knowledge base. See [agent setup and the local review workflow](docs/agent-workflow.md).
+
+Agents implement and verify locally; the owner reviews the diff before deciding to commit or create a PR. No automatic publication or new host isolation is configured. The [implementation plan](docs/ai-first-development-plan.md) clearly marks later work such as unified `make` commands as not yet available.
 
 ## Versioning & Releases
 
@@ -224,18 +232,11 @@ Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/booking/VERSION`
 - `cmd/web/VERSION`
 
-The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. Each service exposes `GET /version` returning `{"version": "1.0.0"}`. The telegram bot additionally calls `GET /version` on the management service at startup and refuses to start if the major versions differ.
+The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. HTTP-serving services expose `GET /version` returning `{"version": "1.0.0"}`; telegram exposes it only in webhook mode. The telegram bot additionally calls management's `GET /version` at startup and refuses to start if the request fails or major versions differ.
 
 ### Releasing a service
 
-Trigger the relevant workflow from **GitHub Actions → Run workflow**:
-
-- **Release Management Service** — for `management`
-- **Release Telegram Bot** — for `telegram`
-- **Release Booking Service** — for `booking`
-- **Release Web Service** — for `web`
-
-Select the bump type (`patch` / `minor` / `major`). The workflow will:
+Trigger **GitHub Actions → Release → Run workflow**, select the service (`management`, `telegram`, `booking`, `web`, or `all`), and the bump type (`patch` / `minor` / `major`). The workflow accepts `main` and `dev`; `dev` releases use a `d` suffix and do not update `latest`. For a main-branch release, the workflow will:
 
 1. Verify CI passed for the exact commit being released (fails immediately otherwise). The web service release additionally checks the `frontend-test` job.
 2. Bump the `VERSION` file.
@@ -381,7 +382,7 @@ crontab -e
 The bot supports three languages: **English** (default), **German**, and **Russian**.
 
 - **Group messages** (game announcements, capacity notifications, weekly reminders) use the language configured for that group.
-- **Private messages** use the language from the user's Telegram client (`LanguageCode`), falling back to English if the language is unsupported.
+- **Private bot messages** use the user's saved DM language preference when available, otherwise the Telegram client's `LanguageCode`, normalized to English/German/Russian. Some scheduled admin reminders use the Telegram locale directly.
 
 Group admins set the language via `/groups` → 🌐 Language. If the admin manages multiple groups, the bot first asks which group to configure, then shows the config menu. The setting is stored per group and survives bot restarts.
 
@@ -423,7 +424,7 @@ Guest spots count toward capacity.
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
 | `TELEGRAM_WEBHOOK_URL`   | No       | _(empty)_         | Full public HTTPS URL Telegram should POST updates to (e.g. `https://example.com/telegram/webhook`). When set, the bot uses webhook mode instead of long-polling. |
-| `TELEGRAM_WEBHOOK_SECRET`| No       | _(empty)_         | Secret sent as `X-Telegram-Bot-Api-Secret-Token` and validated on every incoming webhook request. Generate with `openssl rand -hex 32`. |
+| `TELEGRAM_WEBHOOK_SECRET`| In webhook mode | _(empty)_   | Secret sent as `X-Telegram-Bot-Api-Secret-Token` and validated on every incoming webhook request. Required (at least 16 characters) when `TELEGRAM_WEBHOOK_URL` is set. Generate with `openssl rand -hex 32`. |
 | `SERVER_PORT`            | No       | `8083`            | Local plain-HTTP port the webhook listener binds to (webhook mode only). A TLS-terminating reverse proxy should forward `TELEGRAM_WEBHOOK_URL` traffic to `telegram:<SERVER_PORT>` on the internal network. |
 
 > **Webhook mode:** set `TELEGRAM_WEBHOOK_URL` to a public `https://…` URL and point your reverse proxy to `telegram:<SERVER_PORT>` (no public port mapping needed — the proxy terminates TLS). Generate the secret with `openssl rand -hex 32`. Leave `TELEGRAM_WEBHOOK_URL` empty to fall back to long-polling.
@@ -455,14 +456,15 @@ A single 5-minute poll (configured via `CRON_POLL`) runs the following tasks, ea
 | Auto-booking               | 00:00–00:05 (group TZ) | Books courts for the preferred time on configured game days when booking opens.       |
 | Halfway court check        | first poll at/after venue point | Fires at the venue's selected fraction of the booking-open-to-grace-deadline window. Releases half (rounded down) of the currently-unneeded courts. |
 | Cancellation reminder      | ±2m30s of reminder time | Fires `grace_period_hours + 6` hours before game. Checks capacity, notifies.        |
+| Final court check          | around 15 min before grace deadline | Cancels remaining fully-unused units and updates the announcement.             |
 | Booking reminder           | 10:00–10:05 (group TZ) | DMs admins on configured game days with booking info (or confirms auto-booking ran).  |
 | Day-after cleanup          | 03:00–03:05 (group TZ) | Unpins message, removes buttons, marks yesterday's games complete.                    |
 | Auto-approve results       | every poll              | Approves pending game-result submissions older than 48 h and applies the Glicko-2 update atomically. |
 | Leaderboard post           | every poll, gated by 24 h | Posts yesterday's leaderboard to the group once the last game has been over for ≥ 24 h. |
 
-Same-day dedup guards (`last_auto_booking_at`, `last_booking_reminder_at`, `notified_day_before`, `last_leaderboard_posted_for`) and `game_days` validation apply to all scheduled tasks.
+Each job has its own eligibility and deduplication rules; `game_days` does not gate every job. Auto-booking checks existing results by venue/date/time; `last_auto_booking_at` records successful activity rather than gating execution. Other jobs use venue timestamps, game completion/check flags, or result status. These guards do not guarantee exactly-once external operations across concurrent instances or crashes.
 
-**Auto-booking**: fires at midnight in each group's timezone on configured game days. Skips groups where the server owner has disabled auto-booking (`auto_booking_allowed = false` on the group). For remaining groups, processes venues with `auto_booking_enabled = true`, `preferred_game_times`, and `auto_booking_courts` set. Skipped for any venue where `auto_booking_games_count = 0`. Requires `SPORTS_BOOKING_SERVICE_URL`. Iterates up to `auto_booking_games_count` time slots from `preferred_game_times` independently — per-slot dedup prevents double-booking if the job re-runs. For each fresh slot: queries available (unbooked) courts at that time for the date `today + booking_opens_days`, books up to `len(auto_booking_courts)` courts in the configured priority order, saves one `auto_booking_result` row per slot (carrying the slot's `game_time`), and **immediately creates an unpublished game** (`message_id = NULL`) linked to that result. The game is visible to admins in `/games` (marked `📝`) but not yet announced to the group. The venue-level `last_auto_booking_at` is updated after any successful slot. On full success, sends a silent DM to all group admins. On partial or full failure, silently DMs all group admins.
+**Auto-booking**: fires at midnight in each group's timezone when the target date (`today + booking_opens_days`) matches configured game days. Requires `SPORTS_BOOKING_SERVICE_URL`, group permission, an enabled squash venue with courts/preferred time slots, a positive `auto_booking_courts_count`, and usable per-venue credentials. Processes every preferred slot independently, skipping slots with an existing result or a failed dedup lookup. It attempts up to `auto_booking_courts_count` courts per slot; `auto_booking_courts` optionally controls court preference order. Successful slots save an `auto_booking_results` row and **immediately create an unpublished game** (`message_id = NULL`) linked to it. Admins see the game in `/games` (marked `📝`) before publication. `last_auto_booking_at` is updated after any booked slot. Success and several failure summaries are silent admin DMs; missing/failed credentials have distinct audible notifications. External booking and local persistence are not one transaction; see [booking failure semantics](docs/services/management-scheduling.md#booking-and-publication-lifecycle).
 
 **Halfway court check**: fires on the first poll at or after the venue's Web-only preventive cancellation point: 1/3, 1/2 (default), or 2/3 of the interval from booking opening to the grace-period deadline (`game_date - venue.grace_period_hours`). Booking opening is local midnight on the game's calendar date minus `booking_opens_days`, in the group's timezone. Releases half (rounded down) of the currently-unneeded courts. Deduped via `halfway_court_check_done` flag. Reuses the same court-selection and cancellation logic as the cancellation reminder below. Skipped (without marking done) until the game has at least one active court booking, so it's retried automatically once auto-booking runs. Sends a group notification only when courts were actually canceled; cancellation failures DM group admins. The cancellation reminder (below) and a final check just before the grace-period deadline are unaffected and still clean up any remaining excess courts closer to the game.
 
@@ -489,37 +491,35 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 
 ## Sports Booking Service
 
-**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) on behalf of a configured user account. It supports listing, creating, and cancelling court bookings.
+**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. It supports listing, creating, and cancelling court bookings; there is no service-level default account.
 
 See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API endpoints, environment variables, and local run instructions.
 
 ## Project Structure
 
-```
+```text
 cmd/
-  management/  — management service entry point
-  telegram/    — telegram bot entry point
-  booking/     — booking service entry point
-  web/         — web service entry point
+  management/     — entry point; api/, service/, storage/
+  telegram/       — entry point; telegram/ bot handlers, client/ management HTTP client
+  booking/        — entry point; booking/ HTTP server, eversports/ upstream client
+  web/            — entry point; webserver/ auth, proxies, SPA handler
 internal/
-  config/         — env-based config (TelegramConfig, ManagementConfig, BookingConfig, WebConfig)
-  i18n/           — localisation (en/de/ru strings, Localizer, date formatting)
-  models/         — Game, Player, GameParticipation, GuestParticipation, Group, Venue
-  storage/        — SQL repositories (games, players, participations, guests, groups)
-  service/        — business logic + scheduler; GameNotifier for on-demand Telegram message edits
-  api/            — HTTP handlers for the management service REST API
-  client/         — typed HTTP client used by the telegram bot
-  telegram/       — bot loop, handlers, commands, formatter
-  gameformat/     — shared game message formatter and keyboard builder (used by telegram bot and management service)
-  eversports/     — Eversports HTTP client (GraphQL login/match, /api/slot for court availability, calendar HTML for court discovery)
-  booking/        — HTTP server wrapping the Eversports client
-  webserver/      — HTTP server + SPA handler for the web UI
+  config/         — environment configuration for all services
+  i18n/           — en/de/ru strings and date formatting
+  models/         — shared domain models
+  sport/          — supported sports and unit/capacity defaults
+  gameformat/     — shared game announcement and keyboard builder
+  testutil/       — disposable PostgreSQL and integration fixtures
 web/
-  embed.go        — embeds web/frontend/dist into the Go binary (go:generate builds it)
-  frontend/       — React + Vite + TypeScript source; `npm run build` outputs to dist/
+  embed.go        — embeds frontend/dist; go:generate builds it
+  frontend/       — React + Vite + TypeScript and component tests
 migrations/       — embedded SQL migration files
-scripts/          — deploy.sh, healthcheck.sh (production ops)
-tests/            — integration and e2e tests
-.github/
-  workflows/      — CI pipeline and release workflows
+scripts/          — deploy.sh, healthcheck.sh (production operations)
+tests/e2e/        — service/database lifecycle test (currently stale)
+docs/             — focused references and explicitly marked plans
+.agents/skills/   — canonical on-demand agent procedures and service routing
+.claude/skills/   — links to shared skills for Claude Code
+.github/workflows/ — CI and release workflows
 ```
+
+Go unit/integration tests live beside their packages. For dependency boundaries and known exceptions, see [Architecture](docs/architecture.md).
