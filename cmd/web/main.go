@@ -74,6 +74,7 @@ func main() {
 	prefs := webserver.NewPrefsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
 	users := webserver.NewUsersHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
+	h.SetFeatureFlags(webserver.NewFeatureFlagsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret))
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 
 	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)

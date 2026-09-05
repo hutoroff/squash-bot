@@ -7,6 +7,7 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Need | Reference |
 |---|---|
 | Service ownership, dependency boundaries, identity, compatibility | [Architecture](architecture.md) |
+| Implemented feature flags, disabled defaults, scope, activation, rollback | [Feature toggles](feature-toggles.md) |
 | Critical behavior and nearby tests/known gaps | [Invariants](invariants.md) |
 | Current setup, commands, and verification limitations | [Development](development.md) |
 | Local secret/dependency checks, scope, and remediation status | [Security checks and triage](security-checks.md) |
@@ -29,6 +30,7 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 
 - Product behavior and operator configuration: relevant root README section (booking details in its operator reference).
 - Internal behavior/rationale: the focused service reference; architecture and invariant map for cross-cutting changes.
+- Feature flags: `feature-toggles.md` is the canonical inventory; update it in the same task as any flag/evaluation change. Structural checks do not replace semantic review.
 - Development and agent procedures: development/workflow guides, with essential rules in `AGENTS.md`.
 - Skills: short reusable procedures/routing in `.agents/skills/`. Claude directory links contain no independent knowledge.
 - Plans: record scope, status, important decisions, and verification; retain historical baseline findings as historical, not current defects after they are fixed.

@@ -124,6 +124,7 @@ Everything above can also be managed in the web UI (port 8082) — the bot's men
   - **Auto-booking** — the server-owner master switch; group admins see whether the owner has allowed it
   - **Venues** — one card per venue with its schedule and an auto-booking readiness badge, plus add/edit/delete
 - **Venue form** covers every venue field, including multiple sports, their units, and players-per-unit overrides. It uses structured editors for game days, time slots, preferred times, and auto-booking court priority.
+- **Feature toggles** is server-owner-only: manage default-disabled global flags and per-group overrides. The [separate inventory](docs/feature-toggles.md) explains current flags, activation, and rollback limitations.
 - **My settings** holds your personal preferences: the language the bot uses in DMs, and whether it asks you to submit game results.
 - **Users** (server owners only) lists every user — display name, linked identity providers, and creation date — and lets you grant or revoke the server-owner role. Revoking the last remaining server owner is blocked.
 
@@ -382,6 +383,8 @@ crontab -e
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
 
 For `/result`, enter the optional score as **your score:opponent's score**, regardless of who won: `3:0` if you won, `0:3` if your opponent won. Use whole numbers starting at zero; `0:0` is also accepted. The selected winner cannot have a lower score than the other player. You can also skip the score.
+
+Server owners can manage experimental features under **Feature toggles** in the Web UI. Every framework flag defaults to **disabled**, with persistent global settings and per-group overrides (Inherit / Enabled / Disabled). A group override takes precedence: global Disabled is not a kill switch. See the separate [feature-toggle inventory and operator reference](docs/feature-toggles.md).
 
 ## Localisation
 

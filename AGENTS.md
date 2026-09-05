@@ -48,6 +48,7 @@ telegram and management also call the Telegram Bot API directly.
 | Eversports HTTP/auth/checkout | [Booking](docs/services/booking.md) | `cmd/booking/booking`, `cmd/booking/eversports` |
 | Web auth/proxy or React UI | [Web](docs/services/web.md) | `cmd/web/webserver`, `web/frontend` |
 | Cross-service changes | [Architecture](docs/architecture.md), [invariants](docs/invariants.md) | `internal/models`, `internal/sport`, `internal/gameformat`, `internal/i18n` |
+| Feature flags, defaults, scope, or evaluation | [Feature toggles](docs/feature-toggles.md) | `internal/featureflags`, management flag service/storage |
 | Setup or test failures | [Development](docs/development.md) | current commands and known verification gaps |
 
 The [documentation index](docs/README.md) distinguishes current references from proposals. Service discovery is **proposed, not implemented**.
@@ -94,9 +95,12 @@ make check-security
 
 ## Keep knowledge current
 
+**Any task that adds, changes, renames, or removes a feature flag—or changes flag evaluation behavior—must update [docs/feature-toggles.md](docs/feature-toggles.md) in the same task. The task is not complete until the documentation matches the implementation. Every framework flag must default to disabled.**
+
 | Change | Update |
 |---|---|
 | User-visible behavior, setup, environment variables | Relevant sections of `README.md`; booking operator details in `docs/sports-booking-service.md` |
+| Feature flags or evaluation behavior | `docs/feature-toggles.md`, registry/documentation consistency tests |
 | Service behavior or non-obvious constraints | Relevant `docs/services/` reference; implementation and tests remain authoritative for exact APIs/schema |
 | Architecture or cross-cutting invariant | `docs/architecture.md` / `docs/invariants.md`, including test links and gaps |
 | Agent workflow or verification commands | `docs/agent-workflow.md` / `docs/development.md`; root rules if essential |

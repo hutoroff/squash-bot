@@ -36,6 +36,7 @@ export default function Dashboard({ user }: DashboardProps) {
           <NavLink to="/audit" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
             Audit log
           </NavLink>
+          {user.is_server_owner && <NavLink to="/feature-flags" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>Feature toggles</NavLink>}
           {user.is_server_owner && (
             <NavLink to="/users" className={({ isActive }) => 'dashboard-nav__link' + (isActive ? ' dashboard-nav__link--active' : '')}>
               Users

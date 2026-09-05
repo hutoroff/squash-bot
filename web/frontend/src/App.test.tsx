@@ -12,6 +12,7 @@ vi.mock('./components/GroupSettingsPage', () => ({ default: () => <h1>Group sett
 vi.mock('./components/SettingsPage', () => ({ default: () => <h1>Settings content</h1> }))
 vi.mock('./components/AuditPage', () => ({ default: () => <h1>Audit content</h1> }))
 vi.mock('./components/UsersPage', () => ({ default: () => <h1>Users content</h1> }))
+vi.mock('./components/FeatureFlagsPage', () => ({ default: () => <h1>Feature toggles content</h1> }))
 vi.mock('./components/VenueFormPage', async () => {
   const { useParams } = await import('react-router-dom')
   return {
@@ -51,6 +52,7 @@ describe('App authentication and routing compatibility', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'Games content' })
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Feature toggles' })).not.toBeInTheDocument()
 
     for (const [link, pathname, heading] of [
       ['Groups', '/groups', 'Groups content'],
@@ -79,6 +81,14 @@ describe('App authentication and routing compatibility', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'Users content' })
     expect(screen.getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('mounts the feature toggle controls only for owners', async () => {
+    session(200, { ...user, is_server_owner: true })
+    window.history.replaceState(null, '', '/feature-flags')
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Feature toggles content' })
+    expect(screen.getByRole('link', { name: 'Feature toggles' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('does not mount authenticated routes when a deep link receives 401', async () => {

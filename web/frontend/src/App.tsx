@@ -9,6 +9,7 @@ import GroupSettingsPage from './components/GroupSettingsPage'
 import VenueFormPage from './components/VenueFormPage'
 import SettingsPage from './components/SettingsPage'
 import UsersPage from './components/UsersPage'
+import FeatureFlagsPage from './components/FeatureFlagsPage'
 import type { User } from './types'
 
 function App() {
@@ -66,6 +67,7 @@ function App() {
           <Route path="groups/:chatId/venues/:venueId" element={<VenueFormPage user={user} />} />
           <Route path="settings" element={<SettingsPage user={user} />} />
           {user.is_server_owner && <Route path="users" element={<UsersPage user={user} />} />}
+          {user.is_server_owner && <Route path="feature-flags" element={<FeatureFlagsPage />} />}
         </Route>
       </Routes>
     </BrowserRouter>

@@ -11,16 +11,17 @@ import (
 
 // Handler serves the web service HTTP API and the embedded React frontend.
 type Handler struct {
-	staticFS fs.FS
-	logger   *slog.Logger
-	version  string
-	auth     *AuthHandler
-	games    *GamesHandler
-	audit    *AuditHandler
-	groups   *GroupsHandler
-	venues   *VenuesHandler
-	prefs    *PrefsHandler
-	users    *UsersHandler
+	featureFlags *FeatureFlagsHandler
+	staticFS     fs.FS
+	logger       *slog.Logger
+	version      string
+	auth         *AuthHandler
+	games        *GamesHandler
+	audit        *AuditHandler
+	groups       *GroupsHandler
+	venues       *VenuesHandler
+	prefs        *PrefsHandler
+	users        *UsersHandler
 }
 
 // NewHandler creates a Handler that serves static files from fsys.
@@ -79,6 +80,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/users", h.users.handleListUsers)
 	mux.HandleFunc("PATCH /api/users/{userID}/server-owner", h.users.handleSetServerOwner)
+
+	mux.HandleFunc("GET /api/feature-flags", h.featureFlags.handle)
+	mux.HandleFunc("PATCH /api/feature-flags/{key}", h.featureFlags.handle)
 
 	mux.Handle("/", spaFileServer(h.staticFS))
 }
