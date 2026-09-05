@@ -15,12 +15,15 @@ Use the [shared task skill](../.agents/skills/squash-task/SKILL.md) for substant
 
 ### Local handoff
 
+Use final-state evidence: an edit after a check invalidates that check for affected behavior. Label every relevant check `PASS`, `FAIL`, or `NOT RUN`; do not turn a partial or blocked command into an aggregate pass.
+
 ```text
-Goal and behavior changed:
-Diff scope (including pre-existing changes):
+Goal:
+Behavior changed:
+Diff scope (including intended untracked files and pre-existing changes):
 Important decisions / assumptions:
-Tests added or reason none were needed:
-Verification: exact commands, pass/fail/not-run, final-state limitations:
+Tests added, or reason none were needed:
+Verification (PASS/FAIL/NOT RUN — exact command and relevant result):
 Remaining risks / unverified behavior:
 ```
 
@@ -28,11 +31,25 @@ Keep this concise. The owner reviews locally before deciding whether to commit o
 
 ### Fresh review
 
-Give a separate review session the task, acceptance criteria, agreed constraints, base revision, and actual diff. Include staged/unstaged changes and intended untracked files, excluding unrelated owner work. The implementer's narrative is context, not proof.
+Run the applicable deterministic checks before paying for a fresh model review when practical. A failure or unavailable prerequisite belongs in the review brief as `FAIL` or `NOT RUN`; review does not convert it into a pass. Use one brief that lets the reviewer inspect the code without relying on the implementation conversation:
 
-Review correctness, authorization, compatibility, failure paths, concurrency where relevant, and missing regression coverage. Findings need a concrete failure scenario, severity, and file location. Avoid speculative refactors and formatting feedback already covered by checks. Report no findings when appropriate, but distinguish that from complete verification.
+```text
+Task:
+Acceptance criteria:
+Agreed constraints:
+Base revision (commit SHA or other explicit baseline):
+Review scope (base-to-worktree, staged, unstaged, and intended untracked paths):
+Excluded pre-existing owner work:
+Final-state verification evidence (PASS/FAIL/NOT RUN, exact commands):
+```
 
-Default to one review pass for substantive changes; trivial changes do not require a second model. Do not launch other agents or incur automatic review costs merely because a skill describes this workflow. Test execution can have effects even from a review session; read-only review guidance is not containment.
+Give the reviewer the actual diff or access to the checkout containing it. A summary and diffstat can orient the reviewer but are not substitutes for the changed lines. Include staged/unstaged changes and intended untracked files as applicable, excluding unrelated owner work.
+
+Review correctness, authorization, compatibility, failure paths, concurrency where relevant, and missing regression coverage. Findings need a severity, file location, concrete triggering scenario and consequence, plus a suggested regression check where useful. Separate confirmed findings, unresolved questions, and verification limitations. Avoid speculative refactors and formatting feedback already covered by checks. Report no findings when appropriate, but distinguish that from exhaustive correctness.
+
+Default to one review pass for substantive changes; trivial changes do not require a second model. Do not launch other agents or incur automatic review costs merely because a skill describes this workflow. No check target invokes a model, commits, pushes, or publishes a PR. Test execution can have effects even from a review session; read-only review guidance is not containment.
+
+If temporary evidence is useful, keep it under ignored `tmp/agent/`; do not commit routine transcripts or journals.
 
 ## Tool setup and discovery
 

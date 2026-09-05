@@ -21,7 +21,7 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 
 ## Plans — not descriptions of completed features
 
-- [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–3 provide shared project knowledge, the local `make` verification interface, and a focused regression pack; later review/security safeguards remain proposals.
+- [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–4 provide shared project knowledge, the local `make` verification interface, a focused regression pack, and concise final-state handoff/review evidence; security safeguards remain proposed.
 - [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Do not assume a registry, runtime capability resolution, metrics, or replica safety exists.
 
 ## Documentation ownership

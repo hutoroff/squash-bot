@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Steps 1–3 implemented locally (2026-09-05), ready for owner review. Steps 4–5 are not implemented. See [implementation progress](#11-implementation-progress).
+**Status:** Steps 1–4 implemented locally (2026-09-05), ready for owner review. Step 5 is not implemented. See [implementation progress](#11-implementation-progress).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -317,7 +317,7 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] Required test suites cannot silently succeed without running.
 - [x] The stale service/database lifecycle test is repaired and selected by CI.
 - [x] High-value regression gaps have new meaningful tests.
-- [ ] Local review produces concise final-state evidence, without PR publication.
+- [x] Local review produces concise final-state evidence, without PR publication.
 - [ ] Local security checks have an explicit result/triage path.
 - [ ] No service versions, application changelogs, GitHub settings, host isolation, or release behavior were changed incidentally.
 - [ ] The accepted lack of technical containment remains explicit.
@@ -401,4 +401,21 @@ Validation on the final test/documentation state:
 | Static/document review | Go formatting, staged/unstaged whitespace, local documentation paths, intended test-only executable scope, and invariant anchors checked. |
 
 No live Telegram/Eversports request, application startup, runtime `.env`, dependency, service version, changelog, commit, push, PR, release, or deployment is part of this step.
+
+### Step 4 — implemented locally, 2026-09-05
+
+- Tightened the shared task and review procedures around final-state evidence: every relevant check is reported as `PASS`, `FAIL`, or `NOT RUN`, and later edits invalidate affected evidence.
+- Added copyable local handoff and fresh-review briefs covering the task, acceptance criteria, constraints, base revision, actual staged/unstaged/untracked scope, pre-existing exclusions, exact verification, decisions, and remaining risks. A summary or diffstat is explicitly not a substitute for the changed lines.
+- Kept review findings focused on concrete scenarios, consequences, file locations, and useful regression checks. One optional review pass remains the substantive-task default after deterministic checks; trivial work needs none.
+- Reused the already ignored `tmp/agent/` location for optional temporary evidence. No report generator, model invocation, paid review loop, commit, push, or PR automation was added.
+
+Validation on the final procedural/documentation state:
+
+| Check | Result |
+|---|---|
+| Workflow acceptance review | Handoff/review inputs, final-state result labels, diff scope, actionable finding requirements, optional-review policy, and containment caveat are explicit. |
+| Static documentation validation | Local links and heading anchors resolve; skill metadata and Claude adapter links remain valid; `tmp/agent/` is ignored. |
+| Diff scope and whitespace | Only shared task/review procedures and their plan/index references changed; whitespace checks passed. |
+
+No application code or executable check target changed, so application tests were not rerun. No application startup, runtime `.env`, dependency, service version, changelog, commit, push, PR, release, deployment, GitHub setting, host permission, or global agent setting is part of this step.
 
