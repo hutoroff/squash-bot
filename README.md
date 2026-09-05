@@ -381,6 +381,8 @@ crontab -e
 | `/venues`   | Group admins    | Manage venues (sports, units, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
 
+For `/result`, enter the optional score as **your score:opponent's score**, regardless of who won: `3:0` if you won, `0:3` if your opponent won. Use whole numbers starting at zero; `0:0` is also accepted. The selected winner cannot have a lower score than the other player. You can also skip the score.
+
 ## Localisation
 
 The bot supports three languages: **English** (default), **German**, and **Russian**.
