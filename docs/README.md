@@ -9,7 +9,7 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Service ownership, dependency boundaries, identity, compatibility | [Architecture](architecture.md) |
 | Critical behavior and nearby tests/known gaps | [Invariants](invariants.md) |
 | Current setup, commands, and verification limitations | [Development](development.md) |
-| Local secret/dependency checks, scope, and open security debt | [Security checks and triage](security-checks.md) |
+| Local secret/dependency checks, scope, and remediation status | [Security checks and triage](security-checks.md) |
 | Local task/review/handoff procedure and agent setup | [Agent workflow](agent-workflow.md) |
 | Management business logic, authorization, persistence, results | [Management](services/management.md) |
 | Scheduler windows, deduplication, booking and cancellation | [Management scheduling](services/management-scheduling.md) |
@@ -22,7 +22,7 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 
 ## Plans — not descriptions of completed features
 
-- [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Open dependency findings are tracked separately; safeguards are not containment.
+- [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Dependency scan results and the subsequent remediation are tracked separately; safeguards are not containment.
 - [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Do not assume a registry, runtime capability resolution, metrics, or replica safety exists.
 
 ## Documentation ownership

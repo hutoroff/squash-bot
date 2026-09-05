@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Steps 1–5 and the completion-audit timeout follow-up are implemented locally (2026-09-05), ready for owner review. Dependency security findings remain open and outcome measurement continues over real tasks; the milestone does not claim a clean vulnerability baseline, measured productivity gains, or host containment. See [implementation progress](#11-implementation-progress) and [security triage](security-checks.md).
+**Status:** Steps 1–5 and the completion-audit timeout follow-up are implemented locally (2026-09-05), ready for owner review. The dependency findings recorded at the milestone boundary were subsequently remediated in an owner-authorized local follow-up; see the linked security remediation record. Outcome measurement continues over real tasks; the milestone does not establish measured productivity gains or host containment. See [implementation progress](#11-implementation-progress) and [security triage](security-checks.md).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -319,7 +319,7 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] The stale service/database lifecycle test is repaired and selected by CI.
 - [x] High-value regression gaps have new meaningful tests.
 - [x] Local review produces concise final-state evidence, without PR publication.
-- [x] Local security checks have an explicit result/triage path; existing dependency findings still fail and remain open.
+- [x] Local security checks have an explicit result/triage path with no waived findings; the original failing dependency baseline was subsequently [remediated locally](security-checks.md#dependency-remediation--2026-09-05).
 - [x] No service versions, application changelogs, GitHub settings, host isolation, or release behavior were changed incidentally.
 - [x] The accepted lack of technical containment remains explicit.
 
@@ -457,4 +457,4 @@ Final-state verification:
 | `make check-security` | FAIL: existing 14 reachable Go advisories across 5 modules and 10 npm findings (1 low, 4 moderate, 5 high) remain visible. Secret scan passes; no debt was waived or dependencies upgraded. |
 | Static checks and diff review | JavaScript/shell/Make syntax, local documentation links/anchors, shared adapters, and current/milestone-wide whitespace checked. Changes are limited to the verification interface, its regressions and documentation. |
 
-The implementation checklist is complete, pending owner review of the local diff. Section 8's task-by-task outcome observations and the documented dependency remediation remain follow-up work, not completed measurements or a clean security claim. No application behavior, service version, changelog, release workflow, global setting, Git commit or publication was changed by this follow-up. Verification here is on macOS; native Linux execution and model-behavior evaluation were not performed for this follow-up.
+The implementation checklist was complete at this boundary. Section 8's task-by-task outcome observations and dependency remediation remained follow-up work, not completed measurements or a clean security claim. The later owner-authorized dependency changes and current scan results are recorded in [security remediation](security-checks.md#dependency-remediation--2026-09-05). No application behavior, service version, changelog, release workflow, global setting, Git commit or publication was changed by this follow-up. Verification here is on macOS; native Linux execution and model-behavior evaluation were not performed for this follow-up.

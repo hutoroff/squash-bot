@@ -27,7 +27,7 @@ Use [the task workflow](.agents/skills/squash-task/SKILL.md) for substantive imp
 
 ## Repository map
 
-Go module: `github.com/hutoroff/squash-bot`. Go minimum is defined by [go.mod](go.mod) (currently 1.25); Node by [web/frontend/.node-version](web/frontend/.node-version). PostgreSQL 15, React/TypeScript/Vite, pgx, cron, and slog.
+Go module: `github.com/hutoroff/squash-bot`. Go minimum is defined by [go.mod](go.mod) (currently 1.26.6); Node by [web/frontend/.node-version](web/frontend/.node-version). PostgreSQL 15, React/TypeScript/Vite, pgx, cron, and slog.
 
 Four binaries, wired in `cmd/<service>/main.go`:
 

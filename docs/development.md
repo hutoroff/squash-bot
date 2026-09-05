@@ -2,8 +2,8 @@
 
 ## Prerequisites and boundaries
 
-- Go: use [go.mod](../go.mod) as the minimum version (currently 1.25).
-- Node: use [web/frontend/.node-version](../web/frontend/.node-version); npm dependencies are locked by `package-lock.json`.
+- Go: use [go.mod](../go.mod) as the minimum version (currently 1.26.6). The four Docker builder stages use `golang:1.26.6-alpine`; CI reads the version from `go.mod`.
+- Node: use [web/frontend/.node-version](../web/frontend/.node-version) (Node 22; Vite 8 requires 22.12+ within that line). npm dependencies are locked by `package-lock.json`.
 - Docker: required by `make check`, integration-tagged tests, and the service/database lifecycle test. [SetupTestDB](../internal/testutil/testdb.go) starts disposable PostgreSQL 15 containers and applies embedded migrations.
 - Internet access: may be required by bootstrap and security checks when npm/Go caches are empty or vulnerability databases must be queried.
 

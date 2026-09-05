@@ -42,15 +42,45 @@ node --test scripts/checks/secrets.integration.mjs
 
 The first command uses disposable Git indexes, fake scanner responses, and synthetic files, without commits or network access; it also runs inside `make check-fast`/`make check`. The second explicitly downloads/runs pinned Gitleaks against fake tokens in an isolated temporary repository, confirms index/worktree/untracked/template/test detection, then checks clean replacements. It does not use an external account or contact a token issuer. Keep it separate from the offline edit loop.
 
-## Existing dependency findings — 2026-09-05
+## Dependency remediation — 2026-09-05
+
+The failing baseline was reproduced at `a72c400` before the owner-authorized dependency updates: **14 reachable Go advisories and 10 npm vulnerable-package findings**. With the local remediation applied, the unchanged `make check-security` reports **zero reachable Go vulnerabilities and zero npm findings at every severity**. This is a dated result for the checked source/lockfiles, not a permanent guarantee or a container/host vulnerability scan.
+
+| Dependency path | Resolution |
+|---|---|
+| Runtime PostgreSQL driver/normalization | `pgx/v5` 5.9.2 and `x/text` 0.41.0; compatible pool/service dependencies refreshed. |
+| Testcontainers SSH/archive/client path | Testcontainers 0.42.0 migrates to the supported Moby API/client modules; `x/crypto` 0.56.0 and `moby/go-archive` 0.3.0 include the reported fixes. Required transitive modules were updated through Go's module resolver. |
+| Runtime frontend router | `react-router-dom`/`react-router` 7.18.3, retaining the existing compatibility imports and declarative BrowserRouter route table. React remains 18. |
+| Frontend build/test tooling | Vite 8.2.2 and React plugin 6.1.1 replace the old esbuild/Rollup/Babel build path. The obsolete esbuild, Babel-core and Browserslist packages are no longer in the lockfile. Vite and Vitest share the patched Vite dependency. |
+| Remaining npm transitive findings | Undici 7.29.1, PostCSS 8.5.28 and nanoid 3.3.18 resolve the affected ranges without overrides or forced incompatible transitive replacements. |
+
+The published SSH fixes require Go 1.26. The owner approved raising the project minimum and all four Docker **builder** images to 1.26.6; CI already reads `go.mod`. No installed host toolchain, Docker daemon, runtime image, service version or release workflow was changed. Node remains on the configured 22 line (Vite requires 22.12+). The frontend package is ESM, and its explicit build syntax targets preserve the prior Vite 5 browser floor.
+
+The old `github.com/docker/docker` module remains in the Go module graph solely through **golang-migrate's own dependency tests** (`postgres.test → dhui/dktest`). It is absent from this repository's compiled application, integration and lifecycle test package graphs (`go list -deps -test -tags 'integration,e2e' ./...`). The formerly reachable Testcontainers path now uses Moby. This is a dependency-path migration, not an advisory suppression or proof that every external dependency's tests/host daemon are secure.
+
+Compatibility coverage includes [PostgreSQL parameter boundaries](../cmd/management/storage/postgres_test.go) in extended/simple protocol modes and [App auth/navigation checks](../web/frontend/src/App.test.tsx) with real routing and mocked page bodies. These checks passed before and after the updates; they do not claim to reproduce every upstream exploit (including multi-gigabyte protocol payloads). Full application/storage/lifecycle verification and the unchanged security checks are the acceptance gates. Browser E2E and real Telegram/Eversports operations remain outside scope.
+
+Verification on the final dependency/configuration state:
+
+| Check | Result |
+|---|---|
+| Clean-checkout `make bootstrap`, `make doctor`, `make check` | PASS: 23 helper tests, 113 frontend tests, build/vet/type checks, Go unit/race tests, PostgreSQL integration and the service/database lifecycle suite. Started without `.env`, installed frontend dependencies or generated assets. |
+| Clean-checkout `make check-security` | PASS: prospective secret scan, zero reachable Go vulnerabilities on macOS/arm64 with Go 1.26.6, and zero npm findings at all severities. |
+| Pinned govulncheck with `GOOS=linux`, `CGO_ENABLED=0`, `GOARCH=amd64` and `arm64` | PASS: no vulnerabilities found for either target. The analyzer binary was built into and removed from a temporary directory, not installed globally. |
+| All four Dockerfiles, `--target builder`, local Linux/arm64 | PASS, including the Node/Alpine frontend build and Go 1.26.6 compilation. Only a disposable clean source snapshot was sent; no application image was run or published. This run's labelled verification images were removed. |
+| `go mod tidy -diff`, `go mod verify`, `npm ls --all` | PASS: tidy module files, verified module contents and a consistent installed npm dependency tree. |
+
+No security threshold, scanner pin/scope, ignore rule, `replace` directive or npm override was changed to obtain the clean result. The original findings below are retained as **historical triage**, not currently open items or approved exceptions.
+
+## Historical dependency findings — 2026-09-05
 
 **Baseline:** `76e050f`, Go 1.26.6, Node 22.17.0, npm 10.9.2, unchanged `go.mod`/`go.sum` and frontend lockfile. Commands: `go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...` and `npm --prefix web/frontend audit --package-lock-only --json`.
 
-Observed: **14 reachable Go advisories across 5 modules** and **10 npm vulnerable-package findings** (1 low, 4 moderate, 5 high). npm counts packages, not distinct advisory IDs. These are existing findings, not new application dependency changes from Increment 5. Advisory databases change; this dated record is a triage starting point, **not a scanner allowlist or an approved risk acceptance**. Both dependency checks remain failing. No vulnerability exception has been granted.
+Observed: **14 reachable Go advisories across 5 modules** and **10 npm vulnerable-package findings** (1 low, 4 moderate, 5 high). npm counts packages, not distinct advisory IDs. These predated Increment 5 and were not waived by that milestone. Advisory databases change; this historical record is **not a scanner allowlist or an approved risk acceptance**. Both dependency checks failed at that boundary; their current status and resolution are recorded above. No vulnerability exception has been granted.
 
 ### Go follow-up
 
-| Affected module / observed version | Advisories | Triage and next action |
+| Affected module / observed version | Advisories | Triage and recommended action at baseline |
 |---|---|---|
 | `github.com/jackc/pgx/v5` 5.5.0 | [GO-2026-5004](https://pkg.go.dev/vuln/GO-2026-5004), [GO-2024-2606](https://pkg.go.dev/vuln/GO-2024-2606), [GO-2024-2567](https://pkg.go.dev/vuln/GO-2024-2567) | **Prioritize runtime database path.** Analyzer traces enter management storage/pool/query operations. Prepare a focused upgrade to at least 5.9.2 (highest reported fix); verify SQL/protocol compatibility and run storage/integration/lifecycle checks. Reachability is not proof that current query inputs meet every exploit precondition. |
 | `golang.org/x/text` 0.34.0 | [GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970) | Runtime pgx connection normalization trace; malformed-input infinite-loop advisory. Upgrade to at least 0.39.0 in the database dependency follow-up, checking Go-version requirements. |
@@ -60,7 +90,7 @@ Observed: **14 reachable Go advisories across 5 modules** and **10 npm vulnerabl
 
 ### Frontend/tooling follow-up
 
-| npm finding(s) / observed version(s) | Triage and next action |
+| npm finding(s) / observed version(s) | Triage and recommended action at baseline |
 |---|---|
 | `react-router-dom` 6.30.3, `react-router` 6.30.3, `@remix-run/router` 1.23.2 — moderate | **Runtime dependencies.** Review redirect/link/navigation inputs and SSR-hydration applicability; prepare a compatible router update and navigation/auth regressions. Includes [GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42), [GHSA-wrjc-x8rr-h8h6](https://github.com/advisories/GHSA-wrjc-x8rr-h8h6), [GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg), and [GHSA-jjmj-jmhj-qwj2](https://github.com/advisories/GHSA-jjmj-jmhj-qwj2). Do not assume npm's `fixAvailable` resolves every advisory without rerunning audit. |
 | `vite` 5.4.21 and nested 8.0.8 — high; `esbuild` 0.21.5 and nested 0.28.0 — moderate | Development/test-server path traversal, file-read and platform-specific issues; these packages are not the embedded Go server. Do not expose local dev servers. npm proposes Vite 8.2.2, a major upgrade for the direct dependency: review Vite/plugin/Node compatibility and both dependency paths, then run frontend build/tests and `make check`. Representative reports: [Vite](https://github.com/advisories/GHSA-4w7w-66w2-5vf9), [esbuild](https://github.com/advisories/GHSA-67mh-4wv8-2f99). |
@@ -70,7 +100,7 @@ Observed: **14 reachable Go advisories across 5 modules** and **10 npm vulnerabl
 | `browserslist` 4.28.2 — high | Query-cache memory growth and untrusted stats handling; includes [GHSA-c83g-rgw3-j3cx](https://github.com/advisories/GHSA-c83g-rgw3-j3cx). Refresh past the reported affected range (`<=4.28.6`) and validate browser-target/build behavior. |
 | `@babel/core` 7.29.0 — low | Build-time arbitrary source-map file-read advisory [GHSA-4x5r-pxfx-6jf8](https://github.com/advisories/GHSA-4x5r-pxfx-6jf8). Resolve a compatible version above 7.29.0 and test transpilation. Remains open despite the npm exit threshold. |
 
-The owner should schedule the runtime database/router work first and the build/test dependency refresh separately. All rows remain **open** until fixes and applicable verification are reviewed. Development-only classification is not a waiver: builds and tests execute on the same credential-bearing host.
+At the baseline, all rows were open and runtime database/router work was prioritized ahead of the build/test refresh. The remediation above addresses those reported paths; the local diff still requires owner review. Development-only classification was not used as a waiver: builds and tests execute on the same credential-bearing host.
 
 ## Handling subsequent results
 

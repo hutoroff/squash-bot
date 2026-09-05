@@ -30,6 +30,8 @@ Exact route and DTO shapes belong in handler/client code. When changing a respon
 
 [App.tsx](../../web/frontend/src/App.tsx) owns auth/bootstrap/routes; `components/` contains pages and tests; `api/` contains clients; [types.ts](../../web/frontend/src/types.ts) defines frontend response shapes.
 
+The frontend uses React 18 with React Router 7's `react-router-dom` compatibility exports; it remains a client-rendered `BrowserRouter` app, not an SSR/data-router framework. Vite 8 and React plugin 6 use Rolldown/Oxc; the package is ESM, and the build config explicitly preserves Vite 5's JavaScript syntax targets rather than adopting newer default browser floors.
+
 Current user identity is `user_id`, not a raw Telegram ID. Game roster rows may retain Telegram display information but must include `user_id` for current-user comparisons.
 
 Settings use optimistic updates and rollback. Preserve group/venue scope, last-owner conflict handling, independent in-flight saves, and the Web-only preventive cancellation fraction. Venue edits include per-sport units/player overrides. Do not replace the server's authorization with conditional navigation visibility.
@@ -47,5 +49,7 @@ Tests live beside components and use Vitest + Testing Library:
 - Prefer role-based selectors when a heading and badge share text; do not weaken tests to avoid ambiguous `getByText` matches.
 - Test files/setup are excluded from the application tsconfig. `tsc && vite build` does **not** type-check the tests; a passing Vitest run is not equivalent to a test type check.
 - [auditEvents.test.ts](../../web/frontend/src/auditEvents.test.ts) reads backend audit constants and detects missing/extra labels. Run it after changing event types; also keep the TypeScript union consistent.
+
+[App.test.tsx](../../web/frontend/src/App.test.tsx) exercises the real auth bootstrap, BrowserRouter, route table and Dashboard navigation with mocked page bodies: canonical identity/deep links, owner route visibility, 401 login, and transient-failure retry states. It is compatibility coverage, not browser E2E or a replacement for server authorization tests.
 
 Backend regression anchors include `auth_test.go`, `games_test.go`, `groups_test.go`, `venues_test.go`, and `users_test.go`. Use local HTTP test servers and synthetic signed auth data. Do not add a production authentication bypass or rely on a real public tunnel for routine validation. See [Development](../development.md) for commands and [Invariants](../invariants.md) for known gaps.

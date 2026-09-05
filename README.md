@@ -23,7 +23,7 @@ A Telegram bot for coordinating squash, badminton, table-tennis, tennis, padel, 
 
 | Component     | Technology                                    |
 |---------------|-----------------------------------------------|
-| Language      | Go 1.25+ (see `go.mod`)                       |
+| Language      | Go 1.26.6+ (see `go.mod`)                     |
 | Database      | PostgreSQL 15                                 |
 | Telegram API  | go-telegram-bot-api v5                        |
 | DB Driver     | pgx v5 (connection pool)                      |
@@ -216,7 +216,7 @@ make doctor     # checks Go, Node, npm, Docker, and generated assets
 make check      # full build, fast/race/integration/lifecycle verification
 ```
 
-Use `make check-fast` for the Docker-free edit loop after bootstrap. `make check-secrets` scans prospective local files with pinned Gitleaks; `make check-security` also runs pinned Go vulnerability analysis and the locked npm dependency audit. Security checks fail on blocking findings or incomplete verification; existing dependency findings are not silently waived. See [security scope and triage](docs/security-checks.md). Focused `go test` and `npm test` commands remain available.
+Use `make check-fast` for the Docker-free edit loop after bootstrap. `make check-secrets` scans prospective local files with pinned Gitleaks; `make check-security` also runs pinned Go vulnerability analysis and the locked npm dependency audit. Security checks fail on blocking findings or incomplete verification; findings are not silently waived. See [security scope and triage](docs/security-checks.md). Focused `go test` and `npm test` commands remain available.
 
 All `make` entrypoints have explicit overall deadlines, covering installation/build steps as well as tests. A timeout fails the command instead of leaving it running indefinitely; see [deadlines and cancellation](docs/development.md#deadlines-and-cancellation) for limits and overrides.
 
