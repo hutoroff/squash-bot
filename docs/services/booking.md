@@ -53,6 +53,6 @@ Booking timestamps must retain the facility/group local UTC offset. Do not conve
 
 ## Verification
 
-[client_test.go](../../cmd/booking/eversports/client_test.go) covers cookie loss, auth-shaped errors, and the pay-offline no-retry boundary; [bookings_test.go](../../cmd/booking/eversports/bookings_test.go) covers calendar parsing; [handler_test.go](../../cmd/booking/booking/handler_test.go) covers handler behavior with fakes. Run these locally, not against real accounts.
+[client_test.go](../../cmd/booking/eversports/client_test.go) covers cookie loss, auth-shaped errors, the pay-offline no-retry boundary, an ambiguous step-1 gateway timeout, and post-payment partial success; [bookings_test.go](../../cmd/booking/eversports/bookings_test.go) covers calendar parsing; [handler_test.go](../../cmd/booking/booking/handler_test.go) covers handler behavior with fakes. Run these locally, not against real accounts.
 
 When modifying an operation, test its real response shapes: normal JSON, top-level errors, business errors, HTML, and relevant HTTP failures. Existing mocked retry tests do not establish end-to-end exactly-once booking or compatibility with an upstream change that has not been captured in fixtures.

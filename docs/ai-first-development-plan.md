@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Steps 1–2 implemented locally (2026-09-05), ready for owner review. Steps 3–5 are not implemented. See [implementation progress](#11-implementation-progress).
+**Status:** Steps 1–3 implemented locally (2026-09-05), ready for owner review. Steps 4–5 are not implemented. See [implementation progress](#11-implementation-progress).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -316,7 +316,7 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] Clean bootstrap and the full local check command work.
 - [x] Required test suites cannot silently succeed without running.
 - [x] The stale service/database lifecycle test is repaired and selected by CI.
-- [ ] High-value regression gaps have new meaningful tests.
+- [x] High-value regression gaps have new meaningful tests.
 - [ ] Local review produces concise final-state evidence, without PR publication.
 - [ ] Local security checks have an explicit result/triage path.
 - [ ] No service versions, application changelogs, GitHub settings, host isolation, or release behavior were changed incidentally.
@@ -383,4 +383,22 @@ Validation on the final affected code paths:
 | Static review | Shell/Make/JSON/YAML syntax, repository-wide Go formatting, diff whitespace, changed-document local paths, CI job names, and intended file scope checked. |
 
 No runtime `.env`, live application service, Telegram/Eversports operation, application version, changelog, release, commit, push, PR, deployment, or GitHub setting change is part of this step.
+
+### Step 3 — implemented locally, 2026-09-05
+
+- Added focused Telegram handler regressions for live admin revalidation before publication, compatibility with legacy kick callbacks that carry Telegram IDs, and in-place announcement edits retaining the standard inline keyboard.
+- Added the first dedicated Telegram management HTTP client test file. Representative contracts cover identity resolution, canonical `user_id` and actor propagation, local-offset timestamps, partial cancellation responses, sentinel conflicts, typed HTTP status/message errors, bearer authentication, and request/response shapes.
+- Extended the Eversports client tests for two failure boundaries: an ambiguous step-1 gateway timeout is not retried, while failures in optional post-payment match/tracking work preserve the successful booking result without inventing a `matchId`.
+- Kept the increment test-only apart from invariant/service/plan documentation; no production refactor or new dependency was needed. Remaining callback/route breadth and distributed exactly-once behavior stay explicitly partial or uncovered.
+
+Validation on the final test/documentation state:
+
+| Check | Result |
+|---|---|
+| Focused race run | `go test -race -count=1 -timeout 120s ./cmd/telegram/telegram ./cmd/telegram/client ./cmd/booking/eversports` passed. |
+| Mutation probes | Removing each protected authorization, legacy callback translation, keyboard, canonical actor, and no-retry behavior made its focused test fail; production files were restored before final verification. |
+| `make check` | Passed, including fast checks, 107 frontend tests, race-enabled Go tests, Docker-backed integration suites, and the service/database lifecycle test. |
+| Static/document review | Go formatting, staged/unstaged whitespace, local documentation paths, intended test-only executable scope, and invariant anchors checked. |
+
+No live Telegram/Eversports request, application startup, runtime `.env`, dependency, service version, changelog, commit, push, PR, release, or deployment is part of this step.
 
