@@ -21,7 +21,7 @@ make check
 
 `make bootstrap` runs the locked local frontend install (`npm ci`) and builds the ignored `web/frontend/dist` assets embedded by [web/embed.go](../web/embed.go). It can replace the checkout's `web/frontend/node_modules`, as `npm ci` normally does, but does not install host/global toolchains or touch credentials. The equivalent existing generation command, `go generate ./web/...`, remains available.
 
-`make doctor` is read-only. It reports Go, Node, npm, Docker-daemon, and generated-asset status without reading or printing `.env`. Running it before bootstrap in a clean checkout intentionally reports missing assets and returns nonzero; run bootstrap, then doctor to confirm readiness.
+`make doctor` is read-only. It reports Go, Node, npm, Docker-daemon, and generated-asset status without reading or printing `.env`. A functioning Node runtime is required to enforce deadlines; if Node is missing, doctor reports that prerequisite and exits before running other probes. Running it before bootstrap in a clean checkout intentionally reports missing assets and returns nonzero; run bootstrap, then doctor to confirm readiness.
 
 ## Verification target contract
 
@@ -39,6 +39,27 @@ Generated ignored build/test caches are expected. The targets do not format file
 Missing assets and stale frontend inputs are diagnosed before `check-fast`; use `make check` to rebuild them. Full verification distinguishes this prerequisite error from test failures through labeled steps. The Go test commands have 120-second package timeouts and all scripts set `CI=1` for noninteractive execution.
 
 Security scope, tool requirements, synthetic regression commands, result handling, and open dependency findings are documented in [Local security checks and triage](security-checks.md). Security checks remain separate from `make check`; a green application test run does not imply a clean security result.
+
+## Deadlines and cancellation
+
+All documented `make` entrypoints run through the shared [bounded command controller](../scripts/checks/run-bounded.mjs). A deadline covers the **whole entrypoint**, including dependency downloads, tool startup, builds, vet, test setup/cleanup and nested shell helpers—not just test execution.
+
+| Entrypoint | Default seconds | Make override |
+|---|---:|---|
+| `doctor` | 30 | `DOCTOR_TIMEOUT` |
+| `bootstrap` | 600 | `BOOTSTRAP_TIMEOUT` |
+| `check-fast` | 900 | `CHECK_FAST_TIMEOUT` |
+| `check` | 1800 | `CHECK_TIMEOUT` |
+| `check-secrets` | 600 | `CHECK_SECRETS_TIMEOUT` |
+| `check-security` | 1200 | `CHECK_SECURITY_TIMEOUT` |
+
+For a slow cold-cache run, an explicit override such as `make check CHECK_TIMEOUT=2400` is supported. Values must be finite, positive seconds, at most 86400; zero does not disable the deadline. Existing Go package and security subprocess timeouts still apply independently. The full check invokes the fast shell helper under the same controller, without starting a nested detached command group. Shell scripts in `scripts/checks/` are internal recipes; use the `make` entrypoints for these overall deadlines.
+
+The controller provides closed stdin, `CI=1` and `GIT_TERMINAL_PROMPT=0`, passes arguments without shell interpretation, and preserves normal exit codes/output. Expiry produces a labeled failure and controller exit 124 (`make` also exits nonzero). It sends SIGTERM to its own POSIX command group, then SIGKILL after a one-second grace period, even if the command leader exits zero while descendants remain. SIGINT/SIGTERM cancellation follows the same cleanup path with exit 130/143. An overall timeout terminates the entrypoint rather than retrying or starting later stages.
+
+This uses standard Node/POSIX facilities on macOS and Linux, not GNU `timeout` or a new dependency. Process-group cleanup is not containment: independently detached processes or a forcibly killed controller may escape cleanup. It does not signal unrelated process groups, stop the Docker daemon, or prune shared containers. Abruptly interrupted tests/scans can leave their own disposable resources or temporary snapshots; do not clean unrelated owner resources to compensate.
+
+Offline [deadline regressions](../scripts/checks/run-bounded.test.mjs) run with the other helper tests in `make check-fast`/`make check`. They exercise hung Docker/install/build/vet commands, exit/output/argument propagation, invalid limits, cancellation, and SIGTERM-resistant descendants using synthetic disposable fixtures only.
 
 ## Focused checks
 

@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Steps 1–5 implemented locally (2026-09-05), ready for owner review. Dependency security findings remain open; the milestone does not claim a clean vulnerability baseline or host containment. See [implementation progress](#11-implementation-progress) and [security triage](security-checks.md).
+**Status:** Steps 1–5 and the completion-audit timeout follow-up are implemented locally (2026-09-05), ready for owner review. Dependency security findings remain open and outcome measurement continues over real tasks; the milestone does not claim a clean vulnerability baseline, measured productivity gains, or host containment. See [implementation progress](#11-implementation-progress) and [security triage](security-checks.md).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -294,7 +294,7 @@ Do not combine all increments into one large unreviewable diff. The owner contro
 
 ## 8. Measuring outcomes without building infrastructure
 
-For approximately the next 10 substantive tasks, keep a lightweight local record:
+This is ongoing adoption follow-up, not an additional tracking platform or proof already supplied by the implementation milestone. For approximately the next 10 substantive tasks, keep a lightweight local record as those tasks occur:
 
 - Task type and rough size/risk.
 - Harness/model used.
@@ -314,6 +314,7 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] Critical rules no longer depend on reading only `CLAUDE.md`.
 - [x] Automatic large-reference injection is removed and identified instruction/reference drift is corrected.
 - [x] Clean bootstrap and the full local check command work.
+- [x] All verification entrypoints have overall deadlines covering downloads, tool probes, builds, vet, and test setup as well as test execution; timeout/cancellation behavior has regression coverage.
 - [x] Required test suites cannot silently succeed without running.
 - [x] The stale service/database lifecycle test is repaired and selected by CI.
 - [x] High-value regression gaps have new meaningful tests.
@@ -440,3 +441,20 @@ Validation on the final affected implementation:
 
 No real credential file, application startup, Telegram/Eversports operation, host/global setting change, application dependency upgrade, service version, changelog, Git commit, push, PR, release, deployment, or GitHub setting change is part of this step. Security debt is documented for owner-directed follow-up, not fixed or accepted by this milestone.
 
+### Completion-audit follow-up — implemented locally, 2026-09-05
+
+The audit of `06ca00f` found that Step 2's package/scanner timeouts did not cover prerequisite probes, installs, builds or vet. That remaining implementation gap is closed with a shared [Node/POSIX controller](../scripts/checks/run-bounded.mjs) around all six `make` entrypoints. The bootstrap commands moved into an internal shell recipe so installation and asset building share one deadline. Existing package/scanner limits and failure thresholds remain unchanged; no GNU `timeout` dependency, retry loop, model invocation or host isolation was introduced. [Deadline budgets, overrides and cancellation limits](development.md#deadlines-and-cancellation) are explicit.
+
+Ten new offline regressions cover hung Docker/install/frontend-build/Go-build/vet commands, invalid limits, noninteractive execution, output/argv/exit propagation, cancellation and SIGTERM-resistant descendants. Each hung-tool fixture confirms the intended phase was reached. The doctor regression failed against the previous implementation before the fix. Timeout stays nonzero even if the command leader exits zero during termination; cleanup escalates only within the command's process group. The plan's historical trailing blank line was also removed.
+
+Final-state verification:
+
+| Check | Result |
+|---|---|
+| `node --test scripts/checks/*.test.mjs` | PASS: 23 offline helper tests, including the 10 deadline regressions. |
+| Clean checkout with the local implementation applied | `make bootstrap`, `make doctor` and `make check` passed without an initial `.env`, frontend dependencies or generated assets. Full verification includes 23 helper tests, 107 frontend tests, Go race tests, PostgreSQL integration and the lifecycle suite. Source diff remained unchanged; the disposable checkout was removed. |
+| `node --test scripts/checks/secrets.integration.mjs` and `make check-secrets` | PASS: synthetic real-scanner coverage and prospective local candidate scan; no claim about unchanged files or committed history. |
+| `make check-security` | FAIL: existing 14 reachable Go advisories across 5 modules and 10 npm findings (1 low, 4 moderate, 5 high) remain visible. Secret scan passes; no debt was waived or dependencies upgraded. |
+| Static checks and diff review | JavaScript/shell/Make syntax, local documentation links/anchors, shared adapters, and current/milestone-wide whitespace checked. Changes are limited to the verification interface, its regressions and documentation. |
+
+The implementation checklist is complete, pending owner review of the local diff. Section 8's task-by-task outcome observations and the documented dependency remediation remain follow-up work, not completed measurements or a clean security claim. No application behavior, service version, changelog, release workflow, global setting, Git commit or publication was changed by this follow-up. Verification here is on macOS; native Linux execution and model-behavior evaluation were not performed for this follow-up.

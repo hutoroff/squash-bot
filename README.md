@@ -218,6 +218,8 @@ make check      # full build, fast/race/integration/lifecycle verification
 
 Use `make check-fast` for the Docker-free edit loop after bootstrap. `make check-secrets` scans prospective local files with pinned Gitleaks; `make check-security` also runs pinned Go vulnerability analysis and the locked npm dependency audit. Security checks fail on blocking findings or incomplete verification; existing dependency findings are not silently waived. See [security scope and triage](docs/security-checks.md). Focused `go test` and `npm test` commands remain available.
 
+All `make` entrypoints have explicit overall deadlines, covering installation/build steps as well as tests. A timeout fails the command instead of leaving it running indefinitely; see [deadlines and cancellation](docs/development.md#deadlines-and-cancellation) for limits and overrides.
+
 Docker-backed suites fail explicitly when Docker is unavailable. The historical `e2e`-tagged suite is now a service/database lifecycle test selected by `make check` and CI; it does not exercise browser, HTTP transport, Telegram, or Eversports. See [development and verification](docs/development.md) for the exact target contract and remaining limitations.
 
 ### Agent-assisted development

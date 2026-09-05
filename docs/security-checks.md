@@ -17,7 +17,7 @@ The helpers use the existing Node runtime and Git. Gitleaks is pinned to `github
 
 - Go analysis reports reachable advisories using the current toolchain and default build tags. Any reported reachable vulnerability fails. It is not an audit of the host Docker daemon or every build-tag/tool combination.
 - npm audits **all locked dependencies**, including development dependencies, via `--package-lock-only`. High/critical findings fail, preserving the existing threshold; low/moderate findings remain visible and open. A threshold pass is not a zero-finding claim. No `npm audit fix` or dependency upgrade is automatic.
-- External scanner processes have five-minute limits (Gitleaks matching also has a two-minute limit). Git subprocesses have 30-second limits. Unsupported inputs and output-buffer exhaustion fail rather than silently passing.
+- External scanner processes have five-minute limits (Gitleaks matching also has a two-minute limit). Git subprocesses have 30-second limits. In addition, `make check-secrets` and `make check-security` have overall 600/1200-second command-group deadlines, including candidate collection and tool startup. See [deadlines and cancellation](development.md#deadlines-and-cancellation). An overall timeout aborts the entrypoint; any later analyzers are `NOT RUN`, not clean. Individual analyzer failures still allow the remaining checks within the overall budget. Unsupported inputs and output-buffer exhaustion fail rather than silently passing.
 
 ## Secret-scan scope and privacy
 
