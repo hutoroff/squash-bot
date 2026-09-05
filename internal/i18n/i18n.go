@@ -443,6 +443,9 @@ const (
 	BtnResultEditWinner          = "btn.result_edit_winner"
 	BtnResultEditScore           = "btn.result_edit_score"
 	BtnResultScoreSkip           = "btn.result_score_skip"
+	BtnResultScorePoints         = "btn.result_score_points"
+	BtnResultScoreGames          = "btn.result_score_games"
+	MsgResultScoreUnknown        = "msg.result_score_unknown"
 	BtnResultSubmit              = "btn.result_submit"
 	BtnResultCancel              = "btn.result_cancel"
 	BtnResultApprove             = "btn.result_approve"
@@ -855,7 +858,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultStepPickGame:        "Pick the game you played:",
 		MsgResultStepPickOpponent:    "Who did you play against?",
 		MsgResultStepPickWinner:      "Who won?",
-		MsgResultStepEnterScore:      "Enter the score as N:M (N = your score, M = your opponent's score).\nExamples: 3:0 if you won, 0:3 if your opponent won. Zero scores, including 0:0, are allowed.\nOr tap Skip:",
+		MsgResultStepEnterScore:      "Choose Points (default) or Games/sets won below, then enter N:M (N = your score, M = your opponent's score).\nExamples: 11:9 for points; 3:0 if you won, 0:3 if your opponent won. A winner must have the higher score; equal scores, including 0:0, require Draw.\nWhen enabled for the group at approval, typed scores affect rating strength. Draws and skipped scores use ordinary ratings.\nOr tap Skip:",
 		MsgResultPreview:             "Game: %s\nOpponent: %s\nWinner: %s\nScore: %s",
 		MsgResultSubmitted:           "Submitted — waiting for %s's approval.",
 		MsgResultApprovalRequest:     "%s says they played you on %s.\nOutcome: %s\nScore: %s\n",
@@ -867,7 +870,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultAutoApproved:        "⌛ Your game result was auto-approved (no response within 48 h).",
 		MsgResultAutoApprovedCard:    "⌛ Auto-approved (no response within 48 h)",
 		MsgResultDMUnreachable:       "Couldn't reach %s — they need to start the bot in private chat first (/start). The result wasn't saved. Try again once they do.",
-		MsgResultErrBadScore:         "Invalid score. Use N:M (N = your score, M = your opponent's score), with whole numbers 0 or greater.\nExamples: 3:0 if you won, 0:3 if your opponent won. Zero scores, including 0:0, are allowed.\nThe selected winner cannot have a lower score than the other player. Check the score order and try again:",
+		MsgResultErrBadScore:         "Invalid score. Use N:M (N = your score, M = your opponent's score), with whole numbers 0 or greater (at most 6 digits per side).\nExamples: 3:0 if you won, 0:3 if your opponent won. The selected winner must have the higher score. Equal scores, including 0:0, require Draw. Check the score order and try again:",
 		MsgResultErrNoCompletedGames: "No completed games in the last 14 days.",
 		MsgResultWinnerMe:            "🏆 Me",
 		MsgResultWinnerOpp:           "🏆 %s",
@@ -878,6 +881,9 @@ var translations = map[Lang]map[string]string{
 		BtnResultEditWinner:          "✏️ Winner",
 		BtnResultEditScore:           "✏️ Score",
 		BtnResultScoreSkip:           "Skip",
+		BtnResultScorePoints:         "Points",
+		BtnResultScoreGames:          "Games/sets won",
+		MsgResultScoreUnknown:        "type unknown",
 		BtnResultSubmit:              "✓ Submit",
 		BtnResultCancel:              "✕ Cancel",
 		BtnResultApprove:             "✓ Approve",
@@ -1242,7 +1248,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultStepPickGame:        "Spiel auswählen:",
 		MsgResultStepPickOpponent:    "Gegen wen hast du gespielt?",
 		MsgResultStepPickWinner:      "Wer hat gewonnen?",
-		MsgResultStepEnterScore:      "Gib das Ergebnis als N:M ein (N = dein Ergebnis, M = Ergebnis deines Gegners).\nBeispiele: 3:0, wenn du gewonnen hast; 0:3, wenn dein Gegner gewonnen hat. Null ist erlaubt, auch 0:0.\nOder tippe auf Überspringen:",
+		MsgResultStepEnterScore:      "Wähle unten Punkte (Standard) oder Gewonnene Spiele/Sätze und gib N:M ein (N = dein Ergebnis, M = Ergebnis deines Gegners).\nBeispiele: 11:9 für Punkte; 3:0, wenn du gewonnen hast; 0:3, wenn dein Gegner gewonnen hat. Der Gewinner muss das höhere Ergebnis haben; gleiche Ergebnisse, auch 0:0, erfordern Unentschieden.\nWenn bei der Bestätigung für die Gruppe aktiviert, beeinflusst das Ergebnis die Stärke der Ratingänderung. Unentschieden und übersprungene Ergebnisse verwenden das normale Rating.\nOder tippe auf Überspringen:",
 		MsgResultPreview:             "Spiel: %s\nGegner: %s\nGewinner: %s\nErgebnis: %s",
 		MsgResultSubmitted:           "Eingereicht — warte auf %s's Bestätigung.",
 		MsgResultApprovalRequest:     "%s sagt, sie haben am %s gespielt.\nErgebnis: %s\nScore: %s\n",
@@ -1254,7 +1260,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultAutoApproved:        "⌛ Dein Spielergebnis wurde automatisch bestätigt (keine Antwort innerhalb 48 h).",
 		MsgResultAutoApprovedCard:    "⌛ Automatisch bestätigt (keine Antwort innerhalb 48 h)",
 		MsgResultDMUnreachable:       "%s ist nicht erreichbar — sie müssen zuerst den Bot im privaten Chat starten (/start). Das Ergebnis wurde nicht gespeichert.",
-		MsgResultErrBadScore:         "Ungültiges Ergebnis. Verwende N:M (N = dein Ergebnis, M = Ergebnis deines Gegners) und ganze Zahlen ab 0.\nBeispiele: 3:0, wenn du gewonnen hast; 0:3, wenn dein Gegner gewonnen hat. Null ist erlaubt, auch 0:0.\nDer gewählte Gewinner darf kein niedrigeres Ergebnis als der andere Spieler haben. Prüfe die Reihenfolge und versuche es erneut:",
+		MsgResultErrBadScore:         "Ungültiges Ergebnis. Verwende N:M (N = dein Ergebnis, M = Ergebnis deines Gegners) und ganze Zahlen ab 0 (höchstens 6 Ziffern pro Seite).\nBeispiele: 3:0, wenn du gewonnen hast; 0:3, wenn dein Gegner gewonnen hat. Der gewählte Gewinner muss das höhere Ergebnis haben. Gleiche Ergebnisse, auch 0:0, erfordern Unentschieden. Prüfe die Reihenfolge und versuche es erneut:",
 		MsgResultErrNoCompletedGames: "Keine abgeschlossenen Spiele in den letzten 14 Tagen.",
 		MsgResultWinnerMe:            "🏆 Ich",
 		MsgResultWinnerOpp:           "🏆 %s",
@@ -1265,6 +1271,9 @@ var translations = map[Lang]map[string]string{
 		BtnResultEditWinner:          "✏️ Gewinner",
 		BtnResultEditScore:           "✏️ Ergebnis",
 		BtnResultScoreSkip:           "Überspringen",
+		BtnResultScorePoints:         "Punkte",
+		BtnResultScoreGames:          "Gewonnene Spiele/Sätze",
+		MsgResultScoreUnknown:        "Typ unbekannt",
 		BtnResultSubmit:              "✓ Einreichen",
 		BtnResultCancel:              "✕ Abbrechen",
 		BtnResultApprove:             "✓ Bestätigen",
@@ -1629,7 +1638,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultStepPickGame:        "Выберите игру:",
 		MsgResultStepPickOpponent:    "С кем ты играл(-а)?",
 		MsgResultStepPickWinner:      "Кто победил?",
-		MsgResultStepEnterScore:      "Введи счёт в формате N:M (N = твой счёт, M = счёт соперника).\nПримеры: 3:0, если победа за тобой; 0:3, если победил соперник. Нули допустимы, в том числе 0:0.\nИли нажми Пропустить:",
+		MsgResultStepEnterScore:      "Выбери ниже Очки (по умолчанию) или Выигранные игры/сеты, затем введи N:M (N = твой счёт, M = счёт соперника).\nПримеры: 11:9 для очков; 3:0, если победа за тобой; 0:3, если победил соперник. Счёт победителя должен быть больше; равный счёт, включая 0:0, требует Ничью.\nЕсли функция включена для группы при подтверждении, счёт влияет на величину изменения рейтинга. Ничья и пропущенный счёт используют обычный рейтинг.\nИли нажми Пропустить:",
 		MsgResultPreview:             "Игра: %s\nСоперник: %s\nПобедитель: %s\nСчёт: %s",
 		MsgResultSubmitted:           "Отправлено — ожидаем подтверждения от %s.",
 		MsgResultApprovalRequest:     "%s говорит, что вы сыграли %s.\nРезультат: %s\nСчёт: %s\n",
@@ -1641,7 +1650,7 @@ var translations = map[Lang]map[string]string{
 		MsgResultAutoApproved:        "⌛ Результат игры автоматически подтверждён (нет ответа в течение 48 ч).",
 		MsgResultAutoApprovedCard:    "⌛ Автоподтверждено (нет ответа в течение 48 ч)",
 		MsgResultDMUnreachable:       "Не могу связаться с %s — им нужно сначала написать боту в личку (/start). Результат не сохранён. Попробуй позже.",
-		MsgResultErrBadScore:         "Неверный счёт. Используй формат N:M (N = твой счёт, M = счёт соперника) и целые числа от 0.\nПримеры: 3:0, если победа за тобой; 0:3, если победил соперник. Нули допустимы, в том числе 0:0.\nСчёт выбранного победителя не может быть меньше счёта другого игрока. Проверь порядок чисел и попробуй ещё раз:",
+		MsgResultErrBadScore:         "Неверный счёт. Используй N:M (N = твой счёт, M = счёт соперника) и целые числа от 0 (не более 6 цифр с каждой стороны).\nПримеры: 3:0, если победа за тобой; 0:3, если победил соперник. Счёт выбранного победителя должен быть больше. Равный счёт, включая 0:0, требует Ничью. Проверь порядок чисел и попробуй ещё раз:",
 		MsgResultErrNoCompletedGames: "Нет завершённых игр за последние 14 дней.",
 		MsgResultWinnerMe:            "🏆 Я",
 		MsgResultWinnerOpp:           "🏆 %s",
@@ -1652,6 +1661,9 @@ var translations = map[Lang]map[string]string{
 		BtnResultEditWinner:          "✏️ Победитель",
 		BtnResultEditScore:           "✏️ Счёт",
 		BtnResultScoreSkip:           "Пропустить",
+		BtnResultScorePoints:         "Очки",
+		BtnResultScoreGames:          "Выигранные игры/сеты",
+		MsgResultScoreUnknown:        "тип неизвестен",
 		BtnResultSubmit:              "✓ Отправить",
 		BtnResultCancel:              "✕ Отмена",
 		BtnResultApprove:             "✓ Подтвердить",

@@ -6,17 +6,19 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // submitGameResult handles POST /api/v1/game-results
 func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		GameID           int64  `json:"game_id"`
-		AuthorUserID     int64  `json:"author_user_id"`
-		OpponentPlayerID int64  `json:"opponent_player_id"`
-		WinnerPlayerID   *int64 `json:"winner_player_id"`
-		Score            string `json:"score"`
-		ActorDisplay     string `json:"actor_display"`
+		GameID           int64            `json:"game_id"`
+		AuthorUserID     int64            `json:"author_user_id"`
+		OpponentPlayerID int64            `json:"opponent_player_id"`
+		WinnerPlayerID   *int64           `json:"winner_player_id"`
+		Score            string           `json:"score"`
+		ScoreKind        models.ScoreKind `json:"score_kind"`
+		ActorDisplay     string           `json:"actor_display"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -29,7 +31,7 @@ func (h *Handler) submitGameResult(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.gameResultSvc.Submit(r.Context(),
 		req.GameID, req.AuthorUserID, req.OpponentPlayerID,
-		req.WinnerPlayerID, req.Score, req.ActorDisplay,
+		req.WinnerPlayerID, req.Score, req.ActorDisplay, req.ScoreKind,
 	)
 	if err != nil {
 		switch {

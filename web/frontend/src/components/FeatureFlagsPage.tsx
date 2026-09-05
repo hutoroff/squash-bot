@@ -59,6 +59,6 @@ export default function FeatureFlagsPage() {
         <p>Effective: <strong>{flag.enabled ? 'Enabled' : 'Disabled'}</strong> ({flag.source})</p>
       </fieldset>
     })}
-    <p>Flags affect behavior only where their owning service evaluates them. The score-aware rating flag is registered, but its rating consumer is not connected yet.</p>
+    <p>Rating policy is selected when a result is approved. Existing ratings are not recalculated. Missing scores and draws use ordinary Glicko-2.</p>
   </section>
 }

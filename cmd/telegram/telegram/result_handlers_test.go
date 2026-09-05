@@ -17,7 +17,7 @@ func oppPlayer() *models.Player {
 	return &models.Player{ID: 2, TelegramID: 200, Username: &name}
 }
 
-// Keep the examples in the score prompt/error consistent with the existing validator.
+// Keep localized score guidance consistent with strict outcome validation.
 func TestValidateResultScore_ScoreOrder(t *testing.T) {
 	const selfID, opponentID int64 = 1, 2
 	tests := []struct {
@@ -33,8 +33,10 @@ func TestValidateResultScore_ScoreOrder(t *testing.T) {
 		{"self win reversed", "0:3", int64PtrResult(selfID), true},
 		{"opponent win reversed", "3:0", int64PtrResult(opponentID), true},
 		{"zero draw", "0:0", nil, false},
-		{"zero with self selected remains accepted", "0:0", int64PtrResult(selfID), false},
-		{"zero with opponent selected remains accepted", "0:0", int64PtrResult(opponentID), false},
+		{"zero with self selected rejected", "0:0", int64PtrResult(selfID), true},
+		{"zero with opponent selected rejected", "0:0", int64PtrResult(opponentID), true},
+		{"unequal draw rejected", "11:9", nil, true},
+		{"equal win rejected", "2:2", int64PtrResult(selfID), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

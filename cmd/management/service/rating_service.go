@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service/rating"
+	"github.com/hutoroff/squash-bot/internal/featureflags"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,8 +24,13 @@ type LeaderboardEntry struct {
 	DeltaToday  float64        `json:"delta_today"` // 0 if no change today
 }
 
+type RatingFeatureFlags interface {
+	EnabledInTx(context.Context, pgx.Tx, featureflags.Key, int64) (bool, error)
+}
+
 // RatingService applies Glicko-2 updates and builds leaderboards.
 type RatingService struct {
+	flags      RatingFeatureFlags
 	pool       *pgxpool.Pool
 	ratingRepo PlayerRatingRepository
 	changeRepo RatingChangeRepository
@@ -51,6 +57,9 @@ func NewRatingService(
 	}
 }
 
+// SetFeatureFlags wires the authoritative evaluator. Absent wiring defaults off.
+func (s *RatingService) SetFeatureFlags(flags RatingFeatureFlags) { s.flags = flags }
+
 // Apply updates Glicko-2 ratings for both players in a game result. Opens its
 // own transaction; use ApplyInTx when the caller already holds one (e.g. when
 // the rating update must commit atomically with a game_results status flip).
@@ -75,6 +84,16 @@ func (s *RatingService) Apply(ctx context.Context, result *models.GameResult) er
 // upserts and both rating_changes inserts land in the same transaction so the
 // current rating and its delta-today history can never diverge.
 func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models.GameResult) error {
+	// Select once, inside the approval transaction, before changing either player.
+	enabled := false
+	if s.flags != nil {
+		var err error
+		enabled, err = s.flags.EnabledInTx(ctx, tx, featureflags.ScoreAwareRating, result.GroupID)
+		if err != nil {
+			return fmt.Errorf("evaluate score-aware rating flag: %w", err)
+		}
+	}
+	policy := rating.SelectScorePolicy(result, enabled)
 	// Load both ratings inside the transaction (SELECT FOR UPDATE).
 	// Order by player_id ASC to prevent deadlocks.
 	playerIDs := []int64{result.AuthorID, result.OpponentID}
@@ -110,6 +129,7 @@ func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models
 		[]rating.MatchResult{{
 			Opponent: rating.Rating{R: opponentRating.Rating, RD: opponentRating.RD, Sigma: opponentRating.Volatility},
 			Score:    authorScore,
+			Weight:   policy.Weight,
 		}},
 		rating.Tau,
 	)
@@ -118,6 +138,7 @@ func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models
 		[]rating.MatchResult{{
 			Opponent: rating.Rating{R: authorRating.Rating, RD: authorRating.RD, Sigma: authorRating.Volatility},
 			Score:    opponentScore,
+			Weight:   policy.Weight,
 		}},
 		rating.Tau,
 	)
@@ -147,6 +168,8 @@ func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models
 		OldRating: authorRating.Rating, NewRating: authorNew.R,
 		OldRD: authorRating.RD, NewRD: authorNew.RD,
 		Delta: authorNew.R - authorRating.Rating, AppliedAt: now,
+		PolicyVersion: policy.Version, EvidenceWeight: policy.Weight, ScoreKind: result.ScoreKind,
+		PolicyReason: policy.Reason, ScoreAwareEnabled: enabled,
 	}); err != nil {
 		return fmt.Errorf("insert author rating change: %w", err)
 	}
@@ -155,6 +178,8 @@ func (s *RatingService) ApplyInTx(ctx context.Context, tx pgx.Tx, result *models
 		OldRating: opponentRating.Rating, NewRating: opponentNew.R,
 		OldRD: opponentRating.RD, NewRD: opponentNew.RD,
 		Delta: opponentNew.R - opponentRating.Rating, AppliedAt: now,
+		PolicyVersion: policy.Version, EvidenceWeight: policy.Weight, ScoreKind: result.ScoreKind,
+		PolicyReason: policy.Reason, ScoreAwareEnabled: enabled,
 	}); err != nil {
 		return fmt.Errorf("insert opponent rating change: %w", err)
 	}
@@ -232,10 +257,11 @@ func (s *RatingService) getOrInitForUpdate(ctx context.Context, tx pgx.Tx, group
 		VALUES ($1, $2, 1500, 350, 0.06, 0, NOW())
 		ON CONFLICT (group_id, player_id) DO NOTHING
 		RETURNING group_id, player_id, rating, rd, volatility, games_played, updated_at`
-	const selectNoLock = `
+	const selectAfterConflict = `
 		SELECT group_id, player_id, rating, rd, volatility, games_played, updated_at
 		FROM player_ratings
-		WHERE group_id = $1 AND player_id = $2`
+		WHERE group_id = $1 AND player_id = $2
+  FOR UPDATE`
 
 	scan := func(row pgx.Row) (*models.PlayerRating, error) {
 		var pr models.PlayerRating
@@ -261,8 +287,8 @@ func (s *RatingService) getOrInitForUpdate(ctx context.Context, tx pgx.Tx, group
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	// Concurrent insert — re-read without lock (we're already in tx).
-	return scan(tx.QueryRow(ctx, selectNoLock, groupID, playerID))
+	// Concurrent insert — lock the committed row before computing an update.
+	return scan(tx.QueryRow(ctx, selectAfterConflict, groupID, playerID))
 }
 
 func (s *RatingService) upsertInTx(ctx context.Context, tx pgx.Tx, pr *models.PlayerRating) error {

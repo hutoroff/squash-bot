@@ -41,9 +41,10 @@ Use current signatures/routes from those files, not a copied inventory. New busi
 
 ## Results and ratings
 
-- Results require two players per unit, registered author/opponent, a supported score, opt-out checks, and the per-group-local-calendar result window. The `completed` flag does not alone define eligibility.
+- Results require two players per unit, registered author/opponent, an optional consistent score, opt-out checks, and the per-group-local-calendar result window. The `completed` flag does not alone define eligibility. Scores carry explicit `points`/`games` kind; omitted kind remains unknown for old clients. New scores require the winner's side to be strictly higher or a draw's sides equal; each side is limited to six decimal digits. Winner membership is validated even when the score is skipped.
 - Opponent approval and timed auto-approval commit status and Glicko-2 changes in the **same transaction**. On rating failure, do not leave the result decided without its rating changes.
-- Rating rows are locked in player-ID order to avoid deadlocks. Preserve the ordered critical section and rating/history atomicity.
+- Rating rows are locked in player-ID order to avoid deadlocks, including the re-read after a concurrent default-row insertion. Preserve the ordered critical section and rating/history atomicity.
+- The default-disabled `rating.score_aware` flag is resolved once inside the approval transaction for both players. Lookup failure aborts approval, not a silent fallback. Valid typed decisive scores use bounded evidence weighting; disabled/skipped/draw/legacy cases use ordinary Glicko-2. History records version, weight, kind, effective enabled state, and selection reason. See [feature toggles](../feature-toggles.md) for formula, limitations, precedence, and activation semantics.
 - Unit-test/disabled-rating wiring can use the non-transactional fallback. Tests of that fallback do not prove the production transaction path works.
 - User notification/audit work is best-effort and not a guarantee of delivery or a fully transactional audit log.
 

@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/resultscore"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,15 +16,13 @@ import (
 var (
 	ErrGameResultNotFound     = errors.New("game result not found")
 	ErrGameResultForbidden    = errors.New("actor is not allowed to perform this action")
-	ErrGameResultBadScore     = errors.New("invalid score format: use N:M where winner's side ≥ loser's")
+	ErrGameResultBadScore     = resultscore.ErrInvalid
 	ErrGameResultNotInGame    = errors.New("author or opponent is not registered in this game")
 	ErrGameResultSamePlayer   = errors.New("author and opponent must be different players")
 	ErrGameResultWindowClosed = errors.New("game is outside the result submission window")
 	ErrOpponentOptedOut       = errors.New("opponent has opted out of game results")
 	ErrAuthorOptedOut         = errors.New("author has opted out of game results")
 	ErrResultsNotSupported    = errors.New("results are not supported for this game")
-
-	scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 )
 
 const autoApproveWindow = 48 * time.Hour
@@ -94,7 +90,22 @@ func (s *GameResultService) Submit(
 	winnerPlayerID *int64,
 	score string,
 	actorDisplay string,
+	scoreKinds ...models.ScoreKind,
 ) (*models.GameResult, error) {
+	// Omitted kind preserves compatibility with clients predating typed scores.
+	var scoreKind models.ScoreKind
+	if len(scoreKinds) > 1 {
+		return nil, ErrGameResultBadScore
+	}
+	if len(scoreKinds) == 1 {
+		scoreKind = scoreKinds[0]
+	}
+	if scoreKind != "" && !scoreKind.Valid() {
+		return nil, ErrGameResultBadScore
+	}
+	if score == "" {
+		scoreKind = ""
+	}
 	author, err := s.playerRepo.GetByUserID(ctx, authorUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -194,6 +205,7 @@ func (s *GameResultService) Submit(
 		OpponentID:  opponentPlayerID,
 		WinnerID:    winnerPlayerID,
 		Score:       score,
+		ScoreKind:   scoreKind,
 		Status:      models.GameResultPending,
 		SubmittedAt: now,
 	}
@@ -329,34 +341,6 @@ func (s *GameResultService) commitDecision(ctx context.Context, res *models.Game
 	return nil
 }
 
-// validateScore checks that score is empty, or matches \d+:\d+, and if winnerID is
-// set, the winner's side number ≥ loser's side number.
 func validateScore(score string, authorID, opponentID int64, winnerID *int64) error {
-	if score == "" {
-		return nil
-	}
-	if !scoreRe.MatchString(score) {
-		return ErrGameResultBadScore
-	}
-	if winnerID == nil {
-		return nil
-	}
-	parts := strings.SplitN(score, ":", 2)
-	left, _ := strconv.Atoi(parts[0])
-	right, _ := strconv.Atoi(parts[1])
-	// Determine which side (left=author, right=opponent) the winner is on.
-	// We only validate winner's number ≥ loser's number.
-	winnerIsAuthor := *winnerID == authorID
-	var winnerSide, loserSide int
-	if winnerIsAuthor {
-		winnerSide, loserSide = left, right
-	} else if *winnerID == opponentID {
-		winnerSide, loserSide = right, left
-	} else {
-		return ErrGameResultBadScore
-	}
-	if winnerSide < loserSide {
-		return ErrGameResultBadScore
-	}
-	return nil
+	return resultscore.Validate(score, authorID, opponentID, winnerID)
 }

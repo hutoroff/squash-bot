@@ -25,13 +25,13 @@ func NewGameResultRepo(pool *pgxpool.Pool) *GameResultRepo {
 func (r *GameResultRepo) Create(ctx context.Context, res *models.GameResult) (int64, error) {
 	const q = `
 		INSERT INTO game_results
-			(game_id, group_id, author_id, opponent_id, winner_id, score, status, submitted_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			(game_id, group_id, author_id, opponent_id, winner_id, score, status, submitted_at, score_kind)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id`
 	var id int64
 	err := r.pool.QueryRow(ctx, q,
 		res.GameID, res.GroupID, res.AuthorID, res.OpponentID,
-		res.WinnerID, res.Score, res.Status, res.SubmittedAt,
+		res.WinnerID, res.Score, res.Status, res.SubmittedAt, res.ScoreKind,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("game_result create: %w", err)
@@ -42,7 +42,7 @@ func (r *GameResultRepo) Create(ctx context.Context, res *models.GameResult) (in
 func (r *GameResultRepo) GetByID(ctx context.Context, id int64) (*models.GameResult, error) {
 	const q = `
 		SELECT id, game_id, group_id, author_id, opponent_id, winner_id, score,
-		       status, submitted_at, decided_at, approval_chat_id, approval_message_id
+		       status, submitted_at, decided_at, approval_chat_id, approval_message_id, score_kind
 		FROM game_results WHERE id = $1`
 	row := r.pool.QueryRow(ctx, q, id)
 	res, err := scanGameResult(row)
@@ -94,7 +94,7 @@ func (r *GameResultRepo) DecideInTx(ctx context.Context, tx pgx.Tx, id int64, st
 func (r *GameResultRepo) ListPendingOlderThan(ctx context.Context, cutoff time.Time) ([]*models.GameResult, error) {
 	const q = `
 		SELECT id, game_id, group_id, author_id, opponent_id, winner_id, score,
-		       status, submitted_at, decided_at, approval_chat_id, approval_message_id
+		       status, submitted_at, decided_at, approval_chat_id, approval_message_id, score_kind
 		FROM game_results
 		WHERE status = 'pending' AND submitted_at < $1
 		ORDER BY submitted_at`
@@ -109,7 +109,7 @@ func (r *GameResultRepo) ListPendingOlderThan(ctx context.Context, cutoff time.T
 func (r *GameResultRepo) ListByGroupAndDate(ctx context.Context, groupID int64, gameDate time.Time) ([]*models.GameResult, error) {
 	const q = `
 		SELECT gr.id, gr.game_id, gr.group_id, gr.author_id, gr.opponent_id, gr.winner_id, gr.score,
-		       gr.status, gr.submitted_at, gr.decided_at, gr.approval_chat_id, gr.approval_message_id
+		       gr.status, gr.submitted_at, gr.decided_at, gr.approval_chat_id, gr.approval_message_id, gr.score_kind
 		FROM game_results gr
 		JOIN games g ON g.id = gr.game_id
 		WHERE gr.group_id = $1
@@ -126,7 +126,7 @@ func (r *GameResultRepo) ListByGroupAndDate(ctx context.Context, groupID int64, 
 func (r *GameResultRepo) ListByGameID(ctx context.Context, gameID int64) ([]*models.GameResult, error) {
 	const q = `
 		SELECT id, game_id, group_id, author_id, opponent_id, winner_id, score,
-		       status, submitted_at, decided_at, approval_chat_id, approval_message_id
+		       status, submitted_at, decided_at, approval_chat_id, approval_message_id, score_kind
 		FROM game_results
 		WHERE game_id = $1
 		ORDER BY submitted_at`
@@ -143,7 +143,7 @@ func scanGameResult(s scanner) (*models.GameResult, error) {
 	err := s.Scan(
 		&r.ID, &r.GameID, &r.GroupID, &r.AuthorID, &r.OpponentID,
 		&r.WinnerID, &r.Score, &r.Status, &r.SubmittedAt,
-		&r.DecidedAt, &r.ApprovalChatID, &r.ApprovalMessageID,
+		&r.DecidedAt, &r.ApprovalChatID, &r.ApprovalMessageID, &r.ScoreKind,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan game_result: %w", err)

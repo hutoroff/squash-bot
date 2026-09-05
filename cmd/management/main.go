@@ -146,6 +146,7 @@ func main() {
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
 	flagRepo := storage.NewFeatureFlagRepo(pool)
 	flagSvc := service.NewFeatureFlagService(flagRepo, userRepo, groupRepo, auditSvc)
+	ratingSvc.SetFeatureFlags(flagRepo)
 	gameResultSvc.SetRatingService(ratingSvc)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
