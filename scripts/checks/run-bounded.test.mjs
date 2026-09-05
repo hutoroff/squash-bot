@@ -150,11 +150,16 @@ function checkout(t) {
 
 test('make doctor bounds a stalled Docker probe', async t => {
   const { root, write, env } = checkout(t);
-  write('tools/docker', '#!/bin/sh\necho called > docker-probed\nexec /bin/sleep 3\n', 0o755);
-  const result = await execute('make', ['doctor', 'DOCTOR_TIMEOUT=1'], { cwd: root, env }).done;
-  assert.ok(fs.existsSync(path.join(root, 'docker-probed')), 'doctor did not reach Docker');
-  assert.notEqual(result.code, 0);
-  assert.match(result.stderr, /timed out/);
+  // Simulate slow prerequisite startup before doctor reaches Docker.
+  write('tools/npm', '#!/bin/sh\nif [ "$1" = --version ]; then /bin/sleep 1; echo 10.9.2; fi\n', 0o755);
+  // Leave startup headroom and keep the 8s watchdog beyond the deadline + 1s cleanup,
+  // but shorter than Docker's hang so a broken controller cannot pass by waiting it out.
+  write('tools/docker', '#!/bin/sh\necho called > docker-probed\nexec /bin/sleep 10\n', 0o755);
+  const result = await execute('make', ['doctor', 'DOCTOR_TIMEOUT=3'], { cwd: root, env }).done;
+  const diagnostics = `exit=${result.code}, signal=${result.signal}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+  assert.ok(fs.existsSync(path.join(root, 'docker-probed')), `doctor did not reach Docker\n${diagnostics}`);
+  assert.notEqual(result.code, 0, diagnostics);
+  assert.match(result.stderr, /Prerequisite checks timed out after 3s/, diagnostics);
 });
 
 for (const [phase, name] of [['ci', 'install'], ['run', 'frontend build']]) {
