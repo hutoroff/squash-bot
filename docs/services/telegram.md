@@ -53,7 +53,7 @@ Participation handlers enqueue coalesced per-game edits; the worker fetches fres
 
 ## Results, errors, and tests
 
-The result wizard uses canonical user/player identity, eligible games, opponent/winner/score selection, and an approval DM. If the opponent cannot receive the DM, the newly submitted result is canceled rather than left to auto-approve. Preserve author/opponent authorization in subsequent callbacks and management calls.
+The result wizard uses canonical user/player identity, eligible games, opponent/winner/score selection, and an approval DM. Score input is always author:opponent, not winner:loser; the localized prompt and validation error explain this with `3:0`/`0:3` examples. Zero is allowed, including `0:0`; existing validation permits equal scores even with a selected winner. If the opponent cannot receive the DM, the newly submitted result is canceled rather than left to auto-approve. Preserve author/opponent authorization in subsequent callbacks and management calls.
 
 Management result/leaderboard requests use `/api/v1/users/{userID}/...`, not old `/players/{tgID}` routes. Use the typed `HTTPError` and existing sentinel mappings for API failures; distinguish conflict/partial success from a generic error. Verify method contracts in the client rather than copying a request shape from a stale reference.
 

@@ -17,6 +17,36 @@ func oppPlayer() *models.Player {
 	return &models.Player{ID: 2, TelegramID: 200, Username: &name}
 }
 
+// Keep the examples in the score prompt/error consistent with the existing validator.
+func TestValidateResultScore_ScoreOrder(t *testing.T) {
+	const selfID, opponentID int64 = 1, 2
+	tests := []struct {
+		name    string
+		score   string
+		winner  *int64
+		wantErr bool
+	}{
+		{"self wins", "3:1", int64PtrResult(selfID), false},
+		{"opponent wins", "1:3", int64PtrResult(opponentID), false},
+		{"self wins to zero", "3:0", int64PtrResult(selfID), false},
+		{"opponent wins to zero", "0:3", int64PtrResult(opponentID), false},
+		{"self win reversed", "0:3", int64PtrResult(selfID), true},
+		{"opponent win reversed", "3:0", int64PtrResult(opponentID), true},
+		{"zero draw", "0:0", nil, false},
+		{"zero with self selected remains accepted", "0:0", int64PtrResult(selfID), false},
+		{"zero with opponent selected remains accepted", "0:0", int64PtrResult(opponentID), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wiz := &resultWizard{opponent: oppPlayer(), winnerID: tt.winner}
+			err := validateResultScore(tt.score, wiz, int64PtrResult(selfID))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateResultScore(%q): got %v, wantErr %v", tt.score, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func buildApprovalCardBot() *Bot {
 	return &Bot{}
 }

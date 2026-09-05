@@ -7,6 +7,61 @@ import (
 	"github.com/hutoroff/squash-bot/internal/i18n"
 )
 
+func TestResultScoreMessages_ExplainOrderAndZeroScores(t *testing.T) {
+	tests := []struct {
+		lang       i18n.Lang
+		order      []string
+		winnerRule string
+		numberRule string
+		skip       string
+	}{
+		{
+			lang:       i18n.En,
+			order:      []string{"N = your score", "M = your opponent's score"},
+			winnerRule: "selected winner cannot have a lower score",
+			numberRule: "whole numbers 0 or greater",
+			skip:       "Skip",
+		},
+		{
+			lang:       i18n.De,
+			order:      []string{"N = dein Ergebnis", "M = Ergebnis deines Gegners"},
+			winnerRule: "gewählte Gewinner darf kein niedrigeres Ergebnis",
+			numberRule: "ganze Zahlen ab 0",
+			skip:       "Überspringen",
+		},
+		{
+			lang:       i18n.Ru,
+			order:      []string{"N = твой счёт", "M = счёт соперника"},
+			winnerRule: "выбранного победителя не может быть меньше",
+			numberRule: "целые числа от 0",
+			skip:       "Пропустить",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.lang), func(t *testing.T) {
+			lz := i18n.New(tt.lang)
+			prompt := lz.T(i18n.MsgResultStepEnterScore)
+			errMsg := lz.T(i18n.MsgResultErrBadScore)
+			for _, msg := range []string{prompt, errMsg} {
+				for _, want := range append(tt.order, "N:M", "3:0", "0:3", "0:0") {
+					if !strings.Contains(msg, want) {
+						t.Errorf("message missing score guidance %q: %s", want, msg)
+					}
+				}
+			}
+			for _, want := range []string{tt.winnerRule, tt.numberRule} {
+				if !strings.Contains(errMsg, want) {
+					t.Errorf("error missing validation rule %q: %s", want, errMsg)
+				}
+			}
+			if !strings.Contains(prompt, tt.skip) {
+				t.Errorf("prompt must retain the skip option: %s", prompt)
+			}
+		})
+	}
+}
+
 // TestSchedReminderEvenNoCancel_Wording is a regression test for the bug where an even
 // player count under capacity produced an "all good" (✅) notification instead of a
 // warning asking the group to cancel unused courts.
