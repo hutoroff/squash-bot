@@ -175,8 +175,8 @@ MANAGEMENT_SERVICE_URL=http://localhost:8080 \
 The Go backend embeds the compiled React frontend from `web/frontend/dist/`. Build the frontend once before running the Go binary locally — or any time the frontend source changes:
 
 ```bash
-# Build the frontend (runs npm ci + vite build inside web/frontend)
-go generate ./web/...
+# Install locked frontend dependencies and build embedded assets
+make bootstrap
 
 # Run the web service
 TELEGRAM_BOT_TOKEN=<token> \
@@ -208,21 +208,23 @@ The Login Widget only works on domains that are explicitly registered with Teleg
 
 ## Testing
 
+From a clean checkout:
+
 ```bash
-# Required in a clean checkout: build assets embedded by the Go web package
-go generate ./web/...
-go test -count=1 -timeout 120s ./...
-go test -count=1 -tags integration -timeout 120s ./...  # requires Docker; starts disposable PostgreSQL
-npm --prefix web/frontend test
+make bootstrap  # npm ci plus the embedded frontend build; downloads may require internet
+make doctor     # checks Go, Node, npm, Docker, and generated assets
+make check      # full build, fast/race/integration/lifecycle verification
 ```
 
-**Current limitations:** integration suites can exit successfully without running when Docker is unavailable; inspect their output. The separate `tests/e2e` suite is currently stale and does not compile. See [development and verification](docs/development.md) for focused checks and known gaps.
+Use `make check-fast` for the Docker-free edit loop after bootstrap, and `make check-security` for the separate pinned vulnerability checks. Focused `go test` and `npm test` commands remain available.
+
+Docker-backed suites fail explicitly when Docker is unavailable. The historical `e2e`-tagged suite is now a service/database lifecycle test selected by `make check` and CI; it does not exercise browser, HTTP transport, Telegram, or Eversports. See [development and verification](docs/development.md) for the exact target contract and remaining limitations.
 
 ### Agent-assisted development
 
 Pi, Codex, and Claude Code share [AGENTS.md](AGENTS.md), focused [project references](docs/README.md), and on-demand skills in `.agents/skills/`. Claude Code uses thin adapters rather than a second knowledge base. See [agent setup and the local review workflow](docs/agent-workflow.md).
 
-Agents implement and verify locally; the owner reviews the diff before deciding to commit or create a PR. No automatic publication or new host isolation is configured. The [implementation plan](docs/ai-first-development-plan.md) clearly marks later work such as unified `make` commands as not yet available.
+Agents implement and verify locally; the owner reviews the diff before deciding to commit or create a PR. No automatic publication or new host isolation is configured. The unified local verification commands and remaining planned increments are tracked in the [implementation plan](docs/ai-first-development-plan.md).
 
 ## Versioning & Releases
 
@@ -514,8 +516,8 @@ web/
   embed.go        — embeds frontend/dist; go:generate builds it
   frontend/       — React + Vite + TypeScript and component tests
 migrations/       — embedded SQL migration files
-scripts/          — deploy.sh, healthcheck.sh (production operations)
-tests/e2e/        — service/database lifecycle test (currently stale)
+scripts/          — checks/ local verification; deploy.sh and healthcheck.sh operations
+tests/e2e/        — maintained service/database lifecycle test (historical e2e tag)
 docs/             — focused references and explicitly marked plans
 .agents/skills/   — canonical on-demand agent procedures and service routing
 .claude/skills/   — links to shared skills for Claude Code

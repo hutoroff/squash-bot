@@ -24,9 +24,9 @@ import (
 var apiTestPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
-	if !testutil.IsDockerAvailable() {
-		fmt.Fprintln(os.Stderr, "Docker not available — skipping api integration tests")
-		os.Exit(0)
+	if err := testutil.CheckDocker(); err != nil {
+		fmt.Fprintf(os.Stderr, "api integration tests require Docker: %v\n", err)
+		os.Exit(1)
 	}
 	ctx := context.Background()
 	pool, cleanup, err := testutil.SetupTestDB(ctx)

@@ -20,9 +20,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/frontend/package-lock.json
 
-      - name: Build frontend
-        working-directory: web/frontend
-        run: npm ci && npm run build
+      - name: Bootstrap generated assets
+        run: make bootstrap
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -30,14 +29,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build
-        run: go build ./...
-
-      - name: Run unit tests
-        run: go test ./...
-
-      - name: Run integration tests
-        run: go test -tags integration -timeout 120s ./...
+      - name: Run full verification
+        run: make check
 
   frontend-test:
     runs-on: ubuntu-latest

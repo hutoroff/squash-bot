@@ -56,7 +56,7 @@ Use native resource listing where possible to avoid model calls. If interactive 
 
 > Identify the project rules for versions, changelogs, publication, and verification. Locate the booking skill and its reference for checkout retry safety. State which source files you used; do not run the application.
 
-Expected: all tools find the same root restrictions, the shared booking skill, and the focused booking reference. The answer must not assume planned `make` commands exist or call the unsafe legacy fallback a working account. No large service reference should be automatically injected before it is needed. Report which native discovery paths were actually tested, not just inferred from directory layout.
+Expected: all tools find the same root restrictions, the shared booking skill, and the focused booking reference. The answer should identify the implemented `make bootstrap`/`make check` interface without inventing later planned safeguards, and must not call the unsafe legacy fallback a working account. No large service reference should be automatically injected before it is needed. Report which native discovery paths were actually tested, not just inferred from directory layout.
 
 ## Safety limits
 

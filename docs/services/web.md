@@ -36,7 +36,7 @@ Settings use optimistic updates and rollback. Preserve group/venue scope, last-o
 
 [settingsLabels.ts](../../web/frontend/src/settingsLabels.ts) holds UI labels/helpers; event labels in [auditEvents.ts](../../web/frontend/src/auditEvents.ts) mirror backend event constants and are checked by a drift test. The UI is currently English-only.
 
-[web/embed.go](../../web/embed.go) embeds `web/frontend/dist`; `go generate ./web/...` runs the locked install and frontend build. Rebuild assets before validating a changed embedded Go binary. Vite development alone is not an authenticated full-stack environment: the current [Vite config](../../web/frontend/vite.config.ts) has no management/web API proxy or fake login configuration.
+[web/embed.go](../../web/embed.go) embeds `web/frontend/dist`; `make bootstrap` runs the locked install and frontend build (`go generate ./web/...` remains equivalent). `make check` rebuilds assets, while `make check-fast` diagnoses missing or potentially stale output before compiling the embedded Go package. Vite development alone is not an authenticated full-stack environment: the current [Vite config](../../web/frontend/vite.config.ts) has no management/web API proxy or fake login configuration.
 
 ## Frontend tests
 

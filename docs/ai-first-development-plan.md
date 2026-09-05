@@ -1,6 +1,6 @@
 # AI-first development: local-first implementation plan
 
-**Status:** Step 1 implemented locally (2026-09-05), ready for owner review. Steps 2–5 are not implemented. See [implementation progress](#11-implementation-progress).
+**Status:** Steps 1–2 implemented locally (2026-09-05), ready for owner review. Steps 3–5 are not implemented. See [implementation progress](#11-implementation-progress).
 
 **Assessment baseline:** `f9622ab` (2026-09-05). Recheck the baseline before implementation.
 
@@ -313,9 +313,9 @@ Prefer improving tests and context routing before adding another reviewer. Keep 
 - [x] Root guidance/adapters validated structurally and shared skills discovered by installed Pi, Codex, and Claude Code (native discovery checks; no model behavior evaluation).
 - [x] Critical rules no longer depend on reading only `CLAUDE.md`.
 - [x] Automatic large-reference injection is removed and identified instruction/reference drift is corrected.
-- [ ] Clean bootstrap and the full local check command work.
-- [ ] Required test suites cannot silently succeed without running.
-- [ ] The stale service/database lifecycle test is repaired and selected by CI.
+- [x] Clean bootstrap and the full local check command work.
+- [x] Required test suites cannot silently succeed without running.
+- [x] The stale service/database lifecycle test is repaired and selected by CI.
 - [ ] High-value regression gaps have new meaningful tests.
 - [ ] Local review produces concise final-state evidence, without PR publication.
 - [ ] Local security checks have an explicit result/triage path.
@@ -347,7 +347,7 @@ Research was reviewed on 2026-09-05. Vendor guidance provides useful operational
 - Added eight canonical skills in `.agents/skills/`, with relative directory links for Claude. Retained service/documentation/changelog entry points and added `squash-task`/`squash-review`. No model defaults or executable skill hooks were added.
 - Removed the full-reference prompt hook and its sole-purpose project settings file. Personal/global settings and host isolation were not changed.
 - Added focused architecture, invariant/test-gap, development, local workflow, and service references under `docs/`. Corrected the identified schema/configuration/booking/scheduler/package-tree drift in current references; historical assessment findings above remain historical.
-- Current commands and limitations remain explicit. Step 2's `make` interface and lifecycle-test repairs do not exist yet.
+- At the Step 1 boundary, commands and limitations remained explicit; the `make` interface and lifecycle-test repairs were intentionally deferred to Step 2.
 
 Validation on installed versions:
 
@@ -362,4 +362,25 @@ Validation on installed versions:
 The previous six skill entry files totaled 143,292 bytes; the eight new entry files total 10,956 bytes. Detailed knowledge now loads through focused references. This is a context-size improvement, not a measured billing/productivity claim.
 
 No application tests were rerun for this documentation/agent-resource-only step; baseline test results are recorded in section 3. Native resource discovery and static import checks do not establish behavioral adherence by every model. Restart existing agent sessions to load the new instructions; Pi project trust remains an owner decision. No commit, push, PR, or GitHub configuration change was performed.
+
+### Step 2 — implemented locally, 2026-09-05
+
+- Added a portable `Makefile` and small noninteractive `scripts/checks/` helpers for `doctor`, locked frontend bootstrap, fast/full verification, and separate vulnerability checks. Fast checks require current embedded assets but not Docker; full checks rebuild assets and run build, format/diff/vet/type/unit/frontend, race, PostgreSQL integration, and lifecycle verification.
+- Changed all integration `TestMain` entry points to use one Docker availability check and fail explicitly when an explicitly requested Docker-backed suite cannot run.
+- Repaired the historical `e2e`-tagged test against current canonical identity, constructor, participation, capacity, and repository contracts. It now uses the shared Testcontainers PostgreSQL helper instead of a fixed host port/Compose project and is documented as a service/database lifecycle test rather than browser/transport end-to-end coverage.
+- Reused `make bootstrap` and `make check` in the existing `build-and-test` CI job while preserving the `build-and-test` and `frontend-test` job names expected by release verification.
+- Added an explicit frontend application type-check command and resolved the assessment's four tracked `gofmt` findings without semantic changes. Updated setup, verification, service-test, invariant, and plan references to describe the implemented interface and remaining gaps.
+- `make check-security` currently pins `govulncheck` and audits all locked frontend npm dependencies. Increment 5's prospective-change secret scan and explicit security-debt triage remain unimplemented.
+
+Validation on the final affected code paths:
+
+| Check | Result |
+|---|---|
+| `make bootstrap` followed by `make doctor` | Passed; locked install/build completed and all configured prerequisites/assets were reported ready. |
+| `make check` | Passed, including build, fast checks, 107 frontend tests, race-enabled Go tests, Docker-backed integration suites, and `TestServiceDatabaseLifecycle`. |
+| Docker-unavailable integration simulation | Confirmed an explicit nonzero exit and actionable `Docker CLI not found` diagnostic. |
+| `make check-security` | Ran both checks and failed honestly: `govulncheck` reported 14 reachable advisories across 5 modules; npm audit reported 10 findings (1 low, 4 moderate, 5 high). Dependency upgrades/triage remain Increment 5 scope. |
+| Static review | Shell/Make/JSON/YAML syntax, repository-wide Go formatting, diff whitespace, changed-document local paths, CI job names, and intended file scope checked. |
+
+No runtime `.env`, live application service, Telegram/Eversports operation, application version, changelog, release, commit, push, PR, deployment, or GitHub setting change is part of this step.
 

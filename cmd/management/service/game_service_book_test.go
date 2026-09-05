@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────

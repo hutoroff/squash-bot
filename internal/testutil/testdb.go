@@ -93,12 +93,23 @@ func RunMigrations(databaseURL string) error {
 	return nil
 }
 
-// IsDockerAvailable returns true if the Docker daemon is reachable.
-// Use this in TestMain to skip integration tests when Docker is not running.
-func IsDockerAvailable() bool {
+// CheckDocker reports whether the Docker CLI and daemon are available.
+// Docker-backed suites call this from TestMain so an explicitly requested
+// integration run fails instead of silently succeeding without tests.
+func CheckDocker() error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("Docker CLI not found: %w", err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "docker", "info").Run() == nil
+	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("Docker daemon check timed out: %w", ctx.Err())
+		}
+		return fmt.Errorf("Docker daemon is not reachable: %w", err)
+	}
+	return nil
 }
 
 // Truncate removes all rows from every table and resets serial sequences.

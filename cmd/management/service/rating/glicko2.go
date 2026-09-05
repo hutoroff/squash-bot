@@ -25,9 +25,9 @@ const (
 
 // Rating holds a player's Glicko-2 state.
 type Rating struct {
-	R      float64 // rating (Glicko-1 scale, e.g. 1500)
-	RD     float64 // rating deviation (Glicko-1 scale, e.g. 200)
-	Sigma  float64 // volatility (e.g. 0.06)
+	R     float64 // rating (Glicko-1 scale, e.g. 1500)
+	RD    float64 // rating deviation (Glicko-1 scale, e.g. 200)
+	Sigma float64 // volatility (e.g. 0.06)
 }
 
 // Default returns initial rating values for a new player.

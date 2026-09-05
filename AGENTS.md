@@ -65,28 +65,27 @@ The [documentation index](docs/README.md) distinguishes current references from 
 
 ## Verification — commands available now
 
-Run from the repository root unless noted. `make` targets in the implementation plan **do not exist yet**.
+Run from the repository root unless noted.
 
 ```bash
-# Required in a clean checkout: installs locked frontend dependencies and builds embedded assets
-# Also rerun after frontend changes before building/testing the embedded Go web service.
-go generate ./web/...
+# Clean checkout: install locked frontend dependencies and build embedded assets.
+make bootstrap
+make doctor
 
-# Focused example; choose the package/test relevant to the change
+# Focused example; choose the package/test relevant to the change.
 go test -count=1 -timeout 120s ./cmd/management/service -run TestPublishGame
 
-# Broader local verification
-go build ./...
-go vet ./...
-go test -race -count=1 -timeout 120s ./...
-go test -count=1 -tags integration -timeout 120s ./...
-npm --prefix web/frontend test
-git diff --check
-git diff --cached --check
+# Docker-free edit loop after bootstrap; full final verification requires Docker.
+make check-fast
+make check
+
+# Separate pinned vulnerability checks.
+make check-security
 ```
 
-- Integration tests require Docker and start disposable PostgreSQL via Testcontainers. **Currently some suites exit 0 without running when Docker is missing**: inspect output; report that as unverified, not passed.
-- The separate `tests/e2e` suite currently fails to compile and is not selected by CI. It is a known Step 2 repair, not evidence of successful end-to-end coverage.
+- `make check` rebuilds frontend assets, builds, runs formatting/diff/vet/type/unit/frontend checks, race-enabled Go tests, PostgreSQL integration tests, and the service/database lifecycle suite.
+- Docker-backed suites use disposable PostgreSQL via Testcontainers and fail explicitly if Docker is unavailable.
+- The historical `e2e` build tag now selects a service/database lifecycle test, not browser/HTTP/Telegram/Eversports end-to-end coverage.
 - Frontend tests use Vitest + Testing Library; test files are currently excluded from TypeScript checking. See [frontend test conventions](docs/services/web.md#frontend-tests).
 - Documentation-only changes need link/path/adapter checks and diff review, not unnecessary application tests. For executable behavior changes run relevant tests plus broader checks; explain any omitted verification.
 - Do not fix unrelated failures or weaken checks to get a green result. Re-run affected checks after the final edit.
