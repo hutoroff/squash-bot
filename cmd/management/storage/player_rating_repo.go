@@ -129,33 +129,38 @@ func NewRatingChangeRepo(pool *pgxpool.Pool) *RatingChangeRepo {
 	return &RatingChangeRepo{pool: pool}
 }
 
+const insertRatingChange = `INSERT INTO rating_changes
+ (game_result_id, group_id, player_id, old_rating, new_rating, old_rd, new_rd, delta, applied_at,
+ policy_version, evidence_weight, score_kind, policy_reason, score_aware_enabled)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
+
+func ratingChangeArgs(c models.RatingChange) []any {
+	if c.PolicyVersion == "" {
+		c.PolicyVersion = "glicko2-v1"
+	}
+	if c.EvidenceWeight == 0 {
+		c.EvidenceWeight = 1
+	}
+	if c.PolicyReason == "" {
+		c.PolicyReason = "legacy"
+	}
+	return []any{c.GameResultID, c.GroupID, c.PlayerID, c.OldRating, c.NewRating, c.OldRD, c.NewRD, c.Delta, c.AppliedAt,
+		c.PolicyVersion, c.EvidenceWeight, c.ScoreKind, c.PolicyReason, c.ScoreAwareEnabled}
+}
 func (r *RatingChangeRepo) Insert(ctx context.Context, change *models.RatingChange) error {
-	const q = `
-		INSERT INTO rating_changes
-			(game_result_id, group_id, player_id, old_rating, new_rating, old_rd, new_rd, delta, applied_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err := r.pool.Exec(ctx, q,
-		change.GameResultID, change.GroupID, change.PlayerID,
-		change.OldRating, change.NewRating, change.OldRD, change.NewRD, change.Delta, change.AppliedAt,
-	)
+	_, err := r.pool.Exec(ctx, insertRatingChange, ratingChangeArgs(*change)...)
 	return err
 }
 
 func (r *RatingChangeRepo) InsertInTx(ctx context.Context, tx pgx.Tx, change *models.RatingChange) error {
-	const q = `
-		INSERT INTO rating_changes
-			(game_result_id, group_id, player_id, old_rating, new_rating, old_rd, new_rd, delta, applied_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err := tx.Exec(ctx, q,
-		change.GameResultID, change.GroupID, change.PlayerID,
-		change.OldRating, change.NewRating, change.OldRD, change.NewRD, change.Delta, change.AppliedAt,
-	)
+	_, err := tx.Exec(ctx, insertRatingChange, ratingChangeArgs(*change)...)
 	return err
 }
 
 func (r *RatingChangeRepo) ListByGroupAndDateRange(ctx context.Context, groupID int64, from, to time.Time) ([]*models.RatingChange, error) {
 	const q = `
-		SELECT id, game_result_id, group_id, player_id, old_rating, new_rating, old_rd, new_rd, delta, applied_at
+		SELECT id, game_result_id, group_id, player_id, old_rating, new_rating, old_rd, new_rd, delta, applied_at,
+ policy_version, evidence_weight, score_kind, policy_reason, score_aware_enabled
 		FROM rating_changes
 		WHERE group_id = $1 AND applied_at >= $2 AND applied_at < $3
 		ORDER BY applied_at DESC`
@@ -170,6 +175,7 @@ func (r *RatingChangeRepo) ListByGroupAndDateRange(ctx context.Context, groupID 
 		if err := rows.Scan(
 			&rc.ID, &rc.GameResultID, &rc.GroupID, &rc.PlayerID,
 			&rc.OldRating, &rc.NewRating, &rc.OldRD, &rc.NewRD, &rc.Delta, &rc.AppliedAt,
+			&rc.PolicyVersion, &rc.EvidenceWeight, &rc.ScoreKind, &rc.PolicyReason, &rc.ScoreAwareEnabled,
 		); err != nil {
 			return nil, fmt.Errorf("scan rating change: %w", err)
 		}

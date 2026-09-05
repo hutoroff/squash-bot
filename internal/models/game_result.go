@@ -2,6 +2,16 @@ package models
 
 import "time"
 
+// ScoreKind is explicit: numeric values cannot identify points versus games.
+type ScoreKind string
+
+const (
+	ScoreKindPoints ScoreKind = "points"
+	ScoreKindGames  ScoreKind = "games"
+)
+
+func (k ScoreKind) Valid() bool { return k == ScoreKindPoints || k == ScoreKindGames }
+
 type GameResultStatus string
 
 const (
@@ -20,6 +30,7 @@ type GameResult struct {
 	OpponentID        int64            `json:"opponent_id"`
 	WinnerID          *int64           `json:"winner_id,omitempty"`
 	Score             string           `json:"score"`
+	ScoreKind         ScoreKind        `json:"score_kind,omitempty"`
 	Status            GameResultStatus `json:"status"`
 	SubmittedAt       time.Time        `json:"submitted_at"`
 	DecidedAt         *time.Time       `json:"decided_at,omitempty"`

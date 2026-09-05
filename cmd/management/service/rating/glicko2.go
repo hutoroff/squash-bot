@@ -39,6 +39,9 @@ func Default() Rating {
 type MatchResult struct {
 	Opponent Rating
 	Score    float64 // 1 = win, 0.5 = draw, 0 = loss
+	// Weight is an experimental evidence weight. Zero retains legacy weight 1.
+	// Callers must supply a finite positive weight (score policy bounds it to 0.75..1.25).
+	Weight float64
 }
 
 // Apply runs the Glicko-2 update for a player who played the given results in one period.
@@ -59,7 +62,7 @@ func Apply(p Rating, results []MatchResult, tau float64) Rating {
 
 	// Precompute g and E for each result.
 	type computed struct {
-		g, e, s float64
+		g, e, s, weight float64
 	}
 	comps := make([]computed, len(results))
 	for i, r := range results {
@@ -67,20 +70,24 @@ func Apply(p Rating, results []MatchResult, tau float64) Rating {
 		phiJ := r.Opponent.RD / scaleToGlicko2
 		gJ := gFunc(phiJ)
 		eJ := eFunc(mu, muJ, phiJ)
-		comps[i] = computed{g: gJ, e: eJ, s: r.Score}
+		weight := r.Weight
+		if weight == 0 {
+			weight = 1
+		}
+		comps[i] = computed{g: gJ, e: eJ, s: r.Score, weight: weight}
 	}
 
 	// Step 3: compute v (estimated variance).
 	v := 0.0
 	for _, c := range comps {
-		v += c.g * c.g * c.e * (1 - c.e)
+		v += c.weight * c.g * c.g * c.e * (1 - c.e)
 	}
 	v = 1.0 / v
 
 	// Step 4: compute delta (improvement).
 	delta := 0.0
 	for _, c := range comps {
-		delta += c.g * (c.s - c.e)
+		delta += c.weight * c.g * (c.s - c.e)
 	}
 	delta *= v
 
@@ -96,7 +103,7 @@ func Apply(p Rating, results []MatchResult, tau float64) Rating {
 	phiNew := 1.0 / math.Sqrt(1.0/(phiStar*phiStar)+1.0/v)
 	sumge := 0.0
 	for _, c := range comps {
-		sumge += c.g * (c.s - c.e)
+		sumge += c.weight * c.g * (c.s - c.e)
 	}
 	muNew := mu + phiNew*phiNew*sumge
 

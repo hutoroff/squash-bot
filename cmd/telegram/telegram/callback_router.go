@@ -388,6 +388,7 @@ func (b *Bot) buildCallbackRouter() map[string]callbackHandler {
 		"res_winner": func(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
 			b.handleResultPickWinner(ctx, cb, rawID)
 		},
+		"res_score_kind": b.handleResultScoreKind,
 		"res_score_skip": func(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
 			b.handleResultScoreSkip(ctx, cb, "")
 		},

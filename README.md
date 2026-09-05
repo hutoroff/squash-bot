@@ -382,9 +382,11 @@ crontab -e
 | `/venues`   | Group admins    | Manage venues (sports, units, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |
 
-For `/result`, enter the optional score as **your score:opponent's score**, regardless of who won: `3:0` if you won, `0:3` if your opponent won. Use whole numbers starting at zero; `0:0` is also accepted. The selected winner cannot have a lower score than the other player. You can also skip the score.
+For `/result`, choose **Points** (default) or **Games/sets won**, then enter the optional score as **your score:opponent's score**, regardless of who won: `11:9` for points, `3:0` if you won, `0:3` if your opponent won. Each side must have 1–6 decimal digits. A selected winner must have the strictly higher score; equal scores, including `0:0`, require Draw. **Skip** submits only the outcome. Changing the score type clears the previous score. Preview and approval cards show the score type.
 
 Server owners can manage experimental features under **Feature toggles** in the Web UI. Every framework flag defaults to **disabled**, with persistent global settings and per-group overrides (Inherit / Enabled / Disabled). A group override takes precedence: global Disabled is not a kill switch. See the separate [feature-toggle inventory and operator reference](docs/feature-toggles.md).
+
+The optional `rating.score_aware` flag enables bounded score-weighted Glicko-2 for typed, decisive 1v1 results across supported sports. Close scores carry less evidence than decisive scores without reversing the winner's gain/loser's loss. Draws, skipped scores, and unknown or unusable legacy scores use ordinary Glicko-2. The effective setting is selected at approval, including auto-approval; changes do not recalculate history. The weighting is experimental and can introduce bias and selective-reporting incentives—review the documented limitations before enabling it.
 
 ## Localisation
 

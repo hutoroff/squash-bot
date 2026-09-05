@@ -91,7 +91,7 @@ type ManagementClient interface {
 	GetPlayerGroups(ctx context.Context, userID int64) ([]models.Group, error)
 
 	// Game results
-	SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error)
+	SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string, scoreKind models.ScoreKind) (*GameResultDTO, error)
 	GetGameResult(ctx context.Context, id int64) (*GameResultDTO, error)
 	SetGameResultApprovalMessage(ctx context.Context, id, chatID int64, messageID int) error
 	ApproveGameResult(ctx context.Context, id, actorUserID int64, actorDisplay string) (*GameResultDTO, error)

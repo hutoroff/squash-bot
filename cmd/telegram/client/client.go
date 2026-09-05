@@ -783,21 +783,22 @@ func (c *Client) GetPlayerGroups(ctx context.Context, userID int64) ([]models.Gr
 
 // GameResultDTO is the client-side representation of a game result.
 type GameResultDTO struct {
-	ID                int64          `json:"id"`
-	GameID            int64          `json:"game_id"`
-	GroupID           int64          `json:"group_id"`
-	AuthorID          int64          `json:"author_id"`
-	OpponentID        int64          `json:"opponent_id"`
-	WinnerID          *int64         `json:"winner_id,omitempty"`
-	Score             string         `json:"score"`
-	Status            string         `json:"status"`
-	SubmittedAt       string         `json:"submitted_at"`
-	DecidedAt         *string        `json:"decided_at,omitempty"`
-	ApprovalChatID    *int64         `json:"approval_chat_id,omitempty"`
-	ApprovalMessageID *int           `json:"approval_message_id,omitempty"`
-	AutoApproveAt     *string        `json:"auto_approve_at,omitempty"`
-	Author            *models.Player `json:"author,omitempty"`
-	Opponent          *models.Player `json:"opponent,omitempty"`
+	ID                int64            `json:"id"`
+	GameID            int64            `json:"game_id"`
+	GroupID           int64            `json:"group_id"`
+	AuthorID          int64            `json:"author_id"`
+	OpponentID        int64            `json:"opponent_id"`
+	WinnerID          *int64           `json:"winner_id,omitempty"`
+	Score             string           `json:"score"`
+	ScoreKind         models.ScoreKind `json:"score_kind,omitempty"`
+	Status            string           `json:"status"`
+	SubmittedAt       string           `json:"submitted_at"`
+	DecidedAt         *string          `json:"decided_at,omitempty"`
+	ApprovalChatID    *int64           `json:"approval_chat_id,omitempty"`
+	ApprovalMessageID *int             `json:"approval_message_id,omitempty"`
+	AutoApproveAt     *string          `json:"auto_approve_at,omitempty"`
+	Author            *models.Player   `json:"author,omitempty"`
+	Opponent          *models.Player   `json:"opponent,omitempty"`
 }
 
 // ErrGameResultNotPending is returned when trying to act on a non-pending result.
@@ -808,13 +809,14 @@ var ErrResultOpponentOptedOut = errors.New("opponent has opted out of game resul
 
 var ErrResultsNotSupported = errors.New("results are not supported for this game")
 
-func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string) (*GameResultDTO, error) {
+func (c *Client) SubmitGameResult(ctx context.Context, gameID, authorUserID, opponentPlayerID int64, winnerPlayerID *int64, score, actorDisplay string, scoreKind models.ScoreKind) (*GameResultDTO, error) {
 	body := map[string]any{
 		"game_id":            gameID,
 		"author_user_id":     authorUserID,
 		"opponent_player_id": opponentPlayerID,
 		"winner_player_id":   winnerPlayerID,
 		"score":              score,
+		"score_kind":         scoreKind,
 		"actor_display":      actorDisplay,
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/game-results", body)

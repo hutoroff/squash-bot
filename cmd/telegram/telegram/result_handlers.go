@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/resultscore"
 )
 
 // ── Result wizard types ───────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ const (
 )
 
 type resultWizard struct {
+	mu          sync.Mutex // protects wizard state after publication in pendingResultWizard
+	scoreKind   models.ScoreKind
 	step        resultWizardStep
 	groupID     int64
 	gameID      int64
@@ -41,8 +44,6 @@ type resultWizard struct {
 	candGames   []models.PlayerGame      // memoized recent-games list
 	playerCache map[int64]*models.Player // playerID → Player (populated at opponent-pick step)
 }
-
-var scoreRe = regexp.MustCompile(`^\d+:\d+$`)
 
 // ── /result command ───────────────────────────────────────────────────────────
 
@@ -81,7 +82,9 @@ func (b *Bot) handleCommandResult(ctx context.Context, msg *tgbotapi.Message, lz
 		}
 	}
 
-	wiz := &resultWizard{}
+	wiz := &resultWizard{scoreKind: models.ScoreKindPoints}
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 	b.pendingResultWizard.Store(msg.Chat.ID, wiz)
 
 	if len(playerGroups) == 0 {
@@ -126,6 +129,8 @@ func (b *Bot) handleResultPickGroup(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 	wiz.groupID = groupID
 	wiz.step = resultStepGame
 
@@ -187,6 +192,8 @@ func (b *Bot) handleResultPickGame(ctx context.Context, cb *tgbotapi.CallbackQue
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 	wiz.gameID = gameID
 
 	// Cache the game label from candGames.
@@ -249,12 +256,8 @@ func (b *Bot) sendResultOpponentPicker(ctx context.Context, chatID int64, msgID 
 		b.pendingResultWizard.Delete(chatID)
 		return
 	}
-	// Store playerMap in the wizard so handleResultPickOpponent can look up player data.
-	raw2, ok2 := b.pendingResultWizard.Load(chatID)
-	if ok2 {
-		wiz2 := raw2.(*resultWizard)
-		wiz2.playerCache = playerMap
-	}
+	// Caller holds the wizard lock.
+	wiz.playerCache = playerMap
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	b.editText(chatID, msgID, lz.T(i18n.MsgResultStepPickOpponent), &kb)
 }
@@ -273,6 +276,8 @@ func (b *Bot) handleResultPickOpponent(ctx context.Context, cb *tgbotapi.Callbac
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 
 	// Get the opponent player record from the cached player map (populated during opponent-picker rendering).
 	opp, ok2 := wiz.playerCache[opponentID]
@@ -318,6 +323,12 @@ func (b *Bot) handleResultPickWinner(ctx context.Context, cb *tgbotapi.CallbackQ
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
+	if wiz.opponent == nil || wiz.step != resultStepWinner {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
 
 	ru, err := b.resolveUser(ctx, cb.From)
 	if err != nil || ru.PlayerID == nil {
@@ -347,7 +358,21 @@ func (b *Bot) handleResultPickWinner(ctx context.Context, cb *tgbotapi.CallbackQ
 }
 
 func (b *Bot) renderScoreStep(chatID int64, msgID int, wiz *resultWizard, lz *i18n.Localizer) {
+	if !wiz.scoreKind.Valid() {
+		wiz.scoreKind = models.ScoreKindPoints
+	}
+	wiz.score = "" // entering/changing type must never reinterpret an old score
+	points, games := lz.T(i18n.BtnResultScorePoints), lz.T(i18n.BtnResultScoreGames)
+	if wiz.scoreKind == models.ScoreKindPoints {
+		points = "✓ " + points
+	} else {
+		games = "✓ " + games
+	}
 	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(points, "res_score_kind:points"),
+			tgbotapi.NewInlineKeyboardButtonData(games, "res_score_kind:games"),
+		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(lz.T(i18n.BtnResultScoreSkip), "res_score_skip:_"),
 		),
@@ -364,15 +389,44 @@ func (b *Bot) handleResultScoreSkip(ctx context.Context, cb *tgbotapi.CallbackQu
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
+	if wiz.step != resultStepScore {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
 	wiz.score = ""
+	wiz.scoreKind = ""
 	wiz.step = resultStepPreview
 
 	b.answerCallback(cb.ID, "")
 	b.renderResultPreview(cb.Message.Chat.ID, cb.Message.MessageID, wiz, lz)
 }
 
+func (b *Bot) handleResultScoreKind(ctx context.Context, cb *tgbotapi.CallbackQuery, rawID string) {
+	lz := b.userLocalizer(ctx, cb.From)
+	kind := models.ScoreKind(rawID)
+	raw, ok := b.pendingResultWizard.Load(cb.Message.Chat.ID)
+	if !ok || !kind.Valid() {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
+	if wiz.step != resultStepScore {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
+	wiz.scoreKind = kind
+	b.answerCallback(cb.ID, "")
+	b.renderScoreStep(cb.Message.Chat.ID, cb.Message.MessageID, wiz, lz)
+}
+
 // processResultWizard handles free-text input at the score step.
 func (b *Bot) processResultWizard(ctx context.Context, msg *tgbotapi.Message, wiz *resultWizard) {
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 	lz := b.userLocalizer(ctx, msg.From)
 
 	if wiz.step != resultStepScore {
@@ -380,21 +434,17 @@ func (b *Bot) processResultWizard(ctx context.Context, msg *tgbotapi.Message, wi
 	}
 
 	score := strings.TrimSpace(msg.Text)
-	if !scoreRe.MatchString(score) {
+	ru, err := b.resolveUser(ctx, msg.From)
+	if err != nil || ru.PlayerID == nil {
+		b.sendText(msg.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
+		return
+	}
+	if score == "" || validateResultScore(score, wiz, ru.PlayerID) != nil {
 		b.sendText(msg.Chat.ID, lz.T(i18n.MsgResultErrBadScore), nil)
 		return
 	}
-
-	// Validate winner's number ≥ loser's if a winner is set.
-	if wiz.winnerID != nil {
-		var selfPlayerID *int64
-		if ru, err := b.resolveUser(ctx, msg.From); err == nil {
-			selfPlayerID = ru.PlayerID
-		}
-		if err := validateResultScore(score, wiz, selfPlayerID); err != nil {
-			b.sendText(msg.Chat.ID, lz.T(i18n.MsgResultErrBadScore), nil)
-			return
-		}
+	if !wiz.scoreKind.Valid() {
+		wiz.scoreKind = models.ScoreKindPoints
 	}
 
 	wiz.score = score
@@ -406,11 +456,7 @@ func (b *Bot) processResultWizard(ctx context.Context, msg *tgbotapi.Message, wi
 
 func (b *Bot) renderResultPreview(chatID int64, msgID int, wiz *resultWizard, lz *i18n.Localizer) {
 	oppDisplay := playerModelDisplayName(wiz.opponent)
-	scoreDisplay := wiz.score
-	if scoreDisplay == "" {
-		scoreDisplay = "—"
-	}
-
+	scoreDisplay := resultScoreDisplay(wiz.score, wiz.scoreKind, lz)
 	text := lz.Tf(i18n.MsgResultPreview, escapeMarkdown(wiz.gameLabel), escapeMarkdown(oppDisplay), escapeMarkdown(wiz.winnerLabel), scoreDisplay)
 	kb := buildResultPreviewKeyboard(lz)
 	b.editText(chatID, msgID, text, kb)
@@ -418,11 +464,7 @@ func (b *Bot) renderResultPreview(chatID int64, msgID int, wiz *resultWizard, lz
 
 func (b *Bot) renderResultPreviewNew(chatID int64, wiz *resultWizard, lz *i18n.Localizer) {
 	oppDisplay := playerModelDisplayName(wiz.opponent)
-	scoreDisplay := wiz.score
-	if scoreDisplay == "" {
-		scoreDisplay = "—"
-	}
-
+	scoreDisplay := resultScoreDisplay(wiz.score, wiz.scoreKind, lz)
 	text := lz.Tf(i18n.MsgResultPreview, escapeMarkdown(wiz.gameLabel), escapeMarkdown(oppDisplay), escapeMarkdown(wiz.winnerLabel), scoreDisplay)
 	kb := buildResultPreviewKeyboard(lz)
 	b.sendText(chatID, text, kb)
@@ -453,6 +495,8 @@ func (b *Bot) handleResultEdit(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 
 	ru, err := b.resolveUser(ctx, cb.From)
 	if err != nil {
@@ -487,12 +531,18 @@ func (b *Bot) handleResultCancel(ctx context.Context, cb *tgbotapi.CallbackQuery
 func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery, _ string) {
 	lz := b.userLocalizer(ctx, cb.From)
 
-	raw, ok := b.pendingResultWizard.LoadAndDelete(cb.Message.Chat.ID)
+	raw, ok := b.pendingResultWizard.Load(cb.Message.Chat.ID)
 	if !ok {
 		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
 		return
 	}
 	wiz := raw.(*resultWizard)
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
+	if wiz.step != resultStepPreview || wiz.opponent == nil || !b.pendingResultWizard.CompareAndDelete(cb.Message.Chat.ID, wiz) {
+		b.answerCallback(cb.ID, lz.T(i18n.MsgSessionExpired))
+		return
+	}
 
 	ru, err := b.resolveUser(ctx, cb.From)
 	if err != nil {
@@ -503,7 +553,7 @@ func (b *Bot) handleResultSubmit(ctx context.Context, cb *tgbotapi.CallbackQuery
 
 	result, err := b.client.SubmitGameResult(ctx,
 		wiz.gameID, ru.UserID, wiz.opponent.ID,
-		wiz.winnerID, wiz.score, ru.DisplayName,
+		wiz.winnerID, wiz.score, ru.DisplayName, wiz.scoreKind,
 	)
 	if err != nil {
 		if errors.Is(err, client.ErrResultOpponentOptedOut) {
@@ -578,10 +628,7 @@ func (b *Bot) buildApprovalCardText(ctx context.Context, result *client.GameResu
 		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, escapedAuthor)
 	}
 
-	scoreDisplay := result.Score
-	if scoreDisplay == "" {
-		scoreDisplay = "—"
-	}
+	scoreDisplay := resultScoreDisplay(result.Score, result.ScoreKind, lz)
 
 	autoApproveStr := ""
 	if result.AutoApproveAt != nil {
@@ -624,10 +671,7 @@ func (b *Bot) buildApprovedCardText(ctx context.Context, result *client.GameResu
 		outcomeLabel = lz.Tf(i18n.MsgResultWinnerOpp, escapedAuthor)
 	}
 
-	scoreDisplay := result.Score
-	if scoreDisplay == "" {
-		scoreDisplay = "—"
-	}
+	scoreDisplay := resultScoreDisplay(result.Score, result.ScoreKind, lz)
 
 	return lz.Tf(i18n.MsgResultApprovedCard, escapedAuthor, escapeMarkdown(gameLabel), outcomeLabel, scoreDisplay)
 }
@@ -798,6 +842,7 @@ func (b *Bot) handleResultResubmit(ctx context.Context, cb *tgbotapi.CallbackQue
 		gameLabel: gameLabel,
 		opponent:  opp,
 		score:     result.Score,
+		scoreKind: result.ScoreKind,
 		winnerID:  result.WinnerID,
 	}
 	if wiz.winnerID == nil {
@@ -808,6 +853,8 @@ func (b *Bot) handleResultResubmit(ctx context.Context, cb *tgbotapi.CallbackQue
 		wiz.winnerLabel = lz.T(i18n.MsgResultWinnerMe)
 	}
 
+	wiz.mu.Lock()
+	defer wiz.mu.Unlock()
 	b.pendingResultWizard.Store(cb.Message.Chat.ID, wiz)
 
 	b.answerCallback(cb.ID, "")
@@ -847,28 +894,24 @@ func playerModelDisplayName(p *models.Player) string {
 
 // validateResultScore checks that the score is consistent with the winner.
 func validateResultScore(score string, wiz *resultWizard, selfPlayerID *int64) error {
-	if score == "" || wiz.winnerID == nil {
-		return nil
+	if selfPlayerID == nil || wiz.opponent == nil {
+		return resultscore.ErrInvalid
 	}
-	parts := strings.SplitN(score, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("bad score format")
+	return resultscore.Validate(score, *selfPlayerID, wiz.opponent.ID, wiz.winnerID)
+}
+
+func resultScoreDisplay(score string, kind models.ScoreKind, lz *i18n.Localizer) string {
+	if score == "" {
+		return "—"
 	}
-	left, err1 := strconv.Atoi(parts[0])
-	right, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil {
-		return fmt.Errorf("bad score numbers")
+	label := lz.T(i18n.MsgResultScoreUnknown)
+	if kind == models.ScoreKindPoints {
+		label = lz.T(i18n.BtnResultScorePoints)
 	}
-	if selfPlayerID != nil && *wiz.winnerID == *selfPlayerID {
-		if left < right {
-			return fmt.Errorf("winner's score must be ≥ loser's")
-		}
-	} else if wiz.opponent != nil && *wiz.winnerID == wiz.opponent.ID {
-		if right < left {
-			return fmt.Errorf("winner's score must be ≥ loser's")
-		}
+	if kind == models.ScoreKindGames {
+		label = lz.T(i18n.BtnResultScoreGames)
 	}
-	return nil
+	return escapeMarkdown(score + " (" + label + ")")
 }
 
 // formatDeadline produces a locale-aware deadline string such as "Tuesday, 13 May at 11:00".

@@ -20,7 +20,7 @@ type Definition struct {
 
 // Definitions returns a copy so callers cannot mutate the registry.
 func Definitions() []Definition {
-	return []Definition{{Key: ScoreAwareRating, Description: "Reserved for score-aware ratings (rating consumer not connected yet)", Service: "management", Default: false, GroupScoped: true}}
+	return []Definition{{Key: ScoreAwareRating, Description: "Experimental score-weighted Glicko-2 for typed 1v1 results", Service: "management", Default: false, GroupScoped: true}}
 }
 func Lookup(key Key) (Definition, error) {
 	for _, d := range Definitions() {
