@@ -22,6 +22,7 @@ const maxRequestBodyBytes = 1 << 20
 
 // Handler wires all HTTP routes for the management service.
 type Handler struct {
+	featureFlags     *service.FeatureFlagService
 	gameService      *service.GameService
 	gameResultSvc    *service.GameResultService
 	ratingService    *service.RatingService
@@ -148,6 +149,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Leaderboard
 	mux.HandleFunc("GET /api/v1/groups/{chatID}/leaderboard", h.getGroupLeaderboard)
+
+	// Feature flags (server-owner controls)
+	mux.HandleFunc("GET /api/v1/feature-flags", h.listFeatureFlags)
+	mux.HandleFunc("PATCH /api/v1/feature-flags/{key}", h.setFeatureFlag)
 
 	// Audit
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditEvents)

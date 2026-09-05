@@ -10,6 +10,7 @@ export const EVENT_LABELS: Record<AuditEventType, string> = {
   'game.result_rejected': 'Result rejected',
   'game.result_auto_approved': 'Result auto-approved',
   'game.result_canceled': 'Result canceled',
+  'feature_flag.changed': 'Feature flag changed',
   'game.rating_updated': 'Rating updated',
   'participation.joined': 'Player joined',
   'participation.skipped': 'Player skipped',

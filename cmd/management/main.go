@@ -144,6 +144,8 @@ func main() {
 	partService := service.NewParticipationService(playerRepo, participationRepo, guestRepo, gameNotifier)
 	gameResultSvc := service.NewGameResultService(pool, gameResultRepo, gameRepo, playerRepo, participationRepo, auditSvc, cfg.ResultWindowDays, userRepo)
 	ratingSvc := service.NewRatingService(pool, playerRatingRepo, ratingChangeRepo, groupRepo, auditSvc, logger)
+	flagRepo := storage.NewFeatureFlagRepo(pool)
+	flagSvc := service.NewFeatureFlagService(flagRepo, userRepo, groupRepo, auditSvc)
 	gameResultSvc.SetRatingService(ratingSvc)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
@@ -178,6 +180,7 @@ func main() {
 
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
+	h.SetFeatureFlags(flagSvc)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

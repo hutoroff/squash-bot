@@ -47,6 +47,9 @@ const (
 	AuditEventGameResultAutoApproved AuditEventType = "game.result_auto_approved"
 	AuditEventGameResultCanceled     AuditEventType = "game.result_canceled"
 
+	// Feature flag events.
+	AuditEventFeatureFlagChanged AuditEventType = "feature_flag.changed"
+
 	// Rating events.
 	AuditEventGameRatingUpdated AuditEventType = "game.rating_updated"
 

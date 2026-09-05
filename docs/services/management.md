@@ -47,6 +47,10 @@ Use current signatures/routes from those files, not a copied inventory. New busi
 - Unit-test/disabled-rating wiring can use the non-transactional fallback. Tests of that fallback do not prove the production transaction path works.
 - User notification/audit work is best-effort and not a guarantee of delivery or a fully transactional audit log.
 
+## Feature flags
+
+Management owns persisted global/group overrides, live server-owner authorization, and best-effort change audit. Shared definitions live in `internal/featureflags`; unset defaults are always disabled. Existing booking and notification settings are not migrated. The canonical inventory and mandatory maintenance instructions are in [feature toggles](../feature-toggles.md).
+
 ## Persistence and tests
 
 Use new migration files for schema changes; do not edit already-applied migrations to retrofit behavior. Inspect all ordered migrations when reasoning about schema. The former `auto_booking_games_count` was replaced by `auto_booking_courts_count`; it is not a current column.

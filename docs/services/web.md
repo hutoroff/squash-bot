@@ -34,7 +34,9 @@ The frontend uses React 18 with React Router 7's `react-router-dom` compatibilit
 
 Current user identity is `user_id`, not a raw Telegram ID. Game roster rows may retain Telegram display information but must include `user_id` for current-user comparisons.
 
-Settings use optimistic updates and rollback. Preserve group/venue scope, last-owner conflict handling, independent in-flight saves, and the Web-only preventive cancellation fraction. Venue edits include per-sport units/player overrides. Do not replace the server's authorization with conditional navigation visibility.
+Server owners have a **Feature toggles** page for global defaults and group overrides. Both reads and writes delegate live owner authorization to management; the proxy overwrites actor identity from the session. Flag saves wait for the authoritative response and reload effective values; read/write errors show a reload state instead of inventing disabled values. Scope changes are disabled during a save. See the [canonical flag inventory](../feature-toggles.md).
+
+Existing group/venue settings use optimistic updates and rollback. Preserve group/venue scope, last-owner conflict handling, independent in-flight saves, and the Web-only preventive cancellation fraction. Venue edits include per-sport units/player overrides. Do not replace the server's authorization with conditional navigation visibility.
 
 [settingsLabels.ts](../../web/frontend/src/settingsLabels.ts) holds UI labels/helpers; event labels in [auditEvents.ts](../../web/frontend/src/auditEvents.ts) mirror backend event constants and are checked by a drift test. The UI is currently English-only.
 

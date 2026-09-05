@@ -31,6 +31,7 @@ export type AuditEventType =
   | 'game.result_auto_approved'
   | 'game.result_canceled'
   | 'game.rating_updated'
+  | 'feature_flag.changed'
   | 'participation.joined'
   | 'participation.skipped'
   | 'participation.guest_added'
