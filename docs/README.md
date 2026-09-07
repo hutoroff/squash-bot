@@ -24,7 +24,8 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 ## Plans — not descriptions of completed features
 
 - [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Dependency scan results and the subsequent remediation are tracked separately; safeguards are not containment.
-- [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Do not assume a registry, runtime capability resolution, metrics, or replica safety exists.
+- [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Includes §10.1 requirements for a separate, future management integration task for the reliable booking contract. Do not assume a registry, runtime capability resolution, metrics, or replica safety exists.
+- [Booking reliability and discovery preparation](booking-reliability-design.md): **proposed, not implemented**. Detailed plan for replaceable singleton booking processes, booking-owned tables in the existing database/schema, durable idempotency/conflict protection, caller-authorized duplicate-risk creation and discovery lifecycle preparation. Management integration and real registration are separate tasks; no exactly-once provider or multi-active guarantee.
 
 ## Documentation ownership
 
