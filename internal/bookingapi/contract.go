@@ -107,6 +107,30 @@ type ResolutionRequest struct {
 	Reason           string `json:"reason"`
 }
 
+// ImportRequest records a credential-verified legacy provider booking without
+// representing it as a successful historical create operation.
+type ImportRequest struct {
+	MatchID   string `json:"matchId"`
+	CourtUUID string `json:"courtUuid"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	Actor     string `json:"actor"`
+	Reason    string `json:"reason"`
+}
+
+type ImportStatus struct {
+	ImportID      string           `json:"import_id"`
+	Imported      bool             `json:"imported"`
+	Revision      int64            `json:"revision"`
+	CourtUUID     string           `json:"court_uuid"`
+	Start         string           `json:"start"`
+	End           string           `json:"end"`
+	Evidence      ProviderEvidence `json:"evidence"`
+	ProviderState string           `json:"provider_state"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
 type ProviderEvidence struct {
 	BookingUUID string `json:"booking_uuid,omitempty"`
 	BookingID   int    `json:"booking_id,omitempty"`

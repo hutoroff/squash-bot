@@ -603,6 +603,143 @@ func (*successfulLedgerProvider) CancelMatchOnce(context.Context, string) (*ever
 	panic("unexpected cancellation")
 }
 
+func TestResultCompactionScrubsOnlyUnblockedTerminalEvidence(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	operations := bookingstorage.NewOperationRepo(testPool)
+	request := validatedCreate(t, operation1, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, request, time.Now().Add(time.Minute), executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseLogin, 1, "no_effect", "credential_rejected", map[string]string{"detail": "bounded"}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.Finalize(ctx, request.OperationID, executor1, bookingapi.StateNotDispatched, bookingapi.OutcomeNoEffect, bookingapi.PhaseLogin); err != nil {
+		t.Fatal(err)
+	}
+
+	active := validatedCreate(t, operation2, "other@example.com", "court-2", "2026-04-12T10:15:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, active, time.Now().Add(time.Minute), executor2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.Finalize(ctx, active.OperationID, executor2, bookingapi.StateOutcomeUnknown, bookingapi.OutcomeUnknown, bookingapi.PhaseReserve); err != nil {
+		t.Fatal(err)
+	}
+
+	cutoff := time.Now().Add(24 * time.Hour)
+	if request.End.After(cutoff) {
+		cutoff = request.End.Add(24 * time.Hour)
+	}
+	compacted, err := operations.CompactEligibleResults(ctx, cutoff, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compacted) != 1 || compacted[0] != request.OperationID {
+		t.Fatalf("compacted operations = %+v", compacted)
+	}
+	expired, err := operations.Get(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.ResultExpiredAt == nil {
+		t.Fatal("compacted operation lacks tombstone marker")
+	}
+	steps, err := operations.ListSteps(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || string(steps[1].Evidence) != "{}" || steps[1].Code != "credential_rejected" || steps[1].Effect != "no_effect" {
+		t.Fatalf("compacted steps = %+v", steps)
+	}
+	if replay, err := operations.CompactEligibleResults(ctx, cutoff, 10); err != nil || len(replay) != 0 {
+		t.Fatalf("compaction replay = %+v, %v", replay, err)
+	}
+}
+
+func TestVerifiedLegacyImportIsIdempotentAndSupportsSafeCancellation(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	imports := bookingstorage.NewImportRepo(testPool)
+	operations := bookingstorage.NewOperationRepo(testPool)
+	request, err := bookingapi.ValidateImport(operation1, testScope, identityKey, bookingapi.ImportRequest{
+		MatchID: "legacy-match", CourtUUID: "court-1", Email: "player@example.com", Password: "password",
+		Actor: "management", Reason: "verified legacy booking",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 4, 12, 8, 45, 0, 0, time.FixedZone("CEST", 2*60*60))
+	end := start.Add(45 * time.Minute)
+	accepted, err := imports.AdmitVerified(ctx, request, start, end, "2026-04-12T08:45:00.000+02:00", "2026-04-12T09:30:00.000+02:00", "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Disposition != bookingstorage.ImportAccepted || accepted.Import.StartProvider != "2026-04-12T08:45:00.000+02:00" {
+		t.Fatalf("accepted import = %+v", accepted)
+	}
+	replayRequest, err := bookingapi.ValidateImport(operation1, testScope, identityKey, bookingapi.ImportRequest{
+		MatchID: "legacy-match", CourtUUID: "court-1", Email: "PLAYER@example.com", Password: "rotated",
+		Actor: "management", Reason: "verified legacy booking",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := imports.AdmitVerified(ctx, replayRequest, start, end, "2026-04-12T08:45:00.000+02:00", "2026-04-12T09:30:00.000+02:00", "active")
+	if err != nil || replayed.Disposition != bookingstorage.ImportReplay {
+		t.Fatalf("import replay = %+v, %v", replayed, err)
+	}
+
+	sameKey := validatedCreate(t, operation1, "other@example.com", "court-2", "2026-04-12T10:15:00+02:00", nil)
+	_, err = operations.AdmitCreate(ctx, sameKey, time.Now().Add(time.Minute), executor1)
+	assertConflict(t, err, bookingapi.ErrorIdempotencyKeyConflict)
+
+	overlap := validatedCreate(t, operation2, "other@example.com", "court-1", "2026-04-12T09:00:00+02:00", nil)
+	_, err = operations.AdmitCreate(ctx, overlap, time.Now().Add(time.Minute), executor1)
+	assertConflict(t, err, bookingapi.ErrorBookingConflict)
+
+	cancel, err := bookingapi.ValidateCancel(operation2, testScope, identityKey, "legacy-match", bookingapi.CancelRequest{
+		Email: "player@example.com", Password: "password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AdmitCancel(ctx, cancel, time.Now().Add(time.Minute), executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, cancel.OperationID, bookingapi.PhaseCancellation, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, cancel.OperationID, bookingapi.PhaseCancellation, 1, "confirmed", "cancelled", struct{}{}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.Finalize(ctx, cancel.OperationID, executor1, bookingapi.StateSucceeded, bookingapi.OutcomeSuccess, bookingapi.PhaseFinalization); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := imports.Get(ctx, request.ImportID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.ProviderState != "cancelled" || imported.Revision != 2 {
+		t.Fatalf("cancelled import = %+v", imported)
+	}
+	rebooking := validatedCreate(t, operation3, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, rebooking, time.Now().Add(time.Minute), executor2); err != nil {
+		t.Fatalf("cancelled import retained occupancy: %v", err)
+	}
+	operationKeyImport, err := bookingapi.ValidateImport(operation3, testScope, identityKey, bookingapi.ImportRequest{
+		MatchID: "other-match", CourtUUID: "court-3", Email: "player@example.com", Password: "password",
+		Actor: "management", Reason: "key collision check",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = imports.AdmitVerified(ctx, operationKeyImport, start.Add(3*time.Hour), end.Add(3*time.Hour), "2026-04-12T11:45:00.000+02:00", "2026-04-12T12:30:00.000+02:00", "active")
+	assertConflict(t, err, bookingapi.ErrorIdempotencyKeyConflict)
+}
+
 func TestVerifiedResolutionAtomicallyRefinesUnknownCreationAndIsIdempotent(t *testing.T) {
 	resetBookingTables(t)
 	ctx := context.Background()
@@ -1012,7 +1149,7 @@ func TestIdentityKeyHandling(t *testing.T) {
 
 func assertMigrationTables(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	for _, table := range []string{"schema_migrations", "booking_schema_migrations", "users", "booking_operations"} {
+	for _, table := range []string{"schema_migrations", "booking_schema_migrations", "users", "booking_operations", "booking_imports"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			t.Fatal(err)
@@ -1028,7 +1165,7 @@ func resetBookingTables(t *testing.T) {
 	_, err := testPool.Exec(context.Background(), `
 		TRUNCATE booking_operation_events, booking_provider_bookings,
 		         booking_resource_claims, booking_operation_steps,
-		         booking_operations, booking_accounts, booking_metadata
+		         booking_operations, booking_imports, booking_accounts, booking_metadata
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("reset booking tables: %v", err)

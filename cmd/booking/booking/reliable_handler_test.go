@@ -89,6 +89,20 @@ func (r *fakeReliableReconciler) Resolve(_ context.Context, operationID, eventKe
 	return cloneStatus(r.status), r.err
 }
 
+type fakeReliableImporter struct {
+	result   *bookingservice.ImportResponse
+	err      error
+	calls    int
+	importID bookingapi.OperationID
+	request  bookingapi.ImportRequest
+}
+
+func (i *fakeReliableImporter) Import(_ context.Context, importID bookingapi.OperationID, request bookingapi.ImportRequest) (*bookingservice.ImportResponse, error) {
+	i.calls++
+	i.importID, i.request = importID, request
+	return i.result, i.err
+}
+
 func cloneStatus(status *bookingapi.OperationStatus) *bookingapi.OperationStatus {
 	if status == nil {
 		return nil
@@ -385,6 +399,49 @@ func TestReliableReconciliationFailureRemainsUnknown(t *testing.T) {
 	}
 }
 
+func TestReliableLegacyImportRequiresKeyAndReturnsCreatedOrReplay(t *testing.T) {
+	importer := &fakeReliableImporter{result: &bookingservice.ImportResponse{
+		Status:  &bookingapi.ImportStatus{ImportID: reliableOperationID, Imported: true, Revision: 1, CourtUUID: "court-1", ProviderState: "active"},
+		Created: true,
+	}}
+	h := newReliableTestHandlerWithControls(t, &fakeReliableCoordinator{}, &fakeOperationStatusReader{}, &fakeReliableReconciler{}, importer)
+	srv := serve(h)
+	defer srv.Close()
+	body := `{"matchId":"match-1","courtUuid":"court-1","email":"` + testEmail + `","password":"` + testPassword + `","actor":"management","reason":"verified legacy booking"}`
+
+	keyless, err := http.Post(srv.URL+"/api/v2/eversports/imports", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyless.Body.Close()
+	if keyless.StatusCode != http.StatusBadRequest || importer.calls != 0 {
+		t.Fatalf("keyless import status/calls = %d/%d", keyless.StatusCode, importer.calls)
+	}
+
+	request, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/eversports/imports", strings.NewReader(body))
+	request.Header.Set("Idempotency-Key", reliableOperationID)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated || importer.calls != 1 || importer.importID != reliableOperationID || importer.request.Password != testPassword {
+		t.Fatalf("import response/call = %d/%+v", response.StatusCode, importer)
+	}
+
+	importer.result.Created = false
+	replayRequest, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/eversports/imports", strings.NewReader(body))
+	replayRequest.Header.Set("Idempotency-Key", reliableOperationID)
+	replay, err := http.DefaultClient.Do(replayRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replay.Body.Close()
+	if replay.StatusCode != http.StatusOK {
+		t.Fatalf("import replay status = %d", replay.StatusCode)
+	}
+}
+
 func newReliableTestHandler(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader) *Handler {
 	t.Helper()
 	return newReliableTestHandlerWithReconciler(t, coordinator, status, &fakeReliableReconciler{})
@@ -392,9 +449,14 @@ func newReliableTestHandler(t *testing.T, coordinator ReliableCoordinator, statu
 
 func newReliableTestHandlerWithReconciler(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader, reconciler ReliableReconciler) *Handler {
 	t.Helper()
+	return newReliableTestHandlerWithControls(t, coordinator, status, reconciler, &fakeReliableImporter{})
+}
+
+func newReliableTestHandlerWithControls(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader, reconciler ReliableReconciler, importer ReliableImporter) *Handler {
+	t.Helper()
 	h := NewHandler(testLogger, "test-version", reliableScope.FacilityID, reliableScope.FacilityUUID, reliableScope.FacilitySlug)
 	if err := h.ConfigureReliableAPI(ReliableAPIConfig{
-		Coordinator: coordinator, Status: status, Reconciler: reconciler,
+		Coordinator: coordinator, Status: status, Reconciler: reconciler, Importer: importer,
 		Scope: reliableScope, IdentityKey: reliableIdentityKey,
 		ResponseWait: time.Millisecond, PollInterval: 100 * time.Microsecond,
 	}); err != nil {

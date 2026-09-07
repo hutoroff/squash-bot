@@ -73,7 +73,7 @@ func (r *OperationRepo) withAdmissionRetry(ctx context.Context, fn func(pgx.Tx) 
 }
 
 func admitCreate(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCreate, deadline time.Time, executorID bookingapi.OperationID) (*Admission, error) {
-	if err := lockKey(ctx, tx, "operation:"+string(request.OperationID)); err != nil {
+	if err := lockKey(ctx, tx, "ledger-key:"+string(request.OperationID)); err != nil {
 		return nil, err
 	}
 	fingerprint := request.Fingerprint()
@@ -83,6 +83,9 @@ func admitCreate(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCre
 		}
 		return &Admission{Disposition: AdmissionReplay, Operation: existing}, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err := rejectImportKeyCollision(ctx, tx, request.OperationID); err != nil {
 		return nil, err
 	}
 
@@ -123,12 +126,12 @@ func admitCreate(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCre
 	if err := lockKey(ctx, tx, resourceKey); err != nil {
 		return nil, err
 	}
-	conflictID, err := findOccupancyConflict(ctx, tx, request, parentID)
+	conflictID, conflictKind, err := findOccupancyConflict(ctx, tx, request, parentID)
 	if err != nil {
 		return nil, err
 	}
 	if conflictID != "" {
-		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: conflictID}
+		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: conflictID, ConflictingResourceKind: conflictKind}
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -179,7 +182,7 @@ func admitCreate(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCre
 }
 
 func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCancel, deadline time.Time, executorID bookingapi.OperationID) (*Admission, error) {
-	if err := lockKey(ctx, tx, "operation:"+string(request.OperationID)); err != nil {
+	if err := lockKey(ctx, tx, "ledger-key:"+string(request.OperationID)); err != nil {
 		return nil, err
 	}
 	fingerprint := request.Fingerprint()
@@ -191,6 +194,9 @@ func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCan
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
+	if err := rejectImportKeyCollision(ctx, tx, request.OperationID); err != nil {
+		return nil, err
+	}
 
 	accountID, accountState, activeOperation, quarantineOperation, err := lockAccount(ctx, tx, request.Scope.Provider, request.AccountIdentity)
 	if err != nil {
@@ -200,15 +206,17 @@ func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCan
 	if err := lockKey(ctx, tx, resourceKey); err != nil {
 		return nil, err
 	}
-	var targetState, targetAccountIdentity, targetOperationID string
+	var targetState, targetAccountIdentity, targetOperationID, targetKind string
 	err = tx.QueryRow(ctx, `
-		SELECT b.booking_state, a.identity, b.create_operation_id::text
+		SELECT b.booking_state, a.identity, COALESCE(b.create_operation_id::text, b.import_id::text),
+		       CASE WHEN b.import_id IS NULL THEN 'operation' ELSE 'import' END
 		FROM booking_provider_bookings b
-		JOIN booking_operations o ON o.operation_id = b.create_operation_id
-		JOIN booking_accounts a ON a.id = o.account_id
+		LEFT JOIN booking_operations o ON o.operation_id = b.create_operation_id
+		LEFT JOIN booking_imports i ON i.import_id = b.import_id
+		JOIN booking_accounts a ON a.id = COALESCE(o.account_id, i.account_id)
 		WHERE b.provider = $1 AND b.facility_uuid = $2 AND b.match_id = $3
 		FOR UPDATE OF b`, request.Scope.Provider, request.Scope.FacilityUUID, request.MatchID,
-	).Scan(&targetState, &targetAccountIdentity, &targetOperationID)
+	).Scan(&targetState, &targetAccountIdentity, &targetOperationID, &targetKind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict}
 	}
@@ -216,7 +224,7 @@ func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCan
 		return nil, fmt.Errorf("lock cancellation target: %w", err)
 	}
 	if targetAccountIdentity != request.AccountIdentity {
-		return nil, &ConflictError{Code: bookingapi.ErrorAccountBlocked, ConflictingOperationID: targetOperationID}
+		return nil, &ConflictError{Code: bookingapi.ErrorAccountBlocked, ConflictingOperationID: targetOperationID, ConflictingResourceKind: targetKind}
 	}
 	if targetState == "cancelled" {
 		return admitResolvedCancellation(ctx, tx, request, fingerprint, accountID, deadline)
@@ -314,6 +322,17 @@ func admitResolvedCancellation(ctx context.Context, tx pgx.Tx, request bookingap
 	return &Admission{Disposition: AdmissionResolved, Operation: operation}, nil
 }
 
+func rejectImportKeyCollision(ctx context.Context, tx pgx.Tx, operationID bookingapi.OperationID) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM booking_imports WHERE import_id = $1)`, operationID).Scan(&exists); err != nil {
+		return fmt.Errorf("check booking ledger key collision: %w", err)
+	}
+	if exists {
+		return &ConflictError{Code: bookingapi.ErrorIdempotencyKeyConflict, ConflictingOperationID: string(operationID), ConflictingResourceKind: "import"}
+	}
+	return nil
+}
+
 func lockAccount(ctx context.Context, tx pgx.Tx, provider, identity string) (id int64, state, activeOperation, quarantineOperation string, err error) {
 	if _, err = tx.Exec(ctx, `
 		INSERT INTO booking_accounts (provider, identity)
@@ -332,26 +351,27 @@ func lockAccount(ctx context.Context, tx pgx.Tx, provider, identity string) (id 
 	return id, state, activeOperation, quarantineOperation, nil
 }
 
-func findOccupancyConflict(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCreate, allowedParent string) (string, error) {
-	var operationID string
+func findOccupancyConflict(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCreate, allowedParent string) (string, string, error) {
+	var ownerID, ownerKind string
 	err := tx.QueryRow(ctx, `
-		SELECT operation_id::text
+		SELECT COALESCE(operation_id::text, import_id::text),
+		       CASE WHEN import_id IS NULL THEN 'operation' ELSE 'import' END
 		FROM booking_resource_claims
 		WHERE claim_type = 'occupancy' AND state = 'active'
 		  AND provider = $1 AND facility_uuid = $2 AND court_uuid = $3
 		  AND start_at < $5 AND end_at > $4
-		  AND operation_id <> COALESCE(NULLIF($6, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+		  AND (operation_id IS NULL OR operation_id <> COALESCE(NULLIF($6, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid))
 		ORDER BY id
 		LIMIT 1`,
 		request.Scope.Provider, request.Scope.FacilityUUID, request.CourtUUID, request.Start, request.End, allowedParent,
-	).Scan(&operationID)
+	).Scan(&ownerID, &ownerKind)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("find occupancy conflict: %w", err)
+		return "", "", fmt.Errorf("find occupancy conflict: %w", err)
 	}
-	return operationID, nil
+	return ownerID, ownerKind, nil
 }
 
 func lockKey(ctx context.Context, tx pgx.Tx, key string) error {

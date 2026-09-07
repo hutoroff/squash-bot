@@ -86,6 +86,16 @@ type ValidatedCancel struct {
 	AccountIdentity string
 }
 
+type ValidatedImport struct {
+	ImportID        OperationID
+	Scope           Scope
+	MatchID         string
+	CourtUUID       string
+	AccountIdentity string
+	Actor           string
+	Reason          string
+}
+
 func ValidateCreate(operationID string, scope Scope, identityKey []byte, req CreateRequest) (ValidatedCreate, error) {
 	id, err := ParseOperationID(operationID)
 	if err != nil {
@@ -163,6 +173,33 @@ func ValidateCancel(operationID string, scope Scope, identityKey []byte, matchID
 	return ValidatedCancel{OperationID: id, Scope: scope, MatchID: matchID, AccountIdentity: account}, nil
 }
 
+func ValidateImport(importID string, scope Scope, identityKey []byte, req ImportRequest) (ValidatedImport, error) {
+	id, err := ParseOperationID(importID)
+	if err != nil {
+		return ValidatedImport{}, err
+	}
+	if err := validateScope(scope); err != nil {
+		return ValidatedImport{}, err
+	}
+	if err := validateIdentifier("matchId", req.MatchID); err != nil {
+		return ValidatedImport{}, err
+	}
+	if err := validateIdentifier("courtUuid", req.CourtUUID); err != nil {
+		return ValidatedImport{}, err
+	}
+	account, err := deriveAccountIdentity(identityKey, scope.Provider, req.Email, req.Password)
+	if err != nil {
+		return ValidatedImport{}, err
+	}
+	if err := validateAuditMetadata(req.Actor, req.Reason); err != nil {
+		return ValidatedImport{}, err
+	}
+	return ValidatedImport{
+		ImportID: id, Scope: scope, MatchID: req.MatchID, CourtUUID: req.CourtUUID,
+		AccountIdentity: account, Actor: req.Actor, Reason: req.Reason,
+	}, nil
+}
+
 // Fingerprint returns the immutable request fingerprint persisted for create
 // deduplication. Provider credentials are intentionally excluded.
 func (v ValidatedCreate) Fingerprint() string {
@@ -204,6 +241,18 @@ func (v ValidatedCancel) Fingerprint() string {
 		Account string        `json:"account"`
 		MatchID string        `json:"match_id"`
 	}{Version: 1, Kind: OperationCancel, Scope: v.Scope, Account: v.AccountIdentity, MatchID: v.MatchID})
+}
+
+func (v ValidatedImport) Fingerprint() string {
+	return fingerprint(struct {
+		Version   int    `json:"version"`
+		Scope     Scope  `json:"scope"`
+		Account   string `json:"account"`
+		MatchID   string `json:"match_id"`
+		CourtUUID string `json:"court_uuid"`
+		Actor     string `json:"actor"`
+		Reason    string `json:"reason"`
+	}{Version: 1, Scope: v.Scope, Account: v.AccountIdentity, MatchID: v.MatchID, CourtUUID: v.CourtUUID, Actor: v.Actor, Reason: v.Reason})
 }
 
 func validateScope(scope Scope) error {
@@ -260,10 +309,14 @@ func ValidateResolutionRequest(request ResolutionRequest) error {
 	if err := validateIdentifier("matchId", request.MatchID); err != nil {
 		return err
 	}
-	if request.Actor == "" || request.Actor != strings.TrimSpace(request.Actor) || len(request.Actor) > 128 || !safeText(request.Actor) {
+	return validateAuditMetadata(request.Actor, request.Reason)
+}
+
+func validateAuditMetadata(actor, reason string) error {
+	if actor == "" || actor != strings.TrimSpace(actor) || len(actor) > 128 || !safeText(actor) {
 		return invalid("actor", "invalid")
 	}
-	if request.Reason == "" || request.Reason != strings.TrimSpace(request.Reason) || len(request.Reason) > maxRiskReasonLength || !safeText(request.Reason) {
+	if reason == "" || reason != strings.TrimSpace(reason) || len(reason) > maxRiskReasonLength || !safeText(reason) {
 		return invalid("reason", "invalid")
 	}
 	return nil
