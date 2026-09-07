@@ -248,6 +248,31 @@ func DeriveProviderAlias(identityKey []byte, provider, providerUserID string) (s
 	return "hmac-sha256:v1:" + hex.EncodeToString(mac.Sum(nil)), nil
 }
 
+// DeriveAccountIdentity maps credentials to the durable provider account
+// coordination namespace. Password rotation intentionally preserves identity.
+// ValidateResolutionRequest validates bounded non-secret resolution metadata.
+// Credential/account matching is performed by the booking service because it
+// requires trusted provider scope and the identity key.
+func ValidateResolutionRequest(request ResolutionRequest) error {
+	if request.ExpectedRevision <= 0 {
+		return invalid("expectedRevision", "must_be_positive")
+	}
+	if err := validateIdentifier("matchId", request.MatchID); err != nil {
+		return err
+	}
+	if request.Actor == "" || request.Actor != strings.TrimSpace(request.Actor) || len(request.Actor) > 128 || !safeText(request.Actor) {
+		return invalid("actor", "invalid")
+	}
+	if request.Reason == "" || request.Reason != strings.TrimSpace(request.Reason) || len(request.Reason) > maxRiskReasonLength || !safeText(request.Reason) {
+		return invalid("reason", "invalid")
+	}
+	return nil
+}
+
+func DeriveAccountIdentity(identityKey []byte, provider, email, password string) (string, error) {
+	return deriveAccountIdentity(identityKey, provider, email, password)
+}
+
 func deriveAccountIdentity(identityKey []byte, provider, email, password string) (string, error) {
 	if len(identityKey) < minIdentityKeyBytes {
 		return "", invalid("identity_key", "too_short")
