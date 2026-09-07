@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -68,7 +67,7 @@ func (c *Client) GetCourts(ctx context.Context, facilityID, facilitySlug, sportI
 		}
 		defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
+		respBytes, err := readProviderResponse(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("eversports: GetCourts read response: %w", err)
 		}
@@ -166,7 +165,7 @@ func (c *Client) GetSlots(ctx context.Context, facilityID string, courtIDs []str
 		}
 		defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
+		respBytes, err := readProviderResponse(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("eversports: GetSlots read response: %w", err)
 		}

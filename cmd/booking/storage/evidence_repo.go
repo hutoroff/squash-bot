@@ -97,7 +97,7 @@ func (r *EvidenceRepo) UpsertProviderBooking(ctx context.Context, booking Provid
 	}
 
 	var result ProviderBooking
-	var operationID, cancellationOperationID string
+	var operationID, importID, cancellationOperationID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO booking_provider_bookings (
 			create_operation_id, provider, facility_uuid, booking_uuid, booking_id,
@@ -132,13 +132,13 @@ func (r *EvidenceRepo) UpsertProviderBooking(ctx context.Context, booking Provid
 		  AND NOT (booking_provider_bookings.payment_state IN ('confirmed', 'rejected') AND EXCLUDED.payment_state IN ('confirmed', 'rejected')
 		           AND booking_provider_bookings.payment_state <> EXCLUDED.payment_state)
 		  AND NOT (booking_provider_bookings.booking_state = 'cancelled' AND EXCLUDED.booking_state <> 'cancelled')
-		RETURNING id, create_operation_id::text, provider, facility_uuid,
+		RETURNING id, COALESCE(create_operation_id::text, ''), COALESCE(import_id::text, ''), provider, facility_uuid,
 		          COALESCE(booking_uuid, ''), booking_id, payment_id, COALESCE(match_id, ''),
 		          payment_state, booking_state, COALESCE(cancellation_operation_id::text, ''), created_at, updated_at`,
 		booking.CreateOperationID, booking.Provider, booking.FacilityUUID, booking.BookingUUID,
 		booking.BookingID, booking.PaymentID, booking.MatchID, booking.PaymentState,
 		booking.BookingState, booking.CancellationOperationID,
-	).Scan(&result.ID, &operationID, &result.Provider, &result.FacilityUUID,
+	).Scan(&result.ID, &operationID, &importID, &result.Provider, &result.FacilityUUID,
 		&result.BookingUUID, &result.BookingID, &result.PaymentID, &result.MatchID,
 		&result.PaymentState, &result.BookingState, &cancellationOperationID,
 		&result.CreatedAt, &result.UpdatedAt)
@@ -153,6 +153,7 @@ func (r *EvidenceRepo) UpsertProviderBooking(ctx context.Context, booking Provid
 		return nil, fmt.Errorf("upsert booking provider evidence: %w", err)
 	}
 	result.CreateOperationID = bookingapi.OperationID(operationID)
+	result.ImportID = bookingapi.OperationID(importID)
 	result.CancellationOperationID = cancellationOperationID
 	updateResult, err := tx.Exec(ctx, `
 		UPDATE booking_operations
@@ -179,7 +180,7 @@ func getProviderBookingTx(ctx context.Context, tx pgx.Tx, createOperationID book
 }
 
 const providerBookingSelect = `
-	SELECT id, create_operation_id::text, provider, facility_uuid,
+	SELECT id, COALESCE(create_operation_id::text, ''), COALESCE(import_id::text, ''), provider, facility_uuid,
 	       COALESCE(booking_uuid, ''), booking_id, payment_id, COALESCE(match_id, ''),
 	       payment_state, booking_state, COALESCE(cancellation_operation_id::text, ''), created_at, updated_at
 	FROM booking_provider_bookings
@@ -187,9 +188,9 @@ const providerBookingSelect = `
 
 func getProviderBookingRow(row pgx.Row) (*ProviderBooking, error) {
 	var result ProviderBooking
-	var operationID, cancellationOperationID string
+	var operationID, importID, cancellationOperationID string
 	err := row.Scan(
-		&result.ID, &operationID, &result.Provider, &result.FacilityUUID,
+		&result.ID, &operationID, &importID, &result.Provider, &result.FacilityUUID,
 		&result.BookingUUID, &result.BookingID, &result.PaymentID, &result.MatchID,
 		&result.PaymentState, &result.BookingState, &cancellationOperationID,
 		&result.CreatedAt, &result.UpdatedAt)
@@ -197,6 +198,7 @@ func getProviderBookingRow(row pgx.Row) (*ProviderBooking, error) {
 		return nil, err
 	}
 	result.CreateOperationID = bookingapi.OperationID(operationID)
+	result.ImportID = bookingapi.OperationID(importID)
 	result.CancellationOperationID = cancellationOperationID
 	return &result, nil
 }
@@ -355,27 +357,36 @@ func (r *EvidenceRepo) ApplyVerifiedResolution(ctx context.Context, resolution V
 		if operation.TargetMatchID != resolution.MatchID || resolution.ProviderState != "cancelled" {
 			return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operation.OperationID)}
 		}
-		var createOperationID string
+		var createOperationID, importID string
 		err := tx.QueryRow(ctx, `
 			UPDATE booking_provider_bookings b
 			SET booking_state = 'cancelled', cancellation_operation_id = COALESCE(cancellation_operation_id, $1), updated_at = NOW()
-			FROM booking_operations create_operation
-			WHERE b.create_operation_id = create_operation.operation_id
-			  AND b.provider = $2 AND b.facility_uuid = $3 AND b.match_id = $4
-			  AND create_operation.account_id = $5
-			RETURNING b.create_operation_id::text`, operation.OperationID, operation.Scope.Provider,
+			WHERE b.provider = $2 AND b.facility_uuid = $3 AND b.match_id = $4
+			  AND (
+				EXISTS (SELECT 1 FROM booking_operations o WHERE o.operation_id = b.create_operation_id AND o.account_id = $5)
+				OR EXISTS (SELECT 1 FROM booking_imports i WHERE i.import_id = b.import_id AND i.account_id = $5)
+			  )
+			RETURNING COALESCE(b.create_operation_id::text, ''), COALESCE(b.import_id::text, '')`, operation.OperationID, operation.Scope.Provider,
 			operation.Scope.FacilityUUID, resolution.MatchID, operation.AccountID,
-		).Scan(&createOperationID)
+		).Scan(&createOperationID, &importID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(operation.OperationID)}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("record verified provider cancellation: %w", err)
 		}
+		if importID != "" {
+			if _, err := tx.Exec(ctx, `UPDATE booking_imports SET provider_state = 'cancelled', revision = revision + 1, updated_at = NOW() WHERE import_id = $1`, importID); err != nil {
+				return nil, fmt.Errorf("update verified cancelled import: %w", err)
+			}
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking_resource_claims SET state = 'released', released_at = NOW()
-			WHERE (operation_id = $1 AND claim_type = 'occupancy' OR operation_id = $2 AND claim_type = 'cancellation')
-			  AND state = 'active'`, createOperationID, operation.OperationID); err != nil {
+			WHERE (
+				(operation_id = NULLIF($1, '')::uuid AND claim_type = 'occupancy')
+				OR (import_id = NULLIF($2, '')::uuid AND claim_type = 'occupancy')
+				OR (operation_id = $3 AND claim_type = 'cancellation')
+			) AND state = 'active'`, createOperationID, importID, operation.OperationID); err != nil {
 			return nil, fmt.Errorf("release verified cancellation claims: %w", err)
 		}
 	}

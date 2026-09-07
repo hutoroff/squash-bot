@@ -50,6 +50,7 @@ type Handler struct {
 	coordinator         ReliableCoordinator
 	reliableStatus      OperationStatusReader
 	reconciler          ReliableReconciler
+	importer            ReliableImporter
 	reliableScope       bookingapi.Scope
 	reliableIdentityKey []byte
 	reliableEnabled     bool
@@ -86,10 +87,15 @@ type ReliableReconciler interface {
 	Resolve(context.Context, bookingapi.OperationID, bookingapi.OperationID, bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error)
 }
 
+type ReliableImporter interface {
+	Import(context.Context, bookingapi.OperationID, bookingapi.ImportRequest) (*bookingservice.ImportResponse, error)
+}
+
 type ReliableAPIConfig struct {
 	Coordinator  ReliableCoordinator
 	Status       OperationStatusReader
 	Reconciler   ReliableReconciler
+	Importer     ReliableImporter
 	Scope        bookingapi.Scope
 	IdentityKey  []byte
 	ResponseWait time.Duration
@@ -99,8 +105,8 @@ type ReliableAPIConfig struct {
 // ConfigureReliableAPI enables v2 mutation/status routes and disables keyless
 // legacy mutations. P6 owns constructing these dependencies during startup.
 func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
-	if cfg.Coordinator == nil || cfg.Status == nil || cfg.Reconciler == nil {
-		return fmt.Errorf("reliable booking coordinator, status reader, and reconciler are required")
+	if cfg.Coordinator == nil || cfg.Status == nil || cfg.Reconciler == nil || cfg.Importer == nil {
+		return fmt.Errorf("reliable booking coordinator, status reader, reconciler, and importer are required")
 	}
 	if cfg.ResponseWait == 0 {
 		cfg.ResponseWait = 20 * time.Second
@@ -123,6 +129,7 @@ func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
 	h.coordinator = cfg.Coordinator
 	h.reliableStatus = cfg.Status
 	h.reconciler = cfg.Reconciler
+	h.importer = cfg.Importer
 	h.reliableScope = cfg.Scope
 	h.reliableIdentityKey = append([]byte(nil), cfg.IdentityKey...)
 	h.responseWait = cfg.ResponseWait
@@ -174,6 +181,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/eversports/operations/{id}", h.getOperationV2)
 	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/reconcile", h.reconcileOperationV2)
 	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/resolution", h.resolveOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/imports", h.importBookingV2)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -434,6 +442,52 @@ func (h *Handler) resolveOperationV2(w http.ResponseWriter, r *http.Request) {
 	h.writeReconciliationResult(w, operationID, status, err)
 }
 
+func (h *Handler) importBookingV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	importID, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.ImportRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	result, err := h.importer.Import(r.Context(), importID, request)
+	if err != nil {
+		if errors.Is(err, bookingservice.ErrReconciliationUnresolved) || errors.Is(err, bookingservice.ErrVerificationMismatch) {
+			h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "provider reads did not verify an importable booking", string(importID), "", "")
+			return
+		}
+		var validation *bookingapi.ValidationError
+		if errors.As(err, &validation) {
+			h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid booking import request", string(importID), "", "")
+			return
+		}
+		var conflict *storage.ConflictError
+		if errors.As(err, &conflict) {
+			conflictingID := string(importID)
+			if conflict.ConflictingOperationID != "" {
+				conflictingID = conflict.ConflictingOperationID
+			}
+			h.writeContractError(w, http.StatusConflict, conflict.Code, "booking import conflicts with durable state", conflictingID, "", "")
+			return
+		}
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking import dependency unavailable", string(importID), "", "")
+		return
+	}
+	if result == nil || result.Status == nil {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking import status unavailable", string(importID), "", "")
+		return
+	}
+	httpStatus := http.StatusOK
+	if result.Created {
+		httpStatus = http.StatusCreated
+	}
+	writeJSON(w, httpStatus, result.Status)
+}
+
 func (h *Handler) writeReconciliationResult(w http.ResponseWriter, operationID bookingapi.OperationID, status *bookingapi.OperationStatus, err error) {
 	var expired *bookingservice.ResultExpiredError
 	if errors.As(err, &expired) {
@@ -541,7 +595,9 @@ func (h *Handler) writeSubmissionError(w http.ResponseWriter, operationID bookin
 		responseID, statusURL := string(operationID), ""
 		if parsed, parseErr := bookingapi.ParseOperationID(conflict.ConflictingOperationID); parseErr == nil {
 			responseID = string(parsed)
-			statusURL = bookingservice.OperationStatusURL(parsed)
+			if conflict.ConflictingResourceKind != "import" {
+				statusURL = bookingservice.OperationStatusURL(parsed)
+			}
 		}
 		h.writeContractError(w, http.StatusConflict, conflict.Code, "booking operation conflicts with durable state", responseID, "", statusURL)
 		return

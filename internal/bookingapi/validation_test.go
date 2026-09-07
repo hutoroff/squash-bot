@@ -172,6 +172,38 @@ func TestDeriveProviderAliasIsKeyedAndProviderScoped(t *testing.T) {
 	}
 }
 
+func TestValidateImportFingerprintExcludesCredentialsAndIncludesProvenance(t *testing.T) {
+	request := ImportRequest{
+		MatchID: "match-1", CourtUUID: "court-1", Email: "Player@example.com", Password: "first-secret",
+		Actor: "management", Reason: "verified legacy booking",
+	}
+	first, err := ValidateImport(testOperationID, testScope, testIdentityKey, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Email, request.Password = "player@example.com", "rotated-secret"
+	second, err := ValidateImport(testOperationID, testScope, testIdentityKey, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint() != second.Fingerprint() {
+		t.Fatal("password rotation changed import fingerprint")
+	}
+	request.Reason = "different provenance"
+	third, err := ValidateImport(testOperationID, testScope, testIdentityKey, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Fingerprint() == first.Fingerprint() {
+		t.Fatal("changed provenance did not change import fingerprint")
+	}
+	for _, forbidden := range []string{"player@example.com", "first-secret", "rotated-secret"} {
+		if strings.Contains(first.Fingerprint(), forbidden) {
+			t.Fatalf("import fingerprint exposed %q", forbidden)
+		}
+	}
+}
+
 func TestValidateResolutionRequestRejectsUnsafeOrUnboundedMetadata(t *testing.T) {
 	valid := ResolutionRequest{ExpectedRevision: 3, MatchID: "match-1", Actor: "management", Reason: "verified exact match"}
 	if err := ValidateResolutionRequest(valid); err != nil {

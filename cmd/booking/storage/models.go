@@ -49,8 +49,9 @@ type Admission struct {
 }
 
 type ConflictError struct {
-	Code                   bookingapi.ErrorCode
-	ConflictingOperationID string
+	Code                    bookingapi.ErrorCode
+	ConflictingOperationID  string
+	ConflictingResourceKind string
 }
 
 func (e *ConflictError) Error() string { return string(e.Code) }
@@ -71,6 +72,7 @@ type Step struct {
 type ProviderBooking struct {
 	ID                      int64
 	CreateOperationID       bookingapi.OperationID
+	ImportID                bookingapi.OperationID
 	Provider                string
 	FacilityUUID            string
 	BookingUUID             string
@@ -82,6 +84,38 @@ type ProviderBooking struct {
 	CancellationOperationID string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+}
+
+type Import struct {
+	ImportID           bookingapi.OperationID
+	RequestFingerprint string
+	Scope              bookingapi.Scope
+	AccountID          int64
+	AccountIdentity    string
+	CourtUUID          string
+	Start              time.Time
+	End                time.Time
+	StartProvider      string
+	EndProvider        string
+	MatchID            string
+	ProviderState      string
+	Actor              string
+	Reason             string
+	Revision           int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type ImportDisposition string
+
+const (
+	ImportAccepted ImportDisposition = "accepted"
+	ImportReplay   ImportDisposition = "replay"
+)
+
+type ImportResult struct {
+	Disposition ImportDisposition
+	Import      *Import
 }
 
 type VerifiedResolution struct {

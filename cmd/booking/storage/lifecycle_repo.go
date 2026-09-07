@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/jackc/pgx/v5"
@@ -88,24 +89,30 @@ func (r *OperationRepo) Finalize(
 		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operationID)}
 	}
 	if state == bookingapi.StateSucceeded && operation.Kind == bookingapi.OperationCancel {
-		var createOperationID string
+		var createOperationID, importID string
 		err := tx.QueryRow(ctx, `
 			UPDATE booking_provider_bookings
 			SET booking_state = 'cancelled',
 			    cancellation_operation_id = COALESCE(cancellation_operation_id, $1),
 			    updated_at = NOW()
 			WHERE provider = $2 AND facility_uuid = $3 AND match_id = $4
-			RETURNING create_operation_id::text`,
+			RETURNING COALESCE(create_operation_id::text, ''), COALESCE(import_id::text, '')`,
 			operationID, operation.Scope.Provider, operation.Scope.FacilityUUID, operation.TargetMatchID,
-		).Scan(&createOperationID)
+		).Scan(&createOperationID, &importID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("record confirmed provider cancellation: %w", err)
 		}
-		if createOperationID != "" {
+		if importID != "" {
+			if _, err := tx.Exec(ctx, `UPDATE booking_imports SET provider_state = 'cancelled', revision = revision + 1, updated_at = NOW() WHERE import_id = $1`, importID); err != nil {
+				return nil, fmt.Errorf("update cancelled booking import: %w", err)
+			}
+		}
+		if createOperationID != "" || importID != "" {
 			if _, err := tx.Exec(ctx, `
 				UPDATE booking_resource_claims
 				SET state = 'released', released_at = NOW()
-				WHERE operation_id = $1 AND claim_type = 'occupancy' AND state = 'active'`, createOperationID); err != nil {
+				WHERE ((operation_id = NULLIF($1, '')::uuid) OR (import_id = NULLIF($2, '')::uuid))
+				  AND claim_type = 'occupancy' AND state = 'active'`, createOperationID, importID); err != nil {
 				return nil, fmt.Errorf("release confirmed booking occupancy: %w", err)
 			}
 		}
@@ -149,9 +156,9 @@ func (r *OperationRepo) ListUnfinished(ctx context.Context) ([]*Operation, error
 	return operations, rows.Err()
 }
 
-// MarkResultExpired retains the operation key/fingerprint and terminal summary
-// while marking detailed result retention as expired. Detailed evidence cleanup
-// is a later policy step and must never delete active or unresolved records.
+// MarkResultExpired retains the operation key/fingerprint, terminal summary,
+// classifications and provenance while marking the result expired and scrubbing
+// detailed step payloads. Active or unresolved records are never compacted.
 func (r *OperationRepo) MarkResultExpired(ctx context.Context, operationID bookingapi.OperationID, expectedRevision int64) (*Operation, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -163,6 +170,9 @@ func (r *OperationRepo) MarkResultExpired(ctx context.Context, operationID booki
 		return nil, err
 	}
 	if operation.ResultExpiredAt != nil {
+		if err := compactOperationEvidenceTx(ctx, tx, []bookingapi.OperationID{operationID}); err != nil {
+			return nil, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit booking result expiration replay: %w", err)
 		}
@@ -170,6 +180,23 @@ func (r *OperationRepo) MarkResultExpired(ctx context.Context, operationID booki
 	}
 	if operation.Revision != expectedRevision || operation.State == bookingapi.StateAccepted || operation.State == bookingapi.StateRunning || operation.State == bookingapi.StateOutcomeUnknown {
 		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operationID)}
+	}
+	var blocked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM booking_resource_claims WHERE operation_id = $1 AND state = 'active')
+		    OR EXISTS (
+			SELECT 1 FROM booking_operations unresolved
+			WHERE unresolved.root_operation_id = $2
+			  AND unresolved.state IN ('accepted', 'running', 'outcome_unknown')
+		    )
+		    OR EXISTS (
+			SELECT 1 FROM booking_provider_bookings
+			WHERE create_operation_id = $1 AND booking_state <> 'cancelled'
+		    )`, operationID, operation.RootOperationID).Scan(&blocked); err != nil {
+		return nil, fmt.Errorf("check booking result compaction blockers: %w", err)
+	}
+	if blocked {
+		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(operationID)}
 	}
 	result, err := tx.Exec(ctx, `
 		UPDATE booking_operations
@@ -181,6 +208,9 @@ func (r *OperationRepo) MarkResultExpired(ctx context.Context, operationID booki
 	if result.RowsAffected() != 1 {
 		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operationID)}
 	}
+	if err := compactOperationEvidenceTx(ctx, tx, []bookingapi.OperationID{operationID}); err != nil {
+		return nil, err
+	}
 	expired, err := getOperationTx(ctx, tx, operationID)
 	if err != nil {
 		return nil, err
@@ -189,6 +219,91 @@ func (r *OperationRepo) MarkResultExpired(ctx context.Context, operationID booki
 		return nil, fmt.Errorf("commit booking result expiration: %w", err)
 	}
 	return expired, nil
+}
+
+// CompactEligibleResults marks and physically scrubs bounded step payloads for
+// old terminal operations that have no active claims or unresolved lineage.
+// Operation keys, fingerprints, state summaries, provider ownership records,
+// step classifications, and idempotency/provenance events are retained.
+func (r *OperationRepo) CompactEligibleResults(ctx context.Context, cutoff time.Time, limit int) ([]bookingapi.OperationID, error) {
+	if cutoff.IsZero() || limit <= 0 || limit > 1000 {
+		return nil, fmt.Errorf("invalid booking result compaction bounds")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin booking result compaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		WITH candidates AS (
+			SELECT o.operation_id
+			FROM booking_operations o
+			WHERE o.result_expired_at IS NULL
+			  AND o.state IN ('not_dispatched', 'rejected_no_effect', 'succeeded')
+			  AND GREATEST(o.completed_at, COALESCE(o.end_at, o.completed_at)) < $1
+			  AND NOT EXISTS (
+				SELECT 1 FROM booking_resource_claims c
+				WHERE c.operation_id = o.operation_id AND c.state = 'active'
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM booking_operations unresolved
+				WHERE unresolved.root_operation_id = o.root_operation_id
+				  AND unresolved.state IN ('accepted', 'running', 'outcome_unknown')
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM booking_provider_bookings b
+				WHERE b.create_operation_id = o.operation_id AND b.booking_state <> 'cancelled'
+			  )
+			ORDER BY o.completed_at, o.operation_id
+			FOR UPDATE SKIP LOCKED
+			LIMIT $2
+		)
+		UPDATE booking_operations o
+		SET result_expired_at = NOW(), revision = revision + 1, updated_at = NOW()
+		FROM candidates c
+		WHERE o.operation_id = c.operation_id
+		RETURNING o.operation_id::text`, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("select booking results for compaction: %w", err)
+	}
+	var operationIDs []bookingapi.OperationID
+	for rows.Next() {
+		var operationID string
+		if err := rows.Scan(&operationID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		operationIDs = append(operationIDs, bookingapi.OperationID(operationID))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if err := compactOperationEvidenceTx(ctx, tx, operationIDs); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit booking result compaction: %w", err)
+	}
+	return operationIDs, nil
+}
+
+func compactOperationEvidenceTx(ctx context.Context, tx pgx.Tx, operationIDs []bookingapi.OperationID) error {
+	if len(operationIDs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(operationIDs))
+	for index, operationID := range operationIDs {
+		ids[index] = string(operationID)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking_operation_steps
+		SET evidence = '{}'::jsonb
+		WHERE operation_id = ANY($1::uuid[]) AND evidence <> '{}'::jsonb`, ids); err != nil {
+		return fmt.Errorf("scrub expired booking step evidence: %w", err)
+	}
+	return nil
 }
 
 func hasMutationIntent(ctx context.Context, tx pgx.Tx, operation *Operation) (bool, error) {
