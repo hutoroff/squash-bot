@@ -2,9 +2,9 @@
 
 **Status:** Proposed — not implemented.
 
-**Code baseline reviewed:** `0bc2df1`.
+**Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability/integration requirements additionally reviewed against `78fcc52`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Neither proposal is implemented.
 
 ## 1. Executive decision
 
@@ -25,7 +25,9 @@ Add Prometheus to the Compose deployment. It discovers application scrape target
 - Keep Docker Compose; no orchestrator migration now.
 - Self-registration and runtime discovery of capabilities are more important than immediate horizontal scaling.
 - One active `management` and one active `telegram` are sufficient.
-- Booking replica safety will be designed separately.
+- Booking remains single-active. Its separate [reliability preparation](booking-reliability-design.md) adds replaceable processes, durable API idempotency and account/resource coordination, not permission to scale replicas.
+- Booking directly owns separate tables in the **same PostgreSQL database and schema** as management and must operate without the management process. Management integration is a separate task, required before reliable-booking production mutation cutover.
+- Repeating an accepted booking operation never executes it again. After an unknown creation outcome, the caller may explicitly authorize one new, linked risk-accepting operation; possible duplication is preferable to missing a booking in this exceptional case. There is no implicit replay or corresponding automatic cancellation override.
 - All deployed services are operated by the same trusted owner.
 - If a dependency is unavailable, degrade and notify an administrator where possible. No offline command queue is required.
 - Deployment interruptions and recovery measured in tens of seconds are acceptable.
@@ -36,14 +38,15 @@ Add Prometheus to the Compose deployment. It discovers application scrape target
 
 - Containers can reach each other over one shared user-defined Docker bridge network.
 - Services may be started separately, including from separate Compose projects attached to that network.
-- PostgreSQL remains a required dependency of `management`, not a database shared directly with every service.
+- PostgreSQL is required by management and, after reliability preparation, booking. They initially use the same database/schema but separate owned tables and migration histories. Neither accesses the other's business/registry tables. Telegram/web remain HTTP-only database consumers through management.
+- Booking's static/direct API can operate with management stopped; its own DB/schema and execution admission remain required. Registry-only clients still depend on a functioning registry for fresh resolution. Sharing PostgreSQL retains a common infrastructure failure domain.
 - External Grafana can be given a secure network path to Prometheus. The exact private-network or HTTPS-proxy setup is an implementation-time deployment choice, not a reason to expose application APIs publicly.
 
 ### Explicit non-goals
 
 - New booking-system implementations or a complete provider-neutral booking API.
 - Arbitrary plugins, remotely supplied executable code, dynamically generated UI, or importing unfamiliar APIs from manifests.
-- Multi-active schedulers, distributed Telegram conversations, account-level booking coordination, exactly-once external operations, or automatic mutation replay.
+- Multi-active schedulers, distributed Telegram conversations, exactly-once external operations, or generic automatic mutation replay. Booking-owned account/operation coordination will be implemented by the companion reliability task, not by discovery leases. Its caller integration and explicit risk-accepting new-operation policy are specified in §10.1; they do not authorize replay of an old execution.
 - A service mesh, general-purpose event bus, configuration server, distributed lock service, or custom consensus protocol.
 - Eliminating all bootstrap configuration or all required infrastructure dependencies.
 
@@ -56,7 +59,7 @@ web ───────HTTP──▶ management ──HTTP─▶ booking ─�
 telegram and management independently call the external Telegram Bot API.
 ```
 
-The code, rather than older comments/documentation, is the source of truth for the observations below.
+The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation; booking's direct SQL dependency and v2 API below are planned additions, not current behavior.
 
 | Area | Current behavior | Consequence |
 |---|---|---|
@@ -114,13 +117,16 @@ A custom registry becomes a poor choice if it grows into replicated consensus, g
                  └──Telegram alert contact point──▶ Telegram Bot API
 ```
 
+After the companion reliability work, booking also connects directly to the same PostgreSQL database/schema for its own `booking_*` tables. It does not access registry SQL, and registry availability is not a booking execution permit.
+
 ### Responsibilities
 
 - **Registry:** instance membership, leases, immutable logical identity, contract declarations, and operator-readable status.
 - **Capability catalog:** durable knowledge of which logical services were discovered, including services that currently have no live instances.
 - **Resolver:** retrieves compatible live endpoints for a logical target.
-- **Caller:** chooses a target, applies its execution policy, owns timeouts and safe retry semantics.
-- **Management domain layer:** owns business enablement, credentials, venue configuration, and whether a capability is meaningful for a particular action.
+- **Caller:** chooses a target, applies its execution policy, owns timeouts and safe retry semantics. For booking v2, it persists operation identity before dispatch and separately authorizes any duplicate-risk replacement.
+- **Management domain layer:** owns business enablement, credentials, venue configuration, durable booking intent/game links and caller risk policy, and whether a capability is meaningful for a particular action.
+- **Booking reliability layer:** owns operation admission, external-step evidence, deduplication, account/resource claims and stored API results in its own tables/migration stream. Management integrates through HTTP, not SQL.
 - **Prometheus/Grafana:** metrics collection, visualization, and infrastructure alert delivery. Neither is required for application routing.
 
 No business service should directly access registry SQL except through management's service/repository abstractions. The management-local resolver can query the registry service without calling its own HTTP API.
@@ -166,24 +172,27 @@ Do not use a password, credential ID, user ID, or venue name as a routing identi
     "admin": "http://<instance-ip>:9090"
   },
   "contracts": [
-    {"name": "eversports-booking", "major": 1, "minor": 0}
+    {"name": "eversports-booking", "major": 2, "minor": 0}
   ],
   "capabilities": [
-    {"name": "booking.courts.list", "contract": "eversports-booking", "major": 1},
-    {"name": "booking.slots.list", "contract": "eversports-booking", "major": 1},
-    {"name": "booking.create", "contract": "eversports-booking", "major": 1},
-    {"name": "booking.cancel", "contract": "eversports-booking", "major": 1}
+    {"name": "booking.courts.list", "contract": "eversports-booking", "major": 2},
+    {"name": "booking.slots.list", "contract": "eversports-booking", "major": 2},
+    {"name": "booking.create", "contract": "eversports-booking", "major": 2},
+    {"name": "booking.cancel", "contract": "eversports-booking", "major": 2},
+    {"name": "booking.operations.get", "contract": "eversports-booking", "major": 2},
+    {"name": "booking.operations.reconcile", "contract": "eversports-booking", "major": 2}
   ],
   "state": "starting"
 }
 ```
 
-Names above become a small documented vocabulary during implementation, not arbitrary strings used to invoke arbitrary paths. Existing Eversports endpoints remain the wire API for this phase.
+Names above become a small documented vocabulary during implementation, not arbitrary strings used to invoke arbitrary paths. This descriptor illustrates the **target after booking reliability preparation**, not today's v1 implementation. The v2 mutation/status contract is defined in the companion plan; compatible existing reads may remain v1 aliases. Booking preparation provides metadata and lifecycle seams only; real registration/heartbeats attach when the shared registry exists.
 
 ### Compatibility
 
 - Release versions and API contract versions are different concepts.
-- Initially describe the existing management API as `management-api` major 1 and the existing Eversports API as `eversports-booking` major 1. Confirm these declarations with contract tests before enabling registry mode.
+- Describe the existing management API as `management-api` major 1 and legacy Eversports API as `eversports-booking` major 1. The reliable booking mutation/status API is **major 2**: required operation keys and changed outcome semantics are breaking changes. Confirm actual declarations with contract tests, never release-major comparison alone.
+- A reliability-enabled management client must require booking major 2 and the operation-status capability in static as well as registry mode. No fallback to v1/keyless mutations. Legacy discovery may still describe an actual v1 service before reliability cutover, but it must not imply idempotency; retained v1 read aliases do not imply v1 mutation support.
 - Resolve by contract name, supported major, required capability, and any required minor version. Minor additions must be backward-compatible within a declared major.
 - An unfamiliar descriptor schema major is rejected. An unfamiliar API contract can be cataloged but is not executable by consumers that do not understand it.
 - An implementation must not claim `booking.create` alone and thereby become interchangeable with every booking implementation. The associated contract is mandatory.
@@ -249,7 +258,7 @@ The first release needs a read-only catalog API, not an administrative registry 
 | Registration retry | Exponential backoff from 1 second to 10 seconds, with jitter |
 | Prometheus HTTP SD refresh | 15 seconds |
 | Prometheus scrape interval / timeout | 15 seconds / 5 seconds |
-| Graceful shutdown budget | 10 seconds initially, aligned with existing HTTP shutdown |
+| Graceful shutdown budget | 10 seconds initially for existing services; reliable booking uses its separate bounded executor budget below |
 
 These are operational defaults, not hard real-time guarantees. A crashed instance normally stops being selected within approximately TTL plus one resolver refresh. A successfully draining instance is excluded within the refresh interval. Metrics/alerts have their own delay.
 
@@ -262,11 +271,13 @@ These are operational defaults, not hard real-time guarantees. A crashed instanc
 5. Report ready only when the advertised local capability can actually accept requests. Continue heartbeat/registration retry loops under the process context.
 6. Consumers independently retry dependency resolution; they do not need a restart when a dependency appears.
 
-Management still requires PostgreSQL and completed migrations to serve business/registry traffic. Independence from other **application containers** does not imply operation without the DB or the external Telegram/Eversports APIs. Existing external Telegram authorization during bootstrap needs bounded retries/clear health reporting; redesigning all external-client initialization is not a prerequisite for provider discovery.
+Management still requires PostgreSQL and completed migrations to serve business/registry traffic. Reliable booking requires its own table migrations, DB access and singleton execution admission, but not management initialization or registry success. Independence from other **application containers** does not imply operation without the DB or the external Telegram/Eversports APIs. Existing external Telegram authorization during bootstrap needs bounded retries/clear health reporting; redesigning all external-client initialization is not a prerequisite for provider discovery.
 
 ### Shutdown
 
 First report draining, then stop admitting new work, finish bounded in-flight work, and deregister best-effort. Keep the admin listener available during draining. A failed deregistration is handled by TTL expiry. Do not require a working registry to stop.
+
+Reliable booking tracks accepted executors even after an HTTP `202`/disconnect. Its proposed budgets are 90 seconds total execution, 100 seconds shutdown and at least 110 seconds Compose stop grace, including bounded database finalization; see the companion plan. Do not truncate these to the generic 10-second HTTP-only default. After forced termination, recover unfinished operation evidence without replaying provider mutations.
 
 ### Addresses in Compose
 
@@ -316,17 +327,17 @@ Inject endpoint resolution at the existing HTTP-client request boundary. Preserv
 
 ### Retry and error policy
 
-Use explicit error categories: `dependency_unavailable`, `contract_incompatible`, `multiple_active_instances_not_supported`, `credential_rejected`, and `operation_outcome_unknown`.
+Use explicit error categories: `dependency_unavailable`, `contract_incompatible`, `multiple_active_instances_not_supported`, `credential_rejected`, and `operation_outcome_unknown`. Booking v2 additionally distinguishes accepted/running, not-dispatched, positively rejected-no-effect, successful-with-warnings, key/resource/account conflicts and expired recorded results. Carry operation ID/phase/evidence; a transport status alone cannot classify external effects.
 
 - Directory GETs, registration, and heartbeats can retry within a bounded budget.
 - Side-effect-free business reads may retry once on another eligible endpoint when their contract permits it.
-- Do **not** automatically replay booking creation, cancellation, guest addition/removal, publication, or other mutations following a timeout/disconnect/ambiguous server error.
+- Do **not** automatically replay provider execution for booking creation/cancellation or replay guest addition/removal, publication, or other unprotected mutations after a timeout/disconnect/ambiguous server error. Once v2 is enforced, bounded status lookup and re-submission of the **same immutable keyed booking request** are permitted: booking returns the stored operation, not a new execution. Generic transport retry middleware remains prohibited.
 - Resolve before dispatching a mutation. No endpoint means nothing was sent; return `503 dependency_unavailable` with a machine-readable reason.
-- Once a booking request may have reached the provider, a transport failure does not prove that it failed. Surface `operation_outcome_unknown`, stop credential rotation for that attempt, and request administrator verification. A provider-side `5xx` does not by itself prove absence of side effects either.
-- Only a positively identified credential rejection may mark a credential as failed. Do not reuse current string matching to classify discovery or network errors. Booking HTTP error mapping needs a small typed-error extension; ambiguous responses must be handled conservatively.
+- Once a booking request may have reached the provider, a transport failure does not prove that it failed. Inspect the same operation key where supported; preserve uncertainty and stop implicit credential rotation. A provider-side `5xx` does not by itself prove absence of side effects either. Read-only reconciliation or administrator verification may refine the outcome. Only the explicit new-operation authorization in §10.1 may accept duplicate creation risk; it never reexecutes the unknown operation or permits a concurrent known active checkout.
+- Only a positively identified credential rejection may mark a credential as failed. Do not reuse current string matching to classify discovery or network errors. The separate v2 management integration requires typed operation/outcome handling, not just HTTP error-string matching; ambiguous responses must be handled conservatively.
 - Do not add retrying transport middleware or proxy retries for mutations. Preserve existing provider-specific retries only where their implementation has a proven safe boundary.
 
-Discovery does not provide end-to-end idempotency. An operation ledger, request IDs/deduplication, provider reconciliation, and account coordination belong to the later booking reliability/scaling design.
+Discovery does not provide end-to-end idempotency. The [booking reliability plan](booking-reliability-design.md) owns the operation ledger, request-key deduplication, evidence/reconciliation and account/resource coordination; §10.1 owns the deferred management caller requirements. These enable replaceable singleton booking processes, not exactly-once Eversports completion or multiple active replicas.
 
 ### Degradation
 
@@ -347,9 +358,83 @@ Use an explicit `BOOKING_SERVICE_KEY`, initially `booking.eversports.primary`, t
 
 The binding chooses one logical facility-scoped pool. Do not automatically choose the first service advertising `booking.create`, combine capabilities from unrelated pools, or fall back to a different facility when the configured pool is down.
 
-For this phase, the service-wide binding is sufficient and avoids premature venue-schema changes. Introducing multiple selectable provider/facility integrations later requires durable per-venue integration bindings and provider-scoped booking identifiers. It must also preserve which provider created an existing booking so cancellation reaches the same provider. Those changes are deliberately deferred.
+For this phase, the service-wide binding is sufficient and avoids premature venue-selection schema/UI changes. However, reliability integration must already snapshot the logical provider/facility binding with each intent/result so changing the current binding cannot misroute status/reconciliation/cancellation for an existing operation. Multiple selectable provider/facility integrations and per-venue selection remain deferred; retaining the origin of an existing booking does not.
 
-Extend the current booking-readiness response with stable reasons such as `booking_service_unavailable`, `booking_contract_incompatible`, and `booking_service_ambiguous`. Update Telegram messaging and the web readiness label map to recognize them. This is a small availability UX change, not a new provider-management UI.
+Extend the current booking-readiness response with stable reasons such as `booking_service_unavailable`, `booking_contract_incompatible`, and `booking_service_ambiguous`. Update Telegram messaging and the web readiness label map to recognize them. This is a small availability UX change, not a new provider-management UI. Individual blocked accounts/unknown operations are separate actionable states; they do not imply every booking capability is absent.
+
+### 10.1 Management integration with the reliable booking contract
+
+**Separate implementation task, required before booking v2 production mutation cutover.** The companion [booking reliability plan](booking-reliability-design.md) implements booking/shared foundations only. These requirements apply to static invocation too, not just registry mode. Existing group/venue permissions, scheduling windows, timezone behavior, publication and partial-cancellation semantics remain in force.
+
+#### M1. Durable business intent and operation identity
+
+- Persist a management-owned business intent and chosen operation UUID **before** HTTP dispatch. Cover scheduled auto-booking, manual `BookGameCourts`, scheduler cancellation (including halfway/final checks), and manual court removal/cancellation. Dispatch sites are `booking_core.go`, `court_cancellation.go` and `game_service.go`; update the shared client interface and fakes together.
+- Correlate intent with group/venue/game/time slot, requested count, selected court, credential reference, immutable provider/facility binding and execution generation. Each court creation/cancellation has its own key. Preserve the higher-level requested-count intent so replay cannot start a fresh set of court selections.
+- Allocate keys and business dedup claims transactionally in management tables. Concurrent polls, duplicate manual requests and restarts recover the same intent/key, not new keys just because no success row exists. Propagate a stable manual-command identity at the management transport boundary where necessary; a random key on every handler invocation is insufficient.
+- Preserve scheduler venue/date/time gates, distinguishing no-effect failure, pending/unknown and confirmed outcomes. Unknown is neither success nor permission for the next poll to book again. This task does not enable a multi-active scheduler. Deliberate rebooking after confirmed cancellation uses a new business generation/key.
+- Management never writes booking's `booking_*` tables. Recovery between HTTP success and local persistence uses status/replay and idempotent local upserts, not a cross-service SQL transaction or ledger reset.
+
+#### M2. HTTP contract, status and recovery
+
+- Require `eversports-booking` major 2 and create/cancel/status capabilities, plus reconciliation when used. Extend `BookingServiceClient` with typed operation APIs without spreading URLs/discovery DTOs into scheduler logic.
+- Send the durable `Idempotency-Key`; retain it across endpoint replacement and HTTP uncertainty. Treat `202` as in-progress, not success. Poll within a bounded foreground budget and persist pending intent for later observation.
+- Lost response/unrecognized body is not no-effect failure. Inspect the same key; if admission is uncertain, re-submit only the exact key/payload to the same logical binding. `404`/unreachable status never authorizes a new key, another facility or keyless fallback. Compacted result (`410`) still means a known non-reexecutable operation requiring retained evidence/operator handling.
+- Later polls/restarts may refresh status or request bounded read-only reconciliation of accepted operations. This is observation, not a catch-up booking queue; do not resume reserve/payment/match attachment/cancellation through reconciliation.
+- Supply credentials for fresh execution/provider reads; status-from-ledger requires only internal authorization. Booking stores no passwords/cookies durably. Rotation does not create a new operation/account permission.
+- Extend credential/venue deletion guards to pending/unknown operations needing those credentials, not only match-ID-bearing court rows. Preserve access for active/unresolved work without permanently protecting every historical credential.
+
+#### M3. Failure and account policy
+
+- Only typed, positively identified `credential_rejected` affects cooldown. Network/registry/booking-DB outage, capacity rejection, business/key/resource/account conflict, unknown payment, malformed provider response and missing match ID must not poison credentials.
+- A positively established no-effect failure permits a deliberate new attempt/key under normal caller policy, with the relationship recorded. Never change the account/payload under the old key.
+- Stop implicit credential rotation and ordinary same-slot retries on pending/unknown creation. Keep requested/confirmed/unknown counts distinct; uncertainty is not a booked court or definitive failure to fill using another account.
+- Different management credential entities with identical provider login share booking account coordination. Do not use credential IDs or passwords as the account/operation identity; honor blocked-account responses across groups/venues.
+- Conflicting booking evidence is not permission to link another group's booking automatically. Booking owns external conflicts; management owns group/game authorization and linking.
+
+#### M4. Explicit caller-controlled duplicate-risk creation
+
+The owner prefers exceptional controlled duplication to a missed booking. Implement an **opt-in caller policy**, disabled unless explicitly configured/authorized, not generic automatic retries. An automated management policy may authorize a particular replacement without a human prompt, but must persist that decision before dispatch.
+
+- Inspect the original operation first. Require booking's stopped-executor/unknown eligibility check; an HTTP timeout while checkout remains active is insufficient. Prefer useful bounded read-only reconciliation without treating empty reads as proof of no booking.
+- Allocate a **new** key, reference the unknown parent/root, acknowledge duplicate risk and record bounded reason/provenance. Preserve provider/facility/court/time. Another account is allowed only as an explicit choice on this new operation, never implicit rotation of the old attempt.
+- Match booking's one-child-per-parent and initial one-risk-replacement-per-root budget with durable caller-side deduplication. Parallel polls/manual requests cannot authorize multiple children. No recursive automatic chain, global disable-dedup switch or deletion of the old operation.
+- Keep the parent unknown even if the child succeeds. Persist both results and possible liability, notify administrators, and retain unresolved-ancestor conflicts. Never automatically cancel a suspected duplicate.
+- Evaluate scheduling/deadline policy before authorizing new creation; this does not extend existing booking windows or replay missed deadlines. Booking rechecks eligibility atomically, so stale authorizations may conflict.
+- No corresponding automatic cancellation-risk override in this first contract. Observe/reconcile or escalate cancellation uncertainty instead.
+- Management owns policy authorization; registry metadata grants none. If implemented with a framework flag, default it disabled and update `docs/feature-toggles.md` plus consistency tests in that task. This proposal adds no implemented flag.
+
+#### M5. Partial results, cancellation and business persistence
+
+- Persist operation ID/origin binding, known booking UUID/numeric ID/payment evidence, optional match ID and outcome even when checkout is partial. Extend the match-ID-centric local representation/storage additively; do not discard reserved/paid evidence because `matchId` is empty.
+- Idempotently upsert local results/provider references after replay/status. A local DB failure after external success cannot trigger another booking, duplicate game creation, duplicate labels/counter decrements or repeated publication on recovery.
+- Treat known booked/absent-match-ID as a cancellation-resolution warning, not a new-create failure. Keep reserved/payment-unknown distinct from confirmed booked in game courts and requested counts. A separately quarantined account/session does not turn a known paid booking into an unknown effect eligible for replacement.
+- Cancellation uses the immutable original provider/facility binding and correct **match ID**, not booking UUID. Positively confirmed already-cancelled is success; missing/wrong-scope/malformed reads are not. A failed local `MarkCanceled` must not cause another external mutation.
+- Preserve business distinctions: scheduler adjusts only confirmed cancelled courts; manual removal still persists requested local edits and returns partial cancellation errors. Pending/unknown cancellation must remain explicit, not success. Preserve linked time-slot scoping and deliberate legacy handling.
+- Keep announcements updated in place with keyboards. Recovery is not a new publication. Retain per-slot requested counts, local offsets/DST, preferred-court order and cancellation selection rules.
+
+#### M6. Operator visibility, independence and rollout
+
+- Provide authenticated internal inspection/reconciliation/resolution plumbing and a runbook; no new web resolution UI is required initially. Preserve authorization on user-facing entrypoints. A supplied actor field/internal bearer trust is not end-user permission for duplicate risk.
+- Notify administrators about unknown/partial operations, risk authorization, possible duplicates and missed actions, with bounded repetition keyed to durable state changes. No credentials/raw provider bodies in messages/logs; status replay must not resend success notifications.
+- Export bounded outcomes/unknown/risk counters and pending-age gauges, never account/user/game/operation labels. Infrastructure outages remain Grafana's responsibility.
+- Preserve origin bindings and local pending state during outage. Missing optional booking does not make management unready; stopping management does not disable direct booking with a healthy booking DB.
+- Upgrade both contracts in a coordinated mutation pause after implementation/tests. Use booking's keyed evidence-import API for verified active provider references, preserving imported provenance, and identify unresolved legacy work: an empty new ledger does not prove no bookings exist. Imports are reads/evidence persistence only, never another booking or direct cross-service SQL. No retrospective idempotency guarantee for legacy calls.
+- Block keyless/incompatible mutations. Reliability cutover is independent of discovery; keep v2 in static rollback. A rollback to unsafe keyless binaries must leave mutations disabled, retain evidence and require an explicit recovery plan before resumption.
+
+#### Management acceptance gates
+
+Use local HTTP/provider fakes and disposable PostgreSQL, not live Eversports:
+
+1. Scheduled/manual repeats and crashes before dispatch, after acceptance/external success and around local persistence recover the same intent/key without unapproved new execution.
+2. Lost response/endpoint replacement uses same-key status/replay, not cooldown/rotation. Static or registry v1 mutation targets are rejected by reliable clients.
+3. Pending/unknown/no-match-ID results survive restart, preserve appropriate deletion/conflict guards and do not become false successful counts or duplicate game publication.
+4. Explicit risk policy admits one linked replacement only after the old executor stops; parallel polls/duplicate authorization cannot allocate another child. Default-disabled policy dispatches nothing new. Parent/child histories and notifications stay separate.
+5. Positive no-effect credential rejection permits deliberate fallback; unavailable/unknown does not. Duplicate credential entities cannot bypass account conflicts.
+6. Scheduler/manual cancellation preserve stable operation IDs/origin scope and their distinct partial-edit semantics. Already-cancelled reconciliation/local marker failures do not cause another mutation.
+7. Existing per-slot/group-local/DST, publication and court-order tests stay valid. Repeated status/upserts cannot duplicate records, labels or notifications.
+8. Management stopped/booking DB healthy supports direct booking. Registry outage differs from ledger outage. Coordinated cutover and mutation-disabled legacy rollback are tested.
+
+These are additional to discovery routing tests. Booking-only tests do not satisfy them, and discovery membership does not make the caller idempotent.
 
 ## 11. Monitoring architecture
 
@@ -364,7 +449,7 @@ Add an internal admin listener to **every** binary, including polling-mode teleg
 
 Keep existing `/health` paths as liveness aliases for compatibility. Do not publish admin ports to the host or route them through the public web/webhook ingress.
 
-Readiness must not recursively mean “all services everywhere are healthy.” Management requires its DB/schema, booking requires its advertised local configuration, and each listener must be initialized. Report downstream dependency availability separately. In particular, a missing optional booking service must not make management itself unready.
+Readiness must not recursively mean “all services everywhere are healthy.” Management requires its DB/schema; reliable booking requires its own DB/schema, validated advertised configuration and singleton execution admission; each listener must be initialized and not draining. Booking does not require management/registry availability for direct calls. Report external provider availability and blocked accounts separately. In particular, a missing optional booking service must not make management itself unready.
 
 Use the official Go Prometheus client and its standard process/Go collectors. This is a justified new dependency. No OpenTelemetry collector, tracing pipeline, Redis, or exporter sidecar is required for the initial service-level monitoring.
 
@@ -451,7 +536,8 @@ Metric names below are proposed contracts for instrumentation/dashboards:
 | `squash_service_expected_instances` | Operator-owned minimum live count for each monitored logical key. |
 | `squash_scheduler_runs_total` | Completed scheduler runs by job and outcome, including skipped-dependency. |
 | `squash_scheduler_last_completed_timestamp_seconds` | Detect a stopped/hung scheduler independently of HTTP health. |
-| `squash_booking_operations_total` | Create/cancel outcomes: success, failure, unavailable, unknown; no account labels. |
+| `squash_booking_operations_total` | Create/cancel execution outcomes: success, failure, unavailable, unknown; replays are not new executions; no account labels. |
+| Booking reliability metrics (companion contract) | Durable unresolved counts/age, ledger/admission health and explicit risk-replacement counts; no operation/account labels. |
 | `squash_telegram_updates_total` | Processing outcomes; no chat/user labels. |
 | Standard `go_*`, `process_*`, `up` | Runtime health and scrape success. |
 
@@ -559,10 +645,12 @@ Initially use fixed heartbeat/TTL defaults rather than exposing many timing knob
 - In **static mode**, retain `MANAGEMENT_SERVICE_URL` and `SPORTS_BOOKING_SERVICE_URL` semantics. Registration/monitoring may run in shadow mode without affecting routing.
 - In **registry mode**, use logical bindings. A legacy URL is not an automatic failover path; unavailable discovery must not silently bypass scope/compatibility checks.
 - Reject or explicitly warn about contradictory configurations. Document precedence, rather than guessing from which URL happens to be non-empty.
-- Replace release-major equality with declared contract compatibility only for upgraded registry-mode clients. Retain existing version checks during the legacy-mode transition.
+- Replace release-major equality with declared contract compatibility for upgraded registry-mode clients; retain existing checks for other legacy clients. The separate reliable-booking client is an explicit exception: it requires booking v2 contract compatibility in **both static and registry modes**.
 - Remove application-to-application `depends_on: service_healthy` as a correctness requirement after dependency handling is tested. Management may keep the DB startup convenience, but still handles DB failures explicitly.
 - Keep production singleton replicas and stop-before-start deployments for management/booking/telegram. Remove fixed published ports or introduce ingress balancing **before** claiming web replica deployment support.
-- Deploy new registry tables additively. Use the existing embedded migration mechanism for the singleton deployment; do not drop the tables during application rollback. Migration serialization/rolling schema compatibility are later management-scaling work.
+- Deploy new registry tables additively. Use management's existing embedded migration mechanism for the singleton registry deployment; do not drop tables during application rollback. Management scaling still needs rolling schema/migration work.
+- Booking reliability has a separate embedded migration stream/history/lock namespace for its own prefixed tables in the same database/schema. Do not make booking run management migrations or make management query booking SQL. Include both streams in disposable-DB tests/backups and verify migration-driver locking behavior.
+- Booking's `BOOKING_DATABASE_URL`, durable identity-fingerprint key, executor/stop-grace budgets and mutation-contract cutover are specified by the companion plan. Wire those independently of `DISCOVERY_MODE`; static mode must not bypass the reliability contract.
 
 ## 14. Implementation work packages
 
@@ -572,11 +660,12 @@ The deliverable of this task is this proposal. The following packages are intend
 |---|---|---|---|
 | **A. Contracts and health foundation** | Descriptor/error types, resolver/registrar interfaces, static resolver, internal admin listeners, monitoring auth, fixed metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
 | **B. Registry and lifecycle** | Registry service/repository/API, additive migrations, self-registration, heartbeats/draining, catalog, scope validation, registration retry. | A | Services started before management register without restart; restart/expiry/conflicting-descriptor tests pass. |
-| **C. Discovery-aware invocation** | Registry resolver in existing clients, explicit logical booking binding, runtime availability, contract filtering, typed errors, no ambiguous mutation replay, readiness UX updates. | B | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility. |
+| **C. Discovery-aware invocation** | Registry resolver in existing clients, explicit logical booking binding, runtime availability, contract filtering, typed errors, no implicit external mutation replay, readiness UX updates. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
+| **M. Reliable booking caller integration — separate task** | All requirements in §10.1: durable intent/key allocation, status/reconciliation, explicit creation-risk policy, partial evidence, cancellation/origin semantics, notifications and coordinated activation. | Companion booking contract/fixtures; production activation requires its implementation | §10.1 gates pass in static mode before booking v2 production mutations. Discovery cannot substitute for this work. |
 | **D. Prometheus and external Grafana** | HTTP SD endpoint, expected-service metrics, Compose Prometheus/storage, dashboard and alert provisioning artifacts, secure Grafana connectivity runbook. | A, B | New instances are scraped automatically; disappearance and whole-host/Prometheus failure alert through external Grafana. |
 | **E. Cutover and operational documentation** | Shared Compose network, relaxed application startup dependencies, registry mode rollout, singleton guardrails, rollback runbook; README/AGENTS/CLAUDE updates. | C, D | Full failure/recovery drill succeeds; legacy rollback tested; no implied multi-active support. |
 
-D can proceed alongside C. First deploy registration and monitoring in shadow/static mode; switch invocation only after observing stable leases and checking target scopes. Do not combine this rollout with management or booking horizontal scaling.
+D can proceed alongside C. First deploy registration and monitoring in shadow/static mode; switch invocation only after observing stable leases and checking target scopes. M can proceed independently against the companion contract and must gate reliable-booking production activation even if discovery is not yet enabled. Booking preparation includes metadata/admin/lifecycle seams, not an independently invented registry client. Do not combine either rollout with management or booking horizontal scaling.
 
 Expected code locations:
 
@@ -585,7 +674,7 @@ Expected code locations:
 - `cmd/management/service/`, `api/`, `storage/`: registry behavior, routes, persistence; discovery-aware booking integration and errors.
 - `cmd/telegram/client/`, `cmd/web/webserver/`: endpoint injection and dependency-unavailability mapping.
 - All `cmd/*/main.go` and `internal/config`: lifecycle/config wiring.
-- `migrations/`: registry schema; update integration-test cleanup lists.
+- `migrations/`: management registry schema and management-owned intent changes from M; update integration-test cleanup lists. Booking's separate migration stream/history belongs under its own storage package as specified by the companion plan.
 - `monitoring/`: Prometheus config, Grafana dashboard/alert templates, no committed secrets. Grafana artifacts are deployed to the existing external instance, not a new local Grafana container.
 - `docker-compose*.yml`, `.env.example`, operational scripts/docs: deployment integration.
 
@@ -608,9 +697,10 @@ Expected code locations:
 - Stop/crash/recreate booking with a different IP. Stale membership expires and the new instance becomes eligible without editing a URL.
 - Exercise a two-instance fake stateless service to verify the resolver is genuinely set-valued; do not use real concurrent Eversports bookings as the discovery test.
 - An incompatible instance cannot receive a business request. A different facility cannot receive a fallback request or its credentials.
-- No-eligible-endpoint errors do not mark credentials invalid. A lost booking response does not trigger another account/instance attempt and is surfaced as unknown.
+- No-eligible-endpoint errors do not mark credentials invalid. A lost booking response triggers same-key observation/replay only under v2, never implicit new execution on another account/instance. Unknown creation admits a new attempt only through §10.1's explicit linked risk policy after the old executor stops; cancellation has no automatic equivalent.
+- Run all §10.1 management acceptance gates before reliable-booking production cutover, including static mode, concurrent intent allocation, partial result persistence and rollback with mutations disabled. Booking's ledger remains usable with management stopped.
 - Missing booking does not make management liveness fail or mutate a venue's enablement settings.
-- Existing static-mode tests and behavior continue to pass; callback formats and in-place announcement editing remain unchanged.
+- Preserve existing non-booking static behavior, callback formats and in-place announcement editing. Explicitly migrate booking's static contract tests to mandatory v2 keys/status at reliability cutover; preserving static routing does not preserve unsafe keyless mutations.
 
 ### Monitoring and security
 
@@ -646,23 +736,23 @@ This is a practical migration seam, not a promise of a zero-work or configuratio
 |---|---|
 | Management | Scheduler ownership/atomic task claims; concurrency-safe publication and notifications; booking operation coordination; bounded job contexts/shutdown; startup changelog deduplication; DB pool budget (currently 10 connections per process); safe schema migrations/rolling contracts. |
 | Telegram | Explicit transport policy; no competing pollers or replica-triggered webhook deletion; shared/persisted conversations or partitioned processing; update deduplication/admission semantics; ordered message updates. |
-| Booking | Account/session coordination across instances; checkout serialization; request/operation idempotency and ambiguous-outcome reconciliation; credential-cache concurrency; aggregate provider limits. |
+| Booking | Complete companion singleton reliability work plus §10.1 caller integration first. Then separately prove cross-instance account/session/executor ownership under partitions and paused workers, shared provider limits, and ambiguous-outcome handling. Durable request keys/cache fixes are necessary but do not themselves authorize multi-active deployment. |
 | Web | Shared JWT/configuration, a health-aware public ingress without fixed host-port collisions, and validated dependency error handling. |
 
 Do not use discovery leases as business-operation locks. Lease loss does not cancel a checkout already sent to an external provider, and external systems do not necessarily enforce fencing tokens.
 
 ## 17. Risks and accepted trade-offs
 
-- **Management/DB remain a central failure domain.** Accepted now; external Grafana detects it, but discovery cannot keep DB-backed workflows operating without management.
+- **Management/registry and the shared DB remain central failure domains.** Accepted now; external Grafana detects them. Discovery cannot keep management business workflows operating without management; direct reliable-booking calls can continue with management stopped, but not without booking's shared DB/schema.
 - **A lease is not a reachability guarantee.** A fresh heartbeat can coexist with a failed business path. Real request errors and independent scraping remain necessary.
 - **Self-described capabilities are trusted claims.** Contract tests and owner-operated deployment are the enforcement boundary in this phase.
 - **Recovery is not catch-up.** Restoring a provider does not replay a missed midnight booking or cancellation deadline. Alerts must distinguish restored infrastructure from completed business work.
-- **Ambiguous external outcomes require manual verification.** Prefer a visible unresolved operation over an automatic duplicate reservation or charge.
+- **Ambiguous external outcomes remain durable and visible.** Read-only reconciliation/manual verification may resolve them. For creation only, the owner accepts a possible duplicate reservation/charge through an explicit caller-authorized new linked operation after the old executor stops. Same-key replay never reexecutes; ordinary new-key retries, automatic cancellation replay and implicit credential rotation remain prohibited.
 - **A logical binding is still configuration.** Discovery removes per-instance address management; it does not decide which facility/provider a venue should use.
 - **Registry implementation must remain small.** If independent HA discovery or heterogeneous deployment becomes necessary, migrate the backend instead of implementing consensus.
 - **Monitoring has its own availability limits.** External Grafana can alert when the application host/Prometheus disappears, but its own outage requires monitoring outside this stack.
 
-No further product decision is required to begin planning packages A–E. Before deploying D, confirm the installed Grafana version, its alerting/provisioning access, the secure Grafana-to-Prometheus route, and the monitoring Telegram contact. These are deployment inputs rather than changes to the proposed architecture.
+Owner decisions for booking reliability and deferred management integration are recorded here and in the companion plan; no additional product decision is required to plan A–E/M and the booking work packages. Provider evidence limitations are explicit in that plan, not a claim of exactly-once capability. Before deploying D, confirm the installed Grafana version, its alerting/provisioning access, the secure Grafana-to-Prometheus route, and the monitoring Telegram contact. These are deployment inputs rather than changes to the proposed architecture.
 
 ## References
 
