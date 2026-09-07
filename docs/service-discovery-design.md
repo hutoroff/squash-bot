@@ -2,9 +2,9 @@
 
 **Status:** Proposed — not implemented.
 
-**Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability/integration requirements additionally reviewed against `78fcc52`.
+**Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability status refreshed through lifecycle baseline `ab9e588`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Only P1 of the booking plan (shared contract/typed provider-failure foundation) exists locally; no runtime v2 idempotency, persistence or registration is wired.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Booking's P1–P6 reliable v2 persistence/execution/lifecycle foundation is implemented, with P7 operational handoff local; management §10.1 and real registration remain unimplemented.
 
 ## 1. Executive decision
 
@@ -46,7 +46,7 @@ Add Prometheus to the Compose deployment. It discovers application scrape target
 
 - New booking-system implementations or a complete provider-neutral booking API.
 - Arbitrary plugins, remotely supplied executable code, dynamically generated UI, or importing unfamiliar APIs from manifests.
-- Multi-active schedulers, distributed Telegram conversations, exactly-once external operations, or generic automatic mutation replay. Booking-owned account/operation coordination will be implemented by the companion reliability task, not by discovery leases. Its caller integration and explicit risk-accepting new-operation policy are specified in §10.1; they do not authorize replay of an old execution.
+- Multi-active schedulers, distributed Telegram conversations, exactly-once external operations, or generic automatic mutation replay. Booking-owned account/operation coordination is implemented by the companion reliability work, not by discovery leases. Its caller integration and explicit risk-accepting new-operation policy are specified in §10.1; they do not authorize replay of an old execution.
 - A service mesh, general-purpose event bus, configuration server, distributed lock service, or custom consensus protocol.
 - Eliminating all bootstrap configuration or all required infrastructure dependencies.
 
@@ -55,11 +55,12 @@ Add Prometheus to the Compose deployment. It discovers application scrape target
 ```text
 telegram ──HTTP──▶ management ──SQL──▶ PostgreSQL
 web ───────HTTP──▶ management ──HTTP─▶ booking ──HTTP──▶ Eversports
+                                              └─SQL──▶ PostgreSQL (`booking_*`)
 
 telegram and management independently call the external Telegram Bot API.
 ```
 
-The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation; booking's direct SQL dependency and v2 API below are planned additions, not current behavior.
+The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation. Booking's direct SQL dependency and v2 API are implemented; management's v2 caller integration and all discovery behavior below remain proposed.
 
 | Area | Current behavior | Consequence |
 |---|---|---|
@@ -68,15 +69,15 @@ The code, rather than older comments/documentation, is the source of truth for t
 | Bootstrap | Telegram makes one management `/version` request and exits on failure or release-major mismatch. | Temporary dependency absence is treated as startup failure. |
 | Compose | Production management depends on healthy booking; web/telegram depend on healthy management. | Startup ordering masks the lack of runtime dependency handling. |
 | Scheduler | Every management process starts cron, audit retention, and startup changelog publication. | A second management instance duplicates potential executors. |
-| Booking deduplication | `auto_booking.go` checks a result before booking and saves it afterward; `auto_booking_result_repo.go` has a unique slot key. | The DB constraint protects stored results, not external side effects from concurrent execution. |
+| Booking deduplication | Booking v2 durably deduplicates immutable operation keys and coordinates account/resource conflicts; management still chooses no durable v2 operation key before dispatch. | Provider exactly-once is not guaranteed, and management must complete §10.1 before cutover. |
 | Notifications | `game_notifier.go` has process-local locks; telegram has its own edit coalescer. | Multiple processes can still publish stale or duplicate message updates. |
 | Telegram transport | Wizard state is held in `sync.Map`; webhook acknowledges an in-memory enqueue; polling fallback deletes the webhook. | Multiple replicas and durable update processing require separate work. |
-| Booking execution | `booking/handler.go` caches credential clients; `eversports/checkout.go` serializes checkout using a client-local mutex. | Account/session concurrency is not coordinated across replicas. |
+| Booking execution | One PostgreSQL singleton authority, a durable operation/evidence ledger, and bounded account-scoped sessions coordinate one active booking process. | Replaceable singleton operation is supported; multi-active replicas and manual provider activity remain unsafe/unfenced. |
 | Routing scope | Eversports facility configuration is service-wide, not passed with every booking request. | Two booking processes with different facilities are not interchangeable replicas. |
 | Failure handling | `booking_core.go` currently treats booking failures as credential failures and may continue using another account. | Infrastructure unavailability or an ambiguous timeout must not be mistaken for invalid credentials. |
 | Booking readiness | `api/venues.go:bookingReadiness` checks settings and credentials, not live provider availability. | Existing readiness can report a usable integration when its service is absent. |
-| Health | Current `/health` handlers return `ok`; telegram has HTTP health only in webhook mode. | Liveness is not dependency health, and polling telegram cannot currently be scraped. |
-| Monitoring | `scripts/healthcheck.sh` checks selected containers; application code has no Prometheus instrumentation. | Monitoring needs actual instrumentation, not just dashboards. Indirect OTel dependencies in `go.mod` do not provide it. |
+| Health | Most `/health` handlers return liveness; booking also has monitoring-authenticated database/singleton/coordinator readiness. Telegram has HTTP health only in webhook mode. | Discovery still needs consistent service lifecycle health, and polling telegram cannot currently be scraped. |
+| Monitoring | Booking exposes official Go/process and bounded reliability metrics; `scripts/healthcheck.sh` uses its authenticated readiness. Other services and dynamic Prometheus discovery remain unimplemented. | Discovery monitoring work must reuse booking's bounded labels rather than duplicate or expose business identifiers. |
 | Security | Internal HTTP APIs use one shared bearer secret on a private Docker network. | Acceptable for the current owner-operated deployment, but not a third-party plugin security boundary. |
 
 ## 4. Alternatives considered
@@ -186,12 +187,12 @@ Do not use a password, credential ID, user ID, or venue name as a routing identi
 }
 ```
 
-Names above become a small documented vocabulary during implementation, not arbitrary strings used to invoke arbitrary paths. This descriptor illustrates the **target after booking reliability preparation**, not today's v1 implementation. The v2 mutation/status contract is defined in the companion plan; compatible existing reads may remain v1 aliases. Booking preparation provides metadata and lifecycle seams only; real registration/heartbeats attach when the shared registry exists.
+Names above become a small documented vocabulary during discovery implementation, not arbitrary strings used to invoke arbitrary paths. Booking now exposes equivalent local v2 descriptor metadata and the companion v2 mutation/status contract; compatible reads retain v1 aliases. Real registration/heartbeats and cross-service resolution still wait for the shared registry.
 
 ### Compatibility
 
 - Release versions and API contract versions are different concepts.
-- Describe the existing management API as `management-api` major 1 and legacy Eversports API as `eversports-booking` major 1. The reliable booking mutation/status API is **major 2**: required operation keys and changed outcome semantics are breaking changes. Confirm actual declarations with contract tests, never release-major comparison alone.
+- Describe the existing management API as `management-api` major 1. Reliable booking mutation/status is **`eversports-booking` major 2**: required operation keys and changed outcome semantics are breaking changes; v1 read aliases do not advertise v1 mutation capability. Confirm actual declarations with contract tests, never release-major comparison alone.
 - A reliability-enabled management client must require booking major 2 and the operation-status capability in static as well as registry mode. No fallback to v1/keyless mutations. Legacy discovery may still describe an actual v1 service before reliability cutover, but it must not imply idempotency; retained v1 read aliases do not imply v1 mutation support.
 - Resolve by contract name, supported major, required capability, and any required minor version. Minor additions must be backward-compatible within a declared major.
 - An unfamiliar descriptor schema major is rejected. An unfamiliar API contract can be cataloged but is not executable by consumers that do not understand it.

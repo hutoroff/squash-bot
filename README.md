@@ -300,12 +300,14 @@ openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 # 4. Lock down the .env file
 chmod 600 .env
 
-# 5. Pull images and start
+# 5. Pull images and start only a mutually compatible release set.
+# Reliable booking must not be started with the current legacy management client;
+# complete the linked cutover runbook and explicit acknowledgement first.
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Migrations run automatically on first startup. Verify everything is healthy:
+Migrations run automatically on first startup. **Current reliability work is not production-cutover ready:** management's mandatory keyed-v2 integration is still outstanding. Leave `BOOKING_RELIABLE_CUTOVER_ACK` unset and do not promote/start the reliable booking mutation path until the [cutover runbook](docs/booking-reliability-runbook.md) hard gates pass. Once a compatible release set is approved, verify everything is healthy:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
@@ -337,17 +339,7 @@ Verify a backup exists:
 docker compose -f docker-compose.prod.yml exec db-backup ls -lh /backups/
 ```
 
-To restore from the most recent backup:
-```bash
-# Find the latest dump inside the backup container
-LATEST=$(docker compose -f docker-compose.prod.yml exec -T db-backup \
-  sh -c 'ls -t /backups/squash_bot_*.dump | head -1')
-
-# Pipe it into pg_restore on the postgres container
-docker compose -f docker-compose.prod.yml exec -T db-backup cat "$LATEST" | \
-  docker compose -f docker-compose.prod.yml exec -T postgres \
-    pg_restore -U squash_bot -d squash_bot --clean --if-exists
-```
+A production restore is a disaster-recovery action, not a routine deployment step. Stop all mutation-capable application services first, preserve the booking identity key, and follow the [reliable booking restore/rollback runbook](docs/booking-reliability-runbook.md#4-backup-and-disposable-restore-drill). Practice against a disposable database before an authorized production restore. A stale dump may omit Eversports effects after its snapshot, so restoring rows must never automatically resume booking/cancellation traffic or imply that an empty ledger means no provider bookings exist.
 
 To copy a backup to the host for safekeeping:
 ```bash
@@ -356,7 +348,7 @@ docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
 
 ### Health monitoring
 
-`scripts/healthcheck.sh` pings the `/health` endpoints and sends a Telegram alert if a service is down. Install it in cron:
+`scripts/healthcheck.sh` checks management liveness and booking's monitoring-authenticated admin readiness, then sends a Telegram alert if a service is down. The booking monitoring token expands only inside its container. Install the script in cron:
 
 ```bash
 # Set the env vars for the script (use the same bot token; CHAT_ID is your personal Telegram chat ID)
@@ -502,9 +494,9 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 
 ## Sports Booking Service
 
-**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. It supports listing, creating, and cancelling court bookings; there is no service-level default account.
+**booking** exposes a keyed reliable v2 API on port 8081 and a separately authenticated internal admin listener on port 9091. It owns a PostgreSQL operation/evidence ledger and singleton execution authority while keeping provider credentials/sessions bounded and memory-only. There is no service-level default account, no safe keyless mutation fallback, and no multi-active guarantee.
 
-See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API endpoints, environment variables, and local run instructions.
+See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API/configuration and the [reliable booking runbook](docs/booking-reliability-runbook.md) for backup, cutover, rollback, and incident handling. Management v2 integration is still mandatory before production mutation cutover.
 
 ## Project Structure
 

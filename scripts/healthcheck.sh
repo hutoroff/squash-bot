@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lightweight health monitor for production.
-# Checks /health endpoints and sends a Telegram alert on failure.
+# Checks service health/readiness endpoints and sends a Telegram alert on failure.
 #
 # Install in cron:
 #   */5 * * * * /opt/squash-bot/scripts/healthcheck.sh
@@ -31,23 +31,25 @@ send_alert() {
 
 FAILED=""
 
-# Check services that expose /health endpoints.
-SERVICES=("management:8080" "booking:8081")
+# Management retains its public liveness probe.
+MANAGEMENT_CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q management 2>/dev/null || true)
+if [ -z "$MANAGEMENT_CONTAINER" ]; then
+  FAILED="${FAILED}management (container not found)\n"
+elif ! docker exec "$MANAGEMENT_CONTAINER" wget -qO- "http://localhost:8080/health" > /dev/null 2>&1; then
+  FAILED="${FAILED}management (/health failed)\n"
+fi
 
-for entry in "${SERVICES[@]}"; do
-  NAME="${entry%%:*}"
-  PORT="${entry##*:}"
-
-  CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q "$NAME" 2>/dev/null || true)
-  if [ -z "$CONTAINER" ]; then
-    FAILED="${FAILED}${NAME} (container not found)\n"
-    continue
-  fi
-
-  if ! docker exec "$CONTAINER" wget -qO- "http://localhost:${PORT}/health" > /dev/null 2>&1; then
-    FAILED="${FAILED}${NAME} (/health failed)\n"
-  fi
-done
+# Booking's richer readiness endpoint is internal and monitoring-authenticated.
+# Expand the token only inside the container so its value is not placed in the
+# host docker command line or this script's diagnostics.
+BOOKING_CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q booking 2>/dev/null || true)
+if [ -z "$BOOKING_CONTAINER" ]; then
+  FAILED="${FAILED}booking (container not found)\n"
+elif ! docker exec "$BOOKING_CONTAINER" sh -c \
+  'test -n "$BOOKING_MONITORING_SECRET" && wget -qO- --header="Authorization: Bearer $BOOKING_MONITORING_SECRET" "http://localhost:${BOOKING_ADMIN_PORT:-9091}/health/ready"' \
+  > /dev/null 2>&1; then
+  FAILED="${FAILED}booking (/health/ready failed)\n"
+fi
 
 # Check telegram container is running (no /health endpoint).
 TG_CONTAINER=$(docker compose -f "$PROJECT_DIR/$COMPOSE_FILE" ps -q telegram 2>/dev/null || true)

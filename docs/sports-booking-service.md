@@ -10,6 +10,7 @@
 | `BOOKING_IDENTITY_KEY` | Yes | — | Exactly 32 random bytes as 64 hex characters. Changing it against an existing ledger fails startup. |
 | `BOOKING_SERVICE_KEY` | Yes | — | Stable logical key for the configured provider/facility/sport pool. |
 | `BOOKING_MONITORING_SECRET` | Yes | — | Admin-listener bearer, at least 32 characters and distinct from `INTERNAL_API_SECRET`. |
+| `BOOKING_RELIABLE_CUTOVER_ACK` | Yes | — | Must equal `keyed-v2-only`. Leave unset until management v2 compatibility and the [cutover runbook](booking-reliability-runbook.md) gates pass. It acknowledges semantics; it does not prove compatibility. |
 | `EVERSPORTS_FACILITY_ID` / `UUID` / `SLUG` | Yes | — | Explicit trusted facility scope; there is no production facility default. |
 | `EVERSPORTS_SQUASH_SPORT_UUID` | Yes | — | Eversports squash UUID used for reliable execution and verified import. |
 | `INTERNAL_API_SECRET` | Yes | — | Business API bearer. Monitoring credentials cannot use business routes. |
@@ -64,6 +65,7 @@ export BOOKING_IDENTITY_KEY="$(openssl rand -hex 32)"
 INTERNAL_API_SECRET="$INTERNAL_API_SECRET" \
   BOOKING_MONITORING_SECRET="$BOOKING_MONITORING_SECRET" \
   BOOKING_IDENTITY_KEY="$BOOKING_IDENTITY_KEY" \
+  BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only \
   BOOKING_DATABASE_URL="postgres://squash_bot:squash_bot@localhost:7432/squash_bot?sslmode=disable" \
   BOOKING_SERVICE_KEY=eversports.primary.squash \
   EVERSPORTS_FACILITY_ID=76443 \
