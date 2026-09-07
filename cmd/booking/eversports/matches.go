@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -178,22 +179,24 @@ const cancelMatchMutation = `mutation CancelMatch($matchId: ID!, $origin: Origin
   }
 }`
 
+type cancelMatchPayload struct {
+	Typename string `json:"__typename"`
+	// BallsportMatch fields
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	RelativeLink string `json:"relativeLink"`
+	// ExpectedErrors fields
+	Errors []struct {
+		ID      string `json:"id"`
+		Message string `json:"message"`
+		Path    string `json:"path"`
+	} `json:"errors"`
+}
+
 // gqlCancelMatchResponse is the GraphQL response envelope for the CancelMatch mutation.
 type gqlCancelMatchResponse struct {
 	Data struct {
-		CancelMatch struct {
-			Typename string `json:"__typename"`
-			// BallsportMatch fields
-			ID           string `json:"id"`
-			State        string `json:"state"`
-			RelativeLink string `json:"relativeLink"`
-			// ExpectedErrors fields
-			Errors []struct {
-				ID      string `json:"id"`
-				Message string `json:"message"`
-				Path    string `json:"path"`
-			} `json:"errors"`
-		} `json:"cancelMatch"`
+		CancelMatch cancelMatchPayload `json:"cancelMatch"`
 	} `json:"data"`
 	Errors []struct {
 		Message string `json:"message"`
@@ -214,40 +217,53 @@ func (c *Client) CancelMatch(ctx context.Context, matchID string) (*Cancellation
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
-			return nil, fmt.Errorf("eversports: marshal CancelMatch request: %w", err)
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "request_build_failed", false,
+				fmt.Errorf("marshal CancelMatch request: %w", err))
 		}
 		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("eversports: CancelMatch request: %w", err)
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "transport_error", false,
+				fmt.Errorf("CancelMatch request: %w", err))
 		}
 		defer resp.Body.Close()
 
 		respBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("eversports: read CancelMatch response: %w", err)
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "response_read_failed", false,
+				fmt.Errorf("read CancelMatch response: %w", err))
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", errUnauthorized)
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, errUnauthorized)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "http_error", false,
+				fmt.Errorf("CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes)))
 		}
 		if err := htmlAuthError("CancelMatch", respBytes); err != nil {
-			return nil, err
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, err)
 		}
 
 		var gqlResp gqlCancelMatchResponse
 		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes))
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "invalid_response", false,
+				fmt.Errorf("decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes)))
 		}
 		if len(gqlResp.Errors) > 0 {
-			return nil, gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
+			topErr := gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
+			if errors.Is(topErr, errUnauthorized) {
+				return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, topErr)
+			}
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "provider_error", false, topErr)
 		}
-		// ExpectedErrors are business-rule rejections (e.g. past the cancellation
-		// deadline) — a real answer, never retried.
+		// ExpectedErrors are positively identified business-rule rejections and
+		// therefore do not authorize an authentication or transport retry.
 		cm := gqlResp.Data.CancelMatch
 		if len(cm.Errors) > 0 {
-			return nil, fmt.Errorf("eversports: CancelMatch error: %s", cm.Errors[0].Message)
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "provider_rejected", false,
+				fmt.Errorf("CancelMatch error: %s", cm.Errors[0].Message))
+		}
+		if err := validateCancellationResponse(cm, matchID); err != nil {
+			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "invalid_response", false, err)
 		}
 		c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
 		return &CancellationResult{
@@ -257,5 +273,30 @@ func (c *Client) CancelMatch(ctx context.Context, matchID string) (*Cancellation
 		}, nil
 	}
 
-	return withAuth(ctx, c, do)
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, loginMutationFailure(err)
+	}
+	result, err := do()
+	var mutationErr *MutationError
+	if errors.As(err, &mutationErr) && mutationErr.RetrySafe && errors.Is(err, errUnauthorized) {
+		c.invalidateSession()
+		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+			return nil, loginMutationFailure(loginErr)
+		}
+		return do()
+	}
+	return result, err
+}
+
+func validateCancellationResponse(response cancelMatchPayload, requestedMatchID string) error {
+	if response.Typename != "BallsportMatch" {
+		return fmt.Errorf("CancelMatch returned unexpected type %q", response.Typename)
+	}
+	if response.ID == "" || response.ID != requestedMatchID {
+		return fmt.Errorf("CancelMatch returned a mismatched or empty match identifier")
+	}
+	if response.State != "CANCELLED" {
+		return fmt.Errorf("CancelMatch returned unconfirmed state %q", response.State)
+	}
+	return nil
 }

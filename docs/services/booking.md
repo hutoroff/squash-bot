@@ -1,6 +1,6 @@
 # Booking service internals
 
-The service wraps the reverse-engineered Eversports API. It has no database; sessions are in-memory and scoped to per-request credentials. [Operator API/configuration](../sports-booking-service.md) is separate from this development reference. Manual API examples may cause real bookings; do not execute them as tests.
+The service wraps the reverse-engineered Eversports API. It currently has no database; sessions are in-memory and scoped to per-request credentials. The shared [booking API v2 contract foundation](../../internal/bookingapi) and typed provider mutation failures now exist, but handlers still expose the legacy non-idempotent API: no operation ledger, status routes, durable conflicts, or v2 mutation dispatch is wired yet. The staged target is in [booking reliability](../booking-reliability-design.md). [Operator API/configuration](../sports-booking-service.md) is separate from this development reference. Manual API examples may cause real bookings; do not execute them as tests.
 
 ## Sources and seams
 
@@ -37,7 +37,9 @@ Eversports may return HTTP 200 with a GraphQL auth error or an HTML login/challe
 
 ## Checkout retry safety
 
-`CreateBooking` holds the client-local `bookingMu` across the flow:
+`CreateBooking` holds the client-local `bookingMu` across the flow. Create/cancel failures are exposed as typed `MutationError` values carrying provider phase, effect certainty, code, and narrowly scoped retry safety. `AuthenticationError` supports a positively identified credential-rejection marker, but current reverse-engineered login `ExpectedErrors` have no captured stable ID: they conservatively remain `authentication_failed` and must not trigger credential cooldown from message text. Existing HTTP handlers have not yet mapped these to the planned v2 operation envelope.
+
+The checkout flow is:
 
 1. Reserve a court through `payableitem/courtbooking`.
 2. Settle the payment with `pay-offline`.
@@ -45,7 +47,9 @@ Eversports may return HTTP 200 with a GraphQL auth error or an HTML login/challe
 4. Report marketplace fee (best-effort).
 5. Track checkout completion (best-effort).
 
-The implemented retry is limited to recognized unauthorized/HTML responses at step 1. Do not generalize it to arbitrary timeouts or other ambiguous failures. **Step 2 must not restart checkout**: a reservation may already exist. Failures in steps 3–5 are logged but do not discard the booking result; `matchId` can be absent.
+The implemented retry is limited to a typed, recognized no-effect unauthorized/HTML response at step 1. Do not generalize it to arbitrary timeouts or other ambiguous failures. Reserve transport/HTTP/malformed/rejection-shaped failures are typed unknown unless an existing narrow no-effect rule applies; required reservation/payment identifiers are validated. **Step 2 must not restart checkout**: a reservation may already exist. Its body must be a JSON object without a negative success/errors indication, but this acknowledgment is still not a documented provider settlement guarantee. Failures in steps 3–5 are logged but do not discard the booking result; `matchId` can be absent.
+
+Cancellation now validates that the response is a `BallsportMatch` for the requested ID in `CANCELLED` state. Expected business errors are typed no-effect; malformed, mismatched, non-confirmed and transport/HTTP results are unknown and not retry-safe. These classifications are inputs to the future durable coordinator, not proof of end-to-end idempotency.
 
 The lock prevents same-client checkout interleaving caused by implicit server state. It is not distributed/account-wide coordination and does not make multiple replicas safe. Management's own credential-rotation/error policy has separate ambiguity risks; see [scheduling](management-scheduling.md#booking-and-publication-lifecycle).
 
@@ -55,4 +59,4 @@ Booking timestamps must retain the facility/group local UTC offset. Do not conve
 
 [client_test.go](../../cmd/booking/eversports/client_test.go) covers cookie loss, auth-shaped errors, the pay-offline no-retry boundary, an ambiguous step-1 gateway timeout, and post-payment partial success; [bookings_test.go](../../cmd/booking/eversports/bookings_test.go) covers calendar parsing; [handler_test.go](../../cmd/booking/booking/handler_test.go) covers handler behavior with fakes. Run these locally, not against real accounts.
 
-When modifying an operation, test its real response shapes: normal JSON, top-level errors, business errors, HTML, and relevant HTTP failures. Existing mocked retry tests do not establish end-to-end exactly-once booking or compatibility with an upstream change that has not been captured in fixtures.
+When modifying an operation, test its real response shapes: normal JSON, top-level errors, business errors, HTML, and relevant HTTP failures. `internal/bookingapi/validation_test.go` pins UUID, scope, local-offset/millisecond, HMAC account-identity, password-independent fingerprint and duplicate-risk request rules; `mutation_error_test.go` pins representative phase/effect classifications. Existing mocked retry/contract tests do not establish end-to-end exactly-once booking, durable API idempotency, or compatibility with an upstream change not captured in fixtures.

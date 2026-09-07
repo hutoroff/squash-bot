@@ -1,6 +1,6 @@
 # Booking reliability and discovery preparation
 
-**Status:** Proposed — not implemented. Owner decisions confirmed during planning; work packages below are implementation tasks, not completed changes.
+**Status:** Implementation started locally. P1's shared v2 DTO/validation/fingerprint foundation and typed Eversports mutation failures/response validation are implemented and tested, but are not wired to handlers or durable storage. P2–P7, management integration and discovery attachment remain proposed and unimplemented. Owner decisions below remain authoritative for those tasks.
 
 **Code baseline reviewed:** `78fcc52`.
 
@@ -279,11 +279,11 @@ A direct authenticated client using an explicitly configured address can use boo
 
 ## 11. Implementation work packages
 
-Each package is a bounded local task with a reviewable diff. Do not promote/deploy a partly integrated mutation contract. P1–P7 change booking/shared infrastructure only; M is separate management work.
+Each package is a bounded local task with a reviewable diff. Do not promote/deploy a partly integrated mutation contract. P1–P7 change booking/shared infrastructure only; M is separate management work. **Progress:** P1 is complete in the current local diff; it deliberately has no runtime v2 route until P2–P5 supply durable semantics.
 
 | Package | Changes / likely locations | Acceptance gate |
 |---|---|---|
-| **P1 — contract and failure model** | Shared minimal DTO/error package such as `internal/bookingapi`; v2 request/result fixtures; `eversports` typed phase/evidence errors and response validators; explicit timestamp/fingerprint rules. Document approved retry shapes and conservative unknown fallbacks. | Contract cases pin replay/conflict/unknown/partial-success meanings; existing no-ambiguous-retry fixtures retained or consciously tightened; no provider calls in tests. |
+| **P1 — contract and failure model (implemented locally)** | `internal/bookingapi` v2 DTO/error constants, UUID/scope/credential/time/risk validation, HMAC account identity and deterministic password-independent request fingerprints; `eversports` typed phase/effect/auth failures plus reserve/payment/cancel response validation. No handler wiring. | Focused contract/provider tests pass; existing no-ambiguous-retry fixtures remain green; no provider calls in tests. |
 | **P2 — booking persistence** | `cmd/booking/storage`, separate embedded migrations/history, config/pool/identity-key handling; repositories for operations, steps, accounts, claims, evidence and tombstones. | Real disposable PostgreSQL concurrent admission/overlap/replacement tests; migration streams coexist in either order and booking starts with only its own schema initialized; failed/uncertain commits cannot authorize dispatch. |
 | **P3 — execution coordinator** | `cmd/booking/service` (new booking-owned orchestration), injectable repositories/provider/session manager; context-aware account coordination, bounded cache, singleton guard and tracked executor lifecycle. | Same key executes once under concurrency; same login across credential entities/rotation serializes; loss of DB/guard fails closed; eviction/restart cannot create another permitted execution. |
 | **P4 — journaled provider flows** | Refactor `checkout.go`/`matches.go` into phase-aware operations without moving HTTP parsing into SQL repositories; persist each intent/evidence before proceeding; recognized success validation; cancellation/no-op and optional match semantics. | Fault injection at every send/response/persistence boundary; known IDs survive; payment/cancel ambiguity never restarts external work; post-payment optional failure retains successful evidence. |
