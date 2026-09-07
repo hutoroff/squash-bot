@@ -145,6 +145,9 @@ func TestInvalidateSession_DropsSessionCookie(t *testing.T) {
 
 	c.invalidateSession()
 
+	if c.ProviderUserID() != "" {
+		t.Errorf("provider user ID = %q after invalidation, want empty", c.ProviderUserID())
+	}
 	if c.hasCookie("et") {
 		t.Error("expected the et cookie to be dropped by invalidateSession")
 	}
@@ -385,6 +388,62 @@ func TestCreateBooking_PostPaymentFailuresPreserveBookingResult(t *testing.T) {
 	}
 	if got := ctr.track.Load(); got != 1 {
 		t.Errorf("checkout tracking calls = %d, want 1", got)
+	}
+}
+
+func TestReserveCourtProviderTimeDoesNotFollowRedirectOrForwardIdempotencyHeader(t *testing.T) {
+	var reserveCalls, redirectedCalls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+courtBookingEndpoint, func(w http.ResponseWriter, r *http.Request) {
+		reserveCalls.Add(1)
+		if got := r.Header.Get("Idempotency-Key"); got != "" {
+			t.Errorf("upstream Idempotency-Key = %q, want empty", got)
+		}
+		w.Header().Set("Location", "/redirected-mutation")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("POST /redirected-mutation", func(http.ResponseWriter, *http.Request) {
+		redirectedCalls.Add(1)
+	})
+	c := newTestClient(t, mux)
+
+	_, err := c.ReserveCourtProviderTime(context.Background(), "facility", "court", "sport",
+		"2026-08-10T20:45:00.000+02:00", "2026-08-10T21:30:00.000+02:00")
+	if err == nil {
+		t.Fatal("expected redirect to be classified as an unknown reserve response")
+	}
+	var mutationErr *MutationError
+	if !errors.As(err, &mutationErr) || mutationErr.Effect != MutationUnknown || mutationErr.RetrySafe {
+		t.Fatalf("redirect error = %#v", err)
+	}
+	if reserveCalls.Load() != 1 || redirectedCalls.Load() != 0 {
+		t.Fatalf("reserve/redirected calls = %d/%d, want 1/0", reserveCalls.Load(), redirectedCalls.Load())
+	}
+}
+
+func TestCancelMatchOnceNeverPerformsAdapterAuthenticationRetry(t *testing.T) {
+	var ctr counters
+	mux := http.NewServeMux()
+	registerGraphQL(mux, &ctr, map[string]gqlHandler{
+		"CancelMatch": func(call int, w http.ResponseWriter) {
+			if call == 1 {
+				fmt.Fprint(w, `{"errors":[{"message":"User is a non complete user"}]}`)
+				return
+			}
+			fmt.Fprint(w, cancelMatchSuccessJSON)
+		},
+	})
+	c := newTestClient(t, mux)
+	if err := c.EnsureLoggedIn(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := c.CancelMatchOnce(context.Background(), "match-1")
+	var mutationErr *MutationError
+	if !errors.As(err, &mutationErr) || !mutationErr.RetrySafe || mutationErr.Effect != MutationNoEffect {
+		t.Fatalf("CancelMatchOnce error = %#v", err)
+	}
+	if ctr.cancels.Load() != 1 || ctr.logins.Load() != 1 {
+		t.Fatalf("cancel/login calls = %d/%d, want 1/1", ctr.cancels.Load(), ctr.logins.Load())
 	}
 }
 

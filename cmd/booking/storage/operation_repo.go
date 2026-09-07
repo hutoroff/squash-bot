@@ -387,28 +387,48 @@ func (r *OperationRepo) appendStep(ctx context.Context, operationID bookingapi.O
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var activeExecutor string
+	var activeExecutor, activeKind string
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(executor_id::text, '')
+		SELECT COALESCE(executor_id::text, ''), kind
 		FROM booking_operations
 		WHERE operation_id = $1 AND state IN ('accepted', 'running')
-		FOR UPDATE`, operationID).Scan(&activeExecutor); err != nil {
+		FOR UPDATE`, operationID).Scan(&activeExecutor, &activeKind); err != nil {
 		return nil, fmt.Errorf("lock operation for step: %w", err)
 	}
 	if activeExecutor != string(executorID) {
 		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: activeExecutor}
 	}
+	kind := bookingapi.OperationKind(activeKind)
+	if (kind == bookingapi.OperationCreate && phase != bookingapi.PhaseLogin && phase != bookingapi.PhaseReserve && phase != bookingapi.PhasePayment && phase != bookingapi.PhaseMatchAttachment) ||
+		(kind == bookingapi.OperationCancel && phase != bookingapi.PhaseLogin && phase != bookingapi.PhaseCancellation) {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operationID)}
+	}
 	if status == "intent" && attempt > 1 {
-		if phase != bookingapi.PhaseReserve && phase != bookingapi.PhaseCancellation {
+		if attempt != 2 || (phase != bookingapi.PhaseLogin && phase != bookingapi.PhaseReserve && phase != bookingapi.PhaseCancellation) {
 			return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operationID)}
 		}
 		var priorNoEffect bool
-		if err := tx.QueryRow(ctx, `
+		if phase == bookingapi.PhaseLogin {
+			// A fresh login is allowed only after this operation's first mutation
+			// attempt was durably classified as no-effect. A previous successful
+			// login alone never authorizes another provider mutation.
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM booking_operation_steps
+					WHERE operation_id = $1 AND attempt = 1
+					  AND phase = CASE WHEN $2 = 'create' THEN 'reserve' ELSE 'cancellation' END
+					  AND status = 'evidence' AND effect = 'no_effect'
+					  AND code = 'authentication_expired'
+				)`, operationID, kind).Scan(&priorNoEffect); err != nil {
+				return nil, fmt.Errorf("check prior booking authentication retry: %w", err)
+			}
+		} else if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM booking_operation_steps
-				WHERE operation_id = $1 AND phase = $2 AND attempt = $3
+				WHERE operation_id = $1 AND phase = $2 AND attempt = 1
 				  AND status = 'evidence' AND effect = 'no_effect'
-			)`, operationID, phase, attempt-1).Scan(&priorNoEffect); err != nil {
+				  AND code = 'authentication_expired'
+			)`, operationID, phase).Scan(&priorNoEffect); err != nil {
 			return nil, fmt.Errorf("check prior booking operation attempt: %w", err)
 		}
 		if !priorNoEffect {

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
+	bookingservice "github.com/hutoroff/squash-bot/cmd/booking/service"
 	bookingstorage "github.com/hutoroff/squash-bot/cmd/booking/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/testutil"
@@ -526,6 +528,121 @@ func TestProviderAliasConflictFailsClosed(t *testing.T) {
 	}
 	err := repo.SetProviderUserAlias(ctx, second.Scope.Provider, second.AccountIdentity, "provider-user-1")
 	assertConflict(t, err, bookingapi.ErrorAccountBlocked)
+}
+
+type successfulLedgerProvider struct{}
+
+func (*successfulLedgerProvider) EnsureLoggedIn(context.Context) error { return nil }
+func (*successfulLedgerProvider) Reauthenticate(context.Context) error { return nil }
+func (*successfulLedgerProvider) ProviderUserID() string               { return "provider-user-1" }
+func (*successfulLedgerProvider) ReserveCourtProviderTime(context.Context, string, string, string, string, string) (*eversports.ReservationResult, error) {
+	return &eversports.ReservationResult{BookingUUID: "booking-journaled", BookingID: 42, PaymentID: 7, Status: "CONFIRMED"}, nil
+}
+func (*successfulLedgerProvider) PayOffline(context.Context, int) error { return nil }
+func (*successfulLedgerProvider) AttachMatch(context.Context, string) (string, error) {
+	return "match-journaled", nil
+}
+func (*successfulLedgerProvider) CompleteBookingTracking(context.Context, int, string) error {
+	return nil
+}
+func (*successfulLedgerProvider) CancelMatchOnce(context.Context, string) (*eversports.CancellationResult, error) {
+	panic("unexpected cancellation")
+}
+
+func TestProviderRunnerEvidenceSatisfiesDurableSuccessFinalization(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	operations := bookingstorage.NewOperationRepo(testPool)
+	evidence := bookingstorage.NewEvidenceRepo(testPool)
+	request := validatedCreate(t, operation1, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	admission, err := operations.AdmitCreate(ctx, request, time.Now().Add(time.Minute), executor1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := bookingservice.NewProviderRunner(operations, evidence, bookingservice.ProviderRunnerConfig{
+		IdentityKey: identityKey, SportUUID: "sport-uuid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := runner.Run(ctx, bookingservice.Execution{
+		Operation: admission.Operation, ExecutorID: executor1, Session: &successfulLedgerProvider{},
+	})
+	if err != nil {
+		t.Fatalf("run provider flow: %v", err)
+	}
+	if _, err := operations.Finalize(ctx, request.OperationID, executor1, completion.State, completion.Outcome, completion.Phase); err != nil {
+		t.Fatalf("finalize provider flow: %v", err)
+	}
+	operation, err := operations.Get(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != bookingapi.StateSucceeded || operation.Outcome != bookingapi.OutcomeSuccess {
+		t.Fatalf("operation = %+v", operation)
+	}
+	providerBooking, err := evidence.GetProviderBooking(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerBooking.BookingUUID != "booking-journaled" || providerBooking.MatchID != "match-journaled" || providerBooking.PaymentState != "confirmed" {
+		t.Fatalf("provider booking = %+v", providerBooking)
+	}
+}
+
+func TestJournalDoesNotAuthorizeRetryForGenericNoEffectRejection(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	operations := bookingstorage.NewOperationRepo(testPool)
+	request := validatedCreate(t, operation1, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, request, time.Now().Add(time.Minute), executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseReserve, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseReserve, 1, "no_effect", "provider_rejected", struct{}{}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	_, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 2, executor1)
+	assertConflict(t, err, bookingapi.ErrorOperationOutcomeUnknown)
+	_, err = operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseReserve, 2, executor1)
+	assertConflict(t, err, bookingapi.ErrorOperationOutcomeUnknown)
+}
+
+func TestJournalAllowsOnlyOneAuthenticationRetryAfterMutationNoEffect(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	operations := bookingstorage.NewOperationRepo(testPool)
+	request := validatedCreate(t, operation1, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, request, time.Now().Add(time.Minute), executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseLogin, 1, "confirmed", "authenticated", struct{}{}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	_, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 2, executor1)
+	assertConflict(t, err, bookingapi.ErrorOperationOutcomeUnknown)
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseReserve, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseReserve, 1, "no_effect", "authentication_expired", struct{}{}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 2, executor1); err != nil {
+		t.Fatalf("append authorized authentication retry: %v", err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseLogin, 2, "confirmed", "authenticated", struct{}{}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseReserve, 2, executor1); err != nil {
+		t.Fatalf("append authorized reserve retry: %v", err)
+	}
+	_, err = operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseLogin, 3, executor1)
+	assertConflict(t, err, bookingapi.ErrorOperationOutcomeUnknown)
 }
 
 func TestStepAndEvidenceRecordsAreImmutableAndIdempotent(t *testing.T) {

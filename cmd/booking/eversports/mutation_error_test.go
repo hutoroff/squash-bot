@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +30,20 @@ func TestExplicitCredentialRejectionMapsToStableMutationCode(t *testing.T) {
 	mutationErr := requireMutationError(t, err, MutationPhaseLogin, MutationNoEffect)
 	if mutationErr.Code != "credential_rejected" {
 		t.Fatalf("credential rejection code = %q", mutationErr.Code)
+	}
+}
+
+func TestReserveCourtOversizedResponseIsBoundedAndUnknown(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+courtBookingEndpoint, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, strings.Repeat("x", maxProviderResponseBody+1))
+	})
+	client := newTestClient(t, mux)
+	_, err := client.ReserveCourtProviderTime(context.Background(), "facility", "court", "sport",
+		"2026-04-12T08:45:00.000+02:00", "2026-04-12T09:30:00.000+02:00")
+	mutationErr := requireMutationError(t, err, MutationPhaseReserve, MutationUnknown)
+	if mutationErr.Code != MutationCodeResponseReadFailed || mutationErr.RetrySafe {
+		t.Fatalf("oversized response = code %q retry_safe %t", mutationErr.Code, mutationErr.RetrySafe)
 	}
 }
 

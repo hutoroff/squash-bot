@@ -234,6 +234,20 @@ func validateIdentifier(field, value string) error {
 	return nil
 }
 
+// DeriveProviderAlias creates a durable keyed fingerprint for the provider
+// user learned after login. The raw provider identifier must remain in memory.
+func DeriveProviderAlias(identityKey []byte, provider, providerUserID string) (string, error) {
+	if len(identityKey) < minIdentityKeyBytes {
+		return "", invalid("identity_key", "too_short")
+	}
+	if err := validateIdentifier("provider_user_id", providerUserID); err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, identityKey)
+	_, _ = mac.Write([]byte("booking-provider-user:v1\x00" + provider + "\x00" + providerUserID))
+	return "hmac-sha256:v1:" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
 func deriveAccountIdentity(identityKey []byte, provider, email, password string) (string, error) {
 	if len(identityKey) < minIdentityKeyBytes {
 		return "", invalid("identity_key", "too_short")

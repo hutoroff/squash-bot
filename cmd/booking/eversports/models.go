@@ -65,6 +65,15 @@ type SlotMatch struct {
 	CurParticipants int    `json:"curParticipants"`
 }
 
+// ReservationResult is the validated output of one reserve phase. PaymentID
+// is retained so durable orchestration can persist it before dispatching pay.
+type ReservationResult struct {
+	BookingUUID string
+	BookingID   int
+	PaymentID   int
+	Status      string
+}
+
 // BookingResult is returned by CreateBooking.
 type BookingResult struct {
 	BookingUUID string `json:"bookingUuid"`
