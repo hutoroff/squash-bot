@@ -4,7 +4,7 @@
 
 - Go: use [go.mod](../go.mod) as the minimum version (currently 1.26.6). The four Docker builder stages use `golang:1.26.6-alpine`; CI reads the version from `go.mod`.
 - Node: use [web/frontend/.node-version](../web/frontend/.node-version) (Node 22; Vite 8 requires 22.12+ within that line). npm dependencies are locked by `package-lock.json`.
-- Docker: required by `make check`, integration-tagged tests, and the service/database lifecycle test. [SetupTestDB](../internal/testutil/testdb.go) starts disposable PostgreSQL 15 containers and applies embedded migrations.
+- Docker: required by `make check`, integration-tagged tests, and the service/database lifecycle test. [SetupTestDB](../internal/testutil/testdb.go) starts disposable PostgreSQL 15 containers and applies management's root migrations; `SetupEmptyTestDB` leaves migration ownership/order to tests such as booking's independent stream checks.
 - Internet access: may be required by bootstrap and security checks when npm/Go caches are empty or vulnerability databases must be queried.
 
 Tests use local fakes/HTTP test servers and disposable databases. Application startup is different: configuration automatically loads `.env`, management runs migrations, authorizes with Telegram, starts cron, and can announce changelogs. None of the verification targets start application services or load the runtime `.env`. Do not start the application or use the [manual operator examples](../README.md#running-locally-without-docker) as routine verification without explicit authorization.

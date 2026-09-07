@@ -16,9 +16,24 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// SetupTestDB starts a PostgreSQL container, runs all migrations, and returns
-// a connected pool and a cleanup function to call when tests finish.
+// SetupTestDB starts a PostgreSQL container, runs management's root migration
+// stream, and returns a connected pool and cleanup function.
 func SetupTestDB(ctx context.Context) (pool *pgxpool.Pool, cleanup func(), err error) {
+	pool, databaseURL, cleanup, err := SetupEmptyTestDB(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := RunMigrations(databaseURL); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("run migrations: %w", err)
+	}
+	return pool, cleanup, nil
+}
+
+// SetupEmptyTestDB starts PostgreSQL without applying an application migration
+// stream. It supports tests that must verify independent migration ownership or
+// ordering. Callers must always invoke cleanup.
+func SetupEmptyTestDB(ctx context.Context) (pool *pgxpool.Pool, databaseURL string, cleanup func(), err error) {
 	req := testcontainers.ContainerRequest{
 		Image:        "postgres:15-alpine",
 		ExposedPorts: []string{"5432/tcp"},
@@ -37,34 +52,27 @@ func SetupTestDB(ctx context.Context) (pool *pgxpool.Pool, cleanup func(), err e
 		Started:          true,
 	})
 	if startErr != nil {
-		return nil, nil, fmt.Errorf("start postgres container: %w", startErr)
+		return nil, "", nil, fmt.Errorf("start postgres container: %w", startErr)
 	}
 
 	host, hostErr := container.Host(ctx)
 	if hostErr != nil {
 		_ = container.Terminate(ctx)
-		return nil, nil, fmt.Errorf("get container host: %w", hostErr)
+		return nil, "", nil, fmt.Errorf("get container host: %w", hostErr)
 	}
 
 	port, portErr := container.MappedPort(ctx, "5432")
 	if portErr != nil {
 		_ = container.Terminate(ctx)
-		return nil, nil, fmt.Errorf("get container port: %w", portErr)
+		return nil, "", nil, fmt.Errorf("get container port: %w", portErr)
 	}
 
-	dsn := fmt.Sprintf("postgres://squash_test:squash_test@%s:%s/squash_test?sslmode=disable",
+	databaseURL = fmt.Sprintf("postgres://squash_test:squash_test@%s:%s/squash_test?sslmode=disable",
 		host, port.Port())
-
-	pool, err = pgxpool.New(ctx, dsn)
+	pool, err = pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		_ = container.Terminate(ctx)
-		return nil, nil, fmt.Errorf("create pool: %w", err)
-	}
-
-	if err = RunMigrations(dsn); err != nil {
-		pool.Close()
-		_ = container.Terminate(ctx)
-		return nil, nil, fmt.Errorf("run migrations: %w", err)
+		return nil, "", nil, fmt.Errorf("create pool: %w", err)
 	}
 
 	cleanup = func() {
@@ -73,7 +81,7 @@ func SetupTestDB(ctx context.Context) (pool *pgxpool.Pool, cleanup func(), err e
 			log.Printf("terminate test container: %v", termErr)
 		}
 	}
-	return pool, cleanup, nil
+	return pool, databaseURL, cleanup, nil
 }
 
 // RunMigrations applies all database migrations to the given database URL.
