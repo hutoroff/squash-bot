@@ -21,6 +21,33 @@ func (s *testSession) Close() error {
 	return nil
 }
 
+func TestSessionLeaseDiscardClosesSuspectSessionAndKeepsAccountGateUntilRelease(t *testing.T) {
+	manager := newTestSessionManager(t, 2, time.Hour, func(context.Context, bookingapi.Credentials) (Session, error) {
+		return &testSession{id: 1}, nil
+	})
+	lease, err := manager.Acquire(context.Background(), "account-1", bookingapi.Credentials{Email: "player@example.com", Password: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := lease.Session.(*testSession)
+	lease.Discard()
+	if !session.closed.Load() || manager.Len() != 0 {
+		t.Fatalf("discard left session open/in cache: closed=%t len=%d", session.closed.Load(), manager.Len())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := manager.Acquire(ctx, "account-1", bookingapi.Credentials{Email: "player@example.com", Password: "one"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("discard released account gate early: %v", err)
+	}
+	lease.Release()
+	replacement, err := manager.Acquire(context.Background(), "account-1", bookingapi.Credentials{Email: "player@example.com", Password: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.Release()
+}
+
 func TestSessionManagerSerializesAccountAndConstructsAtomically(t *testing.T) {
 	var creations atomic.Int32
 	manager := newTestSessionManager(t, 4, time.Hour, func(context.Context, bookingapi.Credentials) (Session, error) {

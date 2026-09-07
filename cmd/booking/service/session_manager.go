@@ -68,12 +68,13 @@ type accountGate struct {
 }
 
 type SessionLease struct {
-	manager *SessionManager
-	key     string
-	account string
-	gate    *accountGate
-	Session Session
-	once    sync.Once
+	manager     *SessionManager
+	key         string
+	account     string
+	gate        *accountGate
+	Session     Session
+	once        sync.Once
+	discardOnce sync.Once
 }
 
 func NewSessionManager(factory SessionFactory, cfg SessionManagerConfig) (*SessionManager, error) {
@@ -193,6 +194,25 @@ func (m *SessionManager) Acquire(ctx context.Context, accountIdentity string, cr
 
 	releaseGate = false
 	return &SessionLease{manager: m, key: entryKey, account: accountIdentity, gate: gate, Session: session}, nil
+}
+
+// Discard removes and closes a suspect cached session without releasing the
+// account gate. The executor still calls Release after all session-dependent
+// work is finished.
+func (l *SessionLease) Discard() {
+	if l == nil || l.manager == nil {
+		return
+	}
+	l.discardOnce.Do(func() {
+		var closeSession Session
+		l.manager.mu.Lock()
+		if entry := l.manager.entries[l.key]; entry != nil {
+			delete(l.manager.entries, l.key)
+			closeSession = entry.session
+		}
+		l.manager.mu.Unlock()
+		closeAll([]Session{closeSession})
+	})
 }
 
 func (l *SessionLease) Release() {

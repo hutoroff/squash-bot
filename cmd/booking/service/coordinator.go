@@ -53,9 +53,10 @@ type Execution struct {
 }
 
 type Completion struct {
-	State   bookingapi.OperationState
-	Outcome bookingapi.OutcomeCategory
-	Phase   bookingapi.OperationPhase
+	State          bookingapi.OperationState
+	Outcome        bookingapi.OutcomeCategory
+	Phase          bookingapi.OperationPhase
+	DiscardSession bool
 }
 
 type CoordinatorConfig struct {
@@ -327,6 +328,9 @@ func (c *Coordinator) execute(ctx context.Context, operation *storage.Operation,
 	}
 	if err != nil {
 		c.logger.Error("booking execution failed", "operation_id", operation.OperationID, "phase", completion.Phase, "err", err)
+	}
+	if completion.DiscardSession {
+		lease.Discard()
 	}
 
 	finalizeCtx, cancel := context.WithTimeout(context.Background(), c.cfg.FinalizationTimeout)

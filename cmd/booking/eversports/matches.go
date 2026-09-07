@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 )
 
@@ -123,7 +122,7 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 		}
 		defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
+		respBytes, err := readProviderResponse(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("eversports: read Match response: %w", err)
 		}
@@ -203,87 +202,82 @@ type gqlCancelMatchResponse struct {
 	} `json:"errors"`
 }
 
-// CancelMatch cancels a booking by its UUID.
-// It logs in automatically if no session is held, and retries once on HTTP 401.
-func (c *Client) CancelMatch(ctx context.Context, matchID string) (*CancellationResult, error) {
-	do := func() (*CancellationResult, error) {
-		payload := gqlRequest{
-			OperationName: "CancelMatch",
-			Variables: map[string]any{
-				"matchId": matchID,
-				"origin":  "ORIGIN_MARKETPLACE",
-			},
-			Query: cancelMatchMutation,
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "request_build_failed", false,
-				fmt.Errorf("marshal CancelMatch request: %w", err))
-		}
-		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "transport_error", false,
-				fmt.Errorf("CancelMatch request: %w", err))
-		}
-		defer resp.Body.Close()
+// CancelMatchOnce performs exactly one cancellation mutation. It assumes a
+// session was established and never reauthenticates or retries.
+func (c *Client) CancelMatchOnce(ctx context.Context, matchID string) (*CancellationResult, error) {
+	payload := gqlRequest{
+		OperationName: "CancelMatch",
+		Variables: map[string]any{
+			"matchId": matchID,
+			"origin":  "ORIGIN_MARKETPLACE",
+		},
+		Query: cancelMatchMutation,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeRequestBuildFailed, false,
+			fmt.Errorf("marshal CancelMatch request: %w", err))
+	}
+	resp, err := c.doAuthedMutation(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeTransportError, false,
+			fmt.Errorf("CancelMatch request: %w", err))
+	}
+	defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "response_read_failed", false,
-				fmt.Errorf("read CancelMatch response: %w", err))
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, errUnauthorized)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "http_error", false,
-				fmt.Errorf("CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes)))
-		}
-		if err := htmlAuthError("CancelMatch", respBytes); err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, err)
-		}
-
-		var gqlResp gqlCancelMatchResponse
-		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "invalid_response", false,
-				fmt.Errorf("decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes)))
-		}
-		if len(gqlResp.Errors) > 0 {
-			topErr := gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
-			if errors.Is(topErr, errUnauthorized) {
-				return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "authentication_expired", true, topErr)
-			}
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "provider_error", false, topErr)
-		}
-		// ExpectedErrors are positively identified business-rule rejections and
-		// therefore do not authorize an authentication or transport retry.
-		cm := gqlResp.Data.CancelMatch
-		if len(cm.Errors) > 0 {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, "provider_rejected", false,
-				fmt.Errorf("CancelMatch error: %s", cm.Errors[0].Message))
-		}
-		if err := validateCancellationResponse(cm, matchID); err != nil {
-			return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, "invalid_response", false, err)
-		}
-		c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
-		return &CancellationResult{
-			ID:           cm.ID,
-			State:        cm.State,
-			RelativeLink: cm.RelativeLink,
-		}, nil
+	respBytes, err := readProviderResponse(resp.Body)
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeResponseReadFailed, false,
+			fmt.Errorf("read CancelMatch response: %w", err))
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, errUnauthorized)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeHTTPError, false,
+			fmt.Errorf("CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes)))
+	}
+	if err := htmlAuthError("CancelMatch", respBytes); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, err)
 	}
 
+	var gqlResp gqlCancelMatchResponse
+	if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeInvalidResponse, false,
+			fmt.Errorf("decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes)))
+	}
+	if len(gqlResp.Errors) > 0 {
+		topErr := gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
+		if errors.Is(topErr, errUnauthorized) {
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, topErr)
+		}
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeProviderError, false, topErr)
+	}
+	cm := gqlResp.Data.CancelMatch
+	if len(cm.Errors) > 0 {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeProviderRejected, false,
+			fmt.Errorf("CancelMatch error: %s", cm.Errors[0].Message))
+	}
+	if err := validateCancellationResponse(cm, matchID); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeInvalidResponse, false, err)
+	}
+	c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
+	return &CancellationResult{ID: cm.ID, State: cm.State, RelativeLink: cm.RelativeLink}, nil
+}
+
+// CancelMatch preserves the legacy one-auth-retry behavior. Durable v2
+// orchestration journals each attempt and calls CancelMatchOnce directly.
+func (c *Client) CancelMatch(ctx context.Context, matchID string) (*CancellationResult, error) {
 	if err := c.EnsureLoggedIn(ctx); err != nil {
 		return nil, loginMutationFailure(err)
 	}
-	result, err := do()
+	result, err := c.CancelMatchOnce(ctx, matchID)
 	var mutationErr *MutationError
 	if errors.As(err, &mutationErr) && mutationErr.RetrySafe && errors.Is(err, errUnauthorized) {
-		c.invalidateSession()
-		if loginErr := c.EnsureLoggedIn(ctx); loginErr != nil {
+		if loginErr := c.Reauthenticate(ctx); loginErr != nil {
 			return nil, loginMutationFailure(loginErr)
 		}
-		return do()
+		return c.CancelMatchOnce(ctx, matchID)
 	}
 	return result, err
 }

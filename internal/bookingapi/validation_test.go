@@ -148,6 +148,30 @@ func TestValidateCreateRejectsInvalidTimesWithoutLeakingValues(t *testing.T) {
 	}
 }
 
+func TestDeriveProviderAliasIsKeyedAndProviderScoped(t *testing.T) {
+	first, err := DeriveProviderAlias(testIdentityKey, "eversports", "provider-user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := DeriveProviderAlias(testIdentityKey, "eversports", "provider-user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProvider, err := DeriveProviderAlias(testIdentityKey, "other", "provider-user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != replay || first == otherProvider || strings.Contains(first, "provider-user-1") {
+		t.Fatalf("aliases first/replay/other = %q/%q/%q", first, replay, otherProvider)
+	}
+	if _, err := DeriveProviderAlias([]byte("short"), "eversports", "provider-user-1"); err == nil {
+		t.Fatal("short identity key was accepted")
+	}
+	if _, err := DeriveProviderAlias(testIdentityKey, "eversports", " bad "); err == nil {
+		t.Fatal("invalid provider user ID was accepted")
+	}
+}
+
 func TestValidateCreateAccountIdentityIsProviderScoped(t *testing.T) {
 	first, err := ValidateCreate(testOperationID, testScope, testIdentityKey, validCreateRequest())
 	if err != nil {
