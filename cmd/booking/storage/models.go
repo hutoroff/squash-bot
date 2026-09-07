@@ -40,6 +40,7 @@ type AdmissionDisposition string
 const (
 	AdmissionAccepted AdmissionDisposition = "accepted"
 	AdmissionReplay   AdmissionDisposition = "replay"
+	AdmissionResolved AdmissionDisposition = "resolved"
 )
 
 type Admission struct {

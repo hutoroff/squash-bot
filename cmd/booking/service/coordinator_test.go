@@ -21,6 +21,7 @@ type fakeOperationStore struct {
 	admissions         int
 	finalizations      int
 	commitAcknowledged bool
+	admissionErr       error
 }
 
 func newFakeOperationStore() *fakeOperationStore {
@@ -49,6 +50,9 @@ func (s *fakeOperationStore) AdmitCancel(_ context.Context, request bookingapi.V
 func (s *fakeOperationStore) admit(id bookingapi.OperationID, fingerprint, account string, kind bookingapi.OperationKind, deadline time.Time, executor bookingapi.OperationID) (*storage.Admission, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.admissionErr != nil {
+		return nil, s.admissionErr
+	}
 	if existing := s.operations[id]; existing != nil {
 		if existing.RequestFingerprint != fingerprint {
 			return nil, &storage.ConflictError{Code: bookingapi.ErrorIdempotencyKeyConflict}
@@ -341,6 +345,22 @@ func TestCoordinatorResolvesLostCommitAcknowledgementWithoutSecondAdmission(t *t
 	shutdownCoordinator(t, coordinator)
 	if runs.Load() != 1 {
 		t.Fatalf("runner calls = %d, want 1", runs.Load())
+	}
+}
+
+func TestCoordinatorLabelsUnresolvedAdmissionAsUncertain(t *testing.T) {
+	store := newFakeOperationStore()
+	store.admissionErr = errors.New("database connection lost during admission")
+	coordinator := newTestCoordinator(t, store, newFakeAuthority(), RunnerFunc(func(context.Context, Execution) (Completion, error) {
+		t.Fatal("uncertain admission reached provider runner")
+		return Completion{}, nil
+	}), 1, time.Second)
+	defer shutdownCoordinator(t, coordinator)
+
+	_, err := coordinator.SubmitCreate(context.Background(), testCreate(operation1, "account-1"), testCredentials)
+	var uncertain *AdmissionUncertainError
+	if !errors.As(err, &uncertain) || uncertain.OperationID != operation1 {
+		t.Fatalf("error = %#v, want AdmissionUncertainError", err)
 	}
 }
 

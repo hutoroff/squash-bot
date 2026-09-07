@@ -100,17 +100,19 @@ type ProviderEvidence struct {
 // OperationStatus is safe to return from the ledger. It deliberately contains
 // no provider credentials, cookies, account login, or raw provider response.
 type OperationStatus struct {
-	OperationID string            `json:"operation_id"`
-	Kind        OperationKind     `json:"kind"`
-	State       OperationState    `json:"state"`
-	Phase       OperationPhase    `json:"phase"`
-	Outcome     OutcomeCategory   `json:"outcome"`
-	Revision    int64             `json:"revision"`
-	Evidence    *ProviderEvidence `json:"evidence,omitempty"`
-	Warnings    []string          `json:"warnings,omitempty"`
-	StatusURL   string            `json:"status_url"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	OperationID   string            `json:"operation_id"`
+	Kind          OperationKind     `json:"kind"`
+	State         OperationState    `json:"state"`
+	Phase         OperationPhase    `json:"phase"`
+	Outcome       OutcomeCategory   `json:"outcome"`
+	Code          ErrorCode         `json:"code,omitempty"`
+	Revision      int64             `json:"revision"`
+	Evidence      *ProviderEvidence `json:"evidence,omitempty"`
+	Warnings      []string          `json:"warnings,omitempty"`
+	ResultExpired bool              `json:"result_expired,omitempty"`
+	StatusURL     string            `json:"status_url"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
 type ErrorCode string
@@ -124,6 +126,7 @@ const (
 	ErrorBookingRejected         ErrorCode = "booking_rejected"
 	ErrorDependencyUnavailable   ErrorCode = "dependency_unavailable"
 	ErrorOperationOutcomeUnknown ErrorCode = "operation_outcome_unknown"
+	ErrorOperationNotFound       ErrorCode = "operation_not_found"
 	ErrorOperationResultExpired  ErrorCode = "operation_result_expired"
 	ErrorContractUpgradeRequired ErrorCode = "booking_contract_upgrade_required"
 )

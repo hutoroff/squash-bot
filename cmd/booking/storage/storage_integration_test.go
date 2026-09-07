@@ -323,6 +323,34 @@ func TestCancelAdmissionIsIdempotentAndTargetScoped(t *testing.T) {
 	resetBookingTables(t)
 	ctx := context.Background()
 	repo := bookingstorage.NewOperationRepo(testPool)
+	evidence := bookingstorage.NewEvidenceRepo(testPool)
+	create := validatedCreate(t, operation3, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := repo.AdmitCreate(ctx, create, time.Now().Add(time.Minute), executor3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendStepIntent(ctx, create.OperationID, bookingapi.PhaseReserve, 1, executor3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendStepEvidence(ctx, create.OperationID, bookingapi.PhaseReserve, 1, "confirmed", "reserved", struct{}{}, executor3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendStepIntent(ctx, create.OperationID, bookingapi.PhasePayment, 1, executor3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendStepEvidence(ctx, create.OperationID, bookingapi.PhasePayment, 1, "confirmed", "paid", struct{}{}, executor3); err != nil {
+		t.Fatal(err)
+	}
+	bookingID, paymentID := int64(42), int64(7)
+	if _, err := evidence.UpsertProviderBooking(ctx, bookingstorage.ProviderBooking{
+		CreateOperationID: create.OperationID, Provider: create.Scope.Provider, FacilityUUID: create.Scope.FacilityUUID,
+		BookingUUID: "booking-1", BookingID: &bookingID, PaymentID: &paymentID, MatchID: "match-1",
+		PaymentState: "confirmed", BookingState: "confirmed",
+	}, executor3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Finalize(ctx, create.OperationID, executor3, bookingapi.StateSucceeded, bookingapi.OutcomeSuccess, bookingapi.PhaseFinalization); err != nil {
+		t.Fatal(err)
+	}
 	request, err := bookingapi.ValidateCancel(operation1, testScope, identityKey, "match-1", bookingapi.CancelRequest{
 		Email: "player@example.com", Password: "test-password",
 	})
@@ -344,6 +372,18 @@ func TestCancelAdmissionIsIdempotentAndTargetScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = repo.AdmitCancel(ctx, other, time.Now().Add(time.Minute), executor2)
+	assertConflict(t, err, bookingapi.ErrorAccountBlocked)
+}
+
+func TestCancelAdmissionRejectsTargetAbsentFromLedger(t *testing.T) {
+	resetBookingTables(t)
+	request, err := bookingapi.ValidateCancel(operation1, testScope, identityKey, "unknown-match", bookingapi.CancelRequest{
+		Email: "player@example.com", Password: "test-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = bookingstorage.NewOperationRepo(testPool).AdmitCancel(context.Background(), request, time.Now().Add(time.Minute), executor1)
 	assertConflict(t, err, bookingapi.ErrorBookingConflict)
 }
 
@@ -418,7 +458,21 @@ func TestConfirmedCancellationReleasesKnownOccupancyAtomically(t *testing.T) {
 	if claimState != "released" || bookingState != "cancelled" || cancellationOperationID != operation2 {
 		t.Fatalf("claim/booking/cancellation = %q/%q/%q", claimState, bookingState, cancellationOperationID)
 	}
-	rebooking := validatedCreate(t, operation3, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	resolvedCancel, err := bookingapi.ValidateCancel(operation3, testScope, identityKey, "match-1", bookingapi.CancelRequest{
+		Email: "player@example.com", Password: "rotated-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := operations.AdmitCancel(ctx, resolvedCancel, time.Now().Add(time.Minute), executor3)
+	if err != nil {
+		t.Fatalf("resolved cancellation admission: %v", err)
+	}
+	if resolved.Disposition != bookingstorage.AdmissionResolved || resolved.Operation.State != bookingapi.StateSucceeded || resolved.Operation.ExecutorID != "" {
+		t.Fatalf("resolved cancellation = %+v", resolved)
+	}
+
+	rebooking := validatedCreate(t, operation4, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
 	if _, err := operations.AdmitCreate(ctx, rebooking, time.Now().Add(time.Minute), executor3); err != nil {
 		t.Fatalf("rebooking after confirmed cancellation: %v", err)
 	}
@@ -547,6 +601,61 @@ func (*successfulLedgerProvider) CompleteBookingTracking(context.Context, int, s
 }
 func (*successfulLedgerProvider) CancelMatchOnce(context.Context, string) (*eversports.CancellationResult, error) {
 	panic("unexpected cancellation")
+}
+
+func TestRecoveryFinalizesPaidUnfinishedBookingWithoutProviderExecution(t *testing.T) {
+	resetBookingTables(t)
+	ctx := context.Background()
+	operations := bookingstorage.NewOperationRepo(testPool)
+	evidence := bookingstorage.NewEvidenceRepo(testPool)
+	request := validatedCreate(t, operation1, "player@example.com", "court-1", "2026-04-12T08:45:00+02:00", nil)
+	if _, err := operations.AdmitCreate(ctx, request, time.Now().Add(time.Minute), executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhaseReserve, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	providerEvidence := bookingapi.ProviderEvidence{BookingUUID: "booking-recovered", BookingID: 42, PaymentID: 7, State: "RESERVED"}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhaseReserve, 1, "confirmed", "reserved", providerEvidence, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepIntent(ctx, request.OperationID, bookingapi.PhasePayment, 1, executor1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.AppendStepEvidence(ctx, request.OperationID, bookingapi.PhasePayment, 1, "confirmed", "payment_acknowledged", providerEvidence, executor1); err != nil {
+		t.Fatal(err)
+	}
+	bookingID, paymentID := int64(42), int64(7)
+	if _, err := evidence.UpsertProviderBooking(ctx, bookingstorage.ProviderBooking{
+		CreateOperationID: request.OperationID, Provider: request.Scope.Provider, FacilityUUID: request.Scope.FacilityUUID,
+		BookingUUID: "booking-recovered", BookingID: &bookingID, PaymentID: &paymentID,
+		BookingState: "confirmed", PaymentState: "confirmed",
+	}, executor1); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := bookingstorage.AcquireSingletonGuard(ctx, testDatabaseURL, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close(context.Background())
+	recovery, err := bookingservice.NewRecovery(operations, evidence, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := recovery.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].State != bookingapi.StateSucceeded || results[0].Outcome != bookingapi.OutcomeSuccessWithWarning {
+		t.Fatalf("recovery results = %+v", results)
+	}
+	operation, err := operations.Get(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.ExecutorID != "" || operation.State != bookingapi.StateSucceeded {
+		t.Fatalf("recovered operation = %+v", operation)
+	}
 }
 
 func TestProviderRunnerEvidenceSatisfiesDurableSuccessFinalization(t *testing.T) {
@@ -841,6 +950,7 @@ const (
 	operation1 = "0195f8db-7a6f-7c7b-8f71-0f6e0712042d"
 	operation2 = "550e8400-e29b-41d4-a716-446655440000"
 	operation3 = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+	operation4 = "7ca8c921-aebe-42e2-91c5-11d15fe541d9"
 	executor1  = "018f8d2c-6f7a-7b01-9341-aaaaaaaaaaaa"
 	executor2  = "018f8d2c-6f7a-7b01-9341-bbbbbbbbbbbb"
 	executor3  = "018f8d2c-6f7a-7b01-9341-cccccccccccc"
