@@ -25,13 +25,13 @@ func TestRequireBearer_HealthExempt(t *testing.T) {
 	}
 }
 
-func TestRequireBearer_VersionExempt(t *testing.T) {
+func TestRequireBearer_VersionRequiresBusinessAuthentication(t *testing.T) {
 	h := requireBearer("secret", sentinel)
 	req := httptest.NewRequest(http.MethodGet, "/version", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("GET /version: want 200, got %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("GET /version: want 401, got %d", w.Code)
 	}
 }
 

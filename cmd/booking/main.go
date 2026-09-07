@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,47 +21,131 @@ import (
 var Version = "dev"
 
 func main() {
-	cfg, err := config.LoadBooking()
-	if err != nil {
-		slog.Error("load config", "err", err)
+	if err := run(); err != nil {
+		slog.Error("booking stopped with error", "err", err)
 		os.Exit(1)
 	}
+}
 
+func run() error {
+	cfg, err := config.LoadBooking()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	logger := newLogger(cfg.LogLevel)
+	slog.SetDefault(logger)
+	loc, err := loadTimezone(cfg.Timezone)
+	if err != nil {
+		return err
+	}
+	time.Local = loc
+
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(signalCtx)
+	defer cancel()
+
+	type serverResult struct {
+		name string
+		err  error
+	}
+	errCh := make(chan serverResult, 2)
+	metrics := booking.NewMetrics()
+	health := &runtimeHealthSource{}
+	adminSrv, _, err := booking.NewAdminServer(booking.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Secret: cfg.MonitoringSecret, Version: Version,
+		ServiceKey: cfg.ServiceKey, Scope: configuredScope(cfg), Readiness: health.readiness,
+		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics,
+	})
+	if err != nil {
+		return fmt.Errorf("configure booking admin server: %w", err)
+	}
+	go func() { errCh <- serverResult{name: "admin", err: adminSrv.ListenAndServe()} }()
+	logger.Info("booking admin listener starting", "admin_port", cfg.AdminServerPort)
+
+	startupCtx, cancelStartup := context.WithTimeout(ctx, 45*time.Second)
+	runtime, handler, err := buildReliableRuntime(startupCtx, cfg, logger, metrics)
+	cancelStartup()
+	if err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = adminSrv.Shutdown(shutdownCtx)
+		shutdownCancel()
+		if signalCtx.Err() != nil {
+			logger.Info("booking startup cancelled")
+			return nil
+		}
+		return fmt.Errorf("initialize reliable booking runtime: %w", err)
+	}
+	health.runtime.Store(runtime)
+	select {
+	case result := <-errCh:
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = runtime.shutdown(shutdownCtx)
+		shutdownCancel()
+		return fmt.Errorf("%s HTTP server failed during startup: %w", result.name, result.err)
+	default:
+	}
+
+	go runtime.runRetention(ctx, cfg.RetentionInterval)
+	go func() {
+		select {
+		case <-runtime.guard.Lost():
+			logger.Error("booking singleton authority lost; stopping process incarnation")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		runtime.coordinator.CloseAdmission()
+	}()
+
+	businessSrv := booking.NewObservedServerWithWriteTimeout(
+		":"+cfg.ServerPort, handler, cfg.InternalAPISecret, metrics, cfg.HTTPResponseWait+10*time.Second,
+	)
+	logger.Info("booking starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version, "reliable_api", true)
+	go func() { errCh <- serverResult{name: "business", err: businessSrv.ListenAndServe()} }()
+
+	var runErr error
+	select {
+	case result := <-errCh:
+		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
+			runErr = fmt.Errorf("%s HTTP server: %w", result.name, result.err)
+		}
+		cancel()
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancelShutdown()
+	if err := businessSrv.Shutdown(shutdownCtx); err != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("shut down booking business HTTP server: %w", err))
+	}
+	if err := runtime.shutdown(shutdownCtx); err != nil {
+		runErr = errors.Join(runErr, err)
+	}
+	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("shut down booking admin HTTP server: %w", err))
+	}
+	if runErr != nil {
+		return runErr
+	}
+	logger.Info("booking stopped")
+	return nil
+}
+
+func newLogger(level string) *slog.Logger {
 	logLevel := slog.LevelInfo
-	if cfg.LogLevel == "DEBUG" {
+	if level == "DEBUG" {
 		logLevel = slog.LevelDebug
 	}
 	out := io.Writer(os.Stdout)
 	if logDir := os.Getenv("LOG_DIR"); logDir != "" {
 		out = io.MultiWriter(os.Stdout, &lumberjack.Logger{
-			Filename:   logDir + "/app.log",
-			MaxSize:    10,
-			MaxBackups: 5,
-			Compress:   true,
+			Filename: logDir + "/app.log", MaxSize: 10, MaxBackups: 5, Compress: true,
 		})
 	}
-	logger := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: logLevel}))
-	slog.SetDefault(logger)
-
-	loc, err := loadTimezone(cfg.Timezone)
-	if err != nil {
-		slog.Error("load timezone", "timezone", cfg.Timezone, "err", err)
-		os.Exit(1)
-	}
-	time.Local = loc
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	h := booking.NewHandler(logger, Version, cfg.EversportsFacilityID, cfg.EversportsFacilityUUID, cfg.EversportsFacilitySlug)
-	srv := booking.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
-
-	slog.Info("booking starting", "port", cfg.ServerPort, "version", Version)
-	if err := booking.Run(ctx, srv, logger); err != nil {
-		slog.Error("HTTP server error", "err", err)
-		os.Exit(1)
-	}
-	slog.Info("booking stopped")
+	return slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: logLevel}))
 }
 
 func loadTimezone(name string) (*time.Location, error) {

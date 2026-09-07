@@ -35,6 +35,12 @@ type Operation struct {
 	UpdatedAt          time.Time
 }
 
+type LedgerHealth struct {
+	UnknownOperations int64
+	RiskReplacements  int64
+	OldestUnknownAt   *time.Time
+}
+
 type AdmissionDisposition string
 
 const (

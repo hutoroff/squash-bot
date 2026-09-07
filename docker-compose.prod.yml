@@ -101,22 +101,31 @@ services:
     image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-stable}
     environment:
       SERVER_PORT: "8081"
+      BOOKING_ADMIN_PORT: "9091"
+      BOOKING_DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
+      BOOKING_IDENTITY_KEY: ${BOOKING_IDENTITY_KEY:-}
+      BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:-}
+      BOOKING_MONITORING_SECRET: ${BOOKING_MONITORING_SECRET:-}
       EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
       EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
       EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:-}
-      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      EVERSPORTS_SQUASH_SPORT_UUID: ${EVERSPORTS_SQUASH_SPORT_UUID:-}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/booking
     volumes:
       - logs:/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${BOOKING_MONITORING_SECRET}' http://localhost:9091/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    stop_grace_period: 110s
     logging:
       driver: json-file
       options:

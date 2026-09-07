@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -459,10 +460,31 @@ func newReliableTestHandlerWithControls(t *testing.T, coordinator ReliableCoordi
 		Coordinator: coordinator, Status: status, Reconciler: reconciler, Importer: importer,
 		Scope: reliableScope, IdentityKey: reliableIdentityKey,
 		ResponseWait: time.Millisecond, PollInterval: 100 * time.Microsecond,
+		ProviderSportUUID: squashSportUUID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return h
+}
+
+func TestReliableReadClientIsDisposableAndNotStoredInLegacyCredentialCache(t *testing.T) {
+	h := newReliableTestHandler(t, &fakeReliableCoordinator{}, &fakeOperationStatusReader{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/eversports/matches", nil)
+	req.Header.Set("X-Eversports-Email", "player@example.com")
+	req.Header.Set("X-Eversports-Password", "secret")
+	client, cleanup := h.clientFromRequest(req)
+	if client == nil {
+		t.Fatal("reliable read client is nil")
+	}
+	cleanup()
+	cached := 0
+	h.credClients.Range(func(_, _ any) bool {
+		cached++
+		return true
+	})
+	if cached != 0 {
+		t.Fatalf("legacy cached clients = %d, want 0", cached)
+	}
 }
 
 func acceptedOperation(kind bookingapi.OperationKind) *storage.Operation {

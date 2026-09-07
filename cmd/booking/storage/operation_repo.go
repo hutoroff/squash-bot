@@ -22,6 +22,21 @@ type OperationRepo struct {
 
 func NewOperationRepo(pool *pgxpool.Pool) *OperationRepo { return &OperationRepo{pool: pool} }
 
+func (r *OperationRepo) LedgerHealth(ctx context.Context) (LedgerHealth, error) {
+	var health LedgerHealth
+	err := r.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE state = $1),
+		       count(*) FILTER (WHERE parent_operation_id IS NOT NULL),
+		       min(updated_at) FILTER (WHERE state = $1)
+		FROM booking_operations`, bookingapi.StateOutcomeUnknown).Scan(
+		&health.UnknownOperations, &health.RiskReplacements, &health.OldestUnknownAt,
+	)
+	if err != nil {
+		return LedgerHealth{}, fmt.Errorf("read booking ledger health: %w", err)
+	}
+	return health, nil
+}
+
 func (r *OperationRepo) Get(ctx context.Context, operationID bookingapi.OperationID) (*Operation, error) {
 	return scanOperation(r.pool.QueryRow(ctx, operationSelect+` WHERE o.operation_id = $1`, operationID))
 }

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/caarlos0/env/v10"
@@ -118,31 +120,83 @@ func LoadManagement() (*ManagementConfig, error) {
 	return cfg, nil
 }
 
-// BookingConfig holds configuration for the booking service.
+// BookingConfig holds configuration for the reliable booking service.
 type BookingConfig struct {
-	// EversportsFacilityID is the numeric Eversports facility ID (visible in the
-	// venue page URL, e.g. eversports.de/s/venue-name-76443). Required for
-	// GET /api/v1/eversports/games and GET /api/v1/eversports/courts.
-	EversportsFacilityID string `env:"EVERSPORTS_FACILITY_ID"`
-	// EversportsFacilityUUID is the UUID of the facility (venue) used when creating
-	// bookings via POST /api/v1/eversports/matches. Find it in DevTools under
-	// the /checkout/api/payableitem/courtbooking request body (facilityUuid field).
-	EversportsFacilityUUID string `env:"EVERSPORTS_FACILITY_UUID" envDefault:"6266968c-b0fd-4115-ad3b-ae225cc880f1"`
-	// EversportsFacilitySlug is the facility slug visible in the venue page URL
-	// (e.g. "squash-house-berlin-03"). Required for GET /api/v1/eversports/matches
-	// and GET /api/v1/eversports/courts.
-	EversportsFacilitySlug string `env:"EVERSPORTS_FACILITY_SLUG"`
-	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
+	EversportsFacilityID   string `env:"EVERSPORTS_FACILITY_ID,required"`
+	EversportsFacilityUUID string `env:"EVERSPORTS_FACILITY_UUID,required"`
+	EversportsFacilitySlug string `env:"EVERSPORTS_FACILITY_SLUG,required"`
+	EversportsSquashUUID   string `env:"EVERSPORTS_SQUASH_SPORT_UUID,required"`
+
+	DatabaseURL       string `env:"BOOKING_DATABASE_URL,required"`
+	IdentityKey       string `env:"BOOKING_IDENTITY_KEY,required"`
+	ServiceKey        string `env:"BOOKING_SERVICE_KEY,required"`
+	MonitoringSecret  string `env:"BOOKING_MONITORING_SECRET,required"`
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
-	ServerPort        string `env:"SERVER_PORT"           envDefault:"8081"`
-	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
-	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
+
+	ServerPort      string `env:"SERVER_PORT" envDefault:"8081"`
+	AdminServerPort string `env:"BOOKING_ADMIN_PORT" envDefault:"9091"`
+	LogLevel        string `env:"LOG_LEVEL" envDefault:"INFO"`
+	Timezone        string `env:"TIMEZONE" envDefault:"UTC"`
+
+	HTTPResponseWait       time.Duration `env:"BOOKING_HTTP_RESPONSE_WAIT" envDefault:"20s"`
+	ExecutionTimeout       time.Duration `env:"BOOKING_EXECUTION_TIMEOUT" envDefault:"90s"`
+	ProviderCallTimeout    time.Duration `env:"BOOKING_PROVIDER_CALL_TIMEOUT" envDefault:"20s"`
+	FinalizationTimeout    time.Duration `env:"BOOKING_FINALIZATION_TIMEOUT" envDefault:"5s"`
+	AdmissionWait          time.Duration `env:"BOOKING_ADMISSION_WAIT" envDefault:"1s"`
+	ShutdownTimeout        time.Duration `env:"BOOKING_SHUTDOWN_TIMEOUT" envDefault:"100s"`
+	SingletonCheckInterval time.Duration `env:"BOOKING_SINGLETON_CHECK_INTERVAL" envDefault:"5s"`
+	RetentionInterval      time.Duration `env:"BOOKING_RETENTION_INTERVAL" envDefault:"24h"`
+	RetentionAge           time.Duration `env:"BOOKING_RETENTION_AGE" envDefault:"2160h"`
+	RetentionBatchSize     int           `env:"BOOKING_RETENTION_BATCH_SIZE" envDefault:"100"`
+	SessionCapacity        int           `env:"BOOKING_SESSION_CAPACITY" envDefault:"32"`
+	SessionIdleTimeout     time.Duration `env:"BOOKING_SESSION_IDLE_TIMEOUT" envDefault:"10m"`
 }
 
-// Validate checks that the shared secret is strong enough to resist brute-forcing.
 func (c *BookingConfig) Validate() error {
 	if len(c.InternalAPISecret) < minSecretLength {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if len(c.MonitoringSecret) < minSecretLength {
+		return fmt.Errorf("BOOKING_MONITORING_SECRET must be at least %d characters", minSecretLength)
+	}
+	if c.MonitoringSecret == c.InternalAPISecret {
+		return fmt.Errorf("BOOKING_MONITORING_SECRET must differ from INTERNAL_API_SECRET")
+	}
+	identityKey, err := hex.DecodeString(c.IdentityKey)
+	if err != nil || len(identityKey) != 32 {
+		return fmt.Errorf("BOOKING_IDENTITY_KEY must encode exactly 32 bytes")
+	}
+	serverPort, serverErr := strconv.Atoi(c.ServerPort)
+	adminPort, adminErr := strconv.Atoi(c.AdminServerPort)
+	if serverErr != nil || adminErr != nil || serverPort < 1 || serverPort > 65535 || adminPort < 1 || adminPort > 65535 {
+		return fmt.Errorf("SERVER_PORT and BOOKING_ADMIN_PORT must be valid TCP ports")
+	}
+	if serverPort == adminPort {
+		return fmt.Errorf("SERVER_PORT and BOOKING_ADMIN_PORT must differ")
+	}
+	positiveDurations := map[string]time.Duration{
+		"BOOKING_HTTP_RESPONSE_WAIT": c.HTTPResponseWait, "BOOKING_EXECUTION_TIMEOUT": c.ExecutionTimeout,
+		"BOOKING_PROVIDER_CALL_TIMEOUT": c.ProviderCallTimeout, "BOOKING_FINALIZATION_TIMEOUT": c.FinalizationTimeout,
+		"BOOKING_ADMISSION_WAIT": c.AdmissionWait, "BOOKING_SHUTDOWN_TIMEOUT": c.ShutdownTimeout,
+		"BOOKING_SINGLETON_CHECK_INTERVAL": c.SingletonCheckInterval, "BOOKING_RETENTION_INTERVAL": c.RetentionInterval,
+		"BOOKING_RETENTION_AGE": c.RetentionAge, "BOOKING_SESSION_IDLE_TIMEOUT": c.SessionIdleTimeout,
+	}
+	for name, value := range positiveDurations {
+		if value <= 0 {
+			return fmt.Errorf("%s must be a positive duration", name)
+		}
+	}
+	if c.ProviderCallTimeout > 20*time.Second || c.ProviderCallTimeout > c.ExecutionTimeout {
+		return fmt.Errorf("BOOKING_PROVIDER_CALL_TIMEOUT must not exceed 20s or BOOKING_EXECUTION_TIMEOUT")
+	}
+	if c.ShutdownTimeout < c.ExecutionTimeout+c.FinalizationTimeout {
+		return fmt.Errorf("BOOKING_SHUTDOWN_TIMEOUT must cover execution and finalization timeouts")
+	}
+	if c.RetentionBatchSize < 1 || c.RetentionBatchSize > 1000 {
+		return fmt.Errorf("BOOKING_RETENTION_BATCH_SIZE must be between 1 and 1000")
+	}
+	if c.SessionCapacity < 1 {
+		return fmt.Errorf("BOOKING_SESSION_CAPACITY must be positive")
 	}
 	return nil
 }
