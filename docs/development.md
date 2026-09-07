@@ -75,6 +75,8 @@ Direct database-backed commands remain supported and fail explicitly if Docker i
 
 ```bash
 go test -count=1 -tags integration -timeout 120s ./...
+go test -count=1 -tags integration -timeout 120s ./cmd/booking \
+  -run TestReliableRuntimeStartupFakeProviderSingletonAndShutdown
 go test -count=1 -tags e2e -timeout 120s ./tests/e2e/...
 ```
 

@@ -16,6 +16,11 @@ import (
 // brute-force and undermine the constant-time comparisons that rely on them.
 const minSecretLength = 32
 
+// BookingReliableCutoverAcknowledgement is deliberately explicit: setting it
+// confirms that operators understand reliable booking rejects keyless v1
+// mutations. It is not evidence that management integration tests passed.
+const BookingReliableCutoverAcknowledgement = "keyed-v2-only"
+
 // minWebhookSecretLength is the minimum acceptable length for
 // TELEGRAM_WEBHOOK_SECRET. Lower than minSecretLength because it only guards
 // a single header check, not a full bearer/signing secret.
@@ -127,11 +132,12 @@ type BookingConfig struct {
 	EversportsFacilitySlug string `env:"EVERSPORTS_FACILITY_SLUG,required"`
 	EversportsSquashUUID   string `env:"EVERSPORTS_SQUASH_SPORT_UUID,required"`
 
-	DatabaseURL       string `env:"BOOKING_DATABASE_URL,required"`
-	IdentityKey       string `env:"BOOKING_IDENTITY_KEY,required"`
-	ServiceKey        string `env:"BOOKING_SERVICE_KEY,required"`
-	MonitoringSecret  string `env:"BOOKING_MONITORING_SECRET,required"`
-	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
+	DatabaseURL            string `env:"BOOKING_DATABASE_URL,required"`
+	IdentityKey            string `env:"BOOKING_IDENTITY_KEY,required"`
+	ServiceKey             string `env:"BOOKING_SERVICE_KEY,required"`
+	MonitoringSecret       string `env:"BOOKING_MONITORING_SECRET,required"`
+	CutoverAcknowledgement string `env:"BOOKING_RELIABLE_CUTOVER_ACK,required"`
+	InternalAPISecret      string `env:"INTERNAL_API_SECRET,required"`
 
 	ServerPort      string `env:"SERVER_PORT" envDefault:"8081"`
 	AdminServerPort string `env:"BOOKING_ADMIN_PORT" envDefault:"9091"`
@@ -153,6 +159,9 @@ type BookingConfig struct {
 }
 
 func (c *BookingConfig) Validate() error {
+	if c.CutoverAcknowledgement != BookingReliableCutoverAcknowledgement {
+		return fmt.Errorf("BOOKING_RELIABLE_CUTOVER_ACK must explicitly acknowledge %q semantics", BookingReliableCutoverAcknowledgement)
+	}
 	if len(c.InternalAPISecret) < minSecretLength {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
 	}

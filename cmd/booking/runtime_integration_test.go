@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +29,12 @@ func TestReliableRuntimeStartupFakeProviderSingletonAndShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup test database: %v", err)
 	}
-	defer cleanup()
+	cleanedUp := false
+	defer func() {
+		if !cleanedUp {
+			cleanup()
+		}
+	}()
 	cfg := &config.BookingConfig{
 		EversportsFacilityID: "76443", EversportsFacilityUUID: "facility-uuid", EversportsFacilitySlug: "facility-slug",
 		EversportsSquashUUID: "b388b6e6-69de-11e8-bdc6-02bd505aa7b2", DatabaseURL: databaseURL,
@@ -38,8 +44,9 @@ func TestReliableRuntimeStartupFakeProviderSingletonAndShutdown(t *testing.T) {
 		RetentionAge: 24 * time.Hour, RetentionBatchSize: 10, SessionCapacity: 2, SessionIdleTimeout: time.Minute,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var reserveCalls atomic.Int32
 	factory := bookingservice.SessionFactoryFunc(func(context.Context, bookingapi.Credentials) (bookingservice.Session, error) {
-		return runtimeFakeProvider{}, nil
+		return runtimeFakeProvider{reserveCalls: &reserveCalls}, nil
 	})
 	runtime, _, err := buildReliableRuntimeWithFactory(ctx, cfg, logger, nil, factory)
 	if err != nil {
@@ -85,23 +92,78 @@ func TestReliableRuntimeStartupFakeProviderSingletonAndShutdown(t *testing.T) {
 	if admission.Operation.State != bookingapi.StateSucceeded || admission.Operation.Outcome != bookingapi.OutcomeSuccess {
 		t.Fatalf("fake-provider operation = state %s outcome %s", admission.Operation.State, admission.Operation.Outcome)
 	}
+	if got := reserveCalls.Load(); got != 1 {
+		t.Fatalf("reserve calls = %d, want 1", got)
+	}
 
-	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	shutdownCtx, cancelShutdown := context.WithTimeout(ctx, 5*time.Second)
 	if err := runtime.shutdown(shutdownCtx); err != nil {
+		cancelShutdown()
 		t.Fatalf("shutdown runtime: %v", err)
 	}
+	cancelShutdown()
 	if runtime.pool != nil || runtime.guard != nil {
 		t.Fatal("runtime resources remained attached after shutdown")
 	}
+
+	restarted, _, err := buildReliableRuntimeWithFactory(ctx, cfg, logger, nil, factory)
+	if err != nil {
+		t.Fatalf("restart runtime: %v", err)
+	}
+	replay, err := restarted.coordinator.SubmitCreate(ctx, create, bookingapi.Credentials{Email: "player@example.com", Password: "rotated-secret"})
+	if err != nil {
+		t.Fatalf("replay after restart: %v", err)
+	}
+	if replay.Operation.State != bookingapi.StateSucceeded || replay.Disposition != storage.AdmissionReplay {
+		t.Fatalf("restart replay = disposition %s state %s", replay.Disposition, replay.Operation.State)
+	}
+	if got := reserveCalls.Load(); got != 1 {
+		t.Fatalf("reserve calls after replay = %d, want 1", got)
+	}
+
+	cleanup()
+	cleanedUp = true
+	select {
+	case <-restarted.guard.Lost():
+	case <-time.After(3 * time.Second):
+		t.Fatal("singleton authority loss was not observed")
+	}
+	readinessCtx, cancelReadiness := context.WithTimeout(ctx, 2*time.Second)
+	readiness := restarted.readiness(readinessCtx)
+	cancelReadiness()
+	if readiness.Ready || readiness.Database || readiness.Singleton || readiness.Coordinator {
+		t.Fatalf("runtime remained ready after database loss: %+v", readiness)
+	}
+	secondCreate, err := bookingapi.ValidateCreate("018f8d2c-6f7a-7b01-9341-cccccccccccc", restarted.scope, identityKey, bookingapi.CreateRequest{
+		CourtUUID: "court-2", Start: "2027-01-10T11:00:00+01:00", End: "2027-01-10T11:45:00+01:00",
+		Email: "player@example.com", Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("validate create after authority loss: %v", err)
+	}
+	if _, err := restarted.coordinator.SubmitCreate(ctx, secondCreate, bookingapi.Credentials{Email: "player@example.com", Password: "secret"}); !errors.Is(err, bookingservice.ErrCoordinatorClosed) {
+		t.Fatalf("submit after authority loss error = %v, want ErrCoordinatorClosed", err)
+	}
+	if got := reserveCalls.Load(); got != 1 {
+		t.Fatalf("reserve calls after database loss = %d, want 1", got)
+	}
+	shutdownCtx, cancelShutdown = context.WithTimeout(ctx, 5*time.Second)
+	if err := restarted.shutdown(shutdownCtx); err != nil {
+		cancelShutdown()
+		t.Fatalf("shutdown restarted runtime: %v", err)
+	}
+	cancelShutdown()
 }
 
-type runtimeFakeProvider struct{}
+type runtimeFakeProvider struct {
+	reserveCalls *atomic.Int32
+}
 
 func (runtimeFakeProvider) EnsureLoggedIn(context.Context) error { return nil }
 func (runtimeFakeProvider) Reauthenticate(context.Context) error { return nil }
 func (runtimeFakeProvider) ProviderUserID() string               { return "provider-user" }
-func (runtimeFakeProvider) ReserveCourtProviderTime(context.Context, string, string, string, string, string) (*eversports.ReservationResult, error) {
+func (p runtimeFakeProvider) ReserveCourtProviderTime(context.Context, string, string, string, string, string) (*eversports.ReservationResult, error) {
+	p.reserveCalls.Add(1)
 	return &eversports.ReservationResult{BookingUUID: "booking-uuid", BookingID: 42, PaymentID: 7, Status: "CONFIRMED"}, nil
 }
 func (runtimeFakeProvider) PayOffline(context.Context, int) error { return nil }

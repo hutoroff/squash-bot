@@ -79,7 +79,8 @@ func TestBookingConfig_Validate(t *testing.T) {
 	valid := func() BookingConfig {
 		return BookingConfig{
 			InternalAPISecret: strOfLen(minSecretLength), MonitoringSecret: strOfLen(minSecretLength + 1),
-			IdentityKey: strOfLen(64), ServerPort: "8081", AdminServerPort: "9091",
+			CutoverAcknowledgement: BookingReliableCutoverAcknowledgement,
+			IdentityKey:            strOfLen(64), ServerPort: "8081", AdminServerPort: "9091",
 			HTTPResponseWait: 20, ExecutionTimeout: 90, ProviderCallTimeout: 20,
 			FinalizationTimeout: 5, AdmissionWait: 1, ShutdownTimeout: 100,
 			SingletonCheckInterval: 5, RetentionInterval: 24, RetentionAge: 90,
@@ -89,6 +90,11 @@ func TestBookingConfig_Validate(t *testing.T) {
 	cfg := valid()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid config: %v", err)
+	}
+	cfg = valid()
+	cfg.CutoverAcknowledgement = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected missing reliable cutover acknowledgement to fail")
 	}
 	cfg = valid()
 	cfg.InternalAPISecret = "short"
