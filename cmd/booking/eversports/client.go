@@ -137,25 +137,25 @@ func (c *Client) Login(ctx context.Context) error {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("eversports: marshal login payload: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("marshal login payload: %w", err)}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("eversports: create login request: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("create login request: %w", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setBrowserHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("eversports: login request: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("login request: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("eversports: login HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return &AuthenticationError{Err: fmt.Errorf("login HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))}
 	}
 
 	// The response body may be empty; the session is established via the `et`
@@ -173,10 +173,13 @@ func (c *Client) Login(ctx context.Context) error {
 		} else {
 			cl := gqlResp.Data.CredentialLogin
 			if len(cl.Errors) > 0 {
-				return fmt.Errorf("eversports: login error: %s", cl.Errors[0].Message)
+				// The reverse-engineered contract has no stable captured error ID
+				// proving which ExpectedErrors mean invalid credentials. Keep the
+				// error typed but do not trigger credential cooldown from message text.
+				return &AuthenticationError{Err: fmt.Errorf("login error: %s", cl.Errors[0].Message)}
 			}
 			if len(gqlResp.Errors) > 0 {
-				return fmt.Errorf("eversports: graphql error: %s", gqlResp.Errors[0].Message)
+				return &AuthenticationError{Err: fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)}
 			}
 			if cl.User.ID != "" {
 				c.userID.Store(cl.User.ID)
@@ -186,7 +189,7 @@ func (c *Client) Login(ctx context.Context) error {
 
 	// Confirm that the `et` cookie was actually set by the server.
 	if !c.hasCookie("et") {
-		return fmt.Errorf("eversports: login succeeded HTTP-wise but no 'et' session cookie was returned")
+		return &AuthenticationError{Err: fmt.Errorf("login succeeded HTTP-wise but no 'et' session cookie was returned")}
 	}
 
 	c.loggedIn.Store(true)

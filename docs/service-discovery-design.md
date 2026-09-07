@@ -4,7 +4,7 @@
 
 **Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability/integration requirements additionally reviewed against `78fcc52`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Neither proposal is implemented.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Only P1 of the booking plan (shared contract/typed provider-failure foundation) exists locally; no runtime v2 idempotency, persistence or registration is wired.
 
 ## 1. Executive decision
 
