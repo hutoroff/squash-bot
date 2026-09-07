@@ -56,6 +56,8 @@ type Handler struct {
 	reliableEnabled     bool
 	responseWait        time.Duration
 	statusPollInterval  time.Duration
+	providerCallTimeout time.Duration
+	providerSportUUID   string
 
 	// credClients caches per-credential Eversports clients keyed by email:password.
 	// This avoids re-logging in on every booking request for the same account.
@@ -92,14 +94,16 @@ type ReliableImporter interface {
 }
 
 type ReliableAPIConfig struct {
-	Coordinator  ReliableCoordinator
-	Status       OperationStatusReader
-	Reconciler   ReliableReconciler
-	Importer     ReliableImporter
-	Scope        bookingapi.Scope
-	IdentityKey  []byte
-	ResponseWait time.Duration
-	PollInterval time.Duration
+	Coordinator         ReliableCoordinator
+	Status              OperationStatusReader
+	Reconciler          ReliableReconciler
+	Importer            ReliableImporter
+	Scope               bookingapi.Scope
+	IdentityKey         []byte
+	ResponseWait        time.Duration
+	PollInterval        time.Duration
+	ProviderCallTimeout time.Duration
+	ProviderSportUUID   string
 }
 
 // ConfigureReliableAPI enables v2 mutation/status routes and disables keyless
@@ -118,6 +122,14 @@ func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
 	} else if cfg.PollInterval < 0 {
 		return fmt.Errorf("reliable booking poll interval must be positive")
 	}
+	if cfg.ProviderCallTimeout == 0 {
+		cfg.ProviderCallTimeout = 20 * time.Second
+	} else if cfg.ProviderCallTimeout < 0 {
+		return fmt.Errorf("reliable booking provider call timeout must be positive")
+	}
+	if cfg.ProviderSportUUID == "" {
+		return fmt.Errorf("reliable booking provider sport UUID is required")
+	}
 	// Reuse contract validation so an incomplete trusted scope or identity key
 	// cannot leave a handler that accepts requests but fails after admission.
 	if _, err := bookingapi.ValidateCancel("018f8d2c-6f7a-7b01-9341-aaaaaaaaaaaa", cfg.Scope, cfg.IdentityKey, "config-check", bookingapi.CancelRequest{Email: "config@example.invalid", Password: "config-check"}); err != nil {
@@ -134,12 +146,21 @@ func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
 	h.reliableIdentityKey = append([]byte(nil), cfg.IdentityKey...)
 	h.responseWait = cfg.ResponseWait
 	h.statusPollInterval = cfg.PollInterval
+	h.providerCallTimeout = cfg.ProviderCallTimeout
+	h.providerSportUUID = cfg.ProviderSportUUID
 	h.reliableEnabled = true
 	return nil
 }
 
 // getOrCreateCredClient returns a cached eversportsClient for the given credentials,
 // creating and storing one if none exists yet.
+func (h *Handler) sportUUID() string {
+	if h.providerSportUUID != "" {
+		return h.providerSportUUID
+	}
+	return squashSportUUID
+}
+
 func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient {
 	key := email + ":" + password
 	if v, ok := h.credClients.Load(key); ok {
@@ -150,15 +171,20 @@ func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient
 	return c
 }
 
-// clientFromRequest returns a per-credential client when X-Eversports-Email and
-// X-Eversports-Password headers are present, otherwise nil.
-func (h *Handler) clientFromRequest(r *http.Request) eversportsClient {
+// clientFromRequest returns a per-credential client and cleanup callback. In
+// reliable mode, read routes use disposable bounded-time clients rather than
+// retaining credentials in the legacy unbounded cache.
+func (h *Handler) clientFromRequest(r *http.Request) (eversportsClient, func()) {
 	if email := r.Header.Get("X-Eversports-Email"); email != "" {
 		if password := r.Header.Get("X-Eversports-Password"); password != "" {
-			return h.getOrCreateCredClient(email, password)
+			if h.reliableEnabled {
+				client := eversports.NewWithTimeout(email, password, h.logger, h.providerCallTimeout)
+				return client, func() { _ = client.Close() }
+			}
+			return h.getOrCreateCredClient(email, password), func() {}
 		}
 	}
-	return nil
+	return nil, func() {}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -200,7 +226,8 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
@@ -716,13 +743,14 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
 	}
 
-	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, h.sportUUID(), date)
 	if err != nil {
 		h.logger.Error("eversports get courts for games failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -820,13 +848,14 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
 	}
 
-	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, h.sportUUID(), date)
 	if err != nil {
 		h.logger.Error("eversports get courts failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -843,7 +872,8 @@ func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "slug query parameter is required")
 		return
 	}
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return

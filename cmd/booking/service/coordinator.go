@@ -72,6 +72,11 @@ type Completion struct {
 	DiscardSession bool
 }
 
+type CoordinatorObserver interface {
+	ObserveExternalExecution(bookingapi.OperationKind, bookingapi.OutcomeCategory, time.Duration)
+	ObserveOperationOutcome(bookingapi.OperationKind, bookingapi.OperationState, bookingapi.OutcomeCategory)
+}
+
 type CoordinatorConfig struct {
 	ExecutorID          bookingapi.OperationID
 	MaxConcurrent       int
@@ -79,6 +84,7 @@ type CoordinatorConfig struct {
 	ExecutionTimeout    time.Duration
 	FinalizationTimeout time.Duration
 	Clock               func() time.Time
+	Observer            CoordinatorObserver
 }
 
 type Coordinator struct {
@@ -334,6 +340,7 @@ func (c *Coordinator) execute(ctx context.Context, operation *storage.Operation,
 	}()
 
 	defer lease.Release()
+	executionStarted := time.Now()
 	completion, err := c.runner.Run(ctx, Execution{
 		Operation: operation, ExecutorID: c.cfg.ExecutorID, Credentials: credentials, Session: lease.Session,
 	})
@@ -342,6 +349,9 @@ func (c *Coordinator) execute(ctx context.Context, operation *storage.Operation,
 	}
 	if completion.Phase == "" {
 		completion.Phase = operation.Phase
+	}
+	if c.cfg.Observer != nil {
+		c.cfg.Observer.ObserveExternalExecution(operation.Kind, completion.Outcome, time.Since(executionStarted))
 	}
 	if err != nil {
 		c.logger.Error("booking execution failed", "operation_id", operation.OperationID, "phase", completion.Phase, "err", err)
@@ -354,6 +364,8 @@ func (c *Coordinator) execute(ctx context.Context, operation *storage.Operation,
 	defer cancel()
 	if _, finalizeErr := c.store.Finalize(finalizeCtx, operation.OperationID, c.cfg.ExecutorID, completion.State, completion.Outcome, completion.Phase); finalizeErr != nil {
 		c.logger.Error("booking execution finalization failed", "operation_id", operation.OperationID, "phase", completion.Phase, "err", finalizeErr)
+	} else if c.cfg.Observer != nil {
+		c.cfg.Observer.ObserveOperationOutcome(operation.Kind, completion.State, completion.Outcome)
 	}
 }
 
@@ -373,8 +385,11 @@ func validCompletion(completion Completion) bool {
 func (c *Coordinator) finalizeNotDispatched(operationID bookingapi.OperationID) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.FinalizationTimeout)
 	defer cancel()
-	if _, err := c.store.Finalize(ctx, operationID, c.cfg.ExecutorID, bookingapi.StateNotDispatched, bookingapi.OutcomeNoEffect, bookingapi.PhaseAdmission); err != nil {
+	operation, err := c.store.Finalize(ctx, operationID, c.cfg.ExecutorID, bookingapi.StateNotDispatched, bookingapi.OutcomeNoEffect, bookingapi.PhaseAdmission)
+	if err != nil {
 		c.logger.Error("booking admission finalization failed", "operation_id", operationID, "err", err)
+	} else if c.cfg.Observer != nil {
+		c.cfg.Observer.ObserveOperationOutcome(operation.Kind, operation.State, operation.Outcome)
 	}
 }
 

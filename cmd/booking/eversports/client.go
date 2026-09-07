@@ -100,13 +100,22 @@ type Client struct {
 	logger *slog.Logger
 }
 
-// New creates a new Eversports client.
+// New creates a new Eversports client with the legacy HTTP timeout.
 func New(email, password string, logger *slog.Logger) *Client {
+	return NewWithTimeout(email, password, logger, 30*time.Second)
+}
+
+// NewWithTimeout creates a client whose every provider request is bounded by
+// the supplied timeout. Orchestration owns any authorized second attempt.
+func NewWithTimeout(email, password string, logger *slog.Logger, timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	jar, _ := cookiejar.New(nil) // never errors with nil options
 	return &Client{
 		http: &http.Client{
 			Jar:       jar,
-			Timeout:   30 * time.Second,
+			Timeout:   timeout,
 			Transport: http.DefaultTransport,
 			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 				// Provider mutations opt out of redirects so a 307/308 cannot replay
@@ -122,6 +131,20 @@ func New(email, password string, logger *slog.Logger) *Client {
 		password: password,
 		logger:   logger,
 	}
+}
+
+// Close discards all in-memory credentials and session cookies. Callers must
+// ensure no request is using the client while it is closed.
+func (c *Client) Close() error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	jar, _ := cookiejar.New(nil)
+	c.http.Jar = jar
+	c.email = ""
+	c.password = ""
+	c.loggedIn.Store(false)
+	c.userID.Store("")
+	return nil
 }
 
 // Login authenticates with Eversports via the GraphQL login mutation.

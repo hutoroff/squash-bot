@@ -237,7 +237,7 @@ Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/booking/VERSION`
 - `cmd/web/VERSION`
 
-The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. HTTP-serving services expose `GET /version` returning `{"version": "1.0.0"}`; telegram exposes it only in webhook mode. The telegram bot additionally calls management's `GET /version` at startup and refuses to start if the request fails or major versions differ.
+The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. HTTP-serving services expose `GET /version` returning `{"version": "1.0.0"}`; booking requires business authentication on that listener and also exposes it through its separately authenticated internal admin listener. Telegram exposes it only in webhook mode. The telegram bot additionally calls management's `GET /version` at startup and refuses to start if the request fails or major versions differ.
 
 ### Releasing a service
 
