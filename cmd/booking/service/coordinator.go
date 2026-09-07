@@ -23,6 +23,19 @@ var (
 	_ ExecutionAuthority = (*storage.SingletonGuard)(nil)
 )
 
+// AdmissionUncertainError means an admission write may have committed but its
+// result could not be read back. Callers must inspect the same operation key;
+// they must not retry with a different key or claim the request was unaccepted.
+type AdmissionUncertainError struct {
+	OperationID bookingapi.OperationID
+	Err         error
+}
+
+func (e *AdmissionUncertainError) Error() string {
+	return fmt.Sprintf("booking admission for %s is uncertain", e.OperationID)
+}
+func (e *AdmissionUncertainError) Unwrap() error { return e.Err }
+
 type OperationStore interface {
 	Get(context.Context, bookingapi.OperationID) (*storage.Operation, error)
 	AdmitCreate(context.Context, bookingapi.ValidatedCreate, time.Time, bookingapi.OperationID) (*storage.Admission, error)
@@ -228,14 +241,18 @@ func (c *Coordinator) submit(
 	deadline := c.cfg.Clock().Add(c.cfg.ExecutionTimeout)
 	admission, err := admit(admissionCtx, deadline)
 	if err != nil {
+		var conflict *storage.ConflictError
+		if errors.As(err, &conflict) {
+			return nil, err
+		}
 		resolutionCtx, cancelResolution := context.WithTimeout(c.rootCtx, c.cfg.AdmissionWait)
 		admission, err = c.resolveAdmissionError(resolutionCtx, operationID, fingerprint, err)
 		cancelResolution()
 		if err != nil {
-			return nil, err
+			return nil, &AdmissionUncertainError{OperationID: operationID, Err: err}
 		}
 	}
-	if admission.Disposition == storage.AdmissionReplay {
+	if admission.Disposition == storage.AdmissionReplay || admission.Disposition == storage.AdmissionResolved {
 		return admission, nil
 	}
 	if admission.Operation == nil {

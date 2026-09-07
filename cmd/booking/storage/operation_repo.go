@@ -196,17 +196,37 @@ func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCan
 	if err != nil {
 		return nil, err
 	}
+	resourceKey := "cancellation:" + request.Scope.Provider + ":" + request.Scope.FacilityUUID + ":" + request.MatchID
+	if err := lockKey(ctx, tx, resourceKey); err != nil {
+		return nil, err
+	}
+	var targetState, targetAccountIdentity, targetOperationID string
+	err = tx.QueryRow(ctx, `
+		SELECT b.booking_state, a.identity, b.create_operation_id::text
+		FROM booking_provider_bookings b
+		JOIN booking_operations o ON o.operation_id = b.create_operation_id
+		JOIN booking_accounts a ON a.id = o.account_id
+		WHERE b.provider = $1 AND b.facility_uuid = $2 AND b.match_id = $3
+		FOR UPDATE OF b`, request.Scope.Provider, request.Scope.FacilityUUID, request.MatchID,
+	).Scan(&targetState, &targetAccountIdentity, &targetOperationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock cancellation target: %w", err)
+	}
+	if targetAccountIdentity != request.AccountIdentity {
+		return nil, &ConflictError{Code: bookingapi.ErrorAccountBlocked, ConflictingOperationID: targetOperationID}
+	}
+	if targetState == "cancelled" {
+		return admitResolvedCancellation(ctx, tx, request, fingerprint, accountID, deadline)
+	}
 	if activeOperation != "" || accountState == "quarantined" {
 		conflictID := activeOperation
 		if conflictID == "" {
 			conflictID = quarantineOperation
 		}
 		return nil, &ConflictError{Code: bookingapi.ErrorAccountBlocked, ConflictingOperationID: conflictID}
-	}
-
-	resourceKey := "cancellation:" + request.Scope.Provider + ":" + request.Scope.FacilityUUID + ":" + request.MatchID
-	if err := lockKey(ctx, tx, resourceKey); err != nil {
-		return nil, err
 	}
 	var conflictID string
 	err = tx.QueryRow(ctx, `
@@ -261,6 +281,37 @@ func admitCancel(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCan
 		return nil, err
 	}
 	return &Admission{Disposition: AdmissionAccepted, Operation: operation}, nil
+}
+
+func admitResolvedCancellation(ctx context.Context, tx pgx.Tx, request bookingapi.ValidatedCancel, fingerprint string, accountID int64, deadline time.Time) (*Admission, error) {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO booking_operations (
+			operation_id, request_fingerprint, kind, service_key, provider,
+			facility_id, facility_uuid, facility_slug, sport, account_id,
+			target_match_id, state, phase, outcome, deadline_at, root_operation_id,
+			completed_at
+		) VALUES (
+			$1, $2, 'cancel', $3, $4, $5, $6, $7, $8, $9,
+			$10, 'succeeded', 'finalization', 'success', $11, $1, NOW()
+		)`, request.OperationID, fingerprint, request.Scope.ServiceKey, request.Scope.Provider,
+		request.Scope.FacilityID, request.Scope.FacilityUUID, request.Scope.FacilitySlug,
+		request.Scope.Sport, accountID, request.MatchID, deadline)
+	if err != nil {
+		return nil, fmt.Errorf("insert resolved cancellation operation: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO booking_resource_claims (
+			operation_id, claim_type, provider, facility_uuid, match_id, state, released_at
+		) VALUES ($1, 'cancellation', $2, $3, $4, 'released', NOW())`,
+		request.OperationID, request.Scope.Provider, request.Scope.FacilityUUID, request.MatchID,
+	); err != nil {
+		return nil, fmt.Errorf("insert resolved cancellation claim: %w", err)
+	}
+	operation, err := getOperationTx(ctx, tx, request.OperationID)
+	if err != nil {
+		return nil, err
+	}
+	return &Admission{Disposition: AdmissionResolved, Operation: operation}, nil
 }
 
 func lockAccount(ctx context.Context, tx pgx.Tx, provider, identity string) (id int64, state, activeOperation, quarantineOperation string, err error) {
