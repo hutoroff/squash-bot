@@ -49,6 +49,43 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestSingletonGuardExcludesSecondProcessAndReportsConnectionLoss(t *testing.T) {
+	ctx := context.Background()
+	guard, err := bookingstorage.AcquireSingletonGuard(ctx, testDatabaseURL, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := bookingstorage.AcquireSingletonGuard(ctx, testDatabaseURL, 20*time.Millisecond)
+	if !errors.Is(err, bookingstorage.ErrSingletonHeld) {
+		if second != nil {
+			_ = second.Close(ctx)
+		}
+		t.Fatalf("second singleton acquisition error = %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `SELECT pg_terminate_backend($1)`, guard.BackendPID()); err != nil {
+		t.Fatalf("terminate singleton backend: %v", err)
+	}
+	select {
+	case <-guard.Lost():
+	case <-time.After(time.Second):
+		t.Fatal("singleton guard did not report connection loss")
+	}
+	if guard.Healthy() {
+		t.Fatal("singleton guard remained healthy after connection loss")
+	}
+	if err := guard.Close(ctx); err != nil {
+		t.Fatalf("close lost singleton guard: %v", err)
+	}
+
+	replacement, err := bookingstorage.AcquireSingletonGuard(ctx, testDatabaseURL, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("acquire singleton after old connection stopped: %v", err)
+	}
+	if err := replacement.Close(ctx); err != nil {
+		t.Fatalf("close replacement singleton: %v", err)
+	}
+}
+
 func TestMigrationStreamsCoexistInBothOrders(t *testing.T) {
 	ctx := context.Background()
 	assertMigrationTables(t, ctx, testPool)
