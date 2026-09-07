@@ -254,6 +254,165 @@ func providerBookingChange(existing, requested *ProviderBooking) (changed, confl
 	return changed, false
 }
 
+// ApplyVerifiedResolution atomically records credentialed exact-match evidence,
+// resolves an unknown operation, and updates account/resource blockers. It does
+// not dispatch provider work. Reusing an event key is accepted only for exactly
+// the same immutable resolution.
+func (r *EvidenceRepo) ApplyVerifiedResolution(ctx context.Context, resolution VerifiedResolution) (*Operation, error) {
+	if resolution.ExpectedRevision <= 0 || (resolution.EventType != "reconciliation" && resolution.EventType != "resolution") ||
+		resolution.MatchID == "" || (resolution.ProviderState != "active" && resolution.ProviderState != "cancelled") ||
+		len(resolution.Actor) == 0 || len(resolution.Actor) > 128 || len(resolution.Reason) == 0 || len(resolution.Reason) > 256 {
+		return nil, fmt.Errorf("invalid verified booking resolution")
+	}
+	evidence, err := json.Marshal(struct {
+		MatchID       string `json:"match_id"`
+		ProviderState string `json:"provider_state"`
+		Actor         string `json:"actor"`
+	}{MatchID: resolution.MatchID, ProviderState: resolution.ProviderState, Actor: resolution.Actor})
+	if err != nil {
+		return nil, fmt.Errorf("marshal verified booking resolution: %w", err)
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin verified booking resolution: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	operation, err := getOperationForUpdate(ctx, tx, resolution.OperationID)
+	if err != nil {
+		return nil, fmt.Errorf("lock operation for verified resolution: %w", err)
+	}
+	expectedRevision := resolution.ExpectedRevision
+	event := OperationEvent{
+		OperationID: resolution.OperationID, EventKey: resolution.EventKey, EventType: resolution.EventType,
+		ExpectedRevision: &expectedRevision, ResultingRevision: expectedRevision + 1,
+		Reason: resolution.Reason, Evidence: evidence,
+	}
+	if stored, eventErr := getEventTx(ctx, tx, resolution.OperationID, resolution.EventKey); eventErr == nil {
+		if !sameVerifiedResolutionEvent(stored, event, resolution.MatchID, resolution.Actor) {
+			return nil, &ConflictError{Code: bookingapi.ErrorIdempotencyKeyConflict, ConflictingOperationID: string(resolution.OperationID)}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit verified resolution replay: %w", err)
+		}
+		return operation, nil
+	} else if !errors.Is(eventErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("read verified resolution event: %w", eventErr)
+	}
+	if operation.State != bookingapi.StateOutcomeUnknown || operation.ExecutorID != "" || operation.Revision != resolution.ExpectedRevision {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(resolution.OperationID)}
+	}
+
+	if operation.Kind == bookingapi.OperationCreate {
+		bookingState := "confirmed"
+		if resolution.ProviderState == "cancelled" {
+			bookingState = "cancelled"
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO booking_provider_bookings (
+				create_operation_id, provider, facility_uuid, match_id, payment_state, booking_state
+			) VALUES ($1, $2, $3, $4, 'confirmed', $5)
+			ON CONFLICT (create_operation_id) DO UPDATE SET
+				match_id = COALESCE(booking_provider_bookings.match_id, EXCLUDED.match_id),
+				payment_state = CASE WHEN booking_provider_bookings.payment_state = 'unknown' THEN 'confirmed' ELSE booking_provider_bookings.payment_state END,
+				booking_state = CASE
+					WHEN EXCLUDED.booking_state = 'cancelled' THEN 'cancelled'
+					WHEN booking_provider_bookings.booking_state IN ('unknown', 'reserved') THEN 'confirmed'
+					ELSE booking_provider_bookings.booking_state
+				END,
+				updated_at = NOW()
+			WHERE booking_provider_bookings.provider = EXCLUDED.provider
+			  AND booking_provider_bookings.facility_uuid = EXCLUDED.facility_uuid
+			  AND (booking_provider_bookings.match_id IS NULL OR booking_provider_bookings.match_id = EXCLUDED.match_id)
+			  AND booking_provider_bookings.payment_state <> 'rejected'
+			  AND NOT (booking_provider_bookings.booking_state = 'cancelled' AND EXCLUDED.booking_state <> 'cancelled')`,
+			operation.OperationID, operation.Scope.Provider, operation.Scope.FacilityUUID, resolution.MatchID, bookingState)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(operation.OperationID)}
+			}
+			return nil, fmt.Errorf("record verified provider booking: %w", err)
+		}
+		var storedMatchID, paymentState, storedBookingState string
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(match_id, ''), payment_state, booking_state
+			FROM booking_provider_bookings WHERE create_operation_id = $1`, operation.OperationID,
+		).Scan(&storedMatchID, &paymentState, &storedBookingState); err != nil {
+			return nil, fmt.Errorf("verify resolved provider booking: %w", err)
+		}
+		if storedMatchID != resolution.MatchID || paymentState != "confirmed" ||
+			(resolution.ProviderState == "active" && storedBookingState == "cancelled") {
+			return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(operation.OperationID)}
+		}
+		if resolution.ProviderState == "cancelled" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking_resource_claims SET state = 'released', released_at = NOW()
+				WHERE operation_id = $1 AND claim_type = 'occupancy' AND state = 'active'`, operation.OperationID); err != nil {
+				return nil, fmt.Errorf("release resolved cancelled occupancy: %w", err)
+			}
+		}
+	} else {
+		if operation.TargetMatchID != resolution.MatchID || resolution.ProviderState != "cancelled" {
+			return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(operation.OperationID)}
+		}
+		var createOperationID string
+		err := tx.QueryRow(ctx, `
+			UPDATE booking_provider_bookings b
+			SET booking_state = 'cancelled', cancellation_operation_id = COALESCE(cancellation_operation_id, $1), updated_at = NOW()
+			FROM booking_operations create_operation
+			WHERE b.create_operation_id = create_operation.operation_id
+			  AND b.provider = $2 AND b.facility_uuid = $3 AND b.match_id = $4
+			  AND create_operation.account_id = $5
+			RETURNING b.create_operation_id::text`, operation.OperationID, operation.Scope.Provider,
+			operation.Scope.FacilityUUID, resolution.MatchID, operation.AccountID,
+		).Scan(&createOperationID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(operation.OperationID)}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("record verified provider cancellation: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking_resource_claims SET state = 'released', released_at = NOW()
+			WHERE (operation_id = $1 AND claim_type = 'occupancy' OR operation_id = $2 AND claim_type = 'cancellation')
+			  AND state = 'active'`, createOperationID, operation.OperationID); err != nil {
+			return nil, fmt.Errorf("release verified cancellation claims: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking_operations
+		SET state = 'succeeded', outcome = 'success', phase = 'finalization',
+		    revision = $2, updated_at = NOW()
+		WHERE operation_id = $1`, operation.OperationID, resolution.ExpectedRevision+1); err != nil {
+		return nil, fmt.Errorf("finalize verified booking resolution: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking_accounts
+		SET state = 'available', quarantine_operation_id = NULL, updated_at = NOW()
+		WHERE id = $1 AND quarantine_operation_id = $2`, operation.AccountID, operation.OperationID); err != nil {
+		return nil, fmt.Errorf("clear resolved booking account quarantine: %w", err)
+	}
+	var storedOperationID, storedEventKey string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO booking_operation_events (
+			operation_id, event_key, event_type, expected_revision, resulting_revision, reason, evidence
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING operation_id::text, event_key::text`, operation.OperationID, resolution.EventKey,
+		resolution.EventType, resolution.ExpectedRevision, resolution.ExpectedRevision+1, resolution.Reason, evidence,
+	).Scan(&storedOperationID, &storedEventKey); err != nil {
+		return nil, fmt.Errorf("append verified booking resolution event: %w", err)
+	}
+	resolved, err := getOperationTx(ctx, tx, operation.OperationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit verified booking resolution: %w", err)
+	}
+	return resolved, nil
+}
+
 // AppendEvent is idempotent by operation/event key and atomically advances the
 // operation revision. A reused key with different immutable contents or a stale
 // expected revision is rejected.
@@ -323,14 +482,26 @@ func (r *EvidenceRepo) AppendEvent(ctx context.Context, event OperationEvent) (*
 	return result, nil
 }
 
-func getEventTx(ctx context.Context, tx pgx.Tx, operationID, eventKey bookingapi.OperationID) (*OperationEvent, error) {
-	var result OperationEvent
-	var storedOperationID, storedEventKey string
-	err := tx.QueryRow(ctx, `
+func (r *EvidenceRepo) GetEvent(ctx context.Context, operationID, eventKey bookingapi.OperationID) (*OperationEvent, error) {
+	return getEventRow(r.pool.QueryRow(ctx, `
 		SELECT id, operation_id::text, event_key::text, event_type,
 		       expected_revision, resulting_revision, COALESCE(reason, ''), evidence, created_at
 		FROM booking_operation_events
-		WHERE operation_id = $1 AND event_key = $2`, operationID, eventKey).Scan(
+		WHERE operation_id = $1 AND event_key = $2`, operationID, eventKey))
+}
+
+func getEventTx(ctx context.Context, tx pgx.Tx, operationID, eventKey bookingapi.OperationID) (*OperationEvent, error) {
+	return getEventRow(tx.QueryRow(ctx, `
+		SELECT id, operation_id::text, event_key::text, event_type,
+		       expected_revision, resulting_revision, COALESCE(reason, ''), evidence, created_at
+		FROM booking_operation_events
+		WHERE operation_id = $1 AND event_key = $2`, operationID, eventKey))
+}
+
+func getEventRow(row pgx.Row) (*OperationEvent, error) {
+	var result OperationEvent
+	var storedOperationID, storedEventKey string
+	err := row.Scan(
 		&result.ID, &storedOperationID, &storedEventKey, &result.EventType,
 		&result.ExpectedRevision, &result.ResultingRevision, &result.Reason, &result.Evidence, &result.CreatedAt)
 	if err != nil {
@@ -339,6 +510,19 @@ func getEventTx(ctx context.Context, tx pgx.Tx, operationID, eventKey bookingapi
 	result.OperationID = bookingapi.OperationID(storedOperationID)
 	result.EventKey = bookingapi.OperationID(storedEventKey)
 	return &result, nil
+}
+
+func sameVerifiedResolutionEvent(stored *OperationEvent, requested OperationEvent, matchID, actor string) bool {
+	var evidence struct {
+		MatchID string `json:"match_id"`
+		Actor   string `json:"actor"`
+	}
+	if json.Unmarshal(stored.Evidence, &evidence) != nil {
+		return false
+	}
+	return stored.EventType == requested.EventType && equalOptionalInt64(stored.ExpectedRevision, requested.ExpectedRevision) &&
+		stored.ResultingRevision == requested.ResultingRevision && stored.Reason == requested.Reason &&
+		evidence.MatchID == matchID && evidence.Actor == actor
 }
 
 func sameEvent(stored *OperationEvent, requested OperationEvent, evidence []byte) bool {

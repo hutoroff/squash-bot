@@ -172,6 +172,25 @@ func TestDeriveProviderAliasIsKeyedAndProviderScoped(t *testing.T) {
 	}
 }
 
+func TestValidateResolutionRequestRejectsUnsafeOrUnboundedMetadata(t *testing.T) {
+	valid := ResolutionRequest{ExpectedRevision: 3, MatchID: "match-1", Actor: "management", Reason: "verified exact match"}
+	if err := ValidateResolutionRequest(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*ResolutionRequest){
+		func(request *ResolutionRequest) { request.ExpectedRevision = 0 },
+		func(request *ResolutionRequest) { request.MatchID = " match-1" },
+		func(request *ResolutionRequest) { request.Actor = "management\nadmin" },
+		func(request *ResolutionRequest) { request.Reason = strings.Repeat("r", 257) },
+	} {
+		request := valid
+		mutate(&request)
+		if err := ValidateResolutionRequest(request); err == nil {
+			t.Fatalf("invalid resolution accepted: %+v", request)
+		}
+	}
+}
+
 func TestValidateCreateAccountIdentityIsProviderScoped(t *testing.T) {
 	first, err := ValidateCreate(testOperationID, testScope, testIdentityKey, validCreateRequest())
 	if err != nil {

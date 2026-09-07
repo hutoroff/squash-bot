@@ -89,6 +89,24 @@ type CancelRequest struct {
 	Password string `json:"password"`
 }
 
+// ReconcileRequest authorizes one bounded provider read for an existing
+// unknown operation. Credentials are used in memory only.
+type ReconcileRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// ResolutionRequest explicitly associates a verified provider match with an
+// unknown operation. The event key is carried by Idempotency-Key.
+type ResolutionRequest struct {
+	ExpectedRevision int64  `json:"expectedRevision"`
+	MatchID          string `json:"matchId"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	Actor            string `json:"actor"`
+	Reason           string `json:"reason"`
+}
+
 type ProviderEvidence struct {
 	BookingUUID string `json:"booking_uuid,omitempty"`
 	BookingID   int    `json:"booking_id,omitempty"`

@@ -84,6 +84,17 @@ type ProviderBooking struct {
 	UpdatedAt               time.Time
 }
 
+type VerifiedResolution struct {
+	OperationID      bookingapi.OperationID
+	EventKey         bookingapi.OperationID
+	ExpectedRevision int64
+	EventType        string
+	MatchID          string
+	ProviderState    string
+	Actor            string
+	Reason           string
+}
+
 type OperationEvent struct {
 	ID                int64
 	OperationID       bookingapi.OperationID

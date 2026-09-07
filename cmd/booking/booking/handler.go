@@ -49,6 +49,7 @@ type Handler struct {
 
 	coordinator         ReliableCoordinator
 	reliableStatus      OperationStatusReader
+	reconciler          ReliableReconciler
 	reliableScope       bookingapi.Scope
 	reliableIdentityKey []byte
 	reliableEnabled     bool
@@ -80,9 +81,15 @@ type OperationStatusReader interface {
 	StatusFromOperation(context.Context, *storage.Operation) (*bookingapi.OperationStatus, error)
 }
 
+type ReliableReconciler interface {
+	Reconcile(context.Context, bookingapi.OperationID, bookingapi.Credentials) (*bookingapi.OperationStatus, error)
+	Resolve(context.Context, bookingapi.OperationID, bookingapi.OperationID, bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error)
+}
+
 type ReliableAPIConfig struct {
 	Coordinator  ReliableCoordinator
 	Status       OperationStatusReader
+	Reconciler   ReliableReconciler
 	Scope        bookingapi.Scope
 	IdentityKey  []byte
 	ResponseWait time.Duration
@@ -92,8 +99,8 @@ type ReliableAPIConfig struct {
 // ConfigureReliableAPI enables v2 mutation/status routes and disables keyless
 // legacy mutations. P6 owns constructing these dependencies during startup.
 func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
-	if cfg.Coordinator == nil || cfg.Status == nil {
-		return fmt.Errorf("reliable booking coordinator and status reader are required")
+	if cfg.Coordinator == nil || cfg.Status == nil || cfg.Reconciler == nil {
+		return fmt.Errorf("reliable booking coordinator, status reader, and reconciler are required")
 	}
 	if cfg.ResponseWait == 0 {
 		cfg.ResponseWait = 20 * time.Second
@@ -115,6 +122,7 @@ func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
 	}
 	h.coordinator = cfg.Coordinator
 	h.reliableStatus = cfg.Status
+	h.reconciler = cfg.Reconciler
 	h.reliableScope = cfg.Scope
 	h.reliableIdentityKey = append([]byte(nil), cfg.IdentityKey...)
 	h.responseWait = cfg.ResponseWait
@@ -164,6 +172,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v2/eversports/facility", h.getFacility)
 	mux.HandleFunc("GET /api/v2/eversports/operations/{id}", h.getOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/reconcile", h.reconcileOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/resolution", h.resolveOperationV2)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -384,6 +394,83 @@ func (h *Handler) getOperationV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Handler) reconcileOperationV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, err := bookingapi.ParseOperationID(r.PathValue("id"))
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid operation ID", "", "", "")
+		return
+	}
+	var request bookingapi.ReconcileRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	status, err := h.reconciler.Reconcile(r.Context(), operationID, bookingapi.Credentials{Email: request.Email, Password: request.Password})
+	h.writeReconciliationResult(w, operationID, status, err)
+}
+
+func (h *Handler) resolveOperationV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, err := bookingapi.ParseOperationID(r.PathValue("id"))
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid operation ID", "", "", "")
+		return
+	}
+	eventKey, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.ResolutionRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	status, err := h.reconciler.Resolve(r.Context(), operationID, eventKey, request)
+	h.writeReconciliationResult(w, operationID, status, err)
+}
+
+func (h *Handler) writeReconciliationResult(w http.ResponseWriter, operationID bookingapi.OperationID, status *bookingapi.OperationStatus, err error) {
+	var expired *bookingservice.ResultExpiredError
+	if errors.As(err, &expired) {
+		if status == nil {
+			status = expired.Status
+		}
+		writeJSON(w, http.StatusGone, status)
+		return
+	}
+	if err == nil {
+		if status == nil {
+			h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "operation status unavailable", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+			return
+		}
+		w.Header().Set("Location", status.StatusURL)
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if errors.Is(err, bookingservice.ErrReconciliationUnresolved) || errors.Is(err, bookingservice.ErrVerificationMismatch) {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "provider read did not prove a safe terminal outcome", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	var validation *bookingapi.ValidationError
+	if errors.As(err, &validation) {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid reconciliation request", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.writeContractError(w, http.StatusNotFound, bookingapi.ErrorOperationNotFound, "operation not found", string(operationID), "", "")
+		return
+	}
+	var conflict *storage.ConflictError
+	if errors.As(err, &conflict) {
+		h.writeSubmissionError(w, operationID, err)
+		return
+	}
+	h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "reconciliation dependency unavailable", string(operationID), "", bookingservice.OperationStatusURL(operationID))
 }
 
 func (h *Handler) writeAdmission(w http.ResponseWriter, r *http.Request, admission *storage.Admission) {

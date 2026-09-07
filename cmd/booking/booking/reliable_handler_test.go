@@ -67,6 +67,28 @@ func (s *fakeOperationStatusReader) StatusFromOperation(_ context.Context, opera
 	return statusForOperation(operation), s.fromErr
 }
 
+type fakeReliableReconciler struct {
+	status         *bookingapi.OperationStatus
+	err            error
+	reconcileCalls int
+	resolveCalls   int
+	operationID    bookingapi.OperationID
+	eventKey       bookingapi.OperationID
+	credentials    bookingapi.Credentials
+	resolution     bookingapi.ResolutionRequest
+}
+
+func (r *fakeReliableReconciler) Reconcile(_ context.Context, operationID bookingapi.OperationID, credentials bookingapi.Credentials) (*bookingapi.OperationStatus, error) {
+	r.reconcileCalls++
+	r.operationID, r.credentials = operationID, credentials
+	return cloneStatus(r.status), r.err
+}
+func (r *fakeReliableReconciler) Resolve(_ context.Context, operationID, eventKey bookingapi.OperationID, request bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error) {
+	r.resolveCalls++
+	r.operationID, r.eventKey, r.resolution = operationID, eventKey, request
+	return cloneStatus(r.status), r.err
+}
+
 func cloneStatus(status *bookingapi.OperationStatus) *bookingapi.OperationStatus {
 	if status == nil {
 		return nil
@@ -301,11 +323,79 @@ func TestReliableStatusNotFoundDoesNotClaimProviderFailure(t *testing.T) {
 	}
 }
 
+func TestReliableReconciliationAndResolutionControls(t *testing.T) {
+	status := &bookingapi.OperationStatus{
+		OperationID: reliableOperationID, Kind: bookingapi.OperationCreate, State: bookingapi.StateSucceeded,
+		Outcome: bookingapi.OutcomeSuccess, Phase: bookingapi.PhaseFinalization,
+		StatusURL: bookingservice.OperationStatusURL(reliableOperationID),
+	}
+	reconciler := &fakeReliableReconciler{status: status}
+	h := newReliableTestHandlerWithReconciler(t, &fakeReliableCoordinator{}, &fakeOperationStatusReader{}, reconciler)
+	srv := serve(h)
+	defer srv.Close()
+
+	reconcileResponse, err := http.Post(srv.URL+"/api/v2/eversports/operations/"+reliableOperationID+"/reconcile", "application/json",
+		strings.NewReader(`{"email":"`+testEmail+`","password":"`+testPassword+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reconcileResponse.Body.Close()
+	if reconcileResponse.StatusCode != http.StatusOK || reconciler.reconcileCalls != 1 || reconciler.credentials.Password != testPassword {
+		t.Fatalf("reconcile status/calls/credentials = %d/%d/%+v", reconcileResponse.StatusCode, reconciler.reconcileCalls, reconciler.credentials)
+	}
+
+	resolutionBody := `{"expectedRevision":3,"matchId":"match-1","email":"` + testEmail + `","password":"` + testPassword + `","actor":"management","reason":"verified exact match"}`
+	missingKeyResponse, err := http.Post(srv.URL+"/api/v2/eversports/operations/"+reliableOperationID+"/resolution", "application/json", strings.NewReader(resolutionBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingKeyResponse.Body.Close()
+	if missingKeyResponse.StatusCode != http.StatusBadRequest || reconciler.resolveCalls != 0 {
+		t.Fatalf("keyless resolution status/calls = %d/%d", missingKeyResponse.StatusCode, reconciler.resolveCalls)
+	}
+
+	resolutionRequest, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/eversports/operations/"+reliableOperationID+"/resolution", strings.NewReader(resolutionBody))
+	resolutionRequest.Header.Set("Idempotency-Key", reliableExecutorID)
+	resolutionResponse, err := http.DefaultClient.Do(resolutionRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolutionResponse.Body.Close()
+	if resolutionResponse.StatusCode != http.StatusOK || reconciler.resolveCalls != 1 || reconciler.eventKey != reliableExecutorID || reconciler.resolution.ExpectedRevision != 3 {
+		t.Fatalf("resolution status/call = %d/%+v", resolutionResponse.StatusCode, reconciler)
+	}
+}
+
+func TestReliableReconciliationFailureRemainsUnknown(t *testing.T) {
+	reconciler := &fakeReliableReconciler{err: bookingservice.ErrVerificationMismatch}
+	h := newReliableTestHandlerWithReconciler(t, &fakeReliableCoordinator{}, &fakeOperationStatusReader{}, reconciler)
+	srv := serve(h)
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/api/v2/eversports/operations/"+reliableOperationID+"/reconcile", "application/json", strings.NewReader(`{"email":"`+testEmail+`","password":"`+testPassword+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result bookingapi.ErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusConflict || result.Code != bookingapi.ErrorOperationOutcomeUnknown {
+		t.Fatalf("reconciliation failure = %d/%+v", resp.StatusCode, result)
+	}
+}
+
 func newReliableTestHandler(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader) *Handler {
+	t.Helper()
+	return newReliableTestHandlerWithReconciler(t, coordinator, status, &fakeReliableReconciler{})
+}
+
+func newReliableTestHandlerWithReconciler(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader, reconciler ReliableReconciler) *Handler {
 	t.Helper()
 	h := NewHandler(testLogger, "test-version", reliableScope.FacilityID, reliableScope.FacilityUUID, reliableScope.FacilitySlug)
 	if err := h.ConfigureReliableAPI(ReliableAPIConfig{
-		Coordinator: coordinator, Status: status, Scope: reliableScope, IdentityKey: reliableIdentityKey,
+		Coordinator: coordinator, Status: status, Reconciler: reconciler,
+		Scope: reliableScope, IdentityKey: reliableIdentityKey,
 		ResponseWait: time.Millisecond, PollInterval: 100 * time.Microsecond,
 	}); err != nil {
 		t.Fatal(err)
