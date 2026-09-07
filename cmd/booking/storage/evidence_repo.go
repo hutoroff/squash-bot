@@ -1,0 +1,351 @@
+package storage
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type EvidenceRepo struct {
+	pool *pgxpool.Pool
+}
+
+func NewEvidenceRepo(pool *pgxpool.Pool) *EvidenceRepo { return &EvidenceRepo{pool: pool} }
+
+// VerifyIdentityKey pins the durable account-identity namespace. Startup must
+// fail rather than accept mutations when a different key is presented later.
+func (r *EvidenceRepo) VerifyIdentityKey(ctx context.Context, key []byte) error {
+	marker, err := IdentityKeyMarker(key)
+	if err != nil {
+		return err
+	}
+	return r.PutMetadataOnce(ctx, "account_identity_key_marker_v1", marker)
+}
+
+// PutMetadataOnce stores immutable ledger metadata such as the account identity
+// key verification marker. Repeating the same value is accepted; changing it is
+// rejected so a deployment cannot silently split the identity namespace.
+func (r *EvidenceRepo) PutMetadataOnce(ctx context.Context, key, value string) error {
+	var stored string
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO booking_metadata (key, value)
+		VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = booking_metadata.value
+		RETURNING value`, key, value).Scan(&stored)
+	if err != nil {
+		return fmt.Errorf("store booking metadata: %w", err)
+	}
+	if stored != value {
+		return &ConflictError{Code: bookingapi.ErrorContractUpgradeRequired}
+	}
+	return nil
+}
+
+func (r *EvidenceRepo) GetMetadata(ctx context.Context, key string) (string, error) {
+	var value string
+	if err := r.pool.QueryRow(ctx, `SELECT value FROM booking_metadata WHERE key = $1`, key).Scan(&value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// UpsertProviderBooking fills creation evidence while the matching executor
+// still owns the operation. It refuses stale ownership, cancellation state and
+// contradictory identifiers instead of overwriting history.
+func (r *EvidenceRepo) UpsertProviderBooking(ctx context.Context, booking ProviderBooking, executorID bookingapi.OperationID) (*ProviderBooking, error) {
+	if booking.BookingState == "cancelled" || booking.CancellationOperationID != "" {
+		return nil, fmt.Errorf("cancellation evidence requires an atomic cancellation transition")
+	}
+	if (booking.BookingState != "unknown" && booking.BookingState != "reserved" && booking.BookingState != "confirmed") ||
+		(booking.PaymentState != "unknown" && booking.PaymentState != "confirmed" && booking.PaymentState != "rejected") {
+		return nil, fmt.Errorf("invalid provider booking evidence state")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin booking provider evidence: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	operation, err := getOperationForUpdate(ctx, tx, booking.CreateOperationID)
+	if err != nil {
+		return nil, fmt.Errorf("lock operation for provider evidence: %w", err)
+	}
+	if operation.Kind != bookingapi.OperationCreate || operation.ExecutorID != string(executorID) ||
+		(operation.State != bookingapi.StateAccepted && operation.State != bookingapi.StateRunning) ||
+		operation.Scope.Provider != booking.Provider || operation.Scope.FacilityUUID != booking.FacilityUUID {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(booking.CreateOperationID)}
+	}
+	if existing, err := getProviderBookingTx(ctx, tx, booking.CreateOperationID); err == nil {
+		changed, conflict := providerBookingChange(existing, &booking)
+		if conflict {
+			return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(booking.CreateOperationID)}
+		}
+		if !changed {
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("commit booking provider evidence replay: %w", err)
+			}
+			return existing, nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("read booking provider evidence: %w", err)
+	}
+
+	var result ProviderBooking
+	var operationID, cancellationOperationID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO booking_provider_bookings (
+			create_operation_id, provider, facility_uuid, booking_uuid, booking_id,
+			payment_id, match_id, payment_state, booking_state, cancellation_operation_id
+		) VALUES (
+			$1, $2, $3, NULLIF($4, ''), $5, $6, NULLIF($7, ''), $8, $9, NULLIF($10, '')::uuid
+		)
+		ON CONFLICT (create_operation_id) DO UPDATE SET
+			booking_uuid = COALESCE(booking_provider_bookings.booking_uuid, EXCLUDED.booking_uuid),
+			booking_id = COALESCE(booking_provider_bookings.booking_id, EXCLUDED.booking_id),
+			payment_id = COALESCE(booking_provider_bookings.payment_id, EXCLUDED.payment_id),
+			match_id = COALESCE(booking_provider_bookings.match_id, EXCLUDED.match_id),
+			payment_state = CASE
+				WHEN booking_provider_bookings.payment_state = 'unknown' THEN EXCLUDED.payment_state
+				ELSE booking_provider_bookings.payment_state
+			END,
+			booking_state = CASE
+				WHEN booking_provider_bookings.booking_state = 'unknown' THEN EXCLUDED.booking_state
+				WHEN booking_provider_bookings.booking_state = 'reserved' AND EXCLUDED.booking_state IN ('confirmed', 'cancelled') THEN EXCLUDED.booking_state
+				WHEN booking_provider_bookings.booking_state = 'confirmed' AND EXCLUDED.booking_state = 'cancelled' THEN EXCLUDED.booking_state
+				ELSE booking_provider_bookings.booking_state
+			END,
+			cancellation_operation_id = COALESCE(booking_provider_bookings.cancellation_operation_id, EXCLUDED.cancellation_operation_id),
+			updated_at = NOW()
+		WHERE booking_provider_bookings.provider = EXCLUDED.provider
+		  AND booking_provider_bookings.facility_uuid = EXCLUDED.facility_uuid
+		  AND (booking_provider_bookings.booking_uuid IS NULL OR EXCLUDED.booking_uuid IS NULL OR booking_provider_bookings.booking_uuid = EXCLUDED.booking_uuid)
+		  AND (booking_provider_bookings.booking_id IS NULL OR EXCLUDED.booking_id IS NULL OR booking_provider_bookings.booking_id = EXCLUDED.booking_id)
+		  AND (booking_provider_bookings.payment_id IS NULL OR EXCLUDED.payment_id IS NULL OR booking_provider_bookings.payment_id = EXCLUDED.payment_id)
+		  AND (booking_provider_bookings.match_id IS NULL OR EXCLUDED.match_id IS NULL OR booking_provider_bookings.match_id = EXCLUDED.match_id)
+		  AND (booking_provider_bookings.cancellation_operation_id IS NULL OR EXCLUDED.cancellation_operation_id IS NULL OR booking_provider_bookings.cancellation_operation_id = EXCLUDED.cancellation_operation_id)
+		  AND NOT (booking_provider_bookings.payment_state IN ('confirmed', 'rejected') AND EXCLUDED.payment_state IN ('confirmed', 'rejected')
+		           AND booking_provider_bookings.payment_state <> EXCLUDED.payment_state)
+		  AND NOT (booking_provider_bookings.booking_state = 'cancelled' AND EXCLUDED.booking_state <> 'cancelled')
+		RETURNING id, create_operation_id::text, provider, facility_uuid,
+		          COALESCE(booking_uuid, ''), booking_id, payment_id, COALESCE(match_id, ''),
+		          payment_state, booking_state, COALESCE(cancellation_operation_id::text, ''), created_at, updated_at`,
+		booking.CreateOperationID, booking.Provider, booking.FacilityUUID, booking.BookingUUID,
+		booking.BookingID, booking.PaymentID, booking.MatchID, booking.PaymentState,
+		booking.BookingState, booking.CancellationOperationID,
+	).Scan(&result.ID, &operationID, &result.Provider, &result.FacilityUUID,
+		&result.BookingUUID, &result.BookingID, &result.PaymentID, &result.MatchID,
+		&result.PaymentState, &result.BookingState, &cancellationOperationID,
+		&result.CreatedAt, &result.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(booking.CreateOperationID)}
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, &ConflictError{Code: bookingapi.ErrorBookingConflict, ConflictingOperationID: string(booking.CreateOperationID)}
+		}
+		return nil, fmt.Errorf("upsert booking provider evidence: %w", err)
+	}
+	result.CreateOperationID = bookingapi.OperationID(operationID)
+	result.CancellationOperationID = cancellationOperationID
+	updateResult, err := tx.Exec(ctx, `
+		UPDATE booking_operations
+		SET revision = revision + 1, updated_at = NOW()
+		WHERE operation_id = $1 AND executor_id = $2`, booking.CreateOperationID, executorID)
+	if err != nil {
+		return nil, fmt.Errorf("advance booking provider evidence revision: %w", err)
+	}
+	if updateResult.RowsAffected() != 1 {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(booking.CreateOperationID)}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit booking provider evidence: %w", err)
+	}
+	return &result, nil
+}
+
+func (r *EvidenceRepo) GetProviderBooking(ctx context.Context, createOperationID bookingapi.OperationID) (*ProviderBooking, error) {
+	return getProviderBookingRow(r.pool.QueryRow(ctx, providerBookingSelect, createOperationID))
+}
+
+func getProviderBookingTx(ctx context.Context, tx pgx.Tx, createOperationID bookingapi.OperationID) (*ProviderBooking, error) {
+	return getProviderBookingRow(tx.QueryRow(ctx, providerBookingSelect+` FOR UPDATE`, createOperationID))
+}
+
+const providerBookingSelect = `
+	SELECT id, create_operation_id::text, provider, facility_uuid,
+	       COALESCE(booking_uuid, ''), booking_id, payment_id, COALESCE(match_id, ''),
+	       payment_state, booking_state, COALESCE(cancellation_operation_id::text, ''), created_at, updated_at
+	FROM booking_provider_bookings
+	WHERE create_operation_id = $1`
+
+func getProviderBookingRow(row pgx.Row) (*ProviderBooking, error) {
+	var result ProviderBooking
+	var operationID, cancellationOperationID string
+	err := row.Scan(
+		&result.ID, &operationID, &result.Provider, &result.FacilityUUID,
+		&result.BookingUUID, &result.BookingID, &result.PaymentID, &result.MatchID,
+		&result.PaymentState, &result.BookingState, &cancellationOperationID,
+		&result.CreatedAt, &result.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	result.CreateOperationID = bookingapi.OperationID(operationID)
+	result.CancellationOperationID = cancellationOperationID
+	return &result, nil
+}
+
+func providerBookingChange(existing, requested *ProviderBooking) (changed, conflict bool) {
+	if existing.Provider != requested.Provider || existing.FacilityUUID != requested.FacilityUUID {
+		return false, true
+	}
+	for _, values := range [][2]string{
+		{existing.BookingUUID, requested.BookingUUID},
+		{existing.MatchID, requested.MatchID},
+	} {
+		if values[1] == "" {
+			continue
+		}
+		if values[0] == "" {
+			changed = true
+		} else if values[0] != values[1] {
+			return false, true
+		}
+	}
+	for _, values := range [][2]*int64{
+		{existing.BookingID, requested.BookingID},
+		{existing.PaymentID, requested.PaymentID},
+	} {
+		if values[1] == nil {
+			continue
+		}
+		if values[0] == nil {
+			changed = true
+		} else if *values[0] != *values[1] {
+			return false, true
+		}
+	}
+	validPaymentState := map[string]bool{"unknown": true, "confirmed": true, "rejected": true}
+	if !validPaymentState[requested.PaymentState] {
+		return false, true
+	}
+	if requested.PaymentState != "unknown" {
+		if existing.PaymentState == "unknown" {
+			changed = true
+		} else if existing.PaymentState != requested.PaymentState {
+			return false, true
+		}
+	}
+	bookingRank := map[string]int{"unknown": 0, "reserved": 1, "confirmed": 2, "cancelled": 3}
+	existingRank, existingValid := bookingRank[existing.BookingState]
+	requestedRank, requestedValid := bookingRank[requested.BookingState]
+	if !existingValid || !requestedValid {
+		return false, true
+	}
+	if requestedRank > existingRank {
+		changed = true
+	}
+	return changed, false
+}
+
+// AppendEvent is idempotent by operation/event key and atomically advances the
+// operation revision. A reused key with different immutable contents or a stale
+// expected revision is rejected.
+func (r *EvidenceRepo) AppendEvent(ctx context.Context, event OperationEvent) (*OperationEvent, error) {
+	evidence := event.Evidence
+	if len(evidence) == 0 {
+		evidence = json.RawMessage(`{}`)
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin booking operation event: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	operation, err := getOperationForUpdate(ctx, tx, event.OperationID)
+	if err != nil {
+		return nil, fmt.Errorf("lock booking operation for event: %w", err)
+	}
+
+	result, err := getEventTx(ctx, tx, event.OperationID, event.EventKey)
+	if err == nil {
+		if !sameEvent(result, event, evidence) {
+			return nil, &ConflictError{Code: bookingapi.ErrorIdempotencyKeyConflict, ConflictingOperationID: string(event.OperationID)}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit booking operation event replay: %w", err)
+		}
+		return result, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if event.ExpectedRevision == nil || *event.ExpectedRevision != operation.Revision || event.ResultingRevision != operation.Revision+1 {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(event.OperationID)}
+	}
+
+	var operationID, eventKey string
+	result = &OperationEvent{}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO booking_operation_events (
+			operation_id, event_key, event_type, expected_revision,
+			resulting_revision, reason, evidence
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7)
+		RETURNING id, operation_id::text, event_key::text, event_type,
+		          expected_revision, resulting_revision, COALESCE(reason, ''), evidence, created_at`,
+		event.OperationID, event.EventKey, event.EventType, event.ExpectedRevision,
+		event.ResultingRevision, event.Reason, evidence,
+	).Scan(&result.ID, &operationID, &eventKey, &result.EventType,
+		&result.ExpectedRevision, &result.ResultingRevision, &result.Reason, &result.Evidence, &result.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("append booking operation event: %w", err)
+	}
+	result.OperationID = bookingapi.OperationID(operationID)
+	result.EventKey = bookingapi.OperationID(eventKey)
+	updateResult, err := tx.Exec(ctx, `
+		UPDATE booking_operations
+		SET revision = $3, updated_at = NOW()
+		WHERE operation_id = $1 AND revision = $2`, event.OperationID, event.ExpectedRevision, event.ResultingRevision)
+	if err != nil {
+		return nil, fmt.Errorf("advance booking operation event revision: %w", err)
+	}
+	if updateResult.RowsAffected() != 1 {
+		return nil, &ConflictError{Code: bookingapi.ErrorOperationOutcomeUnknown, ConflictingOperationID: string(event.OperationID)}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit booking operation event: %w", err)
+	}
+	return result, nil
+}
+
+func getEventTx(ctx context.Context, tx pgx.Tx, operationID, eventKey bookingapi.OperationID) (*OperationEvent, error) {
+	var result OperationEvent
+	var storedOperationID, storedEventKey string
+	err := tx.QueryRow(ctx, `
+		SELECT id, operation_id::text, event_key::text, event_type,
+		       expected_revision, resulting_revision, COALESCE(reason, ''), evidence, created_at
+		FROM booking_operation_events
+		WHERE operation_id = $1 AND event_key = $2`, operationID, eventKey).Scan(
+		&result.ID, &storedOperationID, &storedEventKey, &result.EventType,
+		&result.ExpectedRevision, &result.ResultingRevision, &result.Reason, &result.Evidence, &result.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	result.OperationID = bookingapi.OperationID(storedOperationID)
+	result.EventKey = bookingapi.OperationID(storedEventKey)
+	return &result, nil
+}
+
+func sameEvent(stored *OperationEvent, requested OperationEvent, evidence []byte) bool {
+	return stored.EventType == requested.EventType && equalOptionalInt64(stored.ExpectedRevision, requested.ExpectedRevision) &&
+		stored.ResultingRevision == requested.ResultingRevision && stored.Reason == requested.Reason && equalJSON(stored.Evidence, evidence)
+}
+
+func equalOptionalInt64(left, right *int64) bool {
+	return reflect.DeepEqual(left, right)
+}

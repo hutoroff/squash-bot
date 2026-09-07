@@ -1,6 +1,6 @@
 # Booking service internals
 
-The service wraps the reverse-engineered Eversports API. It currently has no database; sessions are in-memory and scoped to per-request credentials. The shared [booking API v2 contract foundation](../../internal/bookingapi) and typed provider mutation failures now exist, but handlers still expose the legacy non-idempotent API: no operation ledger, status routes, durable conflicts, or v2 mutation dispatch is wired yet. The staged target is in [booking reliability](../booking-reliability-design.md). [Operator API/configuration](../sports-booking-service.md) is separate from this development reference. Manual API examples may cause real bookings; do not execute them as tests.
+The service wraps the reverse-engineered Eversports API. Its running binary still has no database dependency; sessions are in-memory and scoped to per-request credentials. The shared [booking API v2 contract foundation](../../internal/bookingapi), typed provider mutation failures and booking-owned [durable storage package](../../cmd/booking/storage) now exist, but startup/handlers do not use the ledger yet. Handlers still expose the legacy non-idempotent API: no status routes, durable admission, or v2 mutation dispatch is wired. The staged target is in [booking reliability](../booking-reliability-design.md). [Operator API/configuration](../sports-booking-service.md) is separate from this development reference. Manual API examples may cause real bookings; do not execute them as tests.
 
 ## Sources and seams
 
@@ -13,6 +13,7 @@ The service wraps the reverse-engineered Eversports API. It currently has no dat
 | Match lookup/cancellation | [eversports/matches.go](../../cmd/booking/eversports/matches.go) |
 | Courts/slots and calendar HTML parsing | [eversports/slots.go](../../cmd/booking/eversports/slots.go) |
 | Facility profile | [eversports/facility.go](../../cmd/booking/eversports/facility.go) |
+| Booking-owned schema, admission and evidence repositories | [storage](../../cmd/booking/storage) |
 | Public and shared wire types | [eversports/models.go](../../cmd/booking/eversports/models.go) |
 
 The handler-local `eversportsClient` interface enables fakes. Same-package upstream-client tests override `Client.baseURL` with `httptest.Server`; methods must use that field, not the production URL constant directly. Public types belong in models; operation-private wire types stay near their operation.
@@ -59,4 +60,4 @@ Booking timestamps must retain the facility/group local UTC offset. Do not conve
 
 [client_test.go](../../cmd/booking/eversports/client_test.go) covers cookie loss, auth-shaped errors, the pay-offline no-retry boundary, an ambiguous step-1 gateway timeout, and post-payment partial success; [bookings_test.go](../../cmd/booking/eversports/bookings_test.go) covers calendar parsing; [handler_test.go](../../cmd/booking/booking/handler_test.go) covers handler behavior with fakes. Run these locally, not against real accounts.
 
-When modifying an operation, test its real response shapes: normal JSON, top-level errors, business errors, HTML, and relevant HTTP failures. `internal/bookingapi/validation_test.go` pins UUID, scope, local-offset/millisecond, HMAC account-identity, password-independent fingerprint and duplicate-risk request rules; `mutation_error_test.go` pins representative phase/effect classifications. Existing mocked retry/contract tests do not establish end-to-end exactly-once booking, durable API idempotency, or compatibility with an upstream change not captured in fixtures.
+When modifying an operation, test its real response shapes: normal JSON, top-level errors, business errors, HTML, and relevant HTTP failures. `internal/bookingapi/validation_test.go` pins UUID, scope, local-offset/millisecond, HMAC account-identity, password-independent fingerprint and duplicate-risk request rules; `mutation_error_test.go` pins representative phase/effect classifications. Integration-tagged storage tests use disposable PostgreSQL to pin independent migration order, booking-only initialization, concurrent operation admission, account/resource conflicts, explicit replacement limits and immutable evidence. Since the storage layer is not wired to handlers/provider flows, these checks do not establish end-to-end exactly-once booking or compatibility with an upstream change not captured in fixtures.

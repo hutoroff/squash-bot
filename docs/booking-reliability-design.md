@@ -1,6 +1,6 @@
 # Booking reliability and discovery preparation
 
-**Status:** Implementation started locally. P1's shared v2 DTO/validation/fingerprint foundation and typed Eversports mutation failures/response validation are implemented and tested, but are not wired to handlers or durable storage. P2–P7, management integration and discovery attachment remain proposed and unimplemented. Owner decisions below remain authoritative for those tasks.
+**Status:** Implementation in progress. P1's shared v2 contract/failure foundation is committed. P2's booking-owned schema, migration stream, bounded pool/key primitives and durable repositories are implemented and tested locally, but booking startup and handlers do not use them yet. P3–P7, management integration and discovery attachment remain proposed and unimplemented. Owner decisions below remain authoritative for those tasks.
 
 **Code baseline reviewed:** `78fcc52`.
 
@@ -51,7 +51,7 @@ Sources, rather than stale comments in these files, are authoritative:
 | [Server](../cmd/booking/booking/server.go) | Request context drives checkout; 30s HTTP write timeout and 10s shutdown; health is unconditional liveness. | Separate response/execution budgets, durable finalization, draining and readiness. |
 | [Management client](../cmd/management/service/booking_client.go) | Static URL; 30s timeout; no operation key/status or typed execution outcome. | Separate management task, before production activation. |
 | [Management orchestration](../cmd/management/service/booking_core.go) | Every create error can rotate credentials; successful results without match ID are not saved as court bookings. | Separate management task must retain intent and partial results and prohibit implicit ambiguous reexecution. |
-| [Migrations/test helper](../internal/testutil/testdb.go) | One management migration stream and default migration-history table; cleanup assumes management tables. | Independent booking stream/history; tests of both streams in the same schema and booking-only initialization. |
+| [Migrations/test helper](../internal/testutil/testdb.go) | Management still owns the root migration stream; the helper now also supports an empty disposable database for independently ordered streams. | Booking's independent stream/history and both migration orders are covered; startup wiring remains. |
 
 Existing [client tests](../cmd/booking/eversports/client_test.go) cover selected auth retries, a gateway timeout, payment HTML, and post-payment optional failures. They do not establish provider idempotency, account-wide isolation, durable deduplication, semantic payment acknowledgment, or crash recovery. No live provider calls were made for this plan.
 
@@ -68,27 +68,27 @@ management ──HTTP v2──▶ booking ──HTTP──▶ Eversports
 
 Management owns business intent, credential entities, game links, user authorization, and caller risk policy. Booking owns admission, deduplication, external-execution evidence, account/court conflict protection, and API results. Neither owns the other's SQL. The shared schema is a deployment choice, not a distributed transaction across the two services or a security-isolation guarantee.
 
-### Proposed table responsibilities
+### Booking-owned table responsibilities
 
-Exact SQL belongs in implementation migrations; use typed selection/state columns, constraints, bounded JSON only for evidence/result extensions, and PostgreSQL time.
+P2 implements these tables in [`cmd/booking/storage/migrations`](../cmd/booking/storage/migrations). Typed selection/state columns and constraints hold authoritative workflow state; bounded JSON is limited to sanitized evidence/event extensions, and PostgreSQL stores the operation instants.
 
-| Proposed table | Responsibility / important constraints |
+| Table | Responsibility / important constraints |
 |---|---|
-| `booking_operations` | Immutable operation UUID/key, contract/fingerprint version, kind, provider/facility scope, account reference, court/interval or target booking, current outcome/phase, executor incarnation, revision, timestamps/deadline, sanitized result/error, parent/root operation for risk-authorized creation. Unique operation key in the booking ledger namespace. |
-| `booking_operation_steps` | Durable ordered dispatch-intent and response/evidence journal for reserve, pay, attach, cancel; known booking UUID/numeric ID/payment ID/match ID; unique step/attempt IDs and conditional transitions. No credentials, cookies, or raw provider bodies. |
-| `booking_accounts` | Stable account coordination identity, known provider-user alias when available, active executor/operation association. Password changes and different management credential rows do not create independent account locks. |
+| `booking_operations` | Immutable operation UUID/key and request fingerprint, kind, provider/facility scope, account reference, court/interval or target booking, current outcome/phase, executor incarnation, revision, timestamps/deadline, expiry marker and parent/root operation for risk-authorized creation. Unique operation key in the booking ledger namespace. |
+| `booking_operation_steps` | Durable dispatch-intent and sanitized response/evidence journal for reserve, pay, attach and cancel, with unique phase/attempt/status records and executor-conditional writes. No credentials, cookies, or raw provider bodies. |
+| `booking_accounts` | Stable account coordination identity, known provider-user alias when available, active operation and separate quarantine association. Password changes and different management credential rows do not create independent account locks. |
 | `booking_resource_claims` | Active/uncertain court interval and cancellation-target claims; operation lineage links. Account/court admission and claim changes are atomic with operation acceptance. A risk replacement adds a linked claim; it does not delete its ancestor's claim. |
 | `booking_provider_bookings` | Known external reservations, payment evidence, optional match ID, cancellation state and source operations. Persist even without a match ID. This is provider evidence, not a copy of management's games/court labels. |
-| `booking_operation_events` | Durable risk authorizations and reconciliation/resolution provenance, bounded reason, revisions and resulting state. These safety records are transactional, not best-effort log/audit calls. |
-| `booking_metadata` | Ledger identity, fingerprint/key version and a non-secret key-verification marker so a changed identity key cannot silently create a parallel account namespace. |
+| `booking_operation_events` | Durable idempotent event records with bounded reason/evidence and expected/resulting revisions. P2 supplies the repository; later reconciliation/resolution flows must write their provenance transactionally rather than as best-effort logs. |
+| `booking_metadata` | Immutable ledger metadata and a non-secret key-verification marker so a changed identity key cannot silently create a parallel account namespace. |
 | `booking_schema_migrations` | Booking's own migration history. Never reuse management's `schema_migrations`. |
 
 Compact expired operations in place or in an equivalently authoritative tombstone store; preserve key uniqueness, request fingerprint, terminal summary, provider references and replacement lineage. Never let cleanup turn an old key into a new executable request.
 
 ### Database and migration implementation
 
-- Add a booking-local embedded migration stream, e.g. `cmd/booking/storage/migrations/`, using existing pgx/golang-migrate dependencies. Configure a dedicated history table and migration-lock namespace; test driver behavior, rather than assuming different SQL filenames isolate it.
-- Run only booking migrations from booking startup. Management continues to run its root `migrations/` stream. Do not alter already-applied management migrations or run all management migrations merely to start booking.
+- P2 adds a booking-local embedded migration stream under `cmd/booking/storage/migrations/`, using existing pgx/golang-migrate dependencies. `booking_schema_migrations` gives it both dedicated history and, through the PostgreSQL driver's lock derivation, a separate migration-lock namespace. Disposable-database tests cover both stream orders and booking-only operation admission.
+- Booking startup does not invoke this stream yet; that wiring belongs to P6. It must run only booking migrations. Management continues to run its root `migrations/` stream. Do not alter already-applied management migrations or run all management migrations merely to start booking.
 - Keep new names prefixed `booking_`; do not add cross-service foreign keys, cascades, triggers, or shared schema-version ownership.
 - Use `BOOKING_DATABASE_URL` as explicit booking configuration, initially pointing to the existing database/schema. Do not silently read management configuration or log the DSN. Sharing the existing role may be retained initially; it is coarse trust, not enforced table isolation. Table-scoped roles can be added separately.
 - Use a small bounded pool; budget the additional connections together with management and the dedicated singleton-guard connection. Start with five ordinary connections plus one guard connection and validate under load.
@@ -279,12 +279,12 @@ A direct authenticated client using an explicitly configured address can use boo
 
 ## 11. Implementation work packages
 
-Each package is a bounded local task with a reviewable diff. Do not promote/deploy a partly integrated mutation contract. P1–P7 change booking/shared infrastructure only; M is separate management work. **Progress:** P1 is complete in the current local diff; it deliberately has no runtime v2 route until P2–P5 supply durable semantics.
+Each package is a bounded local task with a reviewable diff. Do not promote/deploy a partly integrated mutation contract. P1–P7 change booking/shared infrastructure only; M is separate management work. **Progress:** P1 is committed and P2 is implemented locally. Neither is wired to a runtime v2 route; P3–P5 must supply execution, journal integration, recovery and handler semantics first.
 
 | Package | Changes / likely locations | Acceptance gate |
 |---|---|---|
-| **P1 — contract and failure model (implemented locally)** | `internal/bookingapi` v2 DTO/error constants, UUID/scope/credential/time/risk validation, HMAC account identity and deterministic password-independent request fingerprints; `eversports` typed phase/effect/auth failures plus reserve/payment/cancel response validation. No handler wiring. | Focused contract/provider tests pass; existing no-ambiguous-retry fixtures remain green; no provider calls in tests. |
-| **P2 — booking persistence** | `cmd/booking/storage`, separate embedded migrations/history, config/pool/identity-key handling; repositories for operations, steps, accounts, claims, evidence and tombstones. | Real disposable PostgreSQL concurrent admission/overlap/replacement tests; migration streams coexist in either order and booking starts with only its own schema initialized; failed/uncertain commits cannot authorize dispatch. |
+| **P1 — contract and failure model (implemented)** | `internal/bookingapi` v2 DTO/error constants, UUID/scope/credential/time/risk validation, HMAC account identity and deterministic password-independent request fingerprints; `eversports` typed phase/effect/auth failures plus reserve/payment/cancel response validation. No handler wiring. | Focused contract/provider tests pass; existing no-ambiguous-retry fixtures remain green; no provider calls in tests. |
+| **P2 — booking persistence (implemented locally; runtime wiring deferred)** | `cmd/booking/storage`, separate embedded migrations/history, bounded pool and identity-key marker handling; repositories for operations, steps, accounts, claims, evidence, events and tombstone markers. `SetupEmptyTestDB` supports independent stream testing. | Real disposable PostgreSQL tests cover sequential/concurrent key admission, overlap/cancellation claims, concurrent replacement budget, both migration orders and booking-only admission. Repository admission returns success only after commit; no executor/provider wiring exists yet that could dispatch from an uncertain result. |
 | **P3 — execution coordinator** | `cmd/booking/service` (new booking-owned orchestration), injectable repositories/provider/session manager; context-aware account coordination, bounded cache, singleton guard and tracked executor lifecycle. | Same key executes once under concurrency; same login across credential entities/rotation serializes; loss of DB/guard fails closed; eviction/restart cannot create another permitted execution. |
 | **P4 — journaled provider flows** | Refactor `checkout.go`/`matches.go` into phase-aware operations without moving HTTP parsing into SQL repositories; persist each intent/evidence before proceeding; recognized success validation; cancellation/no-op and optional match semantics. | Fault injection at every send/response/persistence boundary; known IDs survive; payment/cancel ambiguity never restarts external work; post-payment optional failure retains successful evidence. |
 | **P5 — v2 API and recovery controls** | Booking handlers/client seams; status, read-only reconcile, idempotent evidence resolution/import; controlled replacement admission; keyless v1 mutation rejection; retention compaction. | Contract HTTP tests use fake provider plus real ledger where relevant; stopped-unknown-only replacement and root budget enforced; replay with rotated password has no provider call; expired keys cannot execute. |
