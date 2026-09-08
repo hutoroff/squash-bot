@@ -87,6 +87,11 @@ func TestManagementConfig_Validate(t *testing.T) {
 	if err := validBooking.Validate(); err != nil {
 		t.Fatalf("expected reliable management booking config to pass: %v", err)
 	}
+	invalidDiscovery := *validBooking
+	invalidDiscovery.DiscoveryURL = "https://user:secret@example.test/path"
+	if err := invalidDiscovery.Validate(); err == nil {
+		t.Fatal("expected invalid discovery bootstrap URL to fail")
+	}
 	invalidAdmin := *validBooking
 	invalidAdmin.MonitoringToken = invalidAdmin.InternalAPISecret
 	if err := invalidAdmin.Validate(); err == nil {

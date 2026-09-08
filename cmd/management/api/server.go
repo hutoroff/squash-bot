@@ -46,6 +46,7 @@ type Handler struct {
 	}
 	reliableBooking *service.ReliableBookingExecutor
 	bookingScope    bookingapi.Scope
+	serviceRegistry *service.ServiceRegistryService
 }
 
 func NewHandler(
@@ -85,6 +86,10 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) SetServiceRegistry(registry *service.ServiceRegistryService) {
+	h.serviceRegistry = registry
+}
+
 func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService, metrics interface {
 	GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
 }, executor *service.ReliableBookingExecutor, scope bookingapi.Scope) {
@@ -97,6 +102,12 @@ func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService,
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
+	mux.HandleFunc("PUT /internal/discovery/v1/instances/{instance_id}", h.registerServiceInstance)
+	mux.HandleFunc("POST /internal/discovery/v1/instances/{instance_id}/heartbeat", h.heartbeatServiceInstance)
+	mux.HandleFunc("POST /internal/discovery/v1/instances/{instance_id}/drain", h.drainServiceInstance)
+	mux.HandleFunc("DELETE /internal/discovery/v1/instances/{instance_id}", h.deregisterServiceInstance)
+	mux.HandleFunc("GET /internal/discovery/v1/resolve", h.resolveServiceInstances)
+	mux.HandleFunc("GET /internal/discovery/v1/catalog", h.getServiceCatalog)
 
 	// Games
 	mux.HandleFunc("POST /api/v1/games", h.createGame)

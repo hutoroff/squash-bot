@@ -47,12 +47,9 @@ type Metrics struct {
 	operationOutcomes  *prometheus.CounterVec
 }
 
-func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
-	if cfg.Addr == "" || cfg.Secret == "" || cfg.Readiness == nil || cfg.Running == nil || cfg.LedgerHealth == nil {
-		return nil, nil, fmt.Errorf("booking admin address, secret, and health sources are required")
-	}
+func AdminDescriptor(cfg AdminConfig) (discovery.Descriptor, error) {
 	if _, err := uuid.Parse(cfg.InstanceID); err != nil {
-		return nil, nil, fmt.Errorf("booking admin instance ID must be a UUID: %w", err)
+		return discovery.Descriptor{}, fmt.Errorf("booking admin instance ID must be a UUID: %w", err)
 	}
 	descriptor := discovery.Descriptor{
 		SchemaVersion: discovery.SchemaVersion, InstanceID: cfg.InstanceID, ServiceKey: cfg.ServiceKey,
@@ -73,7 +70,18 @@ func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 		State: discovery.StateReady,
 	}
 	if err := descriptor.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid booking admin descriptor: %w", err)
+		return discovery.Descriptor{}, fmt.Errorf("invalid booking admin descriptor: %w", err)
+	}
+	return descriptor, nil
+}
+
+func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
+	if cfg.Addr == "" || cfg.Secret == "" || cfg.Readiness == nil || cfg.Running == nil || cfg.LedgerHealth == nil {
+		return nil, nil, fmt.Errorf("booking admin address, secret, and health sources are required")
+	}
+	descriptor, err := AdminDescriptor(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
 	metrics := cfg.Metrics
 	if metrics == nil {
