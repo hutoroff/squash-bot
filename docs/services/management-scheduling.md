@@ -26,7 +26,7 @@ The preventive check anchors booking opening to **group-local midnight on the ga
 1. Auto-booking requires group permission, eligible venue/squash configuration, preferred time slots, and a positive `AutoBookingCourtsCount`.
 2. Iterate **all configured preferred slots**. The court count limits courts per slot, not the number of games. A result lookup error skips that slot conservatively; an existing result skips it as already actioned.
 3. [bookFreeCourts](../../cmd/management/service/booking_core.go), also used by manual booking, loads usable credentials, queries courts/occupancy, orders candidate courts, and books with per-credential limits.
-4. Save per-court booking records with credential and time slot when a match ID is available. Save a per-slot result and create/link an **unpublished** game after successful booking.
+4. Save per-court booking records with credential and time slot when a match ID is available. In reliable mode, atomically upsert one per-slot result and one linked **unpublished** game keyed by durable intent; replay can extend a partial result but cannot duplicate either row.
 5. Booking reminder publishes through `GameService.PublishGame`; already-published games are skipped. Legacy result rows without a linked game retain a create-and-announce path.
 6. Cleanup unpins/removes keyboards for published games, completes games, and closes booking rows; inspect its venue/date scope before changing multiple-session behavior.
 
@@ -56,7 +56,7 @@ Management now stores stable business request keys, requested counts, UUIDv7 ope
 
 Unknown/pending creation consumes requested capacity and cannot rotate credentials or select another court. Positively proven pre-admission conflict is retained as `not_dispatched`; only typed credential rejection with no-effect evidence enters cooldown. A separate explicit duplicate-risk allocator enforces one child of an unknown root and is not connected to ordinary automation or an HTTP authorization route, so the default dispatch policy remains disabled.
 
-Production rollout is still blocked on the remaining acceptance work: bounded durable administrator notifications/metrics, complete restart materialization checks beyond the covered court-booking projection (especially auto-booking result/game linkage), legacy booking inventory/import, static combined-candidate review, and the runbook backup/restore/cutover drill. Discovery remains separate and unimplemented.
+Production rollout is still blocked on the remaining acceptance work: legacy booking inventory/import, static combined-candidate review, and the runbook backup/restore/cutover drill. Durable bounded administrator notifications/aggregate metrics and idempotent auto-booking result/game materialization are now implemented. Discovery remains separate and unimplemented.
 
 ## Regression anchors
 

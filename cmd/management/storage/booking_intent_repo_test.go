@@ -171,6 +171,22 @@ func TestBookingIntentRepoConcurrentAdmissionReplayAndDeletionGuards(t *testing.
 	}); err != nil {
 		t.Fatalf("reject risk child with no effect: %v", err)
 	}
+	notifications, err := repository.ClaimPendingNotifications(ctx, 10)
+	if err != nil || len(notifications) != 3 {
+		t.Fatalf("claimed notifications = %+v err = %v", notifications, err)
+	}
+	if replay, err := repository.ClaimPendingNotifications(ctx, 10); err != nil || len(replay) != 0 {
+		t.Fatalf("reclaimed notifications = %+v err = %v", replay, err)
+	}
+	for _, notification := range notifications {
+		if err := repository.MarkNotificationDelivered(ctx, notification.ID); err != nil {
+			t.Fatalf("mark notification delivered: %v", err)
+		}
+	}
+	metrics, err := repository.GetMetrics(ctx)
+	if err != nil || metrics.OutcomeUnknown != 1 || metrics.RejectedNoEffect != 1 || metrics.RiskAuthorized != 1 || metrics.PendingNotices != 0 {
+		t.Fatalf("booking metrics = %+v err = %v", metrics, err)
+	}
 	storedIntent, err := repository.GetIntentByRequestKey(ctx, intentRequest.RequestKey)
 	if err != nil {
 		t.Fatalf("GetIntentByRequestKey: %v", err)
@@ -221,8 +237,24 @@ func TestBookingIntentRepoConcurrentAdmissionReplayAndDeletionGuards(t *testing.
 		t.Fatalf("finalize partial intent: %v", err)
 	}
 	storedIntent, err = repository.GetIntentByRequestKey(ctx, intentRequest.RequestKey)
-	if err != nil || storedIntent.State != models.BookingIntentPartial {
+	if err != nil || storedIntent.State != models.BookingIntentPartial || storedIntent.GameID == nil {
 		t.Fatalf("partial terminal intent = intent %+v err %v", storedIntent, err)
+	}
+	var resultCount, gameCount int
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM auto_booking_results WHERE management_booking_intent_id = $1`, intentID).Scan(&resultCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM games WHERE management_booking_intent_id = $1`, intentID).Scan(&gameCount); err != nil {
+		t.Fatal(err)
+	}
+	if resultCount != 1 || gameCount != 1 {
+		t.Fatalf("materialized results/games = %d/%d, want 1/1", resultCount, gameCount)
+	}
+	if err := repository.FinalizeIntent(ctx, intentID, models.BookingIntentPartial); err != nil {
+		t.Fatalf("replay partial intent finalization: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM games WHERE management_booking_intent_id = $1`, intentID).Scan(&gameCount); err != nil || gameCount != 1 {
+		t.Fatalf("replayed materialized game count = %d err = %v", gameCount, err)
 	}
 	byCredential, err = courtBookings.HasActiveByCredentialID(ctx, credential.ID)
 	if err != nil {

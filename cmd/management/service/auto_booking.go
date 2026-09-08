@@ -265,7 +265,14 @@ func (j *AutoBookingJob) processTimeSlot(
 		return false
 	}
 
-	// Persist result and eagerly create the unpublished game record.
+	// Reliable scheduled results and unpublished games are materialized atomically
+	// with terminal intent projection, so restart/status replay cannot duplicate them.
+	if j.reliableBooking != nil {
+		j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, gameTime, len(res.BookedLabels), lz)
+		return true
+	}
+
+	// Persist legacy result and eagerly create the unpublished game record.
 	courtsStr := strings.Join(res.BookedLabels, ",")
 	bookedCount := len(res.BookedLabels)
 	resultID, err := j.autoBookingResultRepo.Save(ctx, venue.ID, gameDate, gameTime, courtsStr, bookedCount)

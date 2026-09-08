@@ -11,6 +11,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
@@ -40,8 +41,11 @@ type Handler struct {
 	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
 	credentialErrorCooldown time.Duration
 	bookingIntents          *service.BookingIntentService
-	reliableBooking         *service.ReliableBookingExecutor
-	bookingScope            bookingapi.Scope
+	bookingMetrics          interface {
+		GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
+	}
+	reliableBooking *service.ReliableBookingExecutor
+	bookingScope    bookingapi.Scope
 }
 
 func NewHandler(
@@ -81,8 +85,11 @@ func NewHandler(
 	}
 }
 
-func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService, executor *service.ReliableBookingExecutor, scope bookingapi.Scope) {
+func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService, metrics interface {
+	GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
+}, executor *service.ReliableBookingExecutor, scope bookingapi.Scope) {
 	h.bookingIntents = intents
+	h.bookingMetrics = metrics
 	h.reliableBooking = executor
 	h.bookingScope = scope
 }
@@ -101,6 +108,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
 	mux.HandleFunc("GET /api/v1/games/{id}/active-court-bookings", h.listActiveCourtBookings)
 	mux.HandleFunc("POST /api/v1/games/{id}/book-courts", h.bookCourts)
+	mux.HandleFunc("GET /internal/booking/metrics", h.getBookingMetrics)
 	mux.HandleFunc("GET /internal/booking/operations/{id}", h.getBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/reconcile", h.reconcileBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/resolution", h.resolveBookingOperation)

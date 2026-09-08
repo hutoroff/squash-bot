@@ -96,6 +96,20 @@ CREATE INDEX idx_management_booking_operations_match
     ON management_booking_operations(target_match_id)
     WHERE target_match_id IS NOT NULL;
 
+CREATE TABLE management_booking_notifications (
+    id              BIGSERIAL PRIMARY KEY,
+    operation_id    UUID NOT NULL REFERENCES management_booking_operations(operation_id) ON DELETE RESTRICT,
+    revision        BIGINT NOT NULL CHECK (revision >= 0),
+    kind            TEXT NOT NULL CHECK (kind IN ('outcome_unknown', 'partial', 'possible_duplicate', 'success_warning', 'missed_action')),
+    claimed_at      TIMESTAMPTZ,
+    delivered_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(operation_id, revision, kind)
+);
+CREATE INDEX idx_management_booking_notifications_pending
+    ON management_booking_notifications(created_at, id)
+    WHERE claimed_at IS NULL;
+
 ALTER TABLE court_bookings
     ADD COLUMN management_create_operation_id UUID REFERENCES management_booking_operations(operation_id) ON DELETE RESTRICT,
     ADD COLUMN booking_service_key TEXT,
@@ -116,3 +130,15 @@ ALTER TABLE court_bookings
 CREATE INDEX idx_court_bookings_management_create_operation
     ON court_bookings(management_create_operation_id)
     WHERE management_create_operation_id IS NOT NULL;
+
+ALTER TABLE auto_booking_results
+    ADD COLUMN management_booking_intent_id BIGINT REFERENCES management_booking_intents(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX uq_auto_booking_results_management_intent
+    ON auto_booking_results(management_booking_intent_id)
+    WHERE management_booking_intent_id IS NOT NULL;
+
+ALTER TABLE games
+    ADD COLUMN management_booking_intent_id BIGINT REFERENCES management_booking_intents(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX uq_games_management_booking_intent
+    ON games(management_booking_intent_id)
+    WHERE management_booking_intent_id IS NOT NULL;
