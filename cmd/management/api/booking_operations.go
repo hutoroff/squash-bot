@@ -9,6 +9,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func (h *Handler) getBookingMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.bookingMetrics == nil {
+		writeError(w, http.StatusServiceUnavailable, "reliable booking integration is not configured")
+		return
+	}
+	metrics, err := h.bookingMetrics.GetMetrics(r.Context())
+	if err != nil {
+		h.logger.Error("get management booking metrics", "err", err)
+		writeError(w, http.StatusInternalServerError, "booking metrics unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 type managementBookingOperationResponse struct {
 	OperationID   bookingapi.OperationID                 `json:"operation_id"`
 	IntentID      int64                                  `json:"intent_id"`

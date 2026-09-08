@@ -414,7 +414,7 @@ The owner prefers exceptional controlled duplication to a missed booking. Implem
 
 #### M5. Partial results, cancellation and business persistence
 
-**Implementation status:** scheduled/manual creation and cancellation persist operation projections, partial evidence/warnings, exact match targets, local-offset times, credentials, and original provider/facility origin. Scheduler/manual cancellation semantics remain distinct. Complete restart materialization and legacy-import acceptance remain pending.
+**Implementation status:** scheduled/manual creation and cancellation persist operation projections, partial evidence/warnings, exact match targets, local-offset times, credentials, and original provider/facility origin. Scheduled terminal and temporarily partial successes atomically upsert one auto-booking result and one unpublished game keyed by durable intent, so replay/recovery can update but not duplicate them. Scheduler/manual cancellation semantics remain distinct. Legacy-import acceptance remains pending.
 
 - Persist operation ID/origin binding, known booking UUID/numeric ID/payment evidence, optional match ID and outcome even when checkout is partial. Extend the match-ID-centric local representation/storage additively; do not discard reserved/paid evidence because `matchId` is empty.
 - Idempotently upsert local results/provider references after replay/status. A local DB failure after external success cannot trigger another booking, duplicate game creation, duplicate labels/counter decrements or repeated publication on recovery.
@@ -425,7 +425,7 @@ The owner prefers exceptional controlled duplication to a missed booking. Implem
 
 #### M6. Operator visibility, independence and rollout
 
-**Implementation status:** authenticated sanitized local inspection plus credentialed reconciliation/resolution endpoints and periodic recovery logging are implemented. Durable bounded administrator notifications, management metrics, complete rollout tests, inventory/import, and runbook execution remain pending.
+**Implementation status:** authenticated sanitized local inspection plus credentialed reconciliation/resolution endpoints, durable aggregate metrics, periodic recovery logging, and at-most-once administrator notifications for unknown, partial, possible-duplicate, warning, and missed-action state changes are implemented. Complete rollout tests, inventory/import, and runbook execution remain pending.
 
 - Provide authenticated internal inspection/reconciliation/resolution plumbing and a runbook; no new web resolution UI is required initially. Preserve authorization on user-facing entrypoints. A supplied actor field/internal bearer trust is not end-user permission for duplicate risk.
 - Notify administrators about unknown/partial operations, risk authorization, possible duplicates and missed actions, with bounded repetition keyed to durable state changes. No credentials/raw provider bodies in messages/logs; status replay must not resend success notifications.

@@ -135,6 +135,7 @@ func main() {
 	var bookingIntentSvc *service.BookingIntentService
 	var reliableBookingExecutor *service.ReliableBookingExecutor
 	var reliableBookingRecovery *service.ReliableBookingRecovery
+	var reliableBookingNotifier *service.ReliableBookingNotifier
 	var bookingScope bookingapi.Scope
 	if cfg.SportsBookingServiceURL != "" {
 		bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
@@ -158,6 +159,11 @@ func main() {
 		reliableBookingRecovery, err = service.NewReliableBookingRecovery(bookingIntentRepo, bookingIntentSvc, reliableBookingExecutor, venueCredService, courtBookingRepo, bookingScope, logger, 100)
 		if err != nil {
 			slog.Error("init reliable booking recovery", "err", err)
+			os.Exit(1)
+		}
+		reliableBookingNotifier, err = service.NewReliableBookingNotifier(bookingIntentRepo, tgAPI, logger, 100)
+		if err != nil {
+			slog.Error("init reliable booking notifier", "err", err)
 			os.Exit(1)
 		}
 		slog.Info("keyed v2 booking service enabled", "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
@@ -203,6 +209,9 @@ func main() {
 			if recoveryErr := reliableBookingRecovery.RunOnce(recoveryCtx); recoveryErr != nil {
 				logger.Warn("reliable booking recovery incomplete", "err", recoveryErr)
 			}
+			if notificationErr := reliableBookingNotifier.RunOnce(recoveryCtx); notificationErr != nil {
+				logger.Warn("reliable booking operator notifications incomplete", "err", notificationErr)
+			}
 		}); err != nil {
 			slog.Error("add reliable booking recovery cron", "spec", cfg.CronPoll, "err", err)
 			os.Exit(1)
@@ -225,7 +234,7 @@ func main() {
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	h.SetFeatureFlags(flagSvc)
-	h.SetReliableBookingAdmin(bookingIntentSvc, reliableBookingExecutor, bookingScope)
+	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

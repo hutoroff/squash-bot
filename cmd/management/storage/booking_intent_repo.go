@@ -213,6 +213,11 @@ func (r *BookingIntentRepo) AdmitOperation(ctx context.Context, candidate *model
 	if _, err := tx.Exec(ctx, `UPDATE management_booking_intents SET state = 'active', updated_at = NOW() WHERE id = $1 AND state = 'planned'`, candidate.IntentID); err != nil {
 		return nil, false, fmt.Errorf("activate management booking intent: %w", err)
 	}
+	if candidate.ParentOperationID != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO management_booking_notifications (operation_id, revision, kind) VALUES ($1, $2, 'possible_duplicate') ON CONFLICT DO NOTHING`, operation.OperationID, operation.Revision); err != nil {
+			return nil, false, fmt.Errorf("enqueue duplicate-risk notification: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit management booking operation admission: %w", err)
 	}
@@ -308,8 +313,13 @@ func (r *BookingIntentRepo) FinalizeIntent(ctx context.Context, intentID int64, 
 	if state != models.BookingIntentCompleted && state != models.BookingIntentPartial && state != models.BookingIntentUnknown {
 		return fmt.Errorf("unsupported management booking intent terminal state %q", state)
 	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin management booking intent finalization: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE management_booking_intents i SET state = $2, updated_at = NOW()
 		WHERE i.id = $1
 		  AND NOT EXISTS (
@@ -327,6 +337,21 @@ func (r *BookingIntentRepo) FinalizeIntent(ctx context.Context, intentID int64, 
 	}
 	if err != nil {
 		return fmt.Errorf("finalize management booking intent: %w", err)
+	}
+	if err := materializeScheduledBooking(ctx, tx, intentID); err != nil {
+		return err
+	}
+	if state == models.BookingIntentPartial {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO management_booking_notifications (operation_id, revision, kind)
+			SELECT operation_id, revision, 'partial' FROM management_booking_operations
+			WHERE intent_id = $1 ORDER BY created_at DESC LIMIT 1
+			ON CONFLICT DO NOTHING`, intentID); err != nil {
+			return fmt.Errorf("enqueue partial booking notification: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit management booking intent finalization: %w", err)
 	}
 	return nil
 }
@@ -438,6 +463,20 @@ func (r *BookingIntentRepo) ApplyOperationStatus(ctx context.Context, status *bo
 	if err != nil {
 		return nil, false, fmt.Errorf("update management booking operation status: %w", err)
 	}
+	var notificationKind models.ManagementBookingNotificationKind
+	switch {
+	case state == models.ManagementBookingOperationOutcomeUnknown:
+		notificationKind = models.ManagementBookingNotificationOutcomeUnknown
+	case state == models.ManagementBookingOperationRejectedNoEffect || state == models.ManagementBookingOperationNotDispatched:
+		notificationKind = models.ManagementBookingNotificationMissedAction
+	case state == models.ManagementBookingOperationSucceeded && (status.Outcome == bookingapi.OutcomeSuccessWithWarning || len(statusWarnings) > 0 || (status.Kind == bookingapi.OperationCreate && matchID == "")):
+		notificationKind = models.ManagementBookingNotificationSuccessWarning
+	}
+	if notificationKind != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO management_booking_notifications (operation_id, revision, kind) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, operationID, status.Revision, notificationKind); err != nil {
+			return nil, false, fmt.Errorf("enqueue management booking notification: %w", err)
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE management_booking_intents i SET state = CASE
 			WHEN EXISTS (SELECT 1 FROM management_booking_operations o WHERE o.intent_id = i.id AND o.state = 'outcome_unknown') THEN 'unknown'
@@ -447,10 +486,131 @@ func (r *BookingIntentRepo) ApplyOperationStatus(ctx context.Context, status *bo
 		WHERE i.id = $1`, current.IntentID); err != nil {
 		return nil, false, fmt.Errorf("update management booking intent status: %w", err)
 	}
+	if err := materializeScheduledBooking(ctx, tx, current.IntentID); err != nil {
+		return nil, false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit management booking operation status: %w", err)
 	}
 	return updated, true, nil
+}
+
+func materializeScheduledBooking(ctx context.Context, tx pgx.Tx, intentID int64) error {
+	var resultID int64
+	err := tx.QueryRow(ctx, `
+		INSERT INTO auto_booking_results (venue_id, game_date, game_time, courts, courts_count, management_booking_intent_id)
+		SELECT i.venue_id, i.game_date, i.game_time,
+			string_agg(o.court_label, ',' ORDER BY o.created_at, o.operation_id), COUNT(*)::int, i.id
+		FROM management_booking_intents i
+		JOIN management_booking_operations o ON o.intent_id = i.id AND o.kind = 'create' AND o.state = 'succeeded'
+		WHERE i.id = $1 AND i.source = 'scheduled' AND i.state IN ('active','completed','partial')
+		  AND NOT EXISTS (SELECT 1 FROM management_booking_operations pending WHERE pending.intent_id = i.id AND pending.state IN ('planned','accepted','running','outcome_unknown'))
+		GROUP BY i.id
+		ON CONFLICT (management_booking_intent_id) WHERE management_booking_intent_id IS NOT NULL
+		DO UPDATE SET courts = EXCLUDED.courts, courts_count = EXCLUDED.courts_count
+		RETURNING id`, intentID).Scan(&resultID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("materialize scheduled auto-booking result: %w", err)
+	}
+	var gameID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO games (chat_id, game_date, courts_count, courts, sport, players_per_court, venue_id, management_booking_intent_id)
+		SELECT i.group_id, (i.game_date + i.game_time::time) AT TIME ZONE COALESCE(g.timezone, 'UTC'),
+			r.courts_count, r.courts, i.sport, COALESCE(vs.players_per_court, 2), i.venue_id, i.id
+		FROM management_booking_intents i
+		JOIN auto_booking_results r ON r.management_booking_intent_id = i.id
+		LEFT JOIN bot_groups g ON g.chat_id = i.group_id
+		LEFT JOIN venue_sports vs ON vs.venue_id = i.venue_id AND vs.sport = i.sport
+		WHERE i.id = $1
+		ON CONFLICT (management_booking_intent_id) WHERE management_booking_intent_id IS NOT NULL
+		DO UPDATE SET courts = EXCLUDED.courts, courts_count = EXCLUDED.courts_count
+		RETURNING id`, intentID).Scan(&gameID)
+	if err != nil {
+		return fmt.Errorf("materialize scheduled booking game: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE auto_booking_results SET game_id = $2 WHERE id = $1`, resultID, gameID); err != nil {
+		return fmt.Errorf("link scheduled auto-booking result game: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE management_booking_intents SET game_id = $2, updated_at = NOW() WHERE id = $1`, intentID, gameID); err != nil {
+		return fmt.Errorf("link scheduled booking intent game: %w", err)
+	}
+	return nil
+}
+
+func (r *BookingIntentRepo) ClaimPendingNotifications(ctx context.Context, limit int) ([]*models.ManagementBookingNotification, error) {
+	if limit <= 0 || limit > 100 {
+		return nil, fmt.Errorf("notification claim limit must be between 1 and 100")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin management booking notification claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		WITH selected AS (
+			SELECT id FROM management_booking_notifications WHERE claimed_at IS NULL
+			ORDER BY created_at, id LIMIT $1 FOR UPDATE SKIP LOCKED
+		), claimed AS (
+			UPDATE management_booking_notifications n SET claimed_at = NOW()
+			FROM selected s WHERE n.id = s.id
+			RETURNING n.id, n.operation_id, n.revision, n.kind, n.created_at
+		)
+		SELECT c.id, c.operation_id::text, c.revision, c.kind, i.group_id, i.venue_id, i.game_date, i.game_time, c.created_at
+		FROM claimed c
+		JOIN management_booking_operations o ON o.operation_id = c.operation_id
+		JOIN management_booking_intents i ON i.id = o.intent_id
+		ORDER BY c.created_at, c.id`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim management booking notifications: %w", err)
+	}
+	defer rows.Close()
+	var notifications []*models.ManagementBookingNotification
+	for rows.Next() {
+		var notification models.ManagementBookingNotification
+		if err := rows.Scan(&notification.ID, &notification.OperationID, &notification.Revision, &notification.Kind,
+			&notification.GroupID, &notification.VenueID, &notification.GameDate, &notification.GameTime, &notification.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan management booking notification: %w", err)
+		}
+		notifications = append(notifications, &notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate management booking notifications: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit management booking notification claim: %w", err)
+	}
+	return notifications, nil
+}
+
+func (r *BookingIntentRepo) MarkNotificationDelivered(ctx context.Context, id int64) error {
+	if _, err := r.pool.Exec(ctx, `UPDATE management_booking_notifications SET delivered_at = NOW() WHERE id = $1 AND claimed_at IS NOT NULL`, id); err != nil {
+		return fmt.Errorf("mark management booking notification delivered: %w", err)
+	}
+	return nil
+}
+
+func (r *BookingIntentRepo) GetMetrics(ctx context.Context) (*models.ManagementBookingMetrics, error) {
+	var metrics models.ManagementBookingMetrics
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE state = 'planned'), COUNT(*) FILTER (WHERE state = 'accepted'),
+			COUNT(*) FILTER (WHERE state = 'running'), COUNT(*) FILTER (WHERE state = 'outcome_unknown'),
+			COUNT(*) FILTER (WHERE state = 'succeeded'), COUNT(*) FILTER (WHERE state = 'rejected_no_effect'),
+			COUNT(*) FILTER (WHERE parent_operation_id IS NOT NULL),
+			(SELECT COUNT(*) FROM management_booking_notifications WHERE claimed_at IS NULL),
+			MIN(created_at) FILTER (WHERE state IN ('planned','accepted','running','outcome_unknown'))
+		FROM management_booking_operations`).Scan(
+		&metrics.Planned, &metrics.Accepted, &metrics.Running, &metrics.OutcomeUnknown,
+		&metrics.Succeeded, &metrics.RejectedNoEffect, &metrics.RiskAuthorized,
+		&metrics.PendingNotices, &metrics.OldestPendingAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read management booking metrics: %w", err)
+	}
+	return &metrics, nil
 }
 
 func managementOperationState(state bookingapi.OperationState) (models.ManagementBookingOperationState, error) {
