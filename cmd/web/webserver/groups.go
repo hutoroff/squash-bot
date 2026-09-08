@@ -15,7 +15,10 @@ type GroupsHandler struct {
 
 // NewGroupsHandler creates a GroupsHandler.
 func NewGroupsHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *GroupsHandler {
-	return &GroupsHandler{newMgmtClient(auth, mgmtURL, mgmtSecret)}
+	return NewGroupsHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+func NewGroupsHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *GroupsHandler {
+	return &GroupsHandler{newMgmtClientWithTarget(auth, target, mgmtSecret)}
 }
 
 // handleListGroups handles GET /api/groups.

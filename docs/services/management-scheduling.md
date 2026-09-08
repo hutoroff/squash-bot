@@ -56,7 +56,7 @@ Management now stores stable business request keys, requested counts, UUIDv7 ope
 
 Unknown/pending creation consumes requested capacity and cannot rotate credentials or select another court. Positively proven pre-admission conflict is retained as `not_dispatched`; only typed credential rejection with no-effect evidence enters cooldown. A separate explicit duplicate-risk allocator enforces one child of an unknown root and is not connected to ordinary automation or an HTTP authorization route, so the default dispatch policy remains disabled.
 
-Production rollout is still blocked on the remaining acceptance work: legacy booking inventory/import, static combined-candidate review, and the runbook backup/restore/cutover drill. Durable bounded administrator notifications/aggregate metrics and idempotent auto-booking result/game materialization are now implemented. Discovery remains separate and unimplemented.
+Production rollout is still blocked on the remaining acceptance work: legacy booking inventory/import, static combined-candidate review, and the runbook backup/restore/cutover drill. Durable bounded administrator notifications/aggregate metrics and idempotent auto-booking result/game materialization are now implemented. Discovery-aware booking invocation is implemented behind explicit `DISCOVERY_MODE=registry`; static keyed-v2 routing remains the default and production rollout gates are unchanged.
 
 ## Regression anchors
 

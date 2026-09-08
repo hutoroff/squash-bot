@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 )
 
 // BookingSlot is a minimal representation of a court slot returned by the
@@ -101,6 +102,8 @@ type httpBookingClient struct {
 	apiSecret    string
 	httpClient   *http.Client
 	reliableOnly bool
+	resolver     discovery.Resolver
+	requirement  discovery.Requirement
 }
 
 // NewHTTPBookingClient creates a BookingServiceClient backed by the booking service HTTP API.
@@ -125,6 +128,22 @@ func NewReliableBookingReadClient(baseURL, apiSecret string) BookingServiceClien
 	return client
 }
 
+func NewDiscoveredReliableHTTPBookingClient(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) ReliableBookingServiceClient {
+	client := newHTTPBookingClient("", apiSecret)
+	client.reliableOnly = true
+	client.resolver = resolver
+	client.requirement = requirement
+	return client
+}
+
+func NewDiscoveredReliableBookingReadClient(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) BookingServiceClient {
+	client := newHTTPBookingClient("", apiSecret)
+	client.reliableOnly = true
+	client.resolver = resolver
+	client.requirement = requirement
+	return client
+}
+
 func newHTTPBookingClient(baseURL, apiSecret string) *httpBookingClient {
 	return &httpBookingClient{
 		baseURL:   strings.TrimRight(baseURL, "/"),
@@ -139,7 +158,11 @@ func newHTTPBookingClient(baseURL, apiSecret string) *httpBookingClient {
 }
 
 func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, password string) ([]BookingCourt, error) {
-	url := fmt.Sprintf("%s/api/v2/eversports/courts?date=%s", c.baseURL, date)
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/api/v2/eversports/courts?date=%s", baseURL, date)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -153,6 +176,7 @@ func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, passwor
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("list courts: %w", err)
 	}
 	defer resp.Body.Close()
@@ -170,12 +194,16 @@ func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, passwor
 }
 
 func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, endTime string, my bool, login, password string) ([]BookingSlot, error) {
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
 	myStr := "false"
 	if my {
 		myStr = "true"
 	}
 	url := fmt.Sprintf("%s/api/v2/eversports/matches?date=%s&startTime=%s&endTime=%s&my=%s",
-		c.baseURL, date, startTime, endTime, myStr)
+		baseURL, date, startTime, endTime, myStr)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -189,6 +217,7 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("list matches: %w", err)
 	}
 	defer resp.Body.Close()
@@ -208,7 +237,11 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, p
 	if c.reliableOnly {
 		return &BookingContractError{HTTPStatus: http.StatusConflict, Code: bookingapi.ErrorContractUpgradeRequired}
 	}
-	url := fmt.Sprintf("%s/api/v1/eversports/matches/%s", c.baseURL, matchUUID)
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/eversports/matches/%s", baseURL, matchUUID)
 
 	var body io.Reader
 	if login != "" {
@@ -231,6 +264,7 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, p
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return fmt.Errorf("cancel match %s: %w", matchUUID, err)
 	}
 	defer resp.Body.Close()
@@ -242,7 +276,11 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, p
 }
 
 func (c *httpBookingClient) VerifyBinding(ctx context.Context, expected bookingapi.Scope) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v2/eversports/descriptor", nil)
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v2/eversports/descriptor", nil)
 	if err != nil {
 		return fmt.Errorf("build booking v2 descriptor request: %w", err)
 	}
@@ -250,6 +288,7 @@ func (c *httpBookingClient) VerifyBinding(ctx context.Context, expected bookinga
 	req.Header.Set("Accept", "application/json")
 	response, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return fmt.Errorf("read booking v2 descriptor: %w", err)
 	}
 	defer response.Body.Close()
@@ -320,6 +359,10 @@ func requireBookingOperationID(status *bookingapi.OperationStatus, expected book
 const maxReliableBookingResponseBytes = 1 << 20
 
 func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, path string, idempotencyKey, expectedOperationID bookingapi.OperationID, payload any) (*bookingapi.OperationStatus, error) {
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -328,7 +371,7 @@ func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, pat
 		}
 		body = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("build booking v2 request: %w", err)
 	}
@@ -343,6 +386,7 @@ func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, pat
 
 	response, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("booking v2 request: %w", err)
 	}
 	defer response.Body.Close()
@@ -388,6 +432,26 @@ func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, pat
 	return nil, fmt.Errorf("decode booking v2 response: status %d contained no recognized contract document", response.StatusCode)
 }
 
+func (c *httpBookingClient) invalidateResolvedEndpoint() {
+	if c.resolver != nil {
+		discovery.Invalidate(c.resolver, c.requirement)
+	}
+}
+
+func (c *httpBookingClient) resolveBaseURL(ctx context.Context) (string, error) {
+	if c.resolver == nil {
+		return c.baseURL, nil
+	}
+	endpoint, err := discovery.ResolveOne(ctx, c.resolver, c.requirement)
+	if err != nil {
+		return "", fmt.Errorf("resolve booking service: %w", err)
+	}
+	if endpoint.API == "" {
+		return "", fmt.Errorf("resolve booking service: %w", discovery.ErrNoEndpoint)
+	}
+	return strings.TrimRight(endpoint.API, "/"), nil
+}
+
 func reliableStatusHTTPCode(status int) bool {
 	switch status {
 	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusGone:
@@ -425,7 +489,11 @@ func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end
 	if c.reliableOnly {
 		return nil, &BookingContractError{HTTPStatus: http.StatusConflict, Code: bookingapi.ErrorContractUpgradeRequired}
 	}
-	url := fmt.Sprintf("%s/api/v1/eversports/matches", c.baseURL)
+	baseURL, err := c.resolveBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/api/v1/eversports/matches", baseURL)
 
 	payload := map[string]string{
 		"courtUuid": courtUUID,
@@ -450,6 +518,7 @@ func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("book match: %w", err)
 	}
 	defer resp.Body.Close()

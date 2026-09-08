@@ -37,6 +37,7 @@ services:
       ADMIN_PORT: "9090"
       SERVICE_KEY: management
       MONITORING_TOKEN: ${MONITORING_TOKEN}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       DISCOVERY_URL: ${DISCOVERY_URL:-}
       DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
       DISCOVERY_ALLOWED_CIDRS: ${DISCOVERY_ALLOWED_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
@@ -61,8 +62,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      booking:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 10s
@@ -82,7 +81,9 @@ services:
   telegram:
     image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-stable}
     environment:
-      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -101,9 +102,6 @@ services:
       DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
     volumes:
       - logs:/logs
-    depends_on:
-      management:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 10s
@@ -169,11 +167,13 @@ services:
       ADMIN_PORT: "9090"
       SERVICE_KEY: web
       MONITORING_TOKEN: ${MONITORING_TOKEN}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       DISCOVERY_URL: ${DISCOVERY_URL:-}
       DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME}
-      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       JWT_SECRET: ${JWT_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -181,9 +181,6 @@ services:
       LOG_DIR: /logs/web
     volumes:
       - logs:/logs
-    depends_on:
-      management:
-        condition: service_healthy
     ports:
       - "8082:8082"
     healthcheck:

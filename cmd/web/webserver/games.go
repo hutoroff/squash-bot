@@ -42,11 +42,15 @@ type GamesHandler struct {
 
 // NewGamesHandler creates a GamesHandler.
 func NewGamesHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *GamesHandler {
+	return NewGamesHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+
+func NewGamesHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *GamesHandler {
 	return &GamesHandler{
 		auth:       auth,
-		mgmtURL:    mgmtURL,
+		mgmtURL:    target.requestBaseURL(),
 		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: newTargetHTTPClient(target, 10*time.Second),
 	}
 }
 

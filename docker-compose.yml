@@ -52,16 +52,15 @@ services:
       dockerfile: Dockerfile.telegram
     env_file: .env
     environment:
-      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       ADMIN_PORT: "9090"
       # Webhook mode (optional). Local webhook testing needs a tunnel (e.g. cloudflared/ngrok → 8083).
       # Leave unset to use long-polling (the default for local development).
       # TELEGRAM_WEBHOOK_URL: https://<your-tunnel>.trycloudflare.com/telegram/webhook
       # TELEGRAM_WEBHOOK_SECRET: <openssl rand -hex 32>
       # SERVER_PORT: "8083"
-    depends_on:
-      management:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 5s
@@ -94,11 +93,10 @@ services:
     env_file: .env
     environment:
       SERVER_PORT: "8082"
-      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       ADMIN_PORT: "9090"
-    depends_on:
-      management:
-        condition: service_healthy
     ports:
       - "8082:8082"
     healthcheck:

@@ -16,7 +16,10 @@ type VenuesHandler struct {
 
 // NewVenuesHandler creates a VenuesHandler.
 func NewVenuesHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *VenuesHandler {
-	return &VenuesHandler{newMgmtClient(auth, mgmtURL, mgmtSecret)}
+	return NewVenuesHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+func NewVenuesHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *VenuesHandler {
+	return &VenuesHandler{newMgmtClientWithTarget(auth, target, mgmtSecret)}
 }
 
 // venueScope authorizes the group and parses {venueID}. Callers that only need

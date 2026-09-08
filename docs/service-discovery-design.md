@@ -1,10 +1,10 @@
 # Service Discovery, Capability Registration, and Monitoring
 
-**Status:** Proposed — not implemented.
+**Status:** Implementation in progress — packages A and B committed; package C implemented locally; packages D and E pending.
 
 **Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability status refreshed through lifecycle baseline `ab9e588`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Booking's P1–P7 reliable v2 foundation and operational handoff are implemented. Management §10.1 now has a local static keyed-v2 caller candidate covering durable intent/operation admission, typed execution/status recovery, create/cancel wiring, origin binding, conservative failure policy, an unexposed one-child duplicate-risk primitive, and internal inspection/reconciliation/resolution. Remaining M6 observability/notification and acceptance/rollout gates, plus real registration, remain unimplemented.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) owns the durable idempotent booking API and management intent/recovery work. Packages A and B are committed. Package C is implemented locally: management resolves booking through its local registry service, Telegram/web use bounded lease-aware remote resolution, all callers enforce logical contract/capability/scope requirements, and registry mode has no static fallback. Prometheus/Grafana package D and operational cutover package E remain unimplemented; production booking mutation cutover also remains blocked on the companion plan's inventory/import and drill gates.
 
 ## 1. Executive decision
 
@@ -60,12 +60,12 @@ web ───────HTTP──▶ management ──HTTP─▶ booking ─�
 telegram and management independently call the external Telegram Bot API.
 ```
 
-The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation. Booking's direct SQL dependency and v2 API are implemented, and management's static v2 caller integration is implemented locally but not yet approved for production cutover. All discovery behavior below remains proposed.
+The code, rather than older comments/documentation, is the source of truth for the observations below. Booking's direct SQL dependency and v2 API, the management reliable caller, shared registry/lifecycle, and discovery-aware invocation are implemented. Prometheus/Grafana integration and production cutover remain proposed.
 
 | Area | Current behavior | Consequence |
 |---|---|---|
-| Wiring | `cmd/management/main.go` constructs a static keyed-v2 client only when `SPORTS_BOOKING_SERVICE_URL` and matching immutable scope/cutover acknowledgement are set. | A booking service appearing later still cannot enable the integration without changing startup wiring. |
-| HTTP clients | `cmd/telegram/client/client.go`, `cmd/web/webserver/*`, and `cmd/management/service/booking_client.go` retain static URLs. | Endpoint changes and compatibility selection are not represented explicitly. |
+| Wiring | `DISCOVERY_MODE` defaults to static. Registry mode constructs logical management/booking clients even when their target is initially absent; contradictory static URLs are rejected. | Registry bootstrap remains a central dependency for remote clients. |
+| HTTP clients | Telegram, web, and management booking clients resolve at the request boundary. Remote snapshots are bounded and lease-aware; transport failures invalidate the next lookup without replaying the failed request. | Business mutations still rely on their own idempotency semantics; discovery is not execution authority. |
 | Bootstrap | Telegram makes one management `/version` request and exits on failure or release-major mismatch. | Temporary dependency absence is treated as startup failure. |
 | Compose | Production management depends on healthy booking; web/telegram depend on healthy management. | Startup ordering masks the lack of runtime dependency handling. |
 | Scheduler | Every management process starts cron, audit retention, and startup changelog publication. | A second management instance duplicates potential executors. |
@@ -77,7 +77,7 @@ The code, rather than older comments/documentation, is the source of truth for t
 | Failure handling | `booking_core.go` currently treats booking failures as credential failures and may continue using another account. | Infrastructure unavailability or an ambiguous timeout must not be mistaken for invalid credentials. |
 | Booking readiness | `api/venues.go:bookingReadiness` checks settings and credentials, not live provider availability. | Existing readiness can report a usable integration when its service is absent. |
 | Health | Most `/health` handlers return liveness; booking also has monitoring-authenticated database/singleton/coordinator readiness. Telegram has HTTP health only in webhook mode. | Discovery still needs consistent service lifecycle health, and polling telegram cannot currently be scraped. |
-| Monitoring | Booking exposes official Go/process and bounded reliability metrics; `scripts/healthcheck.sh` uses its authenticated readiness. Other services and dynamic Prometheus discovery remain unimplemented. | Discovery monitoring work must reuse booking's bounded labels rather than duplicate or expose business identifiers. |
+| Monitoring | All services expose protected admin health/descriptor/version/metrics endpoints; booking adds bounded reliability metrics. Dynamic Prometheus discovery remains unimplemented. | Package D must reuse the existing bounded labels rather than duplicate or expose business identifiers. |
 | Security | Internal HTTP APIs use one shared bearer secret on a private Docker network. | Acceptable for the current owner-operated deployment, but not a third-party plugin security boundary. |
 
 ## 4. Alternatives considered
@@ -187,7 +187,7 @@ Do not use a password, credential ID, user ID, or venue name as a routing identi
 }
 ```
 
-Names above become a small documented vocabulary during discovery implementation, not arbitrary strings used to invoke arbitrary paths. Booking now exposes equivalent local v2 descriptor metadata and the companion v2 mutation/status contract; compatible reads retain v1 aliases. Real registration/heartbeats and cross-service resolution still wait for the shared registry.
+Names above are the implemented bounded vocabulary, not arbitrary strings used to invoke arbitrary paths. Booking exposes v2 descriptor metadata and the companion mutation/status contract; compatible reads retain v1 aliases. Registration, heartbeats, and contract-filtered cross-service resolution use the management-owned registry.
 
 ### Compatibility
 
@@ -379,7 +379,7 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 #### M2. HTTP contract, status and recovery
 
-**Implementation status:** static typed v2 client, bearer-authenticated contract/capability/exact-scope descriptor verification before operations, bounded status polling, same-key ambiguity read-back, fair periodic recoverable-operation observation/resubmission, successful court-booking projection repair, and result-expiry persistence are implemented locally. Discovery capability resolution is not.
+**Implementation status:** static and registry-backed typed v2 clients, contract/capability/exact-scope verification, bounded status polling, same-key ambiguity read-back, fair periodic recoverable-operation observation/resubmission, successful court-booking projection repair, and result-expiry persistence are implemented. Production activation gates remain pending.
 
 - Require `eversports-booking` major 2 and create/cancel/status capabilities, plus reconciliation when used. Extend `BookingServiceClient` with typed operation APIs without spreading URLs/discovery DTOs into scheduler logic.
 - Send the durable `Idempotency-Key`; retain it across endpoint replacement and HTTP uncertainty. Treat `202` as in-progress, not success. Poll within a bounded foreground budget and persist pending intent for later observation.
@@ -673,7 +673,7 @@ The original deliverable was this proposal. Implementation now proceeds in the b
 |---|---|---|---|
 | **A. Contracts and health foundation** *(implemented locally)* | Bounded descriptor/error types, resolver/registrar interfaces, exact-scope static resolver, internal admin listeners, monitoring auth, fixed service metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
 | **B. Registry and lifecycle** *(implemented locally)* | Registry service/repository/API, additive migrations, self-registration, heartbeats/draining, catalog, scope/address validation, bounded membership/tombstone retention, and registration retry. | A | Concurrent membership, restart/expiry, late-heartbeat, terminal-incarnation, and conflicting-descriptor tests pass; registration remains shadow-only and does not affect invocation. |
-| **C. Discovery-aware invocation** | Registry resolver in existing clients, explicit logical booking binding, runtime availability, contract filtering, typed errors, no implicit external mutation replay, readiness UX updates. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
+| **C. Discovery-aware invocation** *(implemented locally)* | Registry resolver in existing clients, explicit logical booking binding, runtime availability, contract filtering, typed errors, no implicit external mutation replay, readiness UX updates. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
 | **M. Reliable booking caller integration — separate task** | All requirements in §10.1: durable intent/key allocation, status/reconciliation, explicit creation-risk policy, partial evidence, cancellation/origin semantics, notifications and coordinated activation. | Companion booking contract/fixtures; production activation requires its implementation | §10.1 gates pass in static mode before booking v2 production mutations. Discovery cannot substitute for this work. |
 | **D. Prometheus and external Grafana** | HTTP SD endpoint, expected-service metrics, Compose Prometheus/storage, dashboard and alert provisioning artifacts, secure Grafana connectivity runbook. | A, B | New instances are scraped automatically; disappearance and whole-host/Prometheus failure alert through external Grafana. |
 | **E. Cutover and operational documentation** | Shared Compose network, relaxed application startup dependencies, registry mode rollout, singleton guardrails, rollback runbook; README/AGENTS/CLAUDE updates. | C, D | Full failure/recovery drill succeeds; legacy rollback tested; no implied multi-active support. |

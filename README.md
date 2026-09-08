@@ -397,7 +397,7 @@ Guest spots count toward capacity.
 
 ## Environment Variables
 
-All services accept optional shadow registration through `DISCOVERY_URL` while business invocation remains static. `SERVICE_ADVERTISE_HOST` may provide an explicit non-loopback instance IP; otherwise `DISCOVERY_NETWORK_INTERFACE` selects the container interface. Management bounds registrations to `DISCOVERY_ALLOWED_CIDRS`. Registry unavailability does not stop otherwise healthy services, and it never enables a legacy booking fallback.
+All services accept optional shadow registration through `DISCOVERY_URL`. `DISCOVERY_MODE` defaults to `static`; in `registry` mode management resolves booking by `BOOKING_SERVICE_KEY`, while Telegram and web resolve management by `MANAGEMENT_SERVICE_KEY`. Static target URLs must be empty in registry mode and are never fallback targets. Resolvers enforce contract/capability/scope compatibility, reject multiple active instances, cache only within registry leases, and force rediscovery after transport failures without automatically replaying mutations. `SERVICE_ADVERTISE_HOST` may provide an explicit non-loopback instance IP; otherwise `DISCOVERY_NETWORK_INTERFACE` selects the container interface. Management bounds registrations to `DISCOVERY_ALLOWED_CIDRS`. Registry unavailability does not stop otherwise healthy services, and it never enables a legacy booking fallback.
 
 ### management
 
@@ -414,7 +414,8 @@ All services accept optional shadow registration through `DISCOVERY_URL` while b
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables only the durable keyed-v2 create/cancel integration; no v1 mutation fallback exists. |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | `static` uses `SPORTS_BOOKING_SERVICE_URL`; `registry` requires the registry bootstrap URL and uses `BOOKING_SERVICE_KEY`. |
+| `SPORTS_BOOKING_SERVICE_URL` | In static mode to enable booking | _(empty)_ | Base URL of the booking service (e.g. `http://booking:8081`); enables only durable keyed-v2 create/cancel integration and must be empty in registry mode. |
 | `BOOKING_SERVICE_KEY` / `EVERSPORTS_FACILITY_ID` / `EVERSPORTS_FACILITY_UUID` / `EVERSPORTS_FACILITY_SLUG` | When booking enabled | — | Must match booking's immutable provider/facility binding. Existing operations fail closed rather than being sent to a changed binding. |
 | `BOOKING_RELIABLE_CUTOVER_ACK` | When booking enabled | — | Must equal `keyed-v2-only`; acknowledges that keyless mutation traffic is rejected, not that rollout gates passed. |
 | `MANAGEMENT_BOOKING_RESPONSE_WAIT` | No | `8s` | Bounded foreground wait/status-observation budget after keyed admission. |
@@ -430,7 +431,9 @@ All services accept optional shadow registration through `DISCOVERY_URL` while b
 | Variable                 | Required | Default           | Description                                         |
 |--------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://management:8080`) |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | Select static URL routing or authenticated registry resolution. |
+| `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
+| `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service  |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
@@ -454,7 +457,9 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 |--------------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | Select static URL routing or authenticated registry resolution. |
+| `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
+| `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
 | `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); generate with `openssl rand -hex 32` |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |

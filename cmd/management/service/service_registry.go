@@ -69,10 +69,44 @@ func (s *ServiceRegistryService) Deregister(ctx context.Context, instanceID stri
 	return s.repository.Deregister(ctx, instanceID)
 }
 func (s *ServiceRegistryService) Resolve(ctx context.Context, requirement discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
-	return s.repository.Resolve(ctx, requirement)
+	endpoints, err := s.repository.Resolve(ctx, requirement)
+	if err != nil || len(endpoints) > 0 {
+		return endpoints, err
+	}
+	catalog, err := s.repository.Catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matchingBinding := false
+	for _, entry := range catalog {
+		descriptor := discovery.Descriptor{ServiceKey: entry.ServiceKey, Scope: entry.Scope, Contracts: entry.Contracts, Capabilities: entry.Capabilities}
+		if descriptor.ServiceKey != requirement.ServiceKey || !sameDiscoveryScope(descriptor.Scope, requirement.Scope) {
+			continue
+		}
+		matchingBinding = true
+		if descriptor.Compatible(requirement) {
+			return endpoints, nil
+		}
+	}
+	if matchingBinding {
+		return nil, discovery.ErrIncompatible
+	}
+	return endpoints, nil
 }
 func (s *ServiceRegistryService) Catalog(ctx context.Context) ([]discovery.CatalogEntry, error) {
 	return s.repository.Catalog(ctx)
+}
+
+func sameDiscoveryScope(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *ServiceRegistryService) validateEndpoints(descriptor discovery.Descriptor) error {

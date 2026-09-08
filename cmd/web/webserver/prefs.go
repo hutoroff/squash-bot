@@ -14,7 +14,10 @@ type PrefsHandler struct {
 
 // NewPrefsHandler creates a PrefsHandler.
 func NewPrefsHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *PrefsHandler {
-	return &PrefsHandler{newMgmtClient(auth, mgmtURL, mgmtSecret)}
+	return NewPrefsHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+func NewPrefsHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *PrefsHandler {
+	return &PrefsHandler{newMgmtClientWithTarget(auth, target, mgmtSecret)}
 }
 
 // handleGetPreferences handles GET /api/me/preferences.

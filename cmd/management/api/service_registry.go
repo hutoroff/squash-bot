@@ -159,6 +159,8 @@ func decodeBoundedDiscoveryJSON(w http.ResponseWriter, r *http.Request, target a
 
 func writeRegistryError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, discovery.ErrIncompatible):
+		writeError(w, http.StatusConflict, "service contract is incompatible")
 	case errors.Is(err, service.ErrRegistryDescriptorRejected):
 		writeError(w, http.StatusBadRequest, "service registry descriptor rejected")
 	case errors.Is(err, storage.ErrRegistryConflict):

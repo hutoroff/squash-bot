@@ -23,10 +23,11 @@ const (
 )
 
 var (
-	ErrUnavailable  = errors.New("service discovery unavailable")
-	ErrNoEndpoint   = errors.New("no eligible service endpoint")
-	ErrIncompatible = errors.New("service contract is incompatible")
-	identifierRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+	ErrUnavailable    = errors.New("service discovery unavailable")
+	ErrNoEndpoint     = errors.New("no eligible service endpoint")
+	ErrIncompatible   = errors.New("service contract is incompatible")
+	ErrMultipleActive = errors.New("multiple active instances are not supported")
+	identifierRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 )
 
 type InstanceState string
@@ -98,14 +99,41 @@ type CatalogEntry struct {
 }
 
 type ResolvedEndpoint struct {
-	InstanceID string
-	API        string
-	Admin      string
-	Descriptor Descriptor
+	InstanceID     string     `json:"instance_id"`
+	API            string     `json:"api"`
+	Admin          string     `json:"admin"`
+	Descriptor     Descriptor `json:"descriptor"`
+	RegistryTime   time.Time  `json:"registry_time"`
+	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 }
 
 type Resolver interface {
 	Resolve(context.Context, Requirement) ([]ResolvedEndpoint, error)
+}
+
+type InvalidatingResolver interface {
+	Resolver
+	Invalidate(Requirement)
+}
+
+func Invalidate(resolver Resolver, requirement Requirement) {
+	if invalidating, ok := resolver.(InvalidatingResolver); ok {
+		invalidating.Invalidate(requirement)
+	}
+}
+
+func ResolveOne(ctx context.Context, resolver Resolver, requirement Requirement) (*ResolvedEndpoint, error) {
+	endpoints, err := resolver.Resolve(ctx, requirement)
+	if err != nil {
+		return nil, err
+	}
+	if len(endpoints) == 0 {
+		return nil, ErrNoEndpoint
+	}
+	if len(endpoints) != 1 {
+		return nil, ErrMultipleActive
+	}
+	return &endpoints[0], nil
 }
 
 type Registrar interface {
@@ -188,6 +216,10 @@ func validateEndpoint(raw string, required bool) error {
 
 func (d Descriptor) Satisfies(requirement Requirement) bool {
 	return satisfies(d, requirement)
+}
+
+func (d Descriptor) Compatible(requirement Requirement) bool {
+	return compatible(d, requirement)
 }
 
 func ValidateRequirement(requirement Requirement) error {
