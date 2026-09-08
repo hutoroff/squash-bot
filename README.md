@@ -397,6 +397,8 @@ Guest spots count toward capacity.
 
 ## Environment Variables
 
+All services accept optional shadow registration through `DISCOVERY_URL` while business invocation remains static. `SERVICE_ADVERTISE_HOST` may provide an explicit non-loopback instance IP; otherwise `DISCOVERY_NETWORK_INTERFACE` selects the container interface. Management bounds registrations to `DISCOVERY_ALLOWED_CIDRS`. Registry unavailability does not stop otherwise healthy services, and it never enables a legacy booking fallback.
+
 ### management
 
 | Variable               | Required | Default           | Description                                         |

@@ -1,6 +1,6 @@
 # Telegram service
 
-The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access. A monitoring-token-protected admin listener exposes local health, version, descriptor, and Prometheus metrics in both webhook and polling modes; it is separate from the optional webhook listener.
+The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access. A monitoring-token-protected admin listener exposes local health, version, descriptor, and Prometheus metrics in both webhook and polling modes; it is separate from the optional webhook listener. With `DISCOVERY_URL` configured, the admin listener and shadow registration start before management compatibility is available; Telegram waits with bounded checks and begins update consumption only after the static management dependency is compatible.
 
 ## Entry points and test seams
 

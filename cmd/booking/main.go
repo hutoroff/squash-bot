@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/booking/booking"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -54,18 +55,41 @@ func run() error {
 	errCh := make(chan serverResult, 2)
 	metrics := booking.NewMetrics()
 	health := &runtimeHealthSource{}
-	adminSrv, _, err := booking.NewAdminServer(booking.AdminConfig{
+	registryURL := cfg.DiscoveryURL
+	advertiseHost := "booking"
+	if registryURL != "" {
+		var hostErr error
+		advertiseHost, hostErr = discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface)
+		if hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+			advertiseHost = "booking"
+		}
+	}
+	adminConfig := booking.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Secret: cfg.MonitoringSecret, Version: Version,
 		ServiceKey: cfg.ServiceKey, InstanceID: uuid.NewString(),
-		APIEndpoint: "http://booking:" + cfg.ServerPort, AdminEndpoint: "http://booking:" + cfg.AdminServerPort,
+		APIEndpoint: "http://" + advertiseHost + ":" + cfg.ServerPort, AdminEndpoint: "http://" + advertiseHost + ":" + cfg.AdminServerPort,
 		Scope: configuredScope(cfg), Readiness: health.readiness,
 		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics,
-	})
+	}
+	adminSrv, _, err := booking.NewAdminServer(adminConfig)
 	if err != nil {
 		return fmt.Errorf("configure booking admin server: %w", err)
 	}
 	go func() { errCh <- serverResult{name: "admin", err: adminSrv.ListenAndServe()} }()
 	logger.Info("booking admin listener starting", "admin_port", cfg.AdminServerPort)
+	descriptor, err := booking.AdminDescriptor(adminConfig)
+	if err != nil {
+		return err
+	}
+	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, func(readyCtx context.Context) bool {
+		return health.readiness(readyCtx).Ready
+	}, logger)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	defer discovery.ShutdownLifecycle(lifecycle)
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 45*time.Second)
 	runtime, handler, err := buildReliableRuntime(startupCtx, cfg, logger, metrics)

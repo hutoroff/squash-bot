@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -70,6 +71,32 @@ type Requirement struct {
 	Scope                map[string]string
 }
 
+type Lease struct {
+	RegistryTime          time.Time `json:"registry_time"`
+	LeaseExpiresAt        time.Time `json:"lease_expires_at"`
+	LeaseRemainingSeconds int64     `json:"lease_remaining_seconds"`
+}
+
+type CatalogInstance struct {
+	Descriptor     Descriptor `json:"descriptor"`
+	TerminalState  string     `json:"terminal_state,omitempty"`
+	LastHeartbeat  time.Time  `json:"last_heartbeat"`
+	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
+	Eligible       bool       `json:"eligible"`
+}
+
+type CatalogEntry struct {
+	ServiceKey     string            `json:"service_key"`
+	ServiceKind    string            `json:"service_kind"`
+	Implementation string            `json:"implementation"`
+	Scope          map[string]string `json:"scope,omitempty"`
+	Contracts      []Contract        `json:"contracts"`
+	Capabilities   []Capability      `json:"capabilities"`
+	FirstSeenAt    time.Time         `json:"first_seen_at"`
+	LastSeenAt     time.Time         `json:"last_seen_at"`
+	Instances      []CatalogInstance `json:"instances"`
+}
+
 type ResolvedEndpoint struct {
 	InstanceID string
 	API        string
@@ -82,8 +109,8 @@ type Resolver interface {
 }
 
 type Registrar interface {
-	Register(context.Context, Descriptor) error
-	Heartbeat(context.Context, string, InstanceState) error
+	Register(context.Context, Descriptor) (*Lease, error)
+	Heartbeat(context.Context, string, InstanceState) (*Lease, error)
 	Drain(context.Context, string) error
 	Deregister(context.Context, string) error
 }
@@ -157,6 +184,14 @@ func validateEndpoint(raw string, required bool) error {
 		return fmt.Errorf("endpoint must be an HTTP origin")
 	}
 	return nil
+}
+
+func (d Descriptor) Satisfies(requirement Requirement) bool {
+	return satisfies(d, requirement)
+}
+
+func ValidateRequirement(requirement Requirement) error {
+	return validateRequirement(requirement)
 }
 
 func satisfies(d Descriptor, requirement Requirement) bool {

@@ -79,14 +79,24 @@ func main() {
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
 	h.SetFeatureFlags(webserver.NewFeatureFlagsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret))
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "web", Implementation: "squash-web", ReleaseVersion: Version,
+		Endpoints: discovery.Endpoints{API: "http://web:" + cfg.ServerPort, Admin: "http://web:" + cfg.AdminServerPort},
+		Contracts: []discovery.Contract{{Name: "web-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+	}
+	registryURL := cfg.DiscoveryURL
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
+		}
+	}
+	localReady := func(context.Context) bool { return true }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
-		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
-		Descriptor: discovery.Descriptor{
-			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
-			ServiceKind: "web", Implementation: "squash-web", ReleaseVersion: Version,
-			Endpoints: discovery.Endpoints{API: "http://web:" + cfg.ServerPort, Admin: "http://web:" + cfg.AdminServerPort},
-			Contracts: []discovery.Contract{{Name: "web-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
-		},
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			return observability.Readiness{Ready: true, Checks: map[string]bool{"listener": true}}
 		},
@@ -95,6 +105,12 @@ func main() {
 		slog.Error("configure web admin listener", "err", err)
 		os.Exit(1)
 	}
+
+	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	defer discovery.ShutdownLifecycle(lifecycle)
 
 	slog.Info("web starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)

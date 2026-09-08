@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -65,33 +66,50 @@ func main() {
 
 	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
 
-	mgmtVersion, err := mgmtClient.GetVersion(ctx)
-	if err != nil {
-		slog.Error("check management service version", "err", err)
-		os.Exit(1)
+	if cfg.DiscoveryURL == "" {
+		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
+		if versionErr != nil {
+			slog.Error("check management service version", "err", versionErr)
+			os.Exit(1)
+		}
+		if majorPart(Version) != majorPart(mgmtVersion) {
+			slog.Error("management service major version mismatch", "bot_version", Version, "management_version", mgmtVersion)
+			os.Exit(1)
+		}
+		slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 	}
-	if majorPart(Version) != majorPart(mgmtVersion) {
-		slog.Error("management service major version mismatch",
-			"bot_version", Version, "management_version", mgmtVersion)
-		os.Exit(1)
-	}
-	slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
 	apiEndpoint := ""
+	adminEndpoint := "http://telegram:" + cfg.AdminServerPort
+	registryURL := cfg.DiscoveryURL
 	if cfg.WebhookURL != "" {
 		apiEndpoint = "http://telegram:" + cfg.ServerPort
 	}
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			adminEndpoint = "http://" + host + ":" + cfg.AdminServerPort
+			if cfg.WebhookURL != "" {
+				apiEndpoint = "http://" + host + ":" + cfg.ServerPort
+			}
+		}
+	}
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "telegram", Implementation: "squash-telegram", ReleaseVersion: Version,
+		Endpoints: discovery.Endpoints{API: apiEndpoint, Admin: adminEndpoint},
+		Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
+	}
+	var transportReady atomic.Bool
+	localReady := func(context.Context) bool { return transportReady.Load() }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
-		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
-		Descriptor: discovery.Descriptor{
-			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
-			ServiceKind: "telegram", Implementation: "squash-telegram", ReleaseVersion: Version,
-			Endpoints: discovery.Endpoints{API: apiEndpoint, Admin: "http://telegram:" + cfg.AdminServerPort},
-			Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
-		},
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
-			return observability.Readiness{Ready: true, Checks: map[string]bool{"transport": true}}
+			ready := transportReady.Load()
+			return observability.Readiness{Ready: ready, Checks: map[string]bool{"transport": ready}}
 		},
 	})
 	if err != nil {
@@ -102,6 +120,36 @@ func main() {
 	slog.Info("telegram starting", "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)
 	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	defer discovery.ShutdownLifecycle(lifecycle)
+	if cfg.DiscoveryURL != "" {
+		for ctx.Err() == nil {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
+			mgmtVersion, versionErr := mgmtClient.GetVersion(checkCtx)
+			checkCancel()
+			if versionErr == nil && majorPart(Version) == majorPart(mgmtVersion) {
+				slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
+				break
+			}
+			if versionErr == nil {
+				versionErr = fmt.Errorf("management major version %s is incompatible", mgmtVersion)
+			}
+			logger.Warn("waiting for compatible management service", "err", versionErr)
+			select {
+			case <-ctx.Done():
+				break
+			case <-time.After(5 * time.Second):
+			}
+		}
+		if ctx.Err() != nil {
+			<-errCh
+			return
+		}
+	}
+	transportReady.Store(true)
 	go func() {
 		if cfg.WebhookURL != "" {
 			opts := telegram.WebhookOptions{PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret}

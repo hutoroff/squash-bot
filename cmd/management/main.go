@@ -237,18 +237,34 @@ func main() {
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	h.SetFeatureFlags(flagSvc)
+	registryService, err := service.NewServiceRegistryService(storage.NewServiceRegistryRepo(pool), cfg.DiscoveryAllowedCIDRs)
+	if err != nil {
+		slog.Error("configure service registry", "err", err)
+		os.Exit(1)
+	}
+	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
+		Endpoints: discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
+		Contracts: []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+	}
+	registryURL := cfg.DiscoveryURL
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
+		}
+	}
+	localReady := func(readyCtx context.Context) bool { return pool.Ping(readyCtx) == nil }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
-		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
-		Descriptor: discovery.Descriptor{
-			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
-			ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
-			Endpoints: discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
-			Contracts: []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
-		},
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(readyCtx context.Context) observability.Readiness {
-			database := pool.Ping(readyCtx) == nil
+			database := localReady(readyCtx)
 			return observability.Readiness{Ready: database, Checks: map[string]bool{"database": database}}
 		},
 	})
@@ -256,6 +272,12 @@ func main() {
 		slog.Error("configure management admin listener", "err", err)
 		os.Exit(1)
 	}
+
+	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	defer discovery.ShutdownLifecycle(lifecycle)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)

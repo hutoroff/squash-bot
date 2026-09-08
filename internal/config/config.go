@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strconv"
 	"time"
@@ -43,10 +44,13 @@ type TelegramConfig struct {
 	WebhookSecret string `env:"TELEGRAM_WEBHOOK_SECRET"`
 	// ServerPort is the local plain-HTTP port the webhook listener binds to.
 	// A TLS-terminating reverse proxy should forward to this port.
-	ServerPort      string `env:"SERVER_PORT" envDefault:"8083"`
-	AdminServerPort string `env:"ADMIN_PORT" envDefault:"9090"`
-	MonitoringToken string `env:"MONITORING_TOKEN,required"`
-	ServiceKey      string `env:"SERVICE_KEY" envDefault:"telegram"`
+	ServerPort                string `env:"SERVER_PORT" envDefault:"8083"`
+	AdminServerPort           string `env:"ADMIN_PORT" envDefault:"9090"`
+	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
+	ServiceKey                string `env:"SERVICE_KEY" envDefault:"telegram"`
+	DiscoveryURL              string `env:"DISCOVERY_URL"`
+	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
+	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
 }
 
 // Validate checks invariants that the env parser cannot express: secret
@@ -60,6 +64,9 @@ func (c *TelegramConfig) Validate() error {
 	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
 		return err
 	}
+	if err := validateDiscoveryURL(c.DiscoveryURL); err != nil {
+		return err
+	}
 	if c.WebhookURL != "" && len(c.WebhookSecret) < minWebhookSecretLength {
 		return fmt.Errorf("TELEGRAM_WEBHOOK_SECRET must be set (at least %d characters) when TELEGRAM_WEBHOOK_URL is set", minWebhookSecretLength)
 	}
@@ -71,14 +78,18 @@ type ManagementConfig struct {
 	DatabaseURL      string `env:"DATABASE_URL,required"`
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
-	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
-	ServerPort        string `env:"SERVER_PORT"           envDefault:"8080"`
-	AdminServerPort   string `env:"ADMIN_PORT"            envDefault:"9090"`
-	MonitoringToken   string `env:"MONITORING_TOKEN,required"`
-	ServiceKey        string `env:"SERVICE_KEY" envDefault:"management"`
-	CronPoll          string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
-	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
-	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
+	InternalAPISecret         string `env:"INTERNAL_API_SECRET,required"`
+	ServerPort                string `env:"SERVER_PORT"           envDefault:"8080"`
+	AdminServerPort           string `env:"ADMIN_PORT"            envDefault:"9090"`
+	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
+	ServiceKey                string `env:"SERVICE_KEY" envDefault:"management"`
+	DiscoveryURL              string `env:"DISCOVERY_URL"`
+	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
+	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
+	DiscoveryAllowedCIDRs     string `env:"DISCOVERY_ALLOWED_CIDRS" envDefault:"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"`
+	CronPoll                  string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
+	LogLevel                  string `env:"LOG_LEVEL"             envDefault:"INFO"`
+	Timezone                  string `env:"TIMEZONE"              envDefault:"UTC"`
 	// SportsBookingServiceURL is the base URL of the booking service. Optional.
 	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
 	// and the auto-booking scheduler will book courts when booking opens at midnight.
@@ -116,6 +127,9 @@ func (c *ManagementConfig) Validate() error {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
 	}
 	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
+		return err
+	}
+	if err := validateDiscoveryURL(c.DiscoveryURL); err != nil {
 		return err
 	}
 	if c.SportsBookingServiceURL != "" {
@@ -178,18 +192,21 @@ type BookingConfig struct {
 	LogLevel        string `env:"LOG_LEVEL" envDefault:"INFO"`
 	Timezone        string `env:"TIMEZONE" envDefault:"UTC"`
 
-	HTTPResponseWait       time.Duration `env:"BOOKING_HTTP_RESPONSE_WAIT" envDefault:"20s"`
-	ExecutionTimeout       time.Duration `env:"BOOKING_EXECUTION_TIMEOUT" envDefault:"90s"`
-	ProviderCallTimeout    time.Duration `env:"BOOKING_PROVIDER_CALL_TIMEOUT" envDefault:"20s"`
-	FinalizationTimeout    time.Duration `env:"BOOKING_FINALIZATION_TIMEOUT" envDefault:"5s"`
-	AdmissionWait          time.Duration `env:"BOOKING_ADMISSION_WAIT" envDefault:"1s"`
-	ShutdownTimeout        time.Duration `env:"BOOKING_SHUTDOWN_TIMEOUT" envDefault:"100s"`
-	SingletonCheckInterval time.Duration `env:"BOOKING_SINGLETON_CHECK_INTERVAL" envDefault:"5s"`
-	RetentionInterval      time.Duration `env:"BOOKING_RETENTION_INTERVAL" envDefault:"24h"`
-	RetentionAge           time.Duration `env:"BOOKING_RETENTION_AGE" envDefault:"2160h"`
-	RetentionBatchSize     int           `env:"BOOKING_RETENTION_BATCH_SIZE" envDefault:"100"`
-	SessionCapacity        int           `env:"BOOKING_SESSION_CAPACITY" envDefault:"32"`
-	SessionIdleTimeout     time.Duration `env:"BOOKING_SESSION_IDLE_TIMEOUT" envDefault:"10m"`
+	HTTPResponseWait          time.Duration `env:"BOOKING_HTTP_RESPONSE_WAIT" envDefault:"20s"`
+	ExecutionTimeout          time.Duration `env:"BOOKING_EXECUTION_TIMEOUT" envDefault:"90s"`
+	ProviderCallTimeout       time.Duration `env:"BOOKING_PROVIDER_CALL_TIMEOUT" envDefault:"20s"`
+	FinalizationTimeout       time.Duration `env:"BOOKING_FINALIZATION_TIMEOUT" envDefault:"5s"`
+	AdmissionWait             time.Duration `env:"BOOKING_ADMISSION_WAIT" envDefault:"1s"`
+	ShutdownTimeout           time.Duration `env:"BOOKING_SHUTDOWN_TIMEOUT" envDefault:"100s"`
+	SingletonCheckInterval    time.Duration `env:"BOOKING_SINGLETON_CHECK_INTERVAL" envDefault:"5s"`
+	RetentionInterval         time.Duration `env:"BOOKING_RETENTION_INTERVAL" envDefault:"24h"`
+	RetentionAge              time.Duration `env:"BOOKING_RETENTION_AGE" envDefault:"2160h"`
+	RetentionBatchSize        int           `env:"BOOKING_RETENTION_BATCH_SIZE" envDefault:"100"`
+	SessionCapacity           int           `env:"BOOKING_SESSION_CAPACITY" envDefault:"32"`
+	SessionIdleTimeout        time.Duration `env:"BOOKING_SESSION_IDLE_TIMEOUT" envDefault:"10m"`
+	DiscoveryURL              string        `env:"DISCOVERY_URL"`
+	ServiceAdvertiseHost      string        `env:"SERVICE_ADVERTISE_HOST"`
+	DiscoveryNetworkInterface string        `env:"DISCOVERY_NETWORK_INTERFACE"`
 }
 
 func (c *BookingConfig) Validate() error {
@@ -241,7 +258,7 @@ func (c *BookingConfig) Validate() error {
 	if c.SessionCapacity < 1 {
 		return fmt.Errorf("BOOKING_SESSION_CAPACITY must be positive")
 	}
-	return nil
+	return validateDiscoveryURL(c.DiscoveryURL)
 }
 
 func LoadBooking() (*BookingConfig, error) {
@@ -258,12 +275,15 @@ func LoadBooking() (*BookingConfig, error) {
 
 // WebConfig holds configuration for the web service.
 type WebConfig struct {
-	ServerPort      string `env:"SERVER_PORT" envDefault:"8082"`
-	AdminServerPort string `env:"ADMIN_PORT" envDefault:"9090"`
-	MonitoringToken string `env:"MONITORING_TOKEN,required"`
-	ServiceKey      string `env:"SERVICE_KEY" envDefault:"web"`
-	LogLevel        string `env:"LOG_LEVEL"   envDefault:"INFO"`
-	Timezone        string `env:"TIMEZONE"    envDefault:"UTC"`
+	ServerPort                string `env:"SERVER_PORT" envDefault:"8082"`
+	AdminServerPort           string `env:"ADMIN_PORT" envDefault:"9090"`
+	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
+	ServiceKey                string `env:"SERVICE_KEY" envDefault:"web"`
+	DiscoveryURL              string `env:"DISCOVERY_URL"`
+	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
+	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
+	LogLevel                  string `env:"LOG_LEVEL"   envDefault:"INFO"`
+	Timezone                  string `env:"TIMEZONE"    envDefault:"UTC"`
 	// TelegramBotToken is used to verify Telegram Login Widget callbacks.
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	// TelegramBotName is the bot's username (without @), shown in the Login Widget.
@@ -285,7 +305,21 @@ func (c *WebConfig) Validate() error {
 	if len(c.JWTSecret) < minSecretLength {
 		return fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLength)
 	}
-	return validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey)
+	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
+		return err
+	}
+	return validateDiscoveryURL(c.DiscoveryURL)
+}
+
+func validateDiscoveryURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("DISCOVERY_URL must be an HTTP origin")
+	}
+	return nil
 }
 
 func validateAdminConfig(serverPort, adminPort, monitoringToken, internalSecret, serviceKey string) error {
