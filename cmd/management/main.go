@@ -16,11 +16,14 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/management/api"
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -236,11 +239,37 @@ func main() {
 	h.SetFeatureFlags(flagSvc)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
-
-	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
-	if err := api.Run(ctx, srv, logger); err != nil {
-		slog.Error("HTTP server error", "err", err)
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
+		Descriptor: discovery.Descriptor{
+			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+			ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
+			Endpoints: discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
+			Contracts: []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+		},
+		Readiness: func(readyCtx context.Context) observability.Readiness {
+			database := pool.Ping(readyCtx) == nil
+			return observability.Readiness{Ready: database, Checks: map[string]bool{"database": database}}
+		},
+	})
+	if err != nil {
+		slog.Error("configure management admin listener", "err", err)
 		os.Exit(1)
+	}
+
+	slog.Info("management starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
+	errCh := make(chan error, 2)
+	go func() { errCh <- api.Run(ctx, srv, logger) }()
+	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	if err := <-errCh; err != nil {
+		slog.Error("management listener stopped", "err", err)
+		cancel()
+		<-errCh
+		os.Exit(1)
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		slog.Error("management listener shutdown", "err", err)
 	}
 	slog.Info("management stopped")
 }

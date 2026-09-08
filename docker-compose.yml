@@ -32,6 +32,7 @@ services:
       # network between two containers on localhost, never leaves the host.
       DATABASE_URL: postgres://squash_bot:squash_bot@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
+      ADMIN_PORT: "9090"
     env_file: .env
     depends_on:
       postgres:
@@ -39,7 +40,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -52,6 +53,7 @@ services:
     env_file: .env
     environment:
       MANAGEMENT_SERVICE_URL: http://management:8080
+      ADMIN_PORT: "9090"
       # Webhook mode (optional). Local webhook testing needs a tunnel (e.g. cloudflared/ngrok → 8083).
       # Leave unset to use long-polling (the default for local development).
       # TELEGRAM_WEBHOOK_URL: https://<your-tunnel>.trycloudflare.com/telegram/webhook
@@ -60,6 +62,11 @@ services:
     depends_on:
       management:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   booking:
@@ -68,11 +75,13 @@ services:
       dockerfile: Dockerfile.booking
     environment:
       SERVER_PORT: "8081"
+      BOOKING_ADMIN_PORT: "9091"
+      BOOKING_MONITORING_SECRET: ${MONITORING_TOKEN}
     env_file: .env
     ports:
       - "8081:8081"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${BOOKING_MONITORING_SECRET}' http://localhost:9091/health/ready || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -86,13 +95,14 @@ services:
     environment:
       SERVER_PORT: "8082"
       MANAGEMENT_SERVICE_URL: http://management:8080
+      ADMIN_PORT: "9090"
     depends_on:
       management:
         condition: service_healthy
     ports:
       - "8082:8082"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -42,7 +43,10 @@ type TelegramConfig struct {
 	WebhookSecret string `env:"TELEGRAM_WEBHOOK_SECRET"`
 	// ServerPort is the local plain-HTTP port the webhook listener binds to.
 	// A TLS-terminating reverse proxy should forward to this port.
-	ServerPort string `env:"SERVER_PORT" envDefault:"8083"`
+	ServerPort      string `env:"SERVER_PORT" envDefault:"8083"`
+	AdminServerPort string `env:"ADMIN_PORT" envDefault:"9090"`
+	MonitoringToken string `env:"MONITORING_TOKEN,required"`
+	ServiceKey      string `env:"SERVICE_KEY" envDefault:"telegram"`
 }
 
 // Validate checks invariants that the env parser cannot express: secret
@@ -52,6 +56,9 @@ type TelegramConfig struct {
 func (c *TelegramConfig) Validate() error {
 	if len(c.InternalAPISecret) < minSecretLength {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
+		return err
 	}
 	if c.WebhookURL != "" && len(c.WebhookSecret) < minWebhookSecretLength {
 		return fmt.Errorf("TELEGRAM_WEBHOOK_SECRET must be set (at least %d characters) when TELEGRAM_WEBHOOK_URL is set", minWebhookSecretLength)
@@ -66,6 +73,9 @@ type ManagementConfig struct {
 	// InternalAPISecret is the shared secret that callers must present in the Authorization header.
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	ServerPort        string `env:"SERVER_PORT"           envDefault:"8080"`
+	AdminServerPort   string `env:"ADMIN_PORT"            envDefault:"9090"`
+	MonitoringToken   string `env:"MONITORING_TOKEN,required"`
+	ServiceKey        string `env:"SERVICE_KEY" envDefault:"management"`
 	CronPoll          string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
 	LogLevel          string `env:"LOG_LEVEL"             envDefault:"INFO"`
 	Timezone          string `env:"TIMEZONE"              envDefault:"UTC"`
@@ -104,6 +114,9 @@ type ManagementConfig struct {
 func (c *ManagementConfig) Validate() error {
 	if len(c.InternalAPISecret) < minSecretLength {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
+		return err
 	}
 	if c.SportsBookingServiceURL != "" {
 		if c.BookingCutoverAck != "keyed-v2-only" {
@@ -245,9 +258,12 @@ func LoadBooking() (*BookingConfig, error) {
 
 // WebConfig holds configuration for the web service.
 type WebConfig struct {
-	ServerPort string `env:"SERVER_PORT" envDefault:"8082"`
-	LogLevel   string `env:"LOG_LEVEL"   envDefault:"INFO"`
-	Timezone   string `env:"TIMEZONE"    envDefault:"UTC"`
+	ServerPort      string `env:"SERVER_PORT" envDefault:"8082"`
+	AdminServerPort string `env:"ADMIN_PORT" envDefault:"9090"`
+	MonitoringToken string `env:"MONITORING_TOKEN,required"`
+	ServiceKey      string `env:"SERVICE_KEY" envDefault:"web"`
+	LogLevel        string `env:"LOG_LEVEL"   envDefault:"INFO"`
+	Timezone        string `env:"TIMEZONE"    envDefault:"UTC"`
 	// TelegramBotToken is used to verify Telegram Login Widget callbacks.
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	// TelegramBotName is the bot's username (without @), shown in the Login Widget.
@@ -268,6 +284,24 @@ func (c *WebConfig) Validate() error {
 	}
 	if len(c.JWTSecret) < minSecretLength {
 		return fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLength)
+	}
+	return validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey)
+}
+
+func validateAdminConfig(serverPort, adminPort, monitoringToken, internalSecret, serviceKey string) error {
+	server, serverErr := strconv.Atoi(serverPort)
+	admin, adminErr := strconv.Atoi(adminPort)
+	if serverErr != nil || adminErr != nil || server < 1 || server > 65535 || admin < 1 || admin > 65535 || server == admin {
+		return fmt.Errorf("SERVER_PORT and ADMIN_PORT must be distinct valid TCP ports")
+	}
+	if len(monitoringToken) < minSecretLength {
+		return fmt.Errorf("MONITORING_TOKEN must be at least %d characters", minSecretLength)
+	}
+	if monitoringToken == internalSecret {
+		return fmt.Errorf("MONITORING_TOKEN must differ from INTERNAL_API_SECRET")
+	}
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`).MatchString(serviceKey) {
+		return fmt.Errorf("SERVICE_KEY is invalid")
 	}
 	return nil
 }

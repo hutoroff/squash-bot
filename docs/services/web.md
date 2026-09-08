@@ -1,6 +1,6 @@
 # Web service and frontend
 
-The Go web service serves an embedded React SPA and authenticated proxies to management. It has no database dependency. [main.go](../../cmd/web/main.go) wires handlers; [handler.go](../../cmd/web/webserver/handler.go) registers routes and SPA fallback.
+The Go web service serves an embedded React SPA and authenticated proxies to management. It has no database dependency. A separate internal admin listener exposes monitoring-token-protected local health, version, descriptor, and Prometheus metrics; management availability is not a local readiness gate. [main.go](../../cmd/web/main.go) wires handlers; [handler.go](../../cmd/web/webserver/handler.go) registers routes and SPA fallback.
 
 ## Authentication and identity
 

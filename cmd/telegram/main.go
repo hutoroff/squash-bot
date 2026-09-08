@@ -12,9 +12,12 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/cmd/telegram/telegram"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -75,20 +78,51 @@ func main() {
 	slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
-
-	slog.Info("telegram starting", "version", Version)
+	apiEndpoint := ""
 	if cfg.WebhookURL != "" {
-		opts := telegram.WebhookOptions{
-			PublicURL:  cfg.WebhookURL,
-			ListenPort: cfg.ServerPort,
-			Secret:     cfg.WebhookSecret,
-		}
-		if err := bot.StartWebhook(ctx, opts); err != nil && ctx.Err() == nil {
-			slog.Warn("webhook mode unavailable, falling back to long-polling", "err", err)
+		apiEndpoint = "http://telegram:" + cfg.ServerPort
+	}
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
+		Descriptor: discovery.Descriptor{
+			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+			ServiceKind: "telegram", Implementation: "squash-telegram", ReleaseVersion: Version,
+			Endpoints: discovery.Endpoints{API: apiEndpoint, Admin: "http://telegram:" + cfg.AdminServerPort},
+			Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
+		},
+		Readiness: func(context.Context) observability.Readiness {
+			return observability.Readiness{Ready: true, Checks: map[string]bool{"transport": true}}
+		},
+	})
+	if err != nil {
+		slog.Error("configure telegram admin listener", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("telegram starting", "admin_port", cfg.AdminServerPort, "version", Version)
+	errCh := make(chan error, 2)
+	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	go func() {
+		if cfg.WebhookURL != "" {
+			opts := telegram.WebhookOptions{PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret}
+			if runErr := bot.StartWebhook(ctx, opts); runErr != nil && ctx.Err() == nil {
+				slog.Warn("webhook mode unavailable, falling back to long-polling", "err", runErr)
+				bot.Start(ctx)
+			}
+		} else {
 			bot.Start(ctx)
 		}
-	} else {
-		bot.Start(ctx)
+		errCh <- nil
+	}()
+	if err := <-errCh; err != nil {
+		slog.Error("telegram listener stopped", "err", err)
+		cancel()
+		<-errCh
+		os.Exit(1)
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		slog.Error("telegram listener shutdown", "err", err)
 	}
 	slog.Info("telegram stopped")
 }

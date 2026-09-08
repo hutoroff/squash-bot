@@ -667,11 +667,11 @@ Initially use fixed heartbeat/TTL defaults rather than exposing many timing knob
 
 ## 14. Implementation work packages
 
-The deliverable of this task is this proposal. The following packages are intended to become implementation issues, not changes already made.
+The original deliverable was this proposal. Implementation now proceeds in the bounded packages below; status must be confirmed from code and the notes here.
 
 | Package | Main changes | Depends on | Acceptance gate |
 |---|---|---|---|
-| **A. Contracts and health foundation** | Descriptor/error types, resolver/registrar interfaces, static resolver, internal admin listeners, monitoring auth, fixed metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
+| **A. Contracts and health foundation** *(implemented locally)* | Bounded descriptor/error types, resolver/registrar interfaces, exact-scope static resolver, internal admin listeners, monitoring auth, fixed service metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
 | **B. Registry and lifecycle** | Registry service/repository/API, additive migrations, self-registration, heartbeats/draining, catalog, scope validation, registration retry. | A | Services started before management register without restart; restart/expiry/conflicting-descriptor tests pass. |
 | **C. Discovery-aware invocation** | Registry resolver in existing clients, explicit logical booking binding, runtime availability, contract filtering, typed errors, no implicit external mutation replay, readiness UX updates. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
 | **M. Reliable booking caller integration — separate task** | All requirements in §10.1: durable intent/key allocation, status/reconciliation, explicit creation-risk policy, partial evidence, cancellation/origin semantics, notifications and coordinated activation. | Companion booking contract/fixtures; production activation requires its implementation | §10.1 gates pass in static mode before booking v2 production mutations. Discovery cannot substitute for this work. |

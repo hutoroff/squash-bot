@@ -1,6 +1,6 @@
 # Telegram service
 
-The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access.
+The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access. A monitoring-token-protected admin listener exposes local health, version, descriptor, and Prometheus metrics in both webhook and polling modes; it is separate from the optional webhook listener.
 
 ## Entry points and test seams
 

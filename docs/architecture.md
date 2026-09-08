@@ -11,9 +11,9 @@ Four independently deployable binaries share one Go module. Entry-point wiring i
 | `booking` | Keyed reliable booking API, booking-owned ledger/migrations, singleton execution coordination, bounded in-memory provider sessions, Eversports adapter | PostgreSQL, Eversports |
 | `web` | Telegram Login Widget verification, JWT sessions, authorized proxies, embedded SPA | Management HTTP API |
 
-Default business HTTP ports: management 8080, booking 8081, web 8082; booking's authenticated internal admin listener defaults to 9091, and telegram uses 8083 only in webhook mode. Polling telegram does not bind its webhook HTTP server. Public `/health` routes are liveness checks. Booking additionally reports database/singleton/coordinator readiness on its monitoring-authenticated admin listener.
+Default business HTTP ports: management 8080, booking 8081, web 8082; booking's authenticated internal admin listener defaults to 9091, the other admin listeners to 9090, and telegram uses 8083 only in webhook mode. Polling telegram still exposes its admin listener. Public `/health` routes remain compatibility liveness checks. Every admin route requires the monitoring-only token and exposes local liveness/readiness, version, descriptor, and bounded Prometheus metrics; booking additionally reports database/singleton/coordinator readiness.
 
-Clients keep startup-configured URLs. [Service discovery](service-discovery-design.md) is proposed, not implemented. Keep one active management/telegram/booking instance; this code does not provide distributed scheduler or wizard coordination. Booking uses PostgreSQL singleton authority plus durable account/resource coordination for one active executor, but this does not authorize multiple active replicas or fence manual Eversports activity.
+Clients keep startup-configured URLs. [Service discovery](service-discovery-design.md) contracts, static resolver, and admin/metrics foundation are implemented, but registry registration and discovery-aware invocation are not. Keep one active management/telegram/booking instance; this code does not provide distributed scheduler or wizard coordination. Booking uses PostgreSQL singleton authority plus durable account/resource coordination for one active executor, but this does not authorize multiple active replicas or fence manual Eversports activity.
 
 ## Package boundaries
 

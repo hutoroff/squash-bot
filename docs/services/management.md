@@ -61,7 +61,7 @@ When booking is configured, startup requires `BOOKING_RELIABLE_CUTOVER_ACK=keyed
 
 Unresolved planned/accepted/running/unknown operations protect their credential and venue even when their game date is historical; terminal history does not permanently prevent deletion. Bearer-authenticated internal endpoints expose sanitized local operation inspection (`GET /internal/booking/operations/{id}`), durable aggregate metrics (`GET /internal/booking/metrics`), credentialed reconciliation (`POST .../{id}/reconcile`), and keyed verified resolution (`POST .../{id}/resolution`). Explicit duplicate-risk allocation exists as an unexposed policy primitive with a one-child root budget; ordinary automation cannot invoke it. Durable state changes enqueue bounded at-most-once administrator DMs for unknown, partial, possible-duplicate, warning, and missed-action conditions; claims commit before Telegram calls so restarts cannot create notification loops.
 
-Production cutover remains blocked pending durable bounded administrator notifications/metrics, complete restart materialization and combined-candidate acceptance tests, legacy inventory/import, and the runbook drill. Service discovery remains unimplemented.
+Reliable-booking production cutover remains blocked pending combined-candidate acceptance, legacy inventory/import, and the runbook drill. The management admin listener exposes monitoring-token-protected local database readiness, build/descriptor identity, and bounded Prometheus process/service metrics. Shared discovery contracts and static resolution now exist, but registry registration and discovery-aware invocation remain unimplemented.
 
 ## Persistence and tests
 

@@ -24,7 +24,7 @@ func TestTelegramConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "polling mode, strong secret",
-			cfg:     TelegramConfig{InternalAPISecret: longSecret},
+			cfg:     TelegramConfig{InternalAPISecret: longSecret, ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram"},
 			wantErr: false,
 		},
 		{
@@ -52,6 +52,10 @@ func TestTelegramConfig_Validate(t *testing.T) {
 				InternalAPISecret: longSecret,
 				WebhookURL:        "https://example.com/hook",
 				WebhookSecret:     longWebhookSecret,
+				ServerPort:        "8083",
+				AdminServerPort:   "9090",
+				MonitoringToken:   strOfLen(minSecretLength + 1),
+				ServiceKey:        "telegram",
 			},
 			wantErr: false,
 		},
@@ -67,14 +71,14 @@ func TestTelegramConfig_Validate(t *testing.T) {
 }
 
 func TestManagementConfig_Validate(t *testing.T) {
-	if err := (&ManagementConfig{InternalAPISecret: strOfLen(minSecretLength)}).Validate(); err != nil {
+	if err := (&ManagementConfig{InternalAPISecret: strOfLen(minSecretLength), ServerPort: "8080", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "management"}).Validate(); err != nil {
 		t.Errorf("expected no error for a %d-char secret, got %v", minSecretLength, err)
 	}
 	if err := (&ManagementConfig{InternalAPISecret: "short"}).Validate(); err == nil {
 		t.Error("expected error for a short INTERNAL_API_SECRET")
 	}
 	validBooking := &ManagementConfig{
-		InternalAPISecret: strOfLen(minSecretLength), SportsBookingServiceURL: "http://booking:8081",
+		InternalAPISecret: strOfLen(minSecretLength), ServerPort: "8080", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "management", SportsBookingServiceURL: "http://booking:8081",
 		BookingServiceKey: "eversports.primary.squash", BookingFacilityID: "76443",
 		BookingFacilityUUID: "facility-uuid", BookingFacilitySlug: "facility-slug",
 		BookingCutoverAck: "keyed-v2-only", BookingResponseWait: 8 * time.Second, BookingStatusPoll: 200 * time.Millisecond,
@@ -82,6 +86,11 @@ func TestManagementConfig_Validate(t *testing.T) {
 	}
 	if err := validBooking.Validate(); err != nil {
 		t.Fatalf("expected reliable management booking config to pass: %v", err)
+	}
+	invalidAdmin := *validBooking
+	invalidAdmin.MonitoringToken = invalidAdmin.InternalAPISecret
+	if err := invalidAdmin.Validate(); err == nil {
+		t.Fatal("expected management monitoring token reused as internal secret to fail")
 	}
 	invalidBooking := *validBooking
 	invalidBooking.BookingCutoverAck = ""
@@ -146,7 +155,7 @@ func TestWebConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "both secrets strong",
-			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret},
+			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret, ServerPort: "8082", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "web"},
 			wantErr: false,
 		},
 		{
