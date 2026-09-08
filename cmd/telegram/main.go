@@ -65,8 +65,16 @@ func main() {
 	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
 
 	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
+		if resolverErr != nil {
+			slog.Error("configure management discovery", "err", resolverErr)
+			os.Exit(1)
+		}
+		mgmtClient = client.NewDiscovered(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, cfg.InternalAPISecret)
+	}
 
-	if cfg.DiscoveryURL == "" {
+	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {
 		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
 		if versionErr != nil {
 			slog.Error("check management service version", "err", versionErr)
@@ -125,17 +133,14 @@ func main() {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}
 	defer discovery.ShutdownLifecycle(lifecycle)
-	if cfg.DiscoveryURL != "" {
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 		for ctx.Err() == nil {
 			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
-			mgmtVersion, versionErr := mgmtClient.GetVersion(checkCtx)
+			_, versionErr := mgmtClient.GetVersion(checkCtx)
 			checkCancel()
-			if versionErr == nil && majorPart(Version) == majorPart(mgmtVersion) {
-				slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
-				break
-			}
 			if versionErr == nil {
-				versionErr = fmt.Errorf("management major version %s is incompatible", mgmtVersion)
+				slog.Info("management contract compatibility check passed", "contract", "management-api", "major", 1)
+				break
 			}
 			logger.Warn("waiting for compatible management service", "err", versionErr)
 			select {

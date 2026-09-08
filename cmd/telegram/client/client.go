@@ -14,14 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
 // Client wraps all HTTP calls to the management service.
 type Client struct {
-	baseURL    string
-	apiSecret  string
-	httpClient *http.Client
+	baseURL     string
+	apiSecret   string
+	httpClient  *http.Client
+	resolver    discovery.Resolver
+	requirement discovery.Requirement
 }
 
 // New creates a new Client targeting baseURL (e.g. "http://management:8080").
@@ -31,9 +34,17 @@ func New(baseURL, apiSecret string) *Client {
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		apiSecret: apiSecret,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
+}
+
+func NewDiscovered(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) *Client {
+	client := New("", apiSecret)
+	client.resolver = resolver
+	client.requirement = requirement
+	return client
 }
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -691,7 +702,15 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	baseURL := c.baseURL
+	if c.resolver != nil {
+		endpoint, err := discovery.ResolveOne(ctx, c.resolver, c.requirement)
+		if err != nil {
+			return nil, fmt.Errorf("resolve management service: %w", err)
+		}
+		baseURL = strings.TrimRight(endpoint.API, "/")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -710,6 +729,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if c.resolver != nil {
+			discovery.Invalidate(c.resolver, c.requirement)
+		}
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()

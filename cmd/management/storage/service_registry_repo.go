@@ -179,7 +179,7 @@ func (r *ServiceRegistryRepo) Resolve(ctx context.Context, requirement discovery
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT descriptor, reported_state FROM service_instances
+		SELECT descriptor, reported_state, lease_expires_at, NOW() FROM service_instances
 		WHERE service_key = $1 AND terminal_state IS NULL AND lease_expires_at > NOW()
 		ORDER BY instance_id`, requirement.ServiceKey)
 	if err != nil {
@@ -190,7 +190,8 @@ func (r *ServiceRegistryRepo) Resolve(ctx context.Context, requirement discovery
 	for rows.Next() {
 		var raw []byte
 		var state discovery.InstanceState
-		if err := rows.Scan(&raw, &state); err != nil {
+		var leaseExpires, registryTime time.Time
+		if err := rows.Scan(&raw, &state, &leaseExpires, &registryTime); err != nil {
 			return nil, fmt.Errorf("scan service instance: %w", err)
 		}
 		var descriptor discovery.Descriptor
@@ -199,7 +200,7 @@ func (r *ServiceRegistryRepo) Resolve(ctx context.Context, requirement discovery
 		}
 		descriptor.State = state
 		if descriptor.Satisfies(requirement) {
-			result = append(result, discovery.ResolvedEndpoint{InstanceID: descriptor.InstanceID, API: descriptor.Endpoints.API, Admin: descriptor.Endpoints.Admin, Descriptor: descriptor})
+			result = append(result, discovery.ResolvedEndpoint{InstanceID: descriptor.InstanceID, API: descriptor.Endpoints.API, Admin: descriptor.Endpoints.Admin, Descriptor: descriptor, RegistryTime: registryTime, LeaseExpiresAt: leaseExpires})
 		}
 	}
 	if err := rows.Err(); err != nil {

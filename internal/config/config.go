@@ -22,6 +22,10 @@ const minSecretLength = 32
 // confirms that operators understand reliable booking rejects keyless v1
 // mutations. It is not evidence that management integration tests passed.
 const BookingReliableCutoverAcknowledgement = "keyed-v2-only"
+const (
+	DiscoveryModeStatic   = "static"
+	DiscoveryModeRegistry = "registry"
+)
 
 // minWebhookSecretLength is the minimum acceptable length for
 // TELEGRAM_WEBHOOK_SECRET. Lower than minSecretLength because it only guards
@@ -31,7 +35,7 @@ const minWebhookSecretLength = 16
 // TelegramConfig holds configuration for the telegram service.
 type TelegramConfig struct {
 	TelegramBotToken     string `env:"TELEGRAM_BOT_TOKEN,required"`
-	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL,required"`
+	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL"`
 	// InternalAPISecret is the shared secret used to authenticate requests to management.
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	LogLevel          string `env:"LOG_LEVEL"  envDefault:"INFO"`
@@ -48,6 +52,8 @@ type TelegramConfig struct {
 	AdminServerPort           string `env:"ADMIN_PORT" envDefault:"9090"`
 	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
 	ServiceKey                string `env:"SERVICE_KEY" envDefault:"telegram"`
+	ManagementServiceKey      string `env:"MANAGEMENT_SERVICE_KEY" envDefault:"management"`
+	DiscoveryMode             string `env:"DISCOVERY_MODE" envDefault:"static"`
 	DiscoveryURL              string `env:"DISCOVERY_URL"`
 	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
 	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
@@ -64,7 +70,7 @@ func (c *TelegramConfig) Validate() error {
 	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
 		return err
 	}
-	if err := validateDiscoveryURL(c.DiscoveryURL); err != nil {
+	if err := validateDiscoveryTarget(c.DiscoveryMode, c.DiscoveryURL, c.ManagementServiceURL, c.ManagementServiceKey, "MANAGEMENT_SERVICE_URL"); err != nil {
 		return err
 	}
 	if c.WebhookURL != "" && len(c.WebhookSecret) < minWebhookSecretLength {
@@ -83,6 +89,7 @@ type ManagementConfig struct {
 	AdminServerPort           string `env:"ADMIN_PORT"            envDefault:"9090"`
 	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
 	ServiceKey                string `env:"SERVICE_KEY" envDefault:"management"`
+	DiscoveryMode             string `env:"DISCOVERY_MODE" envDefault:"static"`
 	DiscoveryURL              string `env:"DISCOVERY_URL"`
 	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
 	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
@@ -129,10 +136,17 @@ func (c *ManagementConfig) Validate() error {
 	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
 		return err
 	}
-	if err := validateDiscoveryURL(c.DiscoveryURL); err != nil {
+	if err := validateDiscoveryConfig(c.DiscoveryMode, c.DiscoveryURL); err != nil {
 		return err
 	}
-	if c.SportsBookingServiceURL != "" {
+	bookingEnabled := c.SportsBookingServiceURL != ""
+	if c.DiscoveryMode == DiscoveryModeRegistry {
+		if c.SportsBookingServiceURL != "" {
+			return fmt.Errorf("SPORTS_BOOKING_SERVICE_URL must be empty in registry discovery mode")
+		}
+		bookingEnabled = c.BookingServiceKey != ""
+	}
+	if bookingEnabled {
 		if c.BookingCutoverAck != "keyed-v2-only" {
 			return fmt.Errorf("BOOKING_RELIABLE_CUTOVER_ACK must be keyed-v2-only when booking is enabled")
 		}
@@ -279,6 +293,8 @@ type WebConfig struct {
 	AdminServerPort           string `env:"ADMIN_PORT" envDefault:"9090"`
 	MonitoringToken           string `env:"MONITORING_TOKEN,required"`
 	ServiceKey                string `env:"SERVICE_KEY" envDefault:"web"`
+	ManagementServiceKey      string `env:"MANAGEMENT_SERVICE_KEY" envDefault:"management"`
+	DiscoveryMode             string `env:"DISCOVERY_MODE" envDefault:"static"`
 	DiscoveryURL              string `env:"DISCOVERY_URL"`
 	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
 	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
@@ -288,8 +304,8 @@ type WebConfig struct {
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN,required"`
 	// TelegramBotName is the bot's username (without @), shown in the Login Widget.
 	TelegramBotName string `env:"TELEGRAM_BOT_NAME,required"`
-	// ManagementServiceURL is the base URL of the management service.
-	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL,required"`
+	// ManagementServiceURL is the base URL of the management service in static mode.
+	ManagementServiceURL string `env:"MANAGEMENT_SERVICE_URL"`
 	// InternalAPISecret is the shared bearer token for calling the management service.
 	InternalAPISecret string `env:"INTERNAL_API_SECRET,required"`
 	// JWTSecret is used to sign and verify session JWT tokens (≥32 random bytes recommended).
@@ -308,7 +324,42 @@ func (c *WebConfig) Validate() error {
 	if err := validateAdminConfig(c.ServerPort, c.AdminServerPort, c.MonitoringToken, c.InternalAPISecret, c.ServiceKey); err != nil {
 		return err
 	}
-	return validateDiscoveryURL(c.DiscoveryURL)
+	return validateDiscoveryTarget(c.DiscoveryMode, c.DiscoveryURL, c.ManagementServiceURL, c.ManagementServiceKey, "MANAGEMENT_SERVICE_URL")
+}
+
+func validateDiscoveryTarget(mode, discoveryURL, staticURL, serviceKey, staticName string) error {
+	if mode == "" {
+		mode = DiscoveryModeStatic
+	}
+	if err := validateDiscoveryConfig(mode, discoveryURL); err != nil {
+		return err
+	}
+	if mode == DiscoveryModeRegistry {
+		if staticURL != "" {
+			return fmt.Errorf("%s must be empty in registry discovery mode", staticName)
+		}
+		if serviceKey == "" {
+			return fmt.Errorf("logical service key is required in registry discovery mode")
+		}
+		return nil
+	}
+	if staticURL == "" {
+		return fmt.Errorf("%s is required in static discovery mode", staticName)
+	}
+	return nil
+}
+
+func validateDiscoveryConfig(mode, raw string) error {
+	if mode == "" {
+		mode = DiscoveryModeStatic
+	}
+	if mode != DiscoveryModeStatic && mode != DiscoveryModeRegistry {
+		return fmt.Errorf("DISCOVERY_MODE must be static or registry")
+	}
+	if mode == DiscoveryModeRegistry && raw == "" {
+		return fmt.Errorf("DISCOVERY_URL is required in registry discovery mode")
+	}
+	return validateDiscoveryURL(raw)
 }
 
 func validateDiscoveryURL(raw string) error {

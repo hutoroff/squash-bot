@@ -2,12 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hutoroff/squash-bot/internal/discovery"
 )
 
-type registryServiceRepositoryFake struct{ registered bool }
+type registryServiceRepositoryFake struct {
+	registered bool
+	catalog    []discovery.CatalogEntry
+}
 
 func (r *registryServiceRepositoryFake) Register(context.Context, discovery.Descriptor) (*discovery.Lease, error) {
 	r.registered = true
@@ -21,8 +25,20 @@ func (*registryServiceRepositoryFake) Deregister(context.Context, string) error 
 func (*registryServiceRepositoryFake) Resolve(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
 	return nil, nil
 }
-func (*registryServiceRepositoryFake) Catalog(context.Context) ([]discovery.CatalogEntry, error) {
-	return nil, nil
+func (r *registryServiceRepositoryFake) Catalog(context.Context) ([]discovery.CatalogEntry, error) {
+	return r.catalog, nil
+}
+
+func TestServiceRegistryClassifiesIncompatibleLogicalBinding(t *testing.T) {
+	repository := &registryServiceRepositoryFake{catalog: []discovery.CatalogEntry{{ServiceKey: "booking.default", Scope: map[string]string{"facility_id": "one"}, Contracts: []discovery.Contract{{Name: "eversports-booking", Major: 1}}}}}
+	service, err := NewServiceRegistryService(repository, "10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Resolve(context.Background(), discovery.Requirement{ServiceKey: "booking.default", Contract: "eversports-booking", Major: 2, Scope: map[string]string{"facility_id": "one"}})
+	if !errors.Is(err, discovery.ErrIncompatible) {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestServiceRegistryRejectsUnapprovedAddressesBeforePersistence(t *testing.T) {

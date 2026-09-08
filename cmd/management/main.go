@@ -99,6 +99,11 @@ func main() {
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
 	ratingChangeRepo := storage.NewRatingChangeRepo(pool)
 	userRepo := storage.NewUserRepo(pool)
+	registryService, err := service.NewServiceRegistryService(storage.NewServiceRegistryRepo(pool), cfg.DiscoveryAllowedCIDRs)
+	if err != nil {
+		slog.Error("configure service registry", "err", err)
+		os.Exit(1)
+	}
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
@@ -140,8 +145,8 @@ func main() {
 	var reliableBookingRecovery *service.ReliableBookingRecovery
 	var reliableBookingNotifier *service.ReliableBookingNotifier
 	var bookingScope bookingapi.Scope
-	if cfg.SportsBookingServiceURL != "" {
-		bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+	bookingEnabled := cfg.SportsBookingServiceURL != "" || (cfg.DiscoveryMode == config.DiscoveryModeRegistry && cfg.BookingServiceKey != "")
+	if bookingEnabled {
 		bookingIntentSvc, err = service.NewBookingIntentService(bookingIntentRepo)
 		if err != nil {
 			slog.Error("init durable booking intent service", "err", err)
@@ -151,9 +156,21 @@ func main() {
 			ServiceKey: cfg.BookingServiceKey, Provider: "eversports", FacilityID: cfg.BookingFacilityID,
 			FacilityUUID: cfg.BookingFacilityUUID, FacilitySlug: cfg.BookingFacilitySlug, Sport: "squash",
 		}
+		var reliableClient service.ReliableBookingServiceClient
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			requirement := discovery.Requirement{
+				ServiceKey: cfg.BookingServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor,
+				RequiredCapabilities: []string{"booking.courts.list", "booking.slots.list", "booking.create", "booking.cancel", "booking.operations.get", "booking.operations.reconcile", "booking.operations.resolve"},
+				Scope:                map[string]string{"facility_id": cfg.BookingFacilityID, "facility_uuid": cfg.BookingFacilityUUID, "facility_slug": cfg.BookingFacilitySlug, "sport": "squash"},
+			}
+			bookingClient = service.NewDiscoveredReliableBookingReadClient(registryService, requirement, cfg.InternalAPISecret)
+			reliableClient = service.NewDiscoveredReliableHTTPBookingClient(registryService, requirement, cfg.InternalAPISecret)
+		} else {
+			bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+			reliableClient = service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+		}
 		reliableBookingExecutor, err = service.NewReliableBookingExecutor(
-			service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret),
-			bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,
+			reliableClient, bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,
 		)
 		if err != nil {
 			slog.Error("init reliable booking executor", "err", err)
@@ -169,9 +186,9 @@ func main() {
 			slog.Error("init reliable booking notifier", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("keyed v2 booking service enabled", "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
+		slog.Info("keyed v2 booking service enabled", "discovery_mode", cfg.DiscoveryMode, "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
 	} else {
-		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
+		slog.Info("booking service disabled; auto-cancellation and auto-booking disabled")
 	}
 
 	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo, cfg.ResultWindowDays)
@@ -237,19 +254,15 @@ func main() {
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	h.SetFeatureFlags(flagSvc)
-	registryService, err := service.NewServiceRegistryService(storage.NewServiceRegistryRepo(pool), cfg.DiscoveryAllowedCIDRs)
-	if err != nil {
-		slog.Error("configure service registry", "err", err)
-		os.Exit(1)
-	}
 	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 	descriptor := discovery.Descriptor{
 		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
 		ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
-		Endpoints: discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
-		Contracts: []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+		Endpoints:    discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
+		Contracts:    []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}},
+		Capabilities: []discovery.Capability{{Name: "management.api", Contract: "management-api", Major: 1}}, State: discovery.StateReady,
 	}
 	registryURL := cfg.DiscoveryURL
 	if registryURL != "" {

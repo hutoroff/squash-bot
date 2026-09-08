@@ -9,7 +9,26 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/discovery"
 )
+
+func TestDiscoveredClientResolvesManagementForEachRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertRequest(t, r, http.MethodGet, "/version")
+		writeJSONResponse(t, w, http.StatusOK, map[string]string{"version": "1.0.0"})
+	}))
+	defer server.Close()
+	descriptor := discovery.Descriptor{SchemaVersion: discovery.SchemaVersion, InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120436", ServiceKey: "management", ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: "1", Endpoints: discovery.Endpoints{API: server.URL, Admin: server.URL}, Contracts: []discovery.Contract{{Name: "management-api", Major: 1}}, Capabilities: []discovery.Capability{{Name: "management.api", Contract: "management-api", Major: 1}}, State: discovery.StateReady}
+	resolver, err := discovery.NewStaticResolver([]discovery.Descriptor{descriptor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewDiscovered(resolver, discovery.Requirement{ServiceKey: "management", Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, "test-api-secret")
+	if version, err := client.GetVersion(context.Background()); err != nil || version != "1.0.0" {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+}
 
 func TestResolveUser_HTTPContract(t *testing.T) {
 	var got map[string]any

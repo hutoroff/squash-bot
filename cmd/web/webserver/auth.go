@@ -26,7 +26,7 @@ type AuthHandler struct {
 	botToken   string
 	botName    string
 	jwtSecret  string
-	mgmtURL    string
+	mgmtTarget *ManagementTarget
 	mgmtSecret string
 	httpClient *http.Client
 	logger     *slog.Logger
@@ -34,13 +34,17 @@ type AuthHandler struct {
 
 // NewAuthHandler creates an AuthHandler.
 func NewAuthHandler(botToken, botName, jwtSecret, mgmtURL, mgmtSecret string, logger *slog.Logger) *AuthHandler {
+	return NewAuthHandlerWithTarget(botToken, botName, jwtSecret, NewStaticManagementTarget(mgmtURL), mgmtSecret, logger)
+}
+
+func NewAuthHandlerWithTarget(botToken, botName, jwtSecret string, target *ManagementTarget, mgmtSecret string, logger *slog.Logger) *AuthHandler {
 	return &AuthHandler{
 		botToken:   botToken,
 		botName:    botName,
 		jwtSecret:  jwtSecret,
-		mgmtURL:    mgmtURL,
+		mgmtTarget: target,
 		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		logger:     logger,
 	}
 }
@@ -79,7 +83,11 @@ func (a *AuthHandler) resolveUser(ctx context.Context, telegramID int64, usernam
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.mgmtURL+"/api/v1/identities/resolve", bytes.NewReader(body))
+	baseURL, err := a.mgmtTarget.Resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/identities/resolve", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +112,11 @@ func (a *AuthHandler) resolveUser(ctx context.Context, telegramID int64, usernam
 
 // getUser fetches the canonical user record from the management service.
 func (a *AuthHandler) getUser(ctx context.Context, userID int64) (*resolvedIdentity, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/users/%d", a.mgmtURL, userID), nil)
+	baseURL, err := a.mgmtTarget.Resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/users/%d", baseURL, userID), nil)
 	if err != nil {
 		return nil, err
 	}

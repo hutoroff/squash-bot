@@ -62,22 +62,24 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	auth := webserver.NewAuthHandler(
-		cfg.TelegramBotToken,
-		cfg.TelegramBotName,
-		cfg.JWTSecret,
-		cfg.ManagementServiceURL,
-		cfg.InternalAPISecret,
-		logger,
-	)
-	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	audit := webserver.NewAuditHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	groups := webserver.NewGroupsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	venues := webserver.NewVenuesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	prefs := webserver.NewPrefsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	users := webserver.NewUsersHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	managementTarget := webserver.NewStaticManagementTarget(cfg.ManagementServiceURL)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
+		if resolverErr != nil {
+			slog.Error("configure management discovery", "err", resolverErr)
+			os.Exit(1)
+		}
+		managementTarget = webserver.NewDiscoveredManagementTarget(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}})
+	}
+	auth := webserver.NewAuthHandlerWithTarget(cfg.TelegramBotToken, cfg.TelegramBotName, cfg.JWTSecret, managementTarget, cfg.InternalAPISecret, logger)
+	games := webserver.NewGamesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	audit := webserver.NewAuditHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	groups := webserver.NewGroupsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	venues := webserver.NewVenuesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	prefs := webserver.NewPrefsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	users := webserver.NewUsersHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
-	h.SetFeatureFlags(webserver.NewFeatureFlagsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret))
+	h.SetFeatureFlags(webserver.NewFeatureFlagsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret))
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
 	descriptor := discovery.Descriptor{
 		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,

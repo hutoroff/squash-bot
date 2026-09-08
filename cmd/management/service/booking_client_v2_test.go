@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 )
 
 const managementTestOperationID = bookingapi.OperationID("0195f8db-7a6f-7c7b-8f71-0f6e0712042d")
@@ -145,6 +146,62 @@ func TestReliableHTTPBookingClientStatusAndResultExpiry(t *testing.T) {
 	}
 	if !status.ResultExpired || status.State != bookingapi.StateSucceeded {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+type bookingResolverFunc func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error)
+
+func (f bookingResolverFunc) Resolve(ctx context.Context, requirement discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+	return f(ctx, requirement)
+}
+
+func TestDiscoveredReliableBookingClientAcceptsLateTargetWithoutRestart(t *testing.T) {
+	operationID := bookingapi.OperationID("0195f8db-7a6f-7c7b-8f71-0f6e07120434")
+	var available atomic.Bool
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(bookingapi.OperationStatus{OperationID: string(operationID), Kind: bookingapi.OperationCreate, State: bookingapi.StateAccepted, Phase: bookingapi.PhaseAdmission, Outcome: bookingapi.OutcomePending})
+	}))
+	defer server.Close()
+	resolver := bookingResolverFunc(func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+		if !available.Load() {
+			return nil, nil
+		}
+		return []discovery.ResolvedEndpoint{{InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120435", API: server.URL}}, nil
+	})
+	client := NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: "booking.default", Contract: "eversports-booking", Major: 2}, "secret")
+	if _, err := client.SubmitCreateOperation(context.Background(), operationID, bookingapi.CreateRequest{}); !errors.Is(err, discovery.ErrNoEndpoint) {
+		t.Fatalf("unavailable error = %v", err)
+	}
+	available.Store(true)
+	if _, err := client.SubmitCreateOperation(context.Background(), operationID, bookingapi.CreateRequest{}); err != nil {
+		t.Fatalf("late target: %v", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d", requests.Load())
+	}
+}
+
+func TestDiscoveredReliableBookingClientRejectsMultipleTargetsBeforeDispatch(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	descriptor := discovery.Descriptor{SchemaVersion: discovery.SchemaVersion, InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120431", ServiceKey: "booking.default", ServiceKind: "booking", Implementation: "eversports", ReleaseVersion: "test", Scope: map[string]string{"provider": "eversports", "region": "at", "environment": "test", "account_set": "default"}, Endpoints: discovery.Endpoints{API: server.URL, Admin: server.URL}, Contracts: []discovery.Contract{{Name: "eversports-booking", Major: 2}}, State: discovery.StateReady}
+	second := descriptor
+	second.InstanceID = "0195f8db-7a6f-7c7b-8f71-0f6e07120432"
+	resolver, err := discovery.NewStaticResolver([]discovery.Descriptor{descriptor, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: "booking.default", Contract: "eversports-booking", Major: 2, Scope: descriptor.Scope}, "secret")
+	operationID := bookingapi.OperationID("0195f8db-7a6f-7c7b-8f71-0f6e07120433")
+	_, err = client.SubmitCreateOperation(context.Background(), operationID, bookingapi.CreateRequest{})
+	if !errors.Is(err, discovery.ErrMultipleActive) {
+		t.Fatalf("error = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("requests = %d", requests.Load())
 	}
 }
 

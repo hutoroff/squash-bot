@@ -24,7 +24,7 @@ func TestTelegramConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "polling mode, strong secret",
-			cfg:     TelegramConfig{InternalAPISecret: longSecret, ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram"},
+			cfg:     TelegramConfig{InternalAPISecret: longSecret, ManagementServiceURL: "http://management:8080", ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram"},
 			wantErr: false,
 		},
 		{
@@ -49,13 +49,14 @@ func TestTelegramConfig_Validate(t *testing.T) {
 		{
 			name: "webhook mode with a valid webhook secret",
 			cfg: TelegramConfig{
-				InternalAPISecret: longSecret,
-				WebhookURL:        "https://example.com/hook",
-				WebhookSecret:     longWebhookSecret,
-				ServerPort:        "8083",
-				AdminServerPort:   "9090",
-				MonitoringToken:   strOfLen(minSecretLength + 1),
-				ServiceKey:        "telegram",
+				InternalAPISecret:    longSecret,
+				WebhookURL:           "https://example.com/hook",
+				WebhookSecret:        longWebhookSecret,
+				ManagementServiceURL: "http://management:8080",
+				ServerPort:           "8083",
+				AdminServerPort:      "9090",
+				MonitoringToken:      strOfLen(minSecretLength + 1),
+				ServiceKey:           "telegram",
 			},
 			wantErr: false,
 		},
@@ -67,6 +68,10 @@ func TestTelegramConfig_Validate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+	registry := TelegramConfig{InternalAPISecret: longSecret, ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram", ManagementServiceKey: "management", DiscoveryMode: DiscoveryModeRegistry, DiscoveryURL: "http://management:8080"}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("registry config: %v", err)
 	}
 }
 
@@ -91,6 +96,17 @@ func TestManagementConfig_Validate(t *testing.T) {
 	invalidDiscovery.DiscoveryURL = "https://user:secret@example.test/path"
 	if err := invalidDiscovery.Validate(); err == nil {
 		t.Fatal("expected invalid discovery bootstrap URL to fail")
+	}
+	registryBooking := *validBooking
+	registryBooking.DiscoveryMode = DiscoveryModeRegistry
+	registryBooking.DiscoveryURL = "http://management:8080"
+	registryBooking.SportsBookingServiceURL = ""
+	if err := registryBooking.Validate(); err != nil {
+		t.Fatalf("expected registry booking configuration to pass: %v", err)
+	}
+	registryBooking.SportsBookingServiceURL = "http://booking:8081"
+	if err := registryBooking.Validate(); err == nil {
+		t.Fatal("expected registry mode with static booking URL to fail")
 	}
 	invalidAdmin := *validBooking
 	invalidAdmin.MonitoringToken = invalidAdmin.InternalAPISecret
@@ -160,7 +176,7 @@ func TestWebConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "both secrets strong",
-			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret, ServerPort: "8082", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "web"},
+			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret, ManagementServiceURL: "http://management:8080", ServerPort: "8082", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "web"},
 			wantErr: false,
 		},
 		{

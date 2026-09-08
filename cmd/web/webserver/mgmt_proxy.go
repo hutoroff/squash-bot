@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,23 +11,91 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/discovery"
 )
+
+type ManagementTarget struct {
+	staticURL   string
+	resolver    discovery.Resolver
+	requirement discovery.Requirement
+}
+
+func NewStaticManagementTarget(rawURL string) *ManagementTarget {
+	return &ManagementTarget{staticURL: strings.TrimRight(rawURL, "/")}
+}
+
+func NewDiscoveredManagementTarget(resolver discovery.Resolver, requirement discovery.Requirement) *ManagementTarget {
+	return &ManagementTarget{resolver: resolver, requirement: requirement}
+}
+
+func (t *ManagementTarget) Resolve(ctx context.Context) (string, error) {
+	if t.resolver == nil {
+		return t.staticURL, nil
+	}
+	endpoint, err := discovery.ResolveOne(ctx, t.resolver, t.requirement)
+	if err != nil {
+		return "", fmt.Errorf("resolve management service: %w", err)
+	}
+	return strings.TrimRight(endpoint.API, "/"), nil
+}
+
+func (t *ManagementTarget) requestBaseURL() string {
+	if t.resolver == nil {
+		return t.staticURL
+	}
+	return "http://management.discovery"
+}
+
+func newTargetHTTPClient(target *ManagementTarget, timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: targetTransport{target: target, base: http.DefaultTransport}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+type targetTransport struct {
+	target *ManagementTarget
+	base   http.RoundTripper
+}
+
+func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	baseURL, err := t.target.Resolve(request.Context())
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	clone := request.Clone(request.Context())
+	clonedURL := *request.URL
+	clonedURL.Scheme = parsed.Scheme
+	clonedURL.Host = parsed.Host
+	clone.URL = &clonedURL
+	response, err := t.base.RoundTrip(clone)
+	if err != nil {
+		discovery.Invalidate(t.target.resolver, t.target.requirement)
+	}
+	return response, err
+}
 
 // mgmtClient holds the management-service connection details shared by every
 // JSON API handler, plus the proxy and authorization helpers built on them.
 type mgmtClient struct {
 	auth       *AuthHandler
-	mgmtURL    string
+	mgmtTarget *ManagementTarget
 	mgmtSecret string
 	httpClient *http.Client
 }
 
 func newMgmtClient(auth *AuthHandler, mgmtURL, mgmtSecret string) mgmtClient {
+	return newMgmtClientWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+
+func newMgmtClientWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) mgmtClient {
 	return mgmtClient{
 		auth:       auth,
-		mgmtURL:    mgmtURL,
+		mgmtTarget: target,
 		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: newTargetHTTPClient(target, 10*time.Second),
 	}
 }
 
@@ -56,7 +125,12 @@ func (c mgmtClient) proxy(w http.ResponseWriter, r *http.Request, method, path s
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(r.Context(), method, c.mgmtURL+path, rdr)
+	baseURL, err := c.mgmtTarget.Resolve(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "upstream unavailable")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), method, baseURL+path, rdr)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -80,7 +154,11 @@ func (c mgmtClient) proxy(w http.ResponseWriter, r *http.Request, method, path s
 
 // get fetches JSON from the management service and decodes it into out.
 func (c mgmtClient) get(r *http.Request, path string, out any) (int, error) {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.mgmtURL+path, nil)
+	baseURL, err := c.mgmtTarget.Resolve(r.Context())
+	if err != nil {
+		return http.StatusServiceUnavailable, err
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, baseURL+path, nil)
 	if err != nil {
 		return 0, err
 	}

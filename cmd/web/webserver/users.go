@@ -16,7 +16,10 @@ type UsersHandler struct {
 
 // NewUsersHandler creates a UsersHandler.
 func NewUsersHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *UsersHandler {
-	return &UsersHandler{newMgmtClient(auth, mgmtURL, mgmtSecret)}
+	return NewUsersHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+func NewUsersHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *UsersHandler {
+	return &UsersHandler{newMgmtClientWithTarget(auth, target, mgmtSecret)}
 }
 
 // handleListUsers handles GET /api/users.
@@ -28,7 +31,7 @@ func (u *UsersHandler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.mgmtURL+"/api/v1/users", nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.mgmtTarget.requestBaseURL()+"/api/v1/users", nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal error")
 		return
