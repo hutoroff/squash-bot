@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/booking/booking"
 	"github.com/hutoroff/squash-bot/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -55,7 +56,9 @@ func run() error {
 	health := &runtimeHealthSource{}
 	adminSrv, _, err := booking.NewAdminServer(booking.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Secret: cfg.MonitoringSecret, Version: Version,
-		ServiceKey: cfg.ServiceKey, Scope: configuredScope(cfg), Readiness: health.readiness,
+		ServiceKey: cfg.ServiceKey, InstanceID: uuid.NewString(),
+		APIEndpoint: "http://booking:" + cfg.ServerPort, AdminEndpoint: "http://booking:" + cfg.AdminServerPort,
+		Scope: configuredScope(cfg), Readiness: health.readiness,
 		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics,
 	})
 	if err != nil {

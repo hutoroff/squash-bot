@@ -11,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/web/webserver"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	squashweb "github.com/hutoroff/squash-bot/web"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -76,11 +79,36 @@ func main() {
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
 	h.SetFeatureFlags(webserver.NewFeatureFlagsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret))
 	srv := webserver.NewServer(":"+cfg.ServerPort, h)
-
-	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)
-	if err := webserver.Run(ctx, srv, logger); err != nil {
-		slog.Error("HTTP server error", "err", err)
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version,
+		Descriptor: discovery.Descriptor{
+			SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+			ServiceKind: "web", Implementation: "squash-web", ReleaseVersion: Version,
+			Endpoints: discovery.Endpoints{API: "http://web:" + cfg.ServerPort, Admin: "http://web:" + cfg.AdminServerPort},
+			Contracts: []discovery.Contract{{Name: "web-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+		},
+		Readiness: func(context.Context) observability.Readiness {
+			return observability.Readiness{Ready: true, Checks: map[string]bool{"listener": true}}
+		},
+	})
+	if err != nil {
+		slog.Error("configure web admin listener", "err", err)
 		os.Exit(1)
+	}
+
+	slog.Info("web starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
+	errCh := make(chan error, 2)
+	go func() { errCh <- webserver.Run(ctx, srv, logger) }()
+	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	if err := <-errCh; err != nil {
+		slog.Error("web listener stopped", "err", err)
+		cancel()
+		<-errCh
+		os.Exit(1)
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		slog.Error("web listener shutdown", "err", err)
 	}
 	slog.Info("web stopped")
 }

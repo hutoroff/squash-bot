@@ -34,6 +34,9 @@ services:
     environment:
       DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: management
+      MONITORING_TOKEN: ${MONITORING_TOKEN}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       CRON_POLL: ${CRON_POLL:-*/5 * * * *}
@@ -58,7 +61,7 @@ services:
       booking:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -88,11 +91,19 @@ services:
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       SERVER_PORT: ${TELEGRAM_SERVER_PORT:-8083}
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: telegram
+      MONITORING_TOKEN: ${MONITORING_TOKEN}
     volumes:
       - logs:/logs
     depends_on:
       management:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     logging:
       driver: json-file
@@ -112,7 +123,7 @@ services:
       BOOKING_DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
       BOOKING_IDENTITY_KEY: ${BOOKING_IDENTITY_KEY:-}
       BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:-}
-      BOOKING_MONITORING_SECRET: ${BOOKING_MONITORING_SECRET:-}
+      BOOKING_MONITORING_SECRET: ${MONITORING_TOKEN}
       BOOKING_RELIABLE_CUTOVER_ACK: ${BOOKING_RELIABLE_CUTOVER_ACK:-}
       EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
       EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
@@ -148,6 +159,9 @@ services:
     image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-stable}
     environment:
       SERVER_PORT: "8082"
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: web
+      MONITORING_TOKEN: ${MONITORING_TOKEN}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME}
       MANAGEMENT_SERVICE_URL: http://management:8080
@@ -164,7 +178,7 @@ services:
     ports:
       - "8082:8082"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
