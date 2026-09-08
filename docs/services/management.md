@@ -9,6 +9,7 @@ Owns business rules, PostgreSQL persistence/migrations, scheduled work, and serv
 | Routes and HTTP middleware | [api/server.go](../../cmd/management/api/server.go), domain handler files beside it |
 | Repository/Telegram contracts | [service/interfaces.go](../../cmd/management/service/interfaces.go) |
 | External booking contract | [service/booking_client.go](../../cmd/management/service/booking_client.go) |
+| Durable booking business/operation intent foundation | [service/booking_intent_service.go](../../cmd/management/service/booking_intent_service.go), [storage/booking_intent_repo.go](../../cmd/management/storage/booking_intent_repo.go) |
 | Game creation/publication/manual booking | [service/game_service.go](../../cmd/management/service/game_service.go) |
 | Participation and announcement edits | [participation_service.go](../../cmd/management/service/participation_service.go), [game_notifier.go](../../cmd/management/service/game_notifier.go) |
 | Venues and credentials | [venue_service.go](../../cmd/management/service/venue_service.go), [venue_credential_service.go](../../cmd/management/service/venue_credential_service.go), [encryptor.go](../../cmd/management/service/encryptor.go) |
@@ -51,6 +52,16 @@ Use current signatures/routes from those files, not a copied inventory. New busi
 ## Feature flags
 
 Management owns persisted global/group overrides, live server-owner authorization, and best-effort change audit. Shared definitions live in `internal/featureflags`; unset defaults are always disabled. Existing booking and notification settings are not migrated. The canonical inventory and mandatory maintenance instructions are in [feature toggles](../feature-toggles.md).
+
+## Reliable booking caller integration
+
+Migration 039 adds management-owned `management_booking_intents` and `management_booking_operations`, plus additive origin columns on `court_bookings`. A stable request key protects the high-level requested-count decision; each selected create/cancel has a UUIDv7 operation key, immutable fingerprint, credential reference, facility/provider origin, local date/time, execution generation, bounded status/evidence projection, and optional duplicate-risk lineage. Concurrent same-key admission returns one stored intent/operation; changed reuse conflicts. This state is separate from booking's `booking_*` ledger and management never writes that ledger. No database triggers or stored procedures implement business policy.
+
+When booking is configured, startup requires `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` and matching service/facility scope. Every operation verifies booking's bearer-authenticated v2 descriptor, required capabilities, contract major, and exact scope before mutation/status traffic; mismatch fails closed. Scheduled auto-booking, scheduler cancellation, Telegram manual booking, and Telegram manual removal/cancellation use keyed v2. The production read adapter fails closed before HTTP if a keyless mutation method is reached. Accepted/running work is observed within a bounded foreground budget and by a coalesced periodic recovery pass; only planned records may resubmit the same immutable key/payload. Court cancellation requires the original persisted binding and fails closed after a configuration-origin mismatch.
+
+Unresolved planned/accepted/running/unknown operations protect their credential and venue even when their game date is historical; terminal history does not permanently prevent deletion. Bearer-authenticated internal endpoints expose sanitized local operation inspection (`GET /internal/booking/operations/{id}`), credentialed reconciliation (`POST .../{id}/reconcile`), and keyed verified resolution (`POST .../{id}/resolution`). Explicit duplicate-risk allocation exists as an unexposed policy primitive with a one-child root budget; ordinary automation cannot invoke it.
+
+Production cutover remains blocked pending durable bounded administrator notifications/metrics, complete restart materialization and combined-candidate acceptance tests, legacy inventory/import, and the runbook drill. Service discovery remains unimplemented.
 
 ## Persistence and tests
 

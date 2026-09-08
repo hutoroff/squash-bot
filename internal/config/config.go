@@ -72,7 +72,14 @@ type ManagementConfig struct {
 	// SportsBookingServiceURL is the base URL of the booking service. Optional.
 	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
 	// and the auto-booking scheduler will book courts when booking opens at midnight.
-	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
+	SportsBookingServiceURL string        `env:"SPORTS_BOOKING_SERVICE_URL"`
+	BookingServiceKey       string        `env:"BOOKING_SERVICE_KEY"`
+	BookingFacilityID       string        `env:"EVERSPORTS_FACILITY_ID"`
+	BookingFacilityUUID     string        `env:"EVERSPORTS_FACILITY_UUID"`
+	BookingFacilitySlug     string        `env:"EVERSPORTS_FACILITY_SLUG"`
+	BookingCutoverAck       string        `env:"BOOKING_RELIABLE_CUTOVER_ACK"`
+	BookingResponseWait     time.Duration `env:"MANAGEMENT_BOOKING_RESPONSE_WAIT" envDefault:"8s"`
+	BookingStatusPoll       time.Duration `env:"MANAGEMENT_BOOKING_STATUS_POLL" envDefault:"200ms"`
 	// CredentialsEncryptionKey is a 32-byte (64 hex chars) AES-256 key used to
 	// encrypt venue booking credentials at rest. Optional at startup — credential
 	// operations will fail gracefully if this is not set.
@@ -97,6 +104,20 @@ type ManagementConfig struct {
 func (c *ManagementConfig) Validate() error {
 	if len(c.InternalAPISecret) < minSecretLength {
 		return fmt.Errorf("INTERNAL_API_SECRET must be at least %d characters", minSecretLength)
+	}
+	if c.SportsBookingServiceURL != "" {
+		if c.BookingCutoverAck != "keyed-v2-only" {
+			return fmt.Errorf("BOOKING_RELIABLE_CUTOVER_ACK must be keyed-v2-only when booking is enabled")
+		}
+		if c.BookingServiceKey == "" || c.BookingFacilityID == "" || c.BookingFacilityUUID == "" || c.BookingFacilitySlug == "" {
+			return fmt.Errorf("booking service key and facility scope are required when booking is enabled")
+		}
+		if c.CredentialsEncryptionKey == "" {
+			return fmt.Errorf("CREDENTIALS_ENCRYPTION_KEY is required when booking is enabled")
+		}
+		if c.BookingResponseWait <= 0 || c.BookingStatusPoll <= 0 || c.BookingStatusPoll > c.BookingResponseWait {
+			return fmt.Errorf("management booking response wait and status poll are invalid")
+		}
 	}
 	return nil
 }

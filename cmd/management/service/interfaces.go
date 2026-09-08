@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/jackc/pgx/v5"
 )
@@ -131,6 +132,22 @@ type AutoBookingResultRepository interface {
 	SetGameID(ctx context.Context, resultID, gameID int64) error
 }
 
+// BookingIntentRepository owns management's durable business intent and immutable
+// booking-operation identities. It never accesses booking's booking_* ledger.
+type BookingIntentRepository interface {
+	AdmitIntent(context.Context, *models.BookingIntent) (*models.BookingIntent, bool, error)
+	AdmitOperation(context.Context, *models.ManagementBookingOperation) (*models.ManagementBookingOperation, bool, error)
+	GetIntentByRequestKey(context.Context, string) (*models.BookingIntent, error)
+	GetIntent(context.Context, int64) (*models.BookingIntent, error)
+	ListOperationsByIntent(context.Context, int64) ([]*models.ManagementBookingOperation, error)
+	ListRecoverableOperations(context.Context, int) ([]*models.ManagementBookingOperation, error)
+	MarkRecoveryAttempt(context.Context, bookingapi.OperationID) error
+	FinalizeIntent(context.Context, int64, models.BookingIntentState) error
+	GetOperation(context.Context, bookingapi.OperationID) (*models.ManagementBookingOperation, error)
+	GetOperationByIntentDedup(context.Context, int64, string) (*models.ManagementBookingOperation, error)
+	ApplyOperationStatus(context.Context, *bookingapi.OperationStatus) (*models.ManagementBookingOperation, bool, error)
+}
+
 // CourtBookingRepository is the data access interface for per-court booking records.
 // Each entry links a booked court to the credential used, enabling credential-aware cancellation.
 type CourtBookingRepository interface {
@@ -143,9 +160,9 @@ type CourtBookingRepository interface {
 	GetByVenueAndDateAndTime(ctx context.Context, venueID int64, gameDate time.Time, gameTime string) ([]*models.CourtBooking, error)
 	// MarkCanceled soft-deletes the booking by setting canceled_at to NOW().
 	MarkCanceled(ctx context.Context, matchID string) error
-	// HasActiveByCredentialID returns true if any non-canceled booking dated today or later in its group's timezone uses the credential.
+	// HasActiveByCredentialID returns true for current/future non-canceled bookings or unresolved management booking operations using the credential.
 	HasActiveByCredentialID(ctx context.Context, credentialID int64) (bool, error)
-	// HasActiveByVenueID returns true if any non-canceled booking dated today or later in the venue's group timezone exists.
+	// HasActiveByVenueID returns true for current/future non-canceled bookings or unresolved management booking operations for the venue.
 	HasActiveByVenueID(ctx context.Context, venueID int64) (bool, error)
 	// MarkCanceledByVenueAndDate soft-deletes all active bookings for the venue on the given date.
 	// Called by DayAfterCleanupJob to close out kept bookings after a game completes.

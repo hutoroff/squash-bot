@@ -4,7 +4,7 @@
 
 **Code baseline reviewed:** `0bc2df1` for the original discovery proposal; booking reliability status refreshed through lifecycle baseline `ab9e588`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Booking's P1–P6 reliable v2 persistence/execution/lifecycle foundation is implemented, with P7 operational handoff local; management §10.1 and real registration remain unimplemented.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) prepares a durable idempotent booking API; this document owns its deferred management integration requirements in [§10.1](#101-management-integration-with-the-reliable-booking-contract). Discovery is not implemented. Booking's P1–P7 reliable v2 foundation and operational handoff are implemented. Management §10.1 now has a local static keyed-v2 caller candidate covering durable intent/operation admission, typed execution/status recovery, create/cancel wiring, origin binding, conservative failure policy, an unexposed one-child duplicate-risk primitive, and internal inspection/reconciliation/resolution. Remaining M6 observability/notification and acceptance/rollout gates, plus real registration, remain unimplemented.
 
 ## 1. Executive decision
 
@@ -60,16 +60,16 @@ web ───────HTTP──▶ management ──HTTP─▶ booking ─�
 telegram and management independently call the external Telegram Bot API.
 ```
 
-The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation. Booking's direct SQL dependency and v2 API are implemented; management's v2 caller integration and all discovery behavior below remain proposed.
+The code, rather than older comments/documentation, is the source of truth for the observations below. The diagram/table describe the existing implementation. Booking's direct SQL dependency and v2 API are implemented, and management's static v2 caller integration is implemented locally but not yet approved for production cutover. All discovery behavior below remains proposed.
 
 | Area | Current behavior | Consequence |
 |---|---|---|
-| Wiring | `cmd/management/main.go` constructs a booking client only when `SPORTS_BOOKING_SERVICE_URL` is set. | A booking service appearing later cannot enable the integration without changing startup wiring. |
+| Wiring | `cmd/management/main.go` constructs a static keyed-v2 client only when `SPORTS_BOOKING_SERVICE_URL` and matching immutable scope/cutover acknowledgement are set. | A booking service appearing later still cannot enable the integration without changing startup wiring. |
 | HTTP clients | `cmd/telegram/client/client.go`, `cmd/web/webserver/*`, and `cmd/management/service/booking_client.go` retain static URLs. | Endpoint changes and compatibility selection are not represented explicitly. |
 | Bootstrap | Telegram makes one management `/version` request and exits on failure or release-major mismatch. | Temporary dependency absence is treated as startup failure. |
 | Compose | Production management depends on healthy booking; web/telegram depend on healthy management. | Startup ordering masks the lack of runtime dependency handling. |
 | Scheduler | Every management process starts cron, audit retention, and startup changelog publication. | A second management instance duplicates potential executors. |
-| Booking deduplication | Booking v2 durably deduplicates immutable operation keys and coordinates account/resource conflicts; management still chooses no durable v2 operation key before dispatch. | Provider exactly-once is not guaranteed, and management must complete §10.1 before cutover. |
+| Booking deduplication | Booking v2 durably deduplicates immutable operation keys; management now persists high-level intent and per-court UUIDv7 keys before static dispatch and replays/status-reads the same key. | Provider exactly-once is not guaranteed, and remaining §10.1 acceptance/operational gates still block cutover. |
 | Notifications | `game_notifier.go` has process-local locks; telegram has its own edit coalescer. | Multiple processes can still publish stale or duplicate message updates. |
 | Telegram transport | Wizard state is held in `sync.Map`; webhook acknowledges an in-memory enqueue; polling fallback deletes the webhook. | Multiple replicas and durable update processing require separate work. |
 | Booking execution | One PostgreSQL singleton authority, a durable operation/evidence ledger, and bounded account-scoped sessions coordinate one active booking process. | Replaceable singleton operation is supported; multi-active replicas and manual provider activity remain unsafe/unfenced. |
@@ -369,6 +369,8 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 #### M1. Durable business intent and operation identity
 
+**Implementation status:** implemented locally in migration 039, `BookingIntentService`, and `BookingIntentRepo`, and consumed by the static scheduled/manual create/cancel paths. Combined release acceptance remains pending.
+
 - Persist a management-owned business intent and chosen operation UUID **before** HTTP dispatch. Cover scheduled auto-booking, manual `BookGameCourts`, scheduler cancellation (including halfway/final checks), and manual court removal/cancellation. Dispatch sites are `booking_core.go`, `court_cancellation.go` and `game_service.go`; update the shared client interface and fakes together.
 - Correlate intent with group/venue/game/time slot, requested count, selected court, credential reference, immutable provider/facility binding and execution generation. Each court creation/cancellation has its own key. Preserve the higher-level requested-count intent so replay cannot start a fresh set of court selections.
 - Allocate keys and business dedup claims transactionally in management tables. Concurrent polls, duplicate manual requests and restarts recover the same intent/key, not new keys just because no success row exists. Propagate a stable manual-command identity at the management transport boundary where necessary; a random key on every handler invocation is insufficient.
@@ -376,6 +378,8 @@ Extend the current booking-readiness response with stable reasons such as `booki
 - Management never writes booking's `booking_*` tables. Recovery between HTTP success and local persistence uses status/replay and idempotent local upserts, not a cross-service SQL transaction or ledger reset.
 
 #### M2. HTTP contract, status and recovery
+
+**Implementation status:** static typed v2 client, bearer-authenticated contract/capability/exact-scope descriptor verification before operations, bounded status polling, same-key ambiguity read-back, fair periodic recoverable-operation observation/resubmission, successful court-booking projection repair, and result-expiry persistence are implemented locally. Discovery capability resolution is not.
 
 - Require `eversports-booking` major 2 and create/cancel/status capabilities, plus reconciliation when used. Extend `BookingServiceClient` with typed operation APIs without spreading URLs/discovery DTOs into scheduler logic.
 - Send the durable `Idempotency-Key`; retain it across endpoint replacement and HTTP uncertainty. Treat `202` as in-progress, not success. Poll within a bounded foreground budget and persist pending intent for later observation.
@@ -386,6 +390,8 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 #### M3. Failure and account policy
 
+**Implementation status:** local dispatch distinguishes typed credential no-effect, proven pre-admission conflict, pending/unknown, and dependency ambiguity; only durable credential rejection enters cooldown. Combined failure-matrix acceptance remains pending.
+
 - Only typed, positively identified `credential_rejected` affects cooldown. Network/registry/booking-DB outage, capacity rejection, business/key/resource/account conflict, unknown payment, malformed provider response and missing match ID must not poison credentials.
 - A positively established no-effect failure permits a deliberate new attempt/key under normal caller policy, with the relationship recorded. Never change the account/payload under the old key.
 - Stop implicit credential rotation and ordinary same-slot retries on pending/unknown creation. Keep requested/confirmed/unknown counts distinct; uncertainty is not a booked court or definitive failure to fill using another account.
@@ -393,6 +399,8 @@ Extend the current booking-readiness response with stable reasons such as `booki
 - Conflicting booking evidence is not permission to link another group's booking automatically. Booking owns external conflicts; management owns group/game authorization and linking.
 
 #### M4. Explicit caller-controlled duplicate-risk creation
+
+**Implementation status:** an unexposed allocator preserves parent/root, payload/scope, reason, and one-child budget after terminal unknown. No automatic or HTTP policy authorizes it, so duplicate-risk dispatch remains disabled by default; operator workflow/notifications remain pending.
 
 The owner prefers exceptional controlled duplication to a missed booking. Implement an **opt-in caller policy**, disabled unless explicitly configured/authorized, not generic automatic retries. An automated management policy may authorize a particular replacement without a human prompt, but must persist that decision before dispatch.
 
@@ -406,6 +414,8 @@ The owner prefers exceptional controlled duplication to a missed booking. Implem
 
 #### M5. Partial results, cancellation and business persistence
 
+**Implementation status:** scheduled/manual creation and cancellation persist operation projections, partial evidence/warnings, exact match targets, local-offset times, credentials, and original provider/facility origin. Scheduler/manual cancellation semantics remain distinct. Complete restart materialization and legacy-import acceptance remain pending.
+
 - Persist operation ID/origin binding, known booking UUID/numeric ID/payment evidence, optional match ID and outcome even when checkout is partial. Extend the match-ID-centric local representation/storage additively; do not discard reserved/paid evidence because `matchId` is empty.
 - Idempotently upsert local results/provider references after replay/status. A local DB failure after external success cannot trigger another booking, duplicate game creation, duplicate labels/counter decrements or repeated publication on recovery.
 - Treat known booked/absent-match-ID as a cancellation-resolution warning, not a new-create failure. Keep reserved/payment-unknown distinct from confirmed booked in game courts and requested counts. A separately quarantined account/session does not turn a known paid booking into an unknown effect eligible for replacement.
@@ -414,6 +424,8 @@ The owner prefers exceptional controlled duplication to a missed booking. Implem
 - Keep announcements updated in place with keyboards. Recovery is not a new publication. Retain per-slot requested counts, local offsets/DST, preferred-court order and cancellation selection rules.
 
 #### M6. Operator visibility, independence and rollout
+
+**Implementation status:** authenticated sanitized local inspection plus credentialed reconciliation/resolution endpoints and periodic recovery logging are implemented. Durable bounded administrator notifications, management metrics, complete rollout tests, inventory/import, and runbook execution remain pending.
 
 - Provide authenticated internal inspection/reconciliation/resolution plumbing and a runbook; no new web resolution UI is required initially. Preserve authorization on user-facing entrypoints. A supplied actor field/internal bearer trust is not end-user permission for duplicate risk.
 - Notify administrators about unknown/partial operations, risk authorization, possible duplicates and missed actions, with bounded repetition keyed to durable state changes. No credentials/raw provider bodies in messages/logs; status replay must not resend success notifications.

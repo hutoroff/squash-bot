@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/sport"
@@ -34,6 +35,13 @@ type AutoBookingJob struct {
 	loc                   *time.Location
 	logger                *slog.Logger
 	credCooldown          time.Duration
+	reliableBooking       *reliableBookingDeps
+}
+
+func (j *AutoBookingJob) SetReliableBooking(intents *BookingIntentService, executor *ReliableBookingExecutor, scope bookingapi.Scope) {
+	if intents != nil && executor != nil {
+		j.reliableBooking = &reliableBookingDeps{intents: intents, executor: executor, scope: scope}
+	}
 }
 
 func NewAutoBookingJob(
@@ -200,9 +208,14 @@ func (j *AutoBookingJob) processTimeSlot(
 		auditSvc:         j.auditSvc,
 		credCooldown:     j.credCooldown,
 		logger:           j.logger,
+		reliable:         j.reliableBooking,
 	}
 
-	res, err := bookFreeCourts(ctx, deps, venue, chatID, gameDate, gameDateStr, gameTime, groupTZ, courtsCount)
+	business := bookingIntentContext{
+		requestKey: fmt.Sprintf("scheduled:%d:%s:%s:g1", venue.ID, gameDateStr, gameTime),
+		source:     models.BookingIntentScheduled, generation: 1,
+	}
+	res, err := bookFreeCourts(ctx, deps, venue, chatID, gameDate, gameDateStr, gameTime, groupTZ, courtsCount, business)
 	if err != nil {
 		j.logger.Error("auto-booking: bookFreeCourts failed", "venue_id", venue.ID, "time", gameTime, "err", err)
 		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, 0, courtsCount, lz)

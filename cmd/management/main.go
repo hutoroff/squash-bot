@@ -19,6 +19,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/api"
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/config"
 	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/robfig/cron/v3"
@@ -89,6 +90,7 @@ func main() {
 	venueCredRepo := storage.NewVenueCredentialRepo(pool)
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
+	bookingIntentRepo := storage.NewBookingIntentRepo(pool)
 	auditEventRepo := storage.NewAuditEventRepo(pool)
 	gameResultRepo := storage.NewGameResultRepo(pool)
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
@@ -130,14 +132,41 @@ func main() {
 	}
 
 	var bookingClient service.BookingServiceClient
+	var bookingIntentSvc *service.BookingIntentService
+	var reliableBookingExecutor *service.ReliableBookingExecutor
+	var reliableBookingRecovery *service.ReliableBookingRecovery
+	var bookingScope bookingapi.Scope
 	if cfg.SportsBookingServiceURL != "" {
-		bookingClient = service.NewHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
-		slog.Info("booking service enabled", "booking_service", cfg.SportsBookingServiceURL)
+		bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+		bookingIntentSvc, err = service.NewBookingIntentService(bookingIntentRepo)
+		if err != nil {
+			slog.Error("init durable booking intent service", "err", err)
+			os.Exit(1)
+		}
+		bookingScope = bookingapi.Scope{
+			ServiceKey: cfg.BookingServiceKey, Provider: "eversports", FacilityID: cfg.BookingFacilityID,
+			FacilityUUID: cfg.BookingFacilityUUID, FacilitySlug: cfg.BookingFacilitySlug, Sport: "squash",
+		}
+		reliableBookingExecutor, err = service.NewReliableBookingExecutor(
+			service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret),
+			bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,
+		)
+		if err != nil {
+			slog.Error("init reliable booking executor", "err", err)
+			os.Exit(1)
+		}
+		reliableBookingRecovery, err = service.NewReliableBookingRecovery(bookingIntentRepo, bookingIntentSvc, reliableBookingExecutor, venueCredService, courtBookingRepo, bookingScope, logger, 100)
+		if err != nil {
+			slog.Error("init reliable booking recovery", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("keyed v2 booking service enabled", "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
 	} else {
 		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
 	}
 
 	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo, cfg.ResultWindowDays)
+	gameService.SetReliableBooking(bookingIntentSvc, reliableBookingExecutor, bookingScope)
 
 	gameNotifier := service.NewGameNotifier(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger)
 	gameService.SetNotifier(gameNotifier)
@@ -150,11 +179,13 @@ func main() {
 	gameResultSvc.SetRatingService(ratingSvc)
 
 	cancellationJob := service.NewCancellationReminderJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, bookingClient, courtBookingRepo, autoBookingResultRepo, venueCredService, auditSvc, loc, logger, pollWindow)
+	cancellationJob.SetReliableBooking(bookingIntentSvc, reliableBookingExecutor, bookingScope)
 	finalCourtCheckJob := service.NewFinalCourtCheckJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, cancellationJob, loc, logger, pollWindow)
 	halfwayCourtCheckJob := service.NewHalfwayCourtCheckJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, gameNotifier, cancellationJob, loc, logger)
 	bookingReminderJob := service.NewBookingReminderJob(tgAPI, gameRepo, gameService, groupRepo, venueRepo, autoBookingResultRepo, loc, logger)
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
+	autoBookingJob.SetReliableBooking(bookingIntentSvc, reliableBookingExecutor, bookingScope)
 	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, pool, gameResultRepo, playerRepo, auditSvc, logger)
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)
@@ -164,6 +195,18 @@ func main() {
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
 		slog.Error("add poll cron", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
+	}
+	if reliableBookingRecovery != nil {
+		if _, err := c.AddFunc(cfg.CronPoll, func() {
+			recoveryCtx, cancel := context.WithTimeout(context.Background(), cfg.BookingResponseWait)
+			defer cancel()
+			if recoveryErr := reliableBookingRecovery.RunOnce(recoveryCtx); recoveryErr != nil {
+				logger.Warn("reliable booking recovery incomplete", "err", recoveryErr)
+			}
+		}); err != nil {
+			slog.Error("add reliable booking recovery cron", "spec", cfg.CronPoll, "err", err)
+			os.Exit(1)
+		}
 	}
 	retentionDays := cfg.AuditRetentionDays
 	if _, err := c.AddFunc("0 2 * * *", func() {
@@ -182,6 +225,7 @@ func main() {
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	h.SetFeatureFlags(flagSvc)
+	h.SetReliableBookingAdmin(bookingIntentSvc, reliableBookingExecutor, bookingScope)
 	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)

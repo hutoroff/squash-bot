@@ -73,6 +73,21 @@ func TestManagementConfig_Validate(t *testing.T) {
 	if err := (&ManagementConfig{InternalAPISecret: "short"}).Validate(); err == nil {
 		t.Error("expected error for a short INTERNAL_API_SECRET")
 	}
+	validBooking := &ManagementConfig{
+		InternalAPISecret: strOfLen(minSecretLength), SportsBookingServiceURL: "http://booking:8081",
+		BookingServiceKey: "eversports.primary.squash", BookingFacilityID: "76443",
+		BookingFacilityUUID: "facility-uuid", BookingFacilitySlug: "facility-slug",
+		BookingCutoverAck: "keyed-v2-only", BookingResponseWait: 8 * time.Second, BookingStatusPoll: 200 * time.Millisecond,
+		CredentialsEncryptionKey: "configured",
+	}
+	if err := validBooking.Validate(); err != nil {
+		t.Fatalf("expected reliable management booking config to pass: %v", err)
+	}
+	invalidBooking := *validBooking
+	invalidBooking.BookingCutoverAck = ""
+	if err := invalidBooking.Validate(); err == nil {
+		t.Fatal("expected booking configuration without keyed-v2 acknowledgement to fail")
+	}
 }
 
 func TestBookingConfig_Validate(t *testing.T) {

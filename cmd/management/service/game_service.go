@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/sport"
@@ -64,6 +65,13 @@ type GameService struct {
 	credService           *VenueCredentialService
 	autoBookingResultRepo AutoBookingResultRepository
 	resultWindowDays      int
+	reliableBooking       *reliableBookingDeps
+}
+
+func (s *GameService) SetReliableBooking(intents *BookingIntentService, executor *ReliableBookingExecutor, scope bookingapi.Scope) {
+	if intents != nil && executor != nil {
+		s.reliableBooking = &reliableBookingDeps{intents: intents, executor: executor, scope: scope}
+	}
 }
 
 func NewGameService(
@@ -286,6 +294,17 @@ func (s *GameService) PublishGame(ctx context.Context, gameID, actorUserID int64
 // game has no venue or the venue's auto-booking is disabled.
 // Sanity check: rejects games whose time is exactly 00:00 (likely unset).
 func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count int, actorUserID int64, actorDisplay string, credCooldown time.Duration) (*BookGameCourtsResult, error) {
+	return s.bookGameCourts(ctx, gameID, count, actorUserID, actorDisplay, credCooldown, "")
+}
+
+func (s *GameService) BookGameCourtsWithRequestKey(ctx context.Context, gameID int64, count int, actorUserID int64, actorDisplay string, credCooldown time.Duration, requestKey string) (*BookGameCourtsResult, error) {
+	return s.bookGameCourts(ctx, gameID, count, actorUserID, actorDisplay, credCooldown, requestKey)
+}
+
+func (s *GameService) bookGameCourts(ctx context.Context, gameID int64, count int, actorUserID int64, actorDisplay string, credCooldown time.Duration, requestKey string) (*BookGameCourtsResult, error) {
+	if s.reliableBooking != nil && !ValidManagementBookingRequestKey(requestKey) {
+		return nil, ErrInvalidBookingRequestKey
+	}
 	game, err := s.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -325,9 +344,12 @@ func (s *GameService) BookGameCourts(ctx context.Context, gameID int64, count in
 		auditSvc:         s.auditSvc,
 		credCooldown:     credCooldown,
 		logger:           s.logger,
+		reliable:         s.reliableBooking,
 	}
+	gameIDCopy := game.ID
+	business := bookingIntentContext{requestKey: requestKey, source: models.BookingIntentManual, gameID: &gameIDCopy, generation: 1}
 
-	res, err := bookFreeCourts(ctx, deps, game.Venue, game.ChatID, gameDate, gameDateStr, gameTime, groupTZ, count)
+	res, err := bookFreeCourts(ctx, deps, game.Venue, game.ChatID, gameDate, gameDateStr, gameTime, groupTZ, count, business)
 	if err != nil {
 		return nil, fmt.Errorf("book free courts: %w", err)
 	}
@@ -460,6 +482,17 @@ func (s *GameService) ListActiveCourtBookings(ctx context.Context, gameID int64,
 // The DB update always runs regardless of cancellation failures — the admin's chosen
 // court list is persisted and partial failures are reported back via CourtCancelError.
 func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID int64, newCourts string) (canceledLabels []string, cancelErrors []CourtCancelError, err error) {
+	return s.removeCourtsAndCancelBookings(ctx, gameID, newCourts, "")
+}
+
+func (s *GameService) RemoveCourtsAndCancelBookingsWithRequestKey(ctx context.Context, gameID int64, newCourts, requestKey string) (canceledLabels []string, cancelErrors []CourtCancelError, err error) {
+	return s.removeCourtsAndCancelBookings(ctx, gameID, newCourts, requestKey)
+}
+
+func (s *GameService) removeCourtsAndCancelBookings(ctx context.Context, gameID int64, newCourts, requestKey string) (canceledLabels []string, cancelErrors []CourtCancelError, err error) {
+	if s.reliableBooking != nil && !ValidManagementBookingRequestKey(requestKey) {
+		return nil, nil, ErrInvalidBookingRequestKey
+	}
 	game, err := s.gameRepo.GetByID(ctx, gameID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get game %d: %w", gameID, err)
@@ -502,6 +535,29 @@ func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID 
 		return nil, nil, fmt.Errorf("get active bookings: %w", err)
 	}
 
+	var cancellationIntent *models.BookingIntent
+	if s.reliableBooking != nil && len(entries) > 0 {
+		originScope := entries[0].OriginScope
+		if originScope.ServiceKey == "" || originScope != s.reliableBooking.scope {
+			return nil, []CourtCancelError{{Err: fmt.Errorf("court booking origin is missing or does not match the configured booking binding")}}, s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming))
+		}
+		for _, entry := range entries[1:] {
+			if entry.OriginScope != originScope {
+				return nil, []CourtCancelError{{Err: fmt.Errorf("selected court bookings have mixed provider origins")}}, s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming))
+			}
+		}
+		gameIDCopy := game.ID
+		gameTime := entries[0].GameTime
+		cancellationIntent, _, err = s.reliableBooking.intents.AdmitIntent(ctx, BookingIntentRequest{
+			RequestKey: requestKey, Action: bookingapi.OperationCancel, Source: models.BookingIntentManual,
+			Scope: originScope, GroupID: game.ChatID, VenueID: game.Venue.ID, GameID: &gameIDCopy,
+			GameDate: game.GameDate, GameTime: gameTime, RequestedCount: len(entries), Generation: 1,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("admit durable manual cancellation intent: %w", err)
+		}
+	}
+
 	for _, entry := range entries {
 		if cancelQuota[entry.CourtLabel] <= 0 {
 			continue
@@ -527,7 +583,25 @@ func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID 
 			cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: noCredErr})
 			continue
 		}
-		if cancelErr := s.bookingClient.CancelMatch(ctx, entry.MatchID, login, password); cancelErr != nil {
+		wasSucceeded := false
+		if s.reliableBooking != nil {
+			operation, _, admitErr := s.reliableBooking.intents.AdmitOperation(ctx, BookingOperationRequest{
+				IntentID: cancellationIntent.ID, DedupKey: fmt.Sprintf("cancel:%s:g%d", entry.MatchID, cancellationIntent.Generation),
+				Kind: bookingapi.OperationCancel, TargetMatchID: entry.MatchID, CredentialID: entry.CredentialID,
+			})
+			if admitErr != nil {
+				return canceledLabels, cancelErrors, fmt.Errorf("admit durable manual cancellation operation: %w", admitErr)
+			}
+			wasSucceeded = ManagementBookingSucceeded(operation)
+			operation, cancelErr := s.reliableBooking.executor.ExecuteCancel(ctx, operation, bookingapi.Credentials{Email: login, Password: password})
+			if cancelErr != nil || !ManagementBookingSucceeded(operation) {
+				if cancelErr == nil {
+					cancelErr = fmt.Errorf("cancellation outcome is %s", operation.State)
+				}
+				cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: cancelErr})
+				continue
+			}
+		} else if cancelErr := s.bookingClient.CancelMatch(ctx, entry.MatchID, login, password); cancelErr != nil {
 			s.logger.Error("RemoveCourtsAndCancelBookings: cancel match",
 				"game_id", gameID, "court_label", entry.CourtLabel, "match_id", entry.MatchID, "err", cancelErr)
 			cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: entry.CourtLabel, Err: cancelErr})
@@ -537,10 +611,34 @@ func (s *GameService) RemoveCourtsAndCancelBookings(ctx context.Context, gameID 
 			s.logger.Error("RemoveCourtsAndCancelBookings: mark canceled",
 				"game_id", gameID, "match_id", entry.MatchID, "err", markErr)
 		}
-		if s.auditSvc != nil {
+		if s.auditSvc != nil && !wasSucceeded {
 			s.auditSvc.RecordCourtCanceled(ctx, game.Venue.ID, game.ChatID, game.Venue.Name, entry.CourtLabel, game.GameDate)
 		}
 		canceledLabels = append(canceledLabels, entry.CourtLabel)
+	}
+
+	if cancellationIntent != nil {
+		operations, listErr := s.reliableBooking.intents.ListOperations(ctx, cancellationIntent.ID)
+		if listErr != nil {
+			return canceledLabels, cancelErrors, fmt.Errorf("list durable manual cancellations: %w", listErr)
+		}
+		unresolved := false
+		succeeded := 0
+		for _, operation := range operations {
+			unresolved = unresolved || managementBookingOperationPending(operation) || operation.State == models.ManagementBookingOperationOutcomeUnknown
+			if ManagementBookingSucceeded(operation) {
+				succeeded++
+			}
+		}
+		if !unresolved {
+			state := models.BookingIntentCompleted
+			if succeeded > 0 && succeeded < cancellationIntent.RequestedCount {
+				state = models.BookingIntentPartial
+			}
+			if finalizeErr := s.reliableBooking.intents.FinalizeIntent(ctx, cancellationIntent.ID, state); finalizeErr != nil {
+				return canceledLabels, cancelErrors, fmt.Errorf("finalize durable manual cancellation: %w", finalizeErr)
+			}
+		}
 	}
 
 	if updateErr := s.gameRepo.UpdateCourts(ctx, gameID, newCourts, len(incoming)); updateErr != nil {

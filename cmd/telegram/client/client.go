@@ -546,13 +546,14 @@ func (c *Client) ListActiveCourtBookings(ctx context.Context, gameID int64, cour
 
 // UpdateCourtsAndCancelBookings cancels active bookings for removed courts then persists the new courts list.
 // On partial failure, failed contains per-court errors and courts are still updated.
-func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64) (canceledLabels []string, failed []CancelFailure, err error) {
+func (c *Client) UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64, requestKey string) (canceledLabels []string, failed []CancelFailure, err error) {
 	body := map[string]any{
 		"courts":          newCourts,
 		"group_id":        groupID,
 		"actor_user_id":   actorUserID,
 		"actor_display":   actorDisplay,
 		"cancel_bookings": true,
+		"request_key":     requestKey,
 	}
 	req, reqErr := c.newRequest(ctx, http.MethodPatch, "/api/v1/games/"+strconv.FormatInt(gameID, 10)+"/courts", body)
 	if reqErr != nil {
@@ -639,12 +640,13 @@ func (c *Client) PublishGame(ctx context.Context, gameID, actorUserID int64, act
 
 // BookGameCourts calls POST /api/v1/games/{id}/book-courts.
 // Returns ErrAutoBookingNotAvailable when the server responds with HTTP 409.
-func (c *Client) BookGameCourts(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string, count int) (*BookGameCourtsResult, error) {
+func (c *Client) BookGameCourts(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string, count int, requestKey string) (*BookGameCourtsResult, error) {
 	body := map[string]any{
 		"count":         count,
 		"group_id":      groupID,
 		"actor_user_id": actorUserID,
 		"actor_display": actorDisplay,
+		"request_key":   requestKey,
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, fmt.Sprintf("/api/v1/games/%d/book-courts", gameID), body)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 )
 
 // defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
@@ -38,6 +39,9 @@ type Handler struct {
 	version          string
 	// credentialErrorCooldown is forwarded to GameService.BookGameCourts.
 	credentialErrorCooldown time.Duration
+	bookingIntents          *service.BookingIntentService
+	reliableBooking         *service.ReliableBookingExecutor
+	bookingScope            bookingapi.Scope
 }
 
 func NewHandler(
@@ -77,6 +81,12 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService, executor *service.ReliableBookingExecutor, scope bookingapi.Scope) {
+	h.bookingIntents = intents
+	h.reliableBooking = executor
+	h.bookingScope = scope
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
@@ -91,6 +101,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/games/{id}/publish", h.publishGame)
 	mux.HandleFunc("GET /api/v1/games/{id}/active-court-bookings", h.listActiveCourtBookings)
 	mux.HandleFunc("POST /api/v1/games/{id}/book-courts", h.bookCourts)
+	mux.HandleFunc("GET /internal/booking/operations/{id}", h.getBookingOperation)
+	mux.HandleFunc("POST /internal/booking/operations/{id}/reconcile", h.reconcileBookingOperation)
+	mux.HandleFunc("POST /internal/booking/operations/{id}/resolution", h.resolveBookingOperation)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)
