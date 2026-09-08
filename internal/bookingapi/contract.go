@@ -53,6 +53,13 @@ const (
 
 // Scope is the immutable provider/facility pool addressed by an operation.
 // It is supplied by trusted service configuration, not caller-selected metadata.
+type Descriptor struct {
+	Scope         Scope    `json:"scope"`
+	Contract      string   `json:"contract"`
+	ContractMajor int      `json:"contract_major"`
+	Capabilities  []string `json:"capabilities"`
+}
+
 type Scope struct {
 	ServiceKey   string `json:"service_key"`
 	Provider     string `json:"provider"`

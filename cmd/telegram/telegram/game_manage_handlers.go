@@ -542,7 +542,7 @@ func (b *Bot) handleManageBook(ctx context.Context, cb *tgbotapi.CallbackQuery, 
 		return
 	}
 
-	result, err := b.client.BookGameCourts(ctx, gameID, state.groupID, ru.UserID, ru.DisplayName, int(count))
+	result, err := b.client.BookGameCourts(ctx, gameID, state.groupID, ru.UserID, ru.DisplayName, int(count), "telegram:"+cb.ID)
 	if err != nil {
 		slog.Error("handleManageBook: book courts", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
@@ -831,7 +831,7 @@ func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.
 		return
 	}
 
-	canceledLabels, failed, err := b.client.UpdateCourtsAndCancelBookings(ctx, gameID, state.groupID, state.newCourts, ru.DisplayName, ru.UserID)
+	canceledLabels, failed, err := b.client.UpdateCourtsAndCancelBookings(ctx, gameID, state.groupID, state.newCourts, ru.DisplayName, ru.UserID, "telegram:"+cb.ID)
 	if err != nil {
 		slog.Error("handleManageCourtsCancelConfirm: update+cancel", "err", err, "game_id", gameID)
 		b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgFailedUpdateCourts), nil)

@@ -301,13 +301,13 @@ openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 chmod 600 .env
 
 # 5. Pull images and start only a mutually compatible release set.
-# Reliable booking must not be started with the current legacy management client;
-# complete the linked cutover runbook and explicit acknowledgement first.
+# Reliable booking and management now have a static keyed-v2 integration candidate;
+# complete the linked cutover runbook and explicit acknowledgement before promotion.
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Migrations run automatically on first startup. **Current reliability work is not production-cutover ready:** management's mandatory keyed-v2 integration is still outstanding. Leave `BOOKING_RELIABLE_CUTOVER_ACK` unset and do not promote/start the reliable booking mutation path until the [cutover runbook](docs/booking-reliability-runbook.md) hard gates pass. Once a compatible release set is approved, verify everything is healthy:
+Migrations run automatically on first startup. **Current reliability work is still not production-cutover ready:** management's static keyed-v2 create/cancel, durable intent, status recovery, typed failure handling, origin binding, and internal inspection/reconciliation plumbing are implemented, but the remaining management acceptance gates, legacy inventory/import drill, bounded operator notifications/metrics, and independent rollout review are not complete. `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is required whenever `SPORTS_BOOKING_SERVICE_URL` enables this path; it only acknowledges that keyless mutations are forbidden and does not replace the [cutover runbook](docs/booking-reliability-runbook.md). Do not promote the candidate until those hard gates pass. Once a compatible release set is approved, verify everything is healthy:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
@@ -409,8 +409,12 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
-| `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
+| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables only the durable keyed-v2 create/cancel integration; no v1 mutation fallback exists. |
+| `BOOKING_SERVICE_KEY` / `EVERSPORTS_FACILITY_ID` / `EVERSPORTS_FACILITY_UUID` / `EVERSPORTS_FACILITY_SLUG` | When booking enabled | — | Must match booking's immutable provider/facility binding. Existing operations fail closed rather than being sent to a changed binding. |
+| `BOOKING_RELIABLE_CUTOVER_ACK` | When booking enabled | — | Must equal `keyed-v2-only`; acknowledges that keyless mutation traffic is rejected, not that rollout gates passed. |
+| `MANAGEMENT_BOOKING_RESPONSE_WAIT` | No | `8s` | Bounded foreground wait/status-observation budget after keyed admission. |
+| `MANAGEMENT_BOOKING_STATUS_POLL` | No | `200ms` | Poll interval while a v2 operation remains accepted/running. |
+| `CREDENTIALS_ENCRYPTION_KEY` | When booking enabled | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
 | `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs granted the `is_server_owner` role at startup. Grant-only and idempotent: re-running with the same list is a no-op, and removing an ID here does **not** revoke an existing owner — the `users` table is the source of truth once seeded. Manage ownership afterwards via the web UI's Users page (`GET/PATCH /api/v1/users*`), not this variable. Not read by the web service. |
 | `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |

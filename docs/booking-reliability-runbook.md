@@ -1,6 +1,6 @@
 # Reliable booking cutover, rollback, and recovery runbook
 
-This is the operational handoff for the implemented booking reliability foundation. It does **not** authorize a deployment or a real Eversports mutation. The current management client still uses the legacy mutation contract, so production mutation cutover remains blocked until the separate [management integration gate](service-discovery-design.md#101-management-integration-with-the-reliable-booking-contract) is implemented and reviewed.
+This is the operational handoff for the implemented booking reliability foundation. It does **not** authorize a deployment or a real Eversports mutation. A static management keyed-v2 integration candidate now persists and replays durable create/cancel operations, but production mutation cutover remains blocked until the remaining [management integration gates](service-discovery-design.md#101-management-integration-with-the-reliable-booking-contract), combined review, inventory/import, and this runbook's drills pass.
 
 The booking service is replaceable but single-active. PostgreSQL and Eversports remain required dependencies; discovery registration is not implemented and is not an execution lock.
 

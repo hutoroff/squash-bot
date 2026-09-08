@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
 
@@ -26,6 +27,19 @@ type BookFreeCourtsResult struct {
 
 // bookingDeps groups the external dependencies required by bookFreeCourts.
 // This allows both AutoBookingJob and GameService.BookGameCourts to share the logic.
+type reliableBookingDeps struct {
+	intents  *BookingIntentService
+	executor *ReliableBookingExecutor
+	scope    bookingapi.Scope
+}
+
+type bookingIntentContext struct {
+	requestKey string
+	source     models.BookingIntentSource
+	gameID     *int64
+	generation int
+}
+
 type bookingDeps struct {
 	bookingClient    BookingServiceClient
 	credService      *VenueCredentialService
@@ -33,6 +47,7 @@ type bookingDeps struct {
 	auditSvc         *AuditService
 	credCooldown     time.Duration
 	logger           *slog.Logger
+	reliable         *reliableBookingDeps
 }
 
 // bookFreeCourts books up to `count` free courts for the given venue / time-slot using
@@ -57,7 +72,11 @@ func bookFreeCourts(
 	gameTime string,
 	groupTZ *time.Location,
 	count int,
+	business bookingIntentContext,
 ) (*BookFreeCourtsResult, error) {
+	if deps.reliable != nil {
+		return bookFreeCourtsReliable(ctx, deps, venue, chatID, gameDate, gameDateStr, gameTime, groupTZ, count, business)
+	}
 	result := &BookFreeCourtsResult{Requested: count}
 
 	// Parse "HH:MM" into a concrete time.Time for booking.

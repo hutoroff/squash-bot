@@ -443,6 +443,22 @@ func TestReliableLegacyImportRequiresKeyAndReturnsCreatedOrReplay(t *testing.T) 
 	}
 }
 
+func TestReliableDescriptorReturnsExactContractAndScope(t *testing.T) {
+	h := newReliableTestHandler(t, &fakeReliableCoordinator{}, &fakeOperationStatusReader{})
+	response := httptest.NewRecorder()
+	h.getReliableDescriptor(response, httptest.NewRequest(http.MethodGet, "/api/v2/eversports/descriptor", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("descriptor status = %d", response.Code)
+	}
+	var descriptor bookingapi.Descriptor
+	if err := json.NewDecoder(response.Body).Decode(&descriptor); err != nil {
+		t.Fatal(err)
+	}
+	if descriptor.Contract != bookingapi.ContractName || descriptor.ContractMajor != bookingapi.ContractMajor || descriptor.Scope != reliableScope {
+		t.Fatalf("descriptor = %+v", descriptor)
+	}
+}
+
 func newReliableTestHandler(t *testing.T, coordinator ReliableCoordinator, status OperationStatusReader) *Handler {
 	t.Helper()
 	return newReliableTestHandlerWithReconciler(t, coordinator, status, &fakeReliableReconciler{})

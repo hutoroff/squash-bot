@@ -6,7 +6,7 @@ Four independently deployable binaries share one Go module. Entry-point wiring i
 
 | Binary | Owns | Dependencies |
 |---|---|---|
-| `management` | Business API, PostgreSQL persistence/migrations, scheduled jobs, server-owner decisions | PostgreSQL, Telegram Bot API, optional booking service |
+| `management` | Business API, PostgreSQL persistence/migrations, scheduled jobs, server-owner decisions, management-owned booking business intents | PostgreSQL, Telegram Bot API, optional booking service |
 | `telegram` | Telegram transport, commands, callbacks, in-memory wizards | Management HTTP API, Telegram Bot API |
 | `booking` | Keyed reliable booking API, booking-owned ledger/migrations, singleton execution coordination, bounded in-memory provider sessions, Eversports adapter | PostgreSQL, Eversports |
 | `web` | Telegram Login Widget verification, JWT sessions, authorized proxies, embedded SPA | Management HTTP API |

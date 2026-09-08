@@ -198,6 +198,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v1/eversports/facility", h.getFacility)
 
+	mux.HandleFunc("GET /api/v2/eversports/descriptor", h.getReliableDescriptor)
 	mux.HandleFunc("GET /api/v2/eversports/matches", h.listMatches)
 	mux.HandleFunc("POST /api/v2/eversports/matches", h.createMatchV2)
 	mux.HandleFunc("GET /api/v2/eversports/matches/{id}", h.getMatch)
@@ -217,6 +218,16 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) getVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
+}
+
+func (h *Handler) getReliableDescriptor(w http.ResponseWriter, _ *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, bookingapi.Descriptor{
+		Scope: h.reliableScope, Contract: bookingapi.ContractName, ContractMajor: bookingapi.ContractMajor,
+		Capabilities: []string{"create", "cancel", "status", "reconcile", "resolve", "import"},
+	})
 }
 
 func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {

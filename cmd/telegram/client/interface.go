@@ -77,11 +77,11 @@ type ManagementClient interface {
 
 	// UpdateCourtsAndCancelBookings cancels active bookings for removed courts then updates courts.
 	// On partial cancellation failure, failed is non-empty and the courts update still happened.
-	UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64) (canceledLabels []string, failed []CancelFailure, err error)
+	UpdateCourtsAndCancelBookings(ctx context.Context, gameID, groupID int64, newCourts, actorDisplay string, actorUserID int64, requestKey string) (canceledLabels []string, failed []CancelFailure, err error)
 
 	// BookGameCourts books N courts for a game via auto-booking infrastructure.
 	// Returns ErrAutoBookingNotAvailable (HTTP 409) if the game has no usable venue/credentials.
-	BookGameCourts(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string, count int) (*BookGameCourtsResult, error)
+	BookGameCourts(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string, count int, requestKey string) (*BookGameCourtsResult, error)
 
 	// GetVenueBookingReadiness checks whether a venue can auto-book courts right now.
 	GetVenueBookingReadiness(ctx context.Context, venueID, groupID int64) (*BookingReadiness, error)
