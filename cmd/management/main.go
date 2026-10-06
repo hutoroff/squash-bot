@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -61,13 +62,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
 	// Keep lifecycle health observable while database, migrations and external
 	// Telegram initialization run. Readiness remains false until all local
 	// requirements and the business listener are available.
 	health := &managementHealthSource{}
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		health.draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 	descriptor := discovery.Descriptor{
 		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
 		ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
@@ -93,7 +104,7 @@ func main() {
 		os.Exit(1)
 	}
 	errCh := make(chan error, 2)
-	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
 
 	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -301,6 +312,7 @@ func main() {
 			logger.Warn("service discovery lifecycle unavailable", "err", err)
 		}
 	}
+	lifecycleRef.Store(lifecycle)
 	defer discovery.ShutdownLifecycle(lifecycle)
 
 	slog.Info("management starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
@@ -311,11 +323,19 @@ func main() {
 	}()
 	if err := <-errCh; err != nil {
 		slog.Error("management listener stopped", "err", err)
+		discovery.BeginDrainLifecycle(lifecycle)
+		health.draining.Store(true)
 		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
 		<-errCh
 		os.Exit(1)
 	}
+	discovery.BeginDrainLifecycle(lifecycle)
+	health.draining.Store(true)
 	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
 	if err := <-errCh; err != nil {
 		slog.Error("management listener shutdown", "err", err)
 	}
