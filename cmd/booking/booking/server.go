@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -110,8 +111,7 @@ func requireBearer(secret string, next http.Handler) http.Handler {
 func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := ServeWithReady(srv, logger, nil); err != nil {
 			errCh <- err
 		}
 	}()
@@ -125,6 +125,23 @@ func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
 		logger.Info("HTTP server shutting down")
 		return srv.Shutdown(shutCtx)
 	}
+}
+
+// ServeWithReady binds and serves business traffic. listening runs only after
+// the TCP listener exists, allowing callers to expose accurate local readiness.
+func ServeWithReady(srv *http.Server, logger *slog.Logger, listening func()) error {
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("HTTP server listening", "addr", listener.Addr().String())
+	if listening != nil {
+		listening()
+	}
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

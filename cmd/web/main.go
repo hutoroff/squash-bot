@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -96,11 +97,13 @@ func main() {
 			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
 		}
 	}
-	localReady := func(context.Context) bool { return true }
+	var businessListening atomic.Bool
+	localReady := func(context.Context) bool { return businessListening.Load() }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
-			return observability.Readiness{Ready: true, Checks: map[string]bool{"listener": true}}
+			listening := businessListening.Load()
+			return observability.Readiness{Ready: listening, Checks: map[string]bool{"business_listener": listening}}
 		},
 	})
 	if err != nil {
@@ -116,7 +119,11 @@ func main() {
 
 	slog.Info("web starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)
-	go func() { errCh <- webserver.Run(ctx, srv, logger) }()
+	go func() {
+		errCh <- webserver.RunWithReady(ctx, srv, logger, func() {
+			businessListening.Store(true)
+		})
+	}()
 	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
 	if err := <-errCh; err != nil {
 		slog.Error("web listener stopped", "err", err)

@@ -25,6 +25,9 @@ type WebhookOptions struct {
 	// Secret is sent as X-Telegram-Bot-Api-Secret-Token and validated per request.
 	// Leave empty to skip validation (not recommended in production).
 	Secret string
+	// OnReady is called after the listener is bound and Telegram accepted the
+	// webhook registration. It must not block startup.
+	OnReady func()
 }
 
 // StartWebhook registers the Telegram webhook and runs the HTTP listener until ctx
@@ -52,6 +55,9 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 	if err := b.registerWebhook(opts.PublicURL, opts.Secret); err != nil {
 		ln.Close()
 		return fmt.Errorf("register webhook: %w", err)
+	}
+	if opts.OnReady != nil {
+		opts.OnReady()
 	}
 
 	// Channel sized to absorb a burst while processUpdate goroutines spin up.

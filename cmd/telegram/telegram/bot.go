@@ -327,8 +327,17 @@ func (b *Bot) runUpdateLoop(ctx context.Context, updates tgbotapi.UpdatesChannel
 // Start runs the long-polling update loop until ctx is cancelled.
 // It deletes any registered webhook first so that getUpdates does not return 409.
 func (b *Bot) Start(ctx context.Context) {
+	b.StartWithReady(ctx, nil)
+}
+
+// StartWithReady reports readiness only after polling can safely begin. A
+// failed webhook deletion leaves readiness false because Telegram will reject
+// concurrent getUpdates polling while the webhook remains active.
+func (b *Bot) StartWithReady(ctx context.Context, ready func()) {
 	if _, err := b.api.Request(tgbotapi.DeleteWebhookConfig{}); err != nil {
 		b.logger.Warn("deleteWebhook before polling", "err", err)
+	} else if ready != nil {
+		ready()
 	}
 
 	u := tgbotapi.NewUpdate(0)
