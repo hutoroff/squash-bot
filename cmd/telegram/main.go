@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -57,37 +58,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	tgAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
-	if err != nil {
-		slog.Error("create bot API", "err", err)
-		os.Exit(1)
-	}
-	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
-
-	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
-		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
-		if resolverErr != nil {
-			slog.Error("configure management discovery", "err", resolverErr)
-			os.Exit(1)
-		}
-		mgmtClient = client.NewDiscovered(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, cfg.InternalAPISecret)
-	}
-
-	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {
-		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
-		if versionErr != nil {
-			slog.Error("check management service version", "err", versionErr)
-			os.Exit(1)
-		}
-		if majorPart(Version) != majorPart(mgmtVersion) {
-			slog.Error("management service major version mismatch", "bot_version", Version, "management_version", mgmtVersion)
-			os.Exit(1)
-		}
-		slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
-	}
-
-	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
 	apiEndpoint := ""
 	adminEndpoint := "http://telegram:" + cfg.AdminServerPort
 	registryURL := cfg.DiscoveryURL
@@ -133,6 +103,41 @@ func main() {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}
 	defer discovery.ShutdownLifecycle(lifecycle)
+
+	// Bootstrap authorization is deliberately bounded; long polling retains its
+	// existing unbounded transport after the bot identity has been verified.
+	tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramBotToken, tgbotapi.APIEndpoint, &http.Client{Timeout: 10 * time.Second})
+	if err != nil {
+		slog.Error("create bot API", "err", err)
+		os.Exit(1)
+	}
+	tgAPI.Client = &http.Client{}
+	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
+
+	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
+		if resolverErr != nil {
+			slog.Error("configure management discovery", "err", resolverErr)
+			os.Exit(1)
+		}
+		mgmtClient = client.NewDiscovered(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, cfg.InternalAPISecret)
+	}
+
+	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {
+		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
+		if versionErr != nil {
+			slog.Error("check management service version", "err", versionErr)
+			os.Exit(1)
+		}
+		if majorPart(Version) != majorPart(mgmtVersion) {
+			slog.Error("management service major version mismatch", "bot_version", Version, "management_version", mgmtVersion)
+			os.Exit(1)
+		}
+		slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
+	}
+
+	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
 	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 		for ctx.Err() == nil {
 			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -154,16 +159,18 @@ func main() {
 			return
 		}
 	}
-	transportReady.Store(true)
 	go func() {
 		if cfg.WebhookURL != "" {
-			opts := telegram.WebhookOptions{PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret}
+			opts := telegram.WebhookOptions{
+				PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
+				OnReady: func() { transportReady.Store(true) },
+			}
 			if runErr := bot.StartWebhook(ctx, opts); runErr != nil && ctx.Err() == nil {
 				slog.Warn("webhook mode unavailable, falling back to long-polling", "err", runErr)
-				bot.Start(ctx)
+				bot.StartWithReady(ctx, func() { transportReady.Store(true) })
 			}
 		} else {
-			bot.Start(ctx)
+			bot.StartWithReady(ctx, func() { transportReady.Store(true) })
 		}
 		errCh <- nil
 	}()

@@ -2,10 +2,13 @@ package booking
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // sentinel is a trivial handler that returns 200 with a fixed body,
@@ -106,5 +109,32 @@ func TestLimitRequestBody_RejectsBodyOverLimit(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized body: want 413, got %d", w.Code)
+	}
+}
+
+func TestServeWithReadySignalsOnlyAfterListenerBinds(t *testing.T) {
+	srv := &http.Server{Addr: "127.0.0.1:0", Handler: sentinel}
+	listening := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- ServeWithReady(srv, slog.Default(), func() { close(listening) })
+	}()
+	select {
+	case <-listening:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not become ready")
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeWithReady() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
 	}
 }

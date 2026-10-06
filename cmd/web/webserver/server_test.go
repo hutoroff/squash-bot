@@ -2,10 +2,14 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"log/slog"
 )
 
 // echoBody is a handler that reads the full body and reports whether the
@@ -36,5 +40,30 @@ func TestLimitRequestBody_RejectsBodyOverLimit(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized body: want 413, got %d", w.Code)
+	}
+}
+
+func TestRunWithReadySignalsOnlyAfterListenerBinds(t *testing.T) {
+	srv := &http.Server{Addr: "127.0.0.1:0", Handler: echoBody}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listening := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithReady(ctx, srv, slog.Default(), func() { close(listening) })
+	}()
+	select {
+	case <-listening:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not become ready")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunWithReady() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
 	}
 }

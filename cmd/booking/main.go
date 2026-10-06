@@ -132,7 +132,11 @@ func run() error {
 		":"+cfg.ServerPort, handler, cfg.InternalAPISecret, metrics, cfg.HTTPResponseWait+10*time.Second,
 	)
 	logger.Info("booking starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version, "reliable_api", true)
-	go func() { errCh <- serverResult{name: "business", err: businessSrv.ListenAndServe()} }()
+	go func() {
+		errCh <- serverResult{name: "business", err: booking.ServeWithReady(businessSrv, logger, func() {
+			health.businessListening.Store(true)
+		})}
+	}()
 
 	var runErr error
 	select {
@@ -146,6 +150,7 @@ func run() error {
 	// Exclude this singleton from new discovery resolution before closing
 	// admission or the business listener. Keep the admin listener up through
 	// tracked-executor draining so its not-ready state remains observable.
+	health.draining.Store(true)
 	discovery.BeginDrainLifecycle(lifecycle)
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancelShutdown()

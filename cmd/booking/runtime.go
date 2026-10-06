@@ -24,7 +24,9 @@ const (
 )
 
 type runtimeHealthSource struct {
-	runtime atomic.Pointer[reliableRuntime]
+	runtime           atomic.Pointer[reliableRuntime]
+	businessListening atomic.Bool
+	draining          atomic.Bool
 }
 
 func (s *runtimeHealthSource) readiness(ctx context.Context) booking.Readiness {
@@ -32,7 +34,11 @@ func (s *runtimeHealthSource) readiness(ctx context.Context) booking.Readiness {
 	if runtime == nil {
 		return booking.Readiness{}
 	}
-	return runtime.readiness(ctx)
+	readiness := runtime.readiness(ctx)
+	if !s.businessListening.Load() || s.draining.Load() {
+		readiness.Ready = false
+	}
+	return readiness
 }
 
 func (s *runtimeHealthSource) running() int {

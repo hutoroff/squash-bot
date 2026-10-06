@@ -2,10 +2,16 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"log/slog"
 )
 
 // sentinel is a trivial handler that always returns 200 with a known body,
@@ -106,4 +112,48 @@ func TestLimitRequestBody_RejectsBodyOverLimit(t *testing.T) {
 func TestRegisterRoutes_NoPatternConflicts(t *testing.T) {
 	h := &Handler{}
 	h.RegisterRoutes(http.NewServeMux())
+}
+
+func TestRunWithReadyDoesNotSignalWhenBindFails(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+
+	var signaled atomic.Bool
+	err = RunWithReady(context.Background(), &http.Server{Addr: occupied.Addr().String(), Handler: sentinel}, slog.Default(), func() {
+		signaled.Store(true)
+	})
+	if err == nil {
+		t.Fatal("RunWithReady() succeeded with an occupied address")
+	}
+	if signaled.Load() {
+		t.Fatal("readiness callback ran after bind failure")
+	}
+}
+
+func TestRunWithReadySignalsOnlyAfterListenerBinds(t *testing.T) {
+	srv := &http.Server{Addr: "127.0.0.1:0", Handler: sentinel}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listening := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithReady(ctx, srv, slog.Default(), func() { close(listening) })
+	}()
+	select {
+	case <-listening:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not become ready")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunWithReady() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
+	}
 }

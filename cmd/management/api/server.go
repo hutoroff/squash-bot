@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -265,17 +266,31 @@ func decodeJSON(r *http.Request, v any) error {
 
 // Run starts the server and blocks until ctx is cancelled, then gracefully shuts down.
 func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
+	return RunWithReady(ctx, srv, logger, nil)
+}
+
+// RunWithReady invokes listening after the TCP listener is successfully bound,
+// before serving requests. It lets local readiness distinguish a constructed
+// server from a process that can actually accept business traffic.
+func RunWithReady(ctx context.Context, srv *http.Server, logger *slog.Logger, listening func()) error {
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("HTTP server listening", "addr", listener.Addr().String())
+	if listening != nil {
+		listening()
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		if serveErr := srv.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
 		}
 	}()
 
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr := <-errCh:
+		return serveErr
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
