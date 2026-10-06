@@ -58,15 +58,17 @@ This is split into independently buildable commits to keep lifecycle changes rev
 
 **Scope:** `internal/discovery/resolver.go`, internal HTTP client transport ownership and registry tests.
 
-- Add cancellable bounded refresh for actively used selectors, with bounded cache retention and coalesced lookups; avoid serializing unrelated selectors behind a network request.
+This is split before implementation because refresh/transport lifecycle have different failure boundaries:
+
+1. **2a — selector-isolated lookup:** coalesce concurrent refreshes for one selector while allowing independent selectors to fetch concurrently; preserve bounded cache/error semantics. **Commit:** `fix(discovery): isolate concurrent registry refreshes`.
+2. **2b — active refresh and transport retirement:** add cancellable refresh for active selectors and retire idle connections for removed endpoints without interrupting/replaying mutations. **Commit:** `fix(discovery): refresh active targets and retire removed connections`.
+3. **2c — registry/resolver acceptance matrix:** cover restart/expiry, late terminal requests, unknown contracts, DB failure, capacity limits and typed routing failures. **Commit:** `test(discovery): cover registry resolver failure matrix`.
+
 - Preserve conservative monotonic lease deadlines, successful-empty replacement and still-valid-cache-only behavior after refresh failure.
-- Retire idle connections when endpoints leave a snapshot; never interrupt or replay an in-flight mutation to switch targets.
-- Cover typed unavailable/incompatible/ambiguous results and exact binding requirements. Bound management-local registry operations as well as remote control calls.
-- Extend registry correctness tests for restart/expiry, late terminal requests, unknown contracts, DB failure and concurrent capacity limits; fix any demonstrated boundary failures without growing a new registry framework.
+- Bound management-local registry operations as well as remote control calls.
+- Fix demonstrated boundary failures without growing a new registry framework.
 
-**Acceptance:** fake-clock/race tests for refresh, shutdown and selector isolation; changed-IP replacement; expired endpoints receive no requests; no static fallback; failed mutations dispatch at most once; two fake eligible endpoints remain a set and invocation fails with the singleton ambiguity error.
-
-**Commit:** `fix(discovery): bound active refresh and retire removed endpoints`
+**Step acceptance:** fake-clock/race tests for refresh, shutdown and selector isolation; changed-IP replacement; expired endpoints receive no requests; no static fallback; failed mutations dispatch at most once; two fake eligible endpoints remain a set and invocation fails with the singleton ambiguity error.
 
 ### Step 3 — Finish dependency availability responses and booking readiness (C follow-up)
 
