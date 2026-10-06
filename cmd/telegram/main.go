@@ -55,8 +55,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
+	var transportReady atomic.Bool
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		transportReady.Store(false)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
 	apiEndpoint := ""
 	adminEndpoint := "http://telegram:" + cfg.AdminServerPort
@@ -81,7 +93,6 @@ func main() {
 		Endpoints: discovery.Endpoints{API: apiEndpoint, Admin: adminEndpoint},
 		Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
 	}
-	var transportReady atomic.Bool
 	localReady := func(context.Context) bool { return transportReady.Load() }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
@@ -97,11 +108,12 @@ func main() {
 
 	slog.Info("telegram starting", "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)
-	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
 	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}
+	lifecycleRef.Store(lifecycle)
 	defer discovery.ShutdownLifecycle(lifecycle)
 
 	// Bootstrap authorization is deliberately bounded; long polling retains its
@@ -155,6 +167,9 @@ func main() {
 			}
 		}
 		if ctx.Err() != nil {
+			discovery.BeginDrainLifecycle(lifecycle)
+			discovery.DeregisterLifecycle(lifecycle)
+			cancelAdmin()
 			<-errCh
 			return
 		}
@@ -176,11 +191,19 @@ func main() {
 	}()
 	if err := <-errCh; err != nil {
 		slog.Error("telegram listener stopped", "err", err)
+		transportReady.Store(false)
+		discovery.BeginDrainLifecycle(lifecycle)
 		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
 		<-errCh
 		os.Exit(1)
 	}
+	transportReady.Store(false)
+	discovery.BeginDrainLifecycle(lifecycle)
 	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
 	if err := <-errCh; err != nil {
 		slog.Error("telegram listener shutdown", "err", err)
 	}

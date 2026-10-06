@@ -60,8 +60,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
+	var businessListening, draining atomic.Bool
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
 	managementTarget := webserver.NewStaticManagementTarget(cfg.ManagementServiceURL)
 	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
@@ -97,13 +109,12 @@ func main() {
 			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
 		}
 	}
-	var businessListening atomic.Bool
-	localReady := func(context.Context) bool { return businessListening.Load() }
+	localReady := func(context.Context) bool { return businessListening.Load() && !draining.Load() }
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			listening := businessListening.Load()
-			return observability.Readiness{Ready: listening, Checks: map[string]bool{"business_listener": listening}}
+			return observability.Readiness{Ready: listening && !draining.Load(), Checks: map[string]bool{"business_listener": listening, "draining": !draining.Load()}}
 		},
 	})
 	if err != nil {
@@ -115,6 +126,7 @@ func main() {
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}
+	lifecycleRef.Store(lifecycle)
 	defer discovery.ShutdownLifecycle(lifecycle)
 
 	slog.Info("web starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
@@ -124,14 +136,22 @@ func main() {
 			businessListening.Store(true)
 		})
 	}()
-	go func() { errCh <- observability.Run(ctx, adminSrv, logger) }()
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
 	if err := <-errCh; err != nil {
 		slog.Error("web listener stopped", "err", err)
+		draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycle)
 		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
 		<-errCh
 		os.Exit(1)
 	}
+	draining.Store(true)
+	discovery.BeginDrainLifecycle(lifecycle)
 	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
 	if err := <-errCh; err != nil {
 		slog.Error("web listener shutdown", "err", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,8 +46,16 @@ func run() error {
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
-	ctx, cancel := context.WithCancel(signalCtx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	health := &runtimeHealthSource{}
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		health.draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
 	type serverResult struct {
 		name string
@@ -54,7 +63,6 @@ func run() error {
 	}
 	errCh := make(chan serverResult, 2)
 	metrics := booking.NewMetrics()
-	health := &runtimeHealthSource{}
 	registryURL := cfg.DiscoveryURL
 	advertiseHost := "booking"
 	if registryURL != "" {
@@ -89,6 +97,7 @@ func run() error {
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}
+	lifecycleRef.Store(lifecycle)
 	defer discovery.ShutdownLifecycle(lifecycle)
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 45*time.Second)
