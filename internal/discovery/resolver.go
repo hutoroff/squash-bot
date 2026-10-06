@@ -32,12 +32,13 @@ type resolverSnapshot struct {
 }
 
 type RegistryResolver struct {
-	baseURL string
-	secret  string
-	client  *http.Client
-	mu      sync.Mutex
-	cache   map[string]resolverSnapshot
-	now     func() time.Time
+	baseURL  string
+	secret   string
+	client   *http.Client
+	mu       sync.Mutex
+	cache    map[string]resolverSnapshot
+	inflight map[string]chan struct{}
+	now      func() time.Time
 }
 
 func NewRegistryResolver(baseURL, secret string) (*RegistryResolver, error) {
@@ -45,7 +46,7 @@ func NewRegistryResolver(baseURL, secret string) (*RegistryResolver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RegistryResolver{baseURL: registrar.baseURL, secret: secret, client: registrar.client, cache: make(map[string]resolverSnapshot), now: time.Now}, nil
+	return &RegistryResolver{baseURL: registrar.baseURL, secret: secret, client: registrar.client, cache: make(map[string]resolverSnapshot), inflight: make(map[string]chan struct{}), now: time.Now}, nil
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, requirement Requirement) ([]ResolvedEndpoint, error) {
@@ -53,19 +54,48 @@ func (r *RegistryResolver) Resolve(ctx context.Context, requirement Requirement)
 		return nil, err
 	}
 	key := requirementKey(requirement)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := r.now()
-	cached := liveCached(r.cache[key], now)
-	if snapshot, ok := r.cache[key]; ok && now.Before(snapshot.nextRefresh) {
-		if len(cached) == 0 && snapshot.lastErr != nil {
-			return nil, snapshot.lastErr
+	for {
+		now := r.now()
+		r.mu.Lock()
+		snapshot, ok := r.cache[key]
+		cached := liveCached(snapshot, now)
+		if ok && now.Before(snapshot.nextRefresh) {
+			r.mu.Unlock()
+			if len(cached) == 0 && snapshot.lastErr != nil {
+				return nil, snapshot.lastErr
+			}
+			return cached, nil
 		}
-		return cached, nil
+		if done, refreshing := r.inflight[key]; refreshing {
+			r.mu.Unlock()
+			select {
+			case <-done:
+				// Re-read the snapshot written by the refresh. Do not use the
+				// original caller's context to issue a second simultaneous fetch.
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		r.inflight[key] = done
+		r.mu.Unlock()
+
+		return r.refresh(ctx, requirement, key, now, done)
 	}
-	started := now
+}
+
+func (r *RegistryResolver) refresh(ctx context.Context, requirement Requirement, key string, started time.Time, done chan struct{}) ([]ResolvedEndpoint, error) {
 	resolved, err := r.fetch(ctx, requirement)
 	finished := r.now()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer func() {
+		delete(r.inflight, key)
+		close(done)
+	}()
+
 	if err != nil {
 		snapshot := r.cache[key]
 		snapshot.nextRefresh = finished.Add(resolverFailureInterval)

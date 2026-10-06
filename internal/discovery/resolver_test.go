@@ -74,6 +74,123 @@ func TestRegistryResolverCachesOnlyWithinLeaseAndReplacesWithEmptySnapshot(t *te
 	}
 }
 
+func TestRegistryResolverCoalescesConcurrentRefreshForOneSelector(t *testing.T) {
+	descriptor := testDescriptor()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		now := time.Now()
+		_ = json.NewEncoder(w).Encode([]ResolvedEndpoint{{
+			InstanceID: descriptor.InstanceID, API: descriptor.Endpoints.API, Admin: descriptor.Endpoints.Admin,
+			Descriptor: descriptor, RegistryTime: now, LeaseExpiresAt: now.Add(35 * time.Second),
+		}})
+	}))
+	defer server.Close()
+	resolver, err := NewRegistryResolver(server.URL, strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirement := Requirement{ServiceKey: descriptor.ServiceKey, Contract: "eversports-booking", Major: 2, RequiredCapabilities: []string{"booking.create"}, Scope: descriptor.Scope}
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, resolveErr := resolver.Resolve(context.Background(), requirement)
+			results <- resolveErr
+		}()
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not start")
+	}
+	// The second caller must wait on the first refresh rather than issuing a
+	// second request while the registry response is still unavailable.
+	time.Sleep(25 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("concurrent refresh calls = %d, want 1", got)
+	}
+	close(release)
+	for range 2 {
+		select {
+		case resolveErr := <-results:
+			if resolveErr != nil {
+				t.Fatalf("Resolve() error = %v", resolveErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("coalesced resolve did not finish")
+		}
+	}
+}
+
+func TestRegistryResolverRefreshesIndependentSelectorsConcurrently(t *testing.T) {
+	first := testDescriptor()
+	second := testDescriptor()
+	second.ServiceKey = "booking.secondary"
+	firstStarted := make(chan struct{})
+	secondRequested := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		descriptor := first
+		if r.URL.Query().Get("service_key") == second.ServiceKey {
+			descriptor = second
+			close(secondRequested)
+		} else {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		now := time.Now()
+		_ = json.NewEncoder(w).Encode([]ResolvedEndpoint{{
+			InstanceID: descriptor.InstanceID, API: descriptor.Endpoints.API, Admin: descriptor.Endpoints.Admin,
+			Descriptor: descriptor, RegistryTime: now, LeaseExpiresAt: now.Add(35 * time.Second),
+		}})
+	}))
+	defer server.Close()
+	resolver, err := NewRegistryResolver(server.URL, strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRequirement := Requirement{ServiceKey: first.ServiceKey, Contract: "eversports-booking", Major: 2, RequiredCapabilities: []string{"booking.create"}, Scope: first.Scope}
+	secondRequirement := firstRequirement
+	secondRequirement.ServiceKey = second.ServiceKey
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, resolveErr := resolver.Resolve(context.Background(), firstRequirement)
+		firstDone <- resolveErr
+	}()
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not start")
+	}
+	secondDone := make(chan error, 1)
+	go func() {
+		_, resolveErr := resolver.Resolve(context.Background(), secondRequirement)
+		secondDone <- resolveErr
+	}()
+	select {
+	case <-secondRequested:
+	case <-time.After(time.Second):
+		t.Fatal("independent selector was blocked by the first refresh")
+	}
+	close(releaseFirst)
+	for name, done := range map[string]chan error{"first": firstDone, "second": secondDone} {
+		select {
+		case resolveErr := <-done:
+			if resolveErr != nil {
+				t.Fatalf("%s resolve error = %v", name, resolveErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s resolve did not finish", name)
+		}
+	}
+}
+
 func TestRegistryResolverReturnsTypedIncompatibleError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusConflict) }))
 	defer server.Close()
