@@ -43,15 +43,16 @@ These are code-inspection findings, not a claim that the whole implementation ha
 
 **Scope:** `internal/discovery/{lifecycle,bootstrap}.go`, admin helpers and the four service entrypoints.
 
-- Separate begin-drain from final deregistration; stop registration/renewal safely without allowing an in-flight control request to revive a terminal incarnation.
-- Order shutdown: report draining best-effort, close admission/stop new work, finish bounded in-flight work, deregister, then stop admin health. Readiness becomes false as draining starts.
-- Start admin health before slow initialization; mark ready only after required resources and listeners/transport are initialized. Bound external Telegram authorization attempts and expose initialization failure without an unbounded invisible startup wait.
-- Register management through the local registry service. Registry failure must not prevent direct booking or SPA service, and optional booking absence must not fail management readiness.
+This is split into independently buildable commits to keep lifecycle changes reviewable:
+
+1. **1a — lifecycle control and local ownership:** separate begin-drain/final deregistration, serialize and bound lifecycle control calls, prevent a late register/heartbeat from reviving a draining incarnation, use management's local registry service, and drain booking before its business/admin shutdown sequence. **Commit:** `fix(discovery): add two-phase lifecycle draining`.
+2. **1b — observable startup/readiness:** start admin health before slow initialization, mark readiness only after required resources/listeners/transport initialize, and bound/expose external Telegram initialization. **Commit:** `fix(services): expose startup readiness before dependency initialization`.
+3. **1c — shutdown sequencing coverage:** make management/web/Telegram signal shutdown invoke draining before business listener closure and add listener/registry-down/booking-executor ordering coverage. **Commit:** `test(discovery): cover service startup and draining order`.
+
+- Registry failure must not prevent direct booking or SPA service, and optional booking absence must not fail management readiness.
 - Preserve booking's tracked-executor shutdown budget and at least 110-second Compose grace. Define bounded handling for already-running management jobs without introducing scheduler leadership or catch-up.
 
-**Acceptance:** fake startup dependency failures remain observable; listener bind failure never reports ready; ordering tests observe draining while admin remains up; delayed register/heartbeat cannot revive shutdown; registry-down shutdown stays bounded; booking executor-drain regressions pass.
-
-**Commit:** `fix(discovery): complete startup readiness and two-phase draining`
+**Step acceptance:** fake startup dependency failures remain observable; listener bind failure never reports ready; ordering tests observe draining while admin remains up; delayed register/heartbeat cannot revive shutdown; registry-down shutdown stays bounded; booking executor-drain regressions pass.
 
 ### Step 2 — Complete resolver refresh and endpoint retirement (C follow-up)
 

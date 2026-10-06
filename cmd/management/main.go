@@ -286,9 +286,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
-	if lifecycleErr != nil {
-		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	var lifecycle *discovery.Lifecycle
+	if registryURL != "" {
+		// Management owns the registry service. Register locally instead of
+		// routing its own lifecycle traffic through the business HTTP listener.
+		lifecycle, err = discovery.StartLifecycleWithRegistrar(ctx, registryService, descriptor, localReady, logger)
+		if err != nil {
+			logger.Warn("service discovery lifecycle unavailable", "err", err)
+		}
 	}
 	defer discovery.ShutdownLifecycle(lifecycle)
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -13,6 +14,7 @@ const (
 	defaultHeartbeatInterval   = 10 * time.Second
 	initialRegistrationBackoff = time.Second
 	maximumRegistrationBackoff = 10 * time.Second
+	controlRequestTimeout      = 3 * time.Second
 )
 
 type Lifecycle struct {
@@ -20,7 +22,14 @@ type Lifecycle struct {
 	descriptor Descriptor
 	readiness  func(context.Context) bool
 	logger     *slog.Logger
-	stopping   atomic.Bool
+
+	// stopping is set before drain begins. controlMu serializes all control
+	// requests so a register/heartbeat cannot complete after drain and revive
+	// the incarnation at the registry.
+	stopping       atomic.Bool
+	controlMu      sync.Mutex
+	drainOnce      sync.Once
+	deregisterOnce sync.Once
 }
 
 func NewLifecycle(registrar Registrar, descriptor Descriptor, readiness func(context.Context) bool, logger *slog.Logger) (*Lifecycle, error) {
@@ -40,7 +49,13 @@ func (l *Lifecycle) Run(ctx context.Context) {
 	for !l.stopping.Load() {
 		var err error
 		if !registered {
-			_, err = l.registrar.Register(ctx, l.descriptor)
+			err = l.control(ctx, func(controlCtx context.Context) error {
+				if l.stopping.Load() {
+					return context.Canceled
+				}
+				_, registerErr := l.registrar.Register(controlCtx, l.descriptor)
+				return registerErr
+			})
 			if err == nil {
 				registered = true
 				backoff = initialRegistrationBackoff
@@ -53,7 +68,13 @@ func (l *Lifecycle) Run(ctx context.Context) {
 				state = StateReady
 			}
 			cancel()
-			_, err = l.registrar.Heartbeat(ctx, l.descriptor.InstanceID, state)
+			err = l.control(ctx, func(controlCtx context.Context) error {
+				if l.stopping.Load() {
+					return context.Canceled
+				}
+				_, heartbeatErr := l.registrar.Heartbeat(controlCtx, l.descriptor.InstanceID, state)
+				return heartbeatErr
+			})
 			if err != nil {
 				registered = false
 			}
@@ -80,16 +101,49 @@ func (l *Lifecycle) Run(ctx context.Context) {
 	}
 }
 
+// BeginDrain stops registration/renewal and marks the process incarnation
+// draining. Call it before closing the business listener so resolvers stop
+// selecting this instance while the admin listener remains observable.
+func (l *Lifecycle) BeginDrain(ctx context.Context) {
+	l.stopping.Store(true)
+	l.drainOnce.Do(func() {
+		err := l.control(ctx, func(controlCtx context.Context) error {
+			return l.registrar.Drain(controlCtx, l.descriptor.InstanceID)
+		})
+		if err != nil {
+			l.logger.Warn("service discovery drain failed", "service_key", l.descriptor.ServiceKey, "err", err)
+		}
+	})
+}
+
+// Deregister records the terminal tombstone after bounded local work has
+// drained. It intentionally follows BeginDrain rather than replacing it.
+func (l *Lifecycle) Deregister(ctx context.Context) {
+	l.BeginDrain(ctx)
+	l.deregisterOnce.Do(func() {
+		err := l.control(ctx, func(controlCtx context.Context) error {
+			return l.registrar.Deregister(controlCtx, l.descriptor.InstanceID)
+		})
+		if err != nil {
+			l.logger.Warn("service discovery deregistration failed", "service_key", l.descriptor.ServiceKey, "err", err)
+		}
+	})
+}
+
+// Shutdown preserves the original convenience API for callers without a
+// bounded-work phase. Services with tracked work should call BeginDrain before
+// stopping admission/listeners and Deregister only after that work finishes.
 func (l *Lifecycle) Shutdown(ctx context.Context) {
-	if !l.stopping.CompareAndSwap(false, true) {
-		return
-	}
-	if err := l.registrar.Drain(ctx, l.descriptor.InstanceID); err != nil {
-		l.logger.Warn("service discovery drain failed", "service_key", l.descriptor.ServiceKey, "err", err)
-	}
-	if err := l.registrar.Deregister(ctx, l.descriptor.InstanceID); err != nil {
-		l.logger.Warn("service discovery deregistration failed", "service_key", l.descriptor.ServiceKey, "err", err)
-	}
+	l.BeginDrain(ctx)
+	l.Deregister(ctx)
+}
+
+func (l *Lifecycle) control(ctx context.Context, action func(context.Context) error) error {
+	l.controlMu.Lock()
+	defer l.controlMu.Unlock()
+	controlCtx, cancel := context.WithTimeout(ctx, controlRequestTimeout)
+	defer cancel()
+	return action(controlCtx)
 }
 
 func registrationJitter() time.Duration {
