@@ -143,6 +143,10 @@ func run() error {
 		cancel()
 	case <-ctx.Done():
 	}
+	// Exclude this singleton from new discovery resolution before closing
+	// admission or the business listener. Keep the admin listener up through
+	// tracked-executor draining so its not-ready state remains observable.
+	discovery.BeginDrainLifecycle(lifecycle)
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancelShutdown()
 	if err := businessSrv.Shutdown(shutdownCtx); err != nil {
@@ -151,6 +155,7 @@ func run() error {
 	if err := runtime.shutdown(shutdownCtx); err != nil {
 		runErr = errors.Join(runErr, err)
 	}
+	discovery.DeregisterLifecycle(lifecycle)
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("shut down booking admin HTTP server: %w", err))
 	}
