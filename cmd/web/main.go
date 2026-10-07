@@ -76,6 +76,7 @@ func main() {
 		cancel()
 	}()
 
+	dependencyMetrics := observability.NewDependencyMetrics()
 	managementTarget := webserver.NewStaticManagementTarget(cfg.ManagementServiceURL)
 	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
@@ -90,6 +91,7 @@ func main() {
 		}
 		managementTarget = webserver.NewDiscoveredManagementTarget(resolver, requirement)
 	}
+	managementTarget.SetDependencyMetrics(dependencyMetrics)
 	auth := webserver.NewAuthHandlerWithTarget(cfg.TelegramBotToken, cfg.TelegramBotName, cfg.JWTSecret, managementTarget, cfg.InternalAPISecret, logger)
 	games := webserver.NewGamesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
 	audit := webserver.NewAuditHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
@@ -123,7 +125,7 @@ func main() {
 		Readiness: func(context.Context) observability.Readiness {
 			listening := businessListening.Load()
 			return observability.Readiness{Ready: listening && !draining.Load(), Checks: map[string]bool{"business_listener": listening, "draining": !draining.Load()}}
-		}, Collectors: append([]prometheus.Collector{registrationMetrics}, httpMetrics.Collectors()...),
+		}, Collectors: append(append([]prometheus.Collector{registrationMetrics}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure web admin listener", "err", err)
