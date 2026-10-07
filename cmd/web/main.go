@@ -82,7 +82,12 @@ func main() {
 			slog.Error("configure management discovery", "err", resolverErr)
 			os.Exit(1)
 		}
-		managementTarget = webserver.NewDiscoveredManagementTarget(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}})
+		requirement := discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}
+		if activateErr := resolver.Activate(ctx, requirement); activateErr != nil {
+			slog.Error("activate management discovery", "err", activateErr)
+			os.Exit(1)
+		}
+		managementTarget = webserver.NewDiscoveredManagementTarget(resolver, requirement)
 	}
 	auth := webserver.NewAuthHandlerWithTarget(cfg.TelegramBotToken, cfg.TelegramBotName, cfg.JWTSecret, managementTarget, cfg.InternalAPISecret, logger)
 	games := webserver.NewGamesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)

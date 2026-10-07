@@ -133,7 +133,12 @@ func main() {
 			slog.Error("configure management discovery", "err", resolverErr)
 			os.Exit(1)
 		}
-		mgmtClient = client.NewDiscovered(resolver, discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, cfg.InternalAPISecret)
+		requirement := discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}
+		if activateErr := resolver.Activate(ctx, requirement); activateErr != nil {
+			slog.Error("activate management discovery", "err", activateErr)
+			os.Exit(1)
+		}
+		mgmtClient = client.NewDiscovered(resolver, requirement, cfg.InternalAPISecret)
 	}
 
 	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {

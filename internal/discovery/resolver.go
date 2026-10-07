@@ -32,13 +32,15 @@ type resolverSnapshot struct {
 }
 
 type RegistryResolver struct {
-	baseURL  string
-	secret   string
-	client   *http.Client
-	mu       sync.Mutex
-	cache    map[string]resolverSnapshot
-	inflight map[string]chan struct{}
-	now      func() time.Time
+	baseURL         string
+	secret          string
+	client          *http.Client
+	mu              sync.Mutex
+	cache           map[string]resolverSnapshot
+	inflight        map[string]chan struct{}
+	activeSelectors map[string]struct{}
+	refreshInterval time.Duration
+	now             func() time.Time
 }
 
 func NewRegistryResolver(baseURL, secret string) (*RegistryResolver, error) {
@@ -46,7 +48,11 @@ func NewRegistryResolver(baseURL, secret string) (*RegistryResolver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RegistryResolver{baseURL: registrar.baseURL, secret: secret, client: registrar.client, cache: make(map[string]resolverSnapshot), inflight: make(map[string]chan struct{}), now: time.Now}, nil
+	return &RegistryResolver{
+		baseURL: registrar.baseURL, secret: secret, client: registrar.client,
+		cache: make(map[string]resolverSnapshot), inflight: make(map[string]chan struct{}), activeSelectors: make(map[string]struct{}),
+		refreshInterval: resolverRefreshInterval, now: time.Now,
+	}, nil
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, requirement Requirement) ([]ResolvedEndpoint, error) {
@@ -106,7 +112,7 @@ func (r *RegistryResolver) refresh(ctx context.Context, requirement Requirement,
 		}
 		return nil, err
 	}
-	snapshot := resolverSnapshot{nextRefresh: finished.Add(resolverRefreshInterval)}
+	snapshot := resolverSnapshot{nextRefresh: finished.Add(r.refreshInterval)}
 	for _, endpoint := range resolved {
 		if !endpoint.Descriptor.Satisfies(requirement) || endpoint.RegistryTime.IsZero() || !endpoint.LeaseExpiresAt.After(endpoint.RegistryTime) {
 			return nil, fmt.Errorf("%w: registry returned invalid endpoint", ErrUnavailable)
@@ -119,6 +125,48 @@ func (r *RegistryResolver) refresh(ctx context.Context, requirement Requirement,
 	}
 	r.store(key, snapshot)
 	return liveCached(snapshot, finished), nil
+}
+
+// Activate refreshes an actively used selector in the background until ctx is
+// cancelled. The first refresh runs immediately; later refreshes use the same
+// bounded resolver path as foreground callers. It never dispatches a business
+// request or retries one after a transport failure.
+func (r *RegistryResolver) Activate(ctx context.Context, requirement Requirement) error {
+	if err := ValidateRequirement(requirement); err != nil {
+		return err
+	}
+	key := requirementKey(requirement)
+	r.mu.Lock()
+	if _, active := r.activeSelectors[key]; active {
+		r.mu.Unlock()
+		return nil
+	}
+	r.activeSelectors[key] = struct{}{}
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.activeSelectors, key)
+			r.mu.Unlock()
+		}()
+		refresh := func() {
+			refreshCtx, cancel := context.WithTimeout(ctx, controlRequestTimeout)
+			defer cancel()
+			_, _ = r.Resolve(refreshCtx, requirement)
+		}
+		refresh()
+		ticker := time.NewTicker(r.refreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	}()
+	return nil
 }
 
 func (r *RegistryResolver) Invalidate(requirement Requirement) {

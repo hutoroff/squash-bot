@@ -74,6 +74,72 @@ func TestRegistryResolverCachesOnlyWithinLeaseAndReplacesWithEmptySnapshot(t *te
 	}
 }
 
+func TestRegistryResolverActivateRefreshesWithoutBusinessRequest(t *testing.T) {
+	descriptor := testDescriptor()
+	var calls atomic.Int32
+	var empty atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		if empty.Load() {
+			_ = json.NewEncoder(w).Encode([]ResolvedEndpoint{})
+			return
+		}
+		now := time.Now()
+		_ = json.NewEncoder(w).Encode([]ResolvedEndpoint{{
+			InstanceID: descriptor.InstanceID, API: descriptor.Endpoints.API, Admin: descriptor.Endpoints.Admin,
+			Descriptor: descriptor, RegistryTime: now, LeaseExpiresAt: now.Add(35 * time.Second),
+		}})
+	}))
+	defer server.Close()
+	resolver, err := NewRegistryResolver(server.URL, strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.refreshInterval = 10 * time.Millisecond
+	requirement := Requirement{ServiceKey: descriptor.ServiceKey, Contract: "eversports-booking", Major: 2, RequiredCapabilities: []string{"booking.create"}, Scope: descriptor.Scope}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := resolver.Activate(ctx, requirement); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(time.Second)
+	for calls.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("activation did not perform an initial refresh")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	empty.Store(true)
+	for calls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("activation did not refresh an active selector")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	endpoints, err := resolver.Resolve(context.Background(), requirement)
+	if err != nil || len(endpoints) != 0 {
+		t.Fatalf("active empty snapshot = %+v %v", endpoints, err)
+	}
+	cancel()
+	key := requirementKey(requirement)
+	deadline = time.After(time.Second)
+	for {
+		resolver.mu.Lock()
+		_, active := resolver.activeSelectors[key]
+		resolver.mu.Unlock()
+		if !active {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("active selector was retained after cancellation")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func TestRegistryResolverCoalescesConcurrentRefreshForOneSelector(t *testing.T) {
 	descriptor := testDescriptor()
 	started := make(chan struct{})
