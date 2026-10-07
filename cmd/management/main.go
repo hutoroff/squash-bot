@@ -26,6 +26,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/observability"
 	"github.com/hutoroff/squash-bot/migrations"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -95,9 +96,32 @@ func main() {
 			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
 		}
 	}
+	expectedServices, err := discovery.ParseMonitoredServices(cfg.MonitoredServiceKeys)
+	if err != nil {
+		slog.Error("parse monitored service inventory", "err", err)
+		os.Exit(1)
+	}
+	if cfg.BookingServiceKey != "" {
+		present := false
+		for _, expected := range expectedServices {
+			present = present || expected.ServiceKey == cfg.BookingServiceKey
+		}
+		if !present {
+			expectedServices = append(expectedServices, discovery.MonitoredService{ServiceKey: cfg.BookingServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor, Capabilities: []string{"booking.courts.list", "booking.slots.list", "booking.create", "booking.cancel", "booking.operations.get", "booking.operations.reconcile", "booking.operations.resolve"}, Scope: map[string]string{"facility_id": cfg.BookingFacilityID, "facility_uuid": cfg.BookingFacilityUUID, "facility_slug": cfg.BookingFacilitySlug, "sport": "squash"}})
+		}
+	}
+	var registryRef atomic.Pointer[service.ServiceRegistryService]
+	registrationMetrics := observability.NewRegistrationMetrics()
+	registryCollector := observability.NewRegistryCollector(expectedServices, func(snapshotCtx context.Context) ([]discovery.MonitoringInstance, error) {
+		registry := registryRef.Load()
+		if registry == nil {
+			return nil, fmt.Errorf("service registry not initialized")
+		}
+		return registry.MonitoringInstances(snapshotCtx)
+	})
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
-		Readiness: health.readiness,
+		Readiness: health.readiness, Collectors: []prometheus.Collector{registryCollector, registrationMetrics},
 	})
 	if err != nil {
 		slog.Error("configure management admin listener", "err", err)
@@ -148,6 +172,7 @@ func main() {
 		slog.Error("configure service registry", "err", err)
 		os.Exit(1)
 	}
+	registryRef.Store(registryService)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
@@ -307,7 +332,7 @@ func main() {
 	if registryURL != "" {
 		// Management owns the registry service. Register locally instead of
 		// routing its own lifecycle traffic through the business HTTP listener.
-		lifecycle, err = discovery.StartLifecycleWithRegistrar(ctx, registryService, descriptor, localReady, logger)
+		lifecycle, err = discovery.StartLifecycleWithRegistrarObserved(ctx, registryService, descriptor, localReady, logger, registrationMetrics)
 		if err != nil {
 			logger.Warn("service discovery lifecycle unavailable", "err", err)
 		}

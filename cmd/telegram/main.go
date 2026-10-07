@@ -20,6 +20,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/config"
 	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -98,12 +99,13 @@ func main() {
 		Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
 	}
 	localReady := func(context.Context) bool { return transportReady.Load() }
+	registrationMetrics := observability.NewRegistrationMetrics()
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			ready := transportReady.Load()
 			return observability.Readiness{Ready: ready, Checks: map[string]bool{"transport": ready}}
-		},
+		}, Collectors: []prometheus.Collector{registrationMetrics},
 	})
 	if err != nil {
 		slog.Error("configure telegram admin listener", "err", err)
@@ -113,7 +115,7 @@ func main() {
 	slog.Info("telegram starting", "admin_port", cfg.AdminServerPort, "version", Version)
 	errCh := make(chan error, 2)
 	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
-	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger, registrationMetrics)
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}

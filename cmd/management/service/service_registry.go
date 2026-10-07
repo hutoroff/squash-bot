@@ -104,12 +104,16 @@ func (s *ServiceRegistryService) Catalog(ctx context.Context) ([]discovery.Catal
 // PrometheusTargets projects active registry memberships to Prometheus HTTP SD.
 // Targets use the registered admin address only; descriptor-controlled paths,
 // scope, and release values are intentionally not exported as labels.
-func (s *ServiceRegistryService) PrometheusTargets(ctx context.Context) ([]discovery.PrometheusTarget, error) {
+func (s *ServiceRegistryService) MonitoringInstances(ctx context.Context) ([]discovery.MonitoringInstance, error) {
 	repository, ok := s.repository.(serviceRegistryMonitoringRepository)
 	if !ok {
 		return nil, fmt.Errorf("service registry monitoring snapshot unavailable")
 	}
-	instances, err := repository.MonitoringInstances(ctx)
+	return repository.MonitoringInstances(ctx)
+}
+
+func (s *ServiceRegistryService) PrometheusTargets(ctx context.Context) ([]discovery.PrometheusTarget, error) {
+	instances, err := s.MonitoringInstances(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v10"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/joho/godotenv"
 )
 
@@ -94,6 +95,7 @@ type ManagementConfig struct {
 	ServiceAdvertiseHost      string `env:"SERVICE_ADVERTISE_HOST"`
 	DiscoveryNetworkInterface string `env:"DISCOVERY_NETWORK_INTERFACE"`
 	DiscoveryAllowedCIDRs     string `env:"DISCOVERY_ALLOWED_CIDRS" envDefault:"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"`
+	MonitoredServiceKeys      string `env:"MONITORED_SERVICE_KEYS" envDefault:"[{\"service_key\":\"management\",\"contract\":\"management-api\",\"major\":1,\"capabilities\":[\"management.api\"]},{\"service_key\":\"telegram\",\"contract\":\"telegram-transport\",\"major\":1},{\"service_key\":\"web\",\"contract\":\"web-api\",\"major\":1,\"capabilities\":[\"web.api\"]}]"`
 	CronPoll                  string `env:"CRON_POLL"             envDefault:"*/5 * * * *"`
 	LogLevel                  string `env:"LOG_LEVEL"             envDefault:"INFO"`
 	Timezone                  string `env:"TIMEZONE"              envDefault:"UTC"`
@@ -138,6 +140,11 @@ func (c *ManagementConfig) Validate() error {
 	}
 	if err := validateDiscoveryConfig(c.DiscoveryMode, c.DiscoveryURL); err != nil {
 		return err
+	}
+	if c.MonitoredServiceKeys != "" {
+		if _, err := discovery.ParseMonitoredServices(c.MonitoredServiceKeys); err != nil {
+			return err
+		}
 	}
 	bookingEnabled := c.SportsBookingServiceURL != ""
 	if c.DiscoveryMode == DiscoveryModeRegistry {

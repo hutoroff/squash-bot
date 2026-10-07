@@ -37,6 +37,7 @@ type AdminConfig struct {
 	Running       func() int
 	LedgerHealth  func(context.Context) (storage.LedgerHealth, error)
 	Metrics       *Metrics
+	Collectors    []prometheus.Collector
 }
 
 type Metrics struct {
@@ -90,6 +91,14 @@ func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	registry.MustRegister(metrics.httpRequests, metrics.httpDuration, metrics.externalExecutions, metrics.externalDuration, metrics.operationOutcomes)
+	for _, collector := range cfg.Collectors {
+		if collector == nil {
+			return nil, nil, fmt.Errorf("booking admin collector cannot be nil")
+		}
+		if err := registry.Register(collector); err != nil {
+			return nil, nil, err
+		}
+	}
 	registry.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: observability.MetricBuildInfo, Help: "Static service build identity.", ConstLabels: prometheus.Labels{"service_key": cfg.ServiceKey, "service_kind": "booking", "version": cfg.Version}}, func() float64 { return 1 }),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: observability.MetricServiceReady, Help: "Whether locally owned service readiness gates pass.", ConstLabels: prometheus.Labels{"service_key": cfg.ServiceKey, "service_kind": "booking"}}, func() float64 {
