@@ -1,0 +1,16 @@
+{
+  "apiVersion": 1,
+  "muteTimes": [
+    {
+      "orgId": 1,
+      "name": "squash-owner-approved-maintenance",
+      "time_intervals": [
+        {
+          "times": [{ "start_time": "00:00", "end_time": "00:30" }],
+          "weekdays": ["sunday"],
+          "location": "UTC"
+        }
+      ]
+    }
+  ]
+}

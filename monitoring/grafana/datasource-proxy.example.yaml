@@ -1,0 +1,21 @@
+{
+  "apiVersion": 1,
+  "datasources": [
+    {
+      "name": "Squash Prometheus",
+      "uid": "squash_prometheus",
+      "type": "prometheus",
+      "access": "proxy",
+      "url": "$SQUASH_PROMETHEUS_URL",
+      "isDefault": false,
+      "editable": false,
+      "jsonData": {
+        "timeInterval": "15s",
+        "httpHeaderName1": "Authorization"
+      },
+      "secureJsonData": {
+        "httpHeaderValue1": "Bearer $SQUASH_GRAFANA_QUERY_TOKEN"
+      }
+    }
+  ]
+}

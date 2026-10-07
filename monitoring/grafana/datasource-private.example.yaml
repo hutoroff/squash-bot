@@ -1,0 +1,15 @@
+{
+  "apiVersion": 1,
+  "datasources": [
+    {
+      "name": "Squash Prometheus",
+      "uid": "squash_prometheus",
+      "type": "prometheus",
+      "access": "proxy",
+      "url": "$SQUASH_PROMETHEUS_URL",
+      "isDefault": false,
+      "editable": false,
+      "jsonData": { "timeInterval": "15s" }
+    }
+  ]
+}

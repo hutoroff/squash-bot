@@ -349,7 +349,7 @@ docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
 
 ### Health monitoring
 
-Production Compose includes Prometheus, scraping management statically and the remaining registered services via authenticated HTTP service discovery. Its query listener binds to host loopback only; it does **not** provision or connect the external Grafana instance. Review [network, token-file, retention and synthetic verification](monitoring/prometheus/README.md) before rollout. Prometheus/Grafana alerting is not a replacement for the existing fallback until end-to-end notification testing is authorized and complete.
+Production Compose includes Prometheus, scraping management statically and the remaining registered services via authenticated HTTP service discovery. Its query listener binds to host loopback only; it does **not** provision or connect the external Grafana instance. Review [network, token-file, retention and synthetic verification](monitoring/prometheus/README.md) and the [external Grafana dashboard/alert templates and secure query guidance](monitoring/grafana/README.md) before rollout. Grafana is **not** provisioned by Compose; confirm the installed Grafana version before using those templates. Prometheus/Grafana alerting is not a replacement for the existing fallback until end-to-end notification testing is authorized and complete.
 
 `scripts/healthcheck.sh` checks management liveness and booking's monitoring-authenticated admin readiness, then sends a Telegram alert if a service is down. The booking monitoring token expands only inside its container. Install the script in cron:
 
