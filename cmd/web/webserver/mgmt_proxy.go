@@ -48,12 +48,14 @@ func (t *ManagementTarget) requestBaseURL() string {
 }
 
 func newTargetHTTPClient(target *ManagementTarget, timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: targetTransport{target: target, base: http.DefaultTransport}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &http.Client{Timeout: timeout, Transport: targetTransport{target: target, base: transport, tracker: discovery.NewEndpointTracker(transport.CloseIdleConnections)}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 type targetTransport struct {
-	target *ManagementTarget
-	base   http.RoundTripper
+	target  *ManagementTarget
+	base    http.RoundTripper
+	tracker *discovery.EndpointTracker
 }
 
 func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -61,6 +63,7 @@ func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	if err != nil {
 		return nil, err
 	}
+	t.tracker.Observe(baseURL)
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, err
