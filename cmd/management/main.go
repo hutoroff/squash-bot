@@ -112,6 +112,7 @@ func main() {
 	}
 	var registryRef atomic.Pointer[service.ServiceRegistryService]
 	registrationMetrics := observability.NewRegistrationMetrics()
+	httpMetrics := observability.NewHTTPMetrics()
 	registryCollector := observability.NewRegistryCollector(expectedServices, func(snapshotCtx context.Context) ([]discovery.MonitoringInstance, error) {
 		registry := registryRef.Load()
 		if registry == nil {
@@ -121,7 +122,7 @@ func main() {
 	})
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
-		Readiness: health.readiness, Collectors: []prometheus.Collector{registryCollector, registrationMetrics},
+		Readiness: health.readiness, Collectors: append([]prometheus.Collector{registryCollector, registrationMetrics}, httpMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure management admin listener", "err", err)
@@ -325,7 +326,7 @@ func main() {
 	h.SetFeatureFlags(flagSvc)
 	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
-	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret, cfg.MonitoringToken)
+	srv := api.NewObservedServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret, cfg.MonitoringToken, httpMetrics)
 	localReady := func(readyCtx context.Context) bool { return health.readiness(readyCtx).Ready }
 
 	var lifecycle *discovery.Lifecycle

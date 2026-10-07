@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // maxRequestBodyBytes bounds request bodies to guard against memory/CPU
@@ -14,12 +16,17 @@ import (
 const maxRequestBodyBytes = 1 << 20
 
 // NewServer builds an http.Server with the handler's routes registered.
-func NewServer(addr string, h *Handler) *http.Server {
+func NewServer(addr string, h *Handler) *http.Server { return NewObservedServer(addr, h, nil) }
+func NewObservedServer(addr string, h *Handler, metrics *observability.HTTPMetrics) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	var routes http.Handler = mux
+	if metrics != nil {
+		routes = metrics.WrapMux(mux)
+	}
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(mux),
+		Handler:      limitRequestBody(routes),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
