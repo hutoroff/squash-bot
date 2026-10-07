@@ -1,0 +1,180 @@
+# Only synthetic time series. The test runner supplies rules.yml from the
+# exact Grafana alert queries; these are not Prometheus notification rules.
+rule_files:
+  - rules.yml
+evaluation_interval: 30s
+tests:
+  - name: static management target absent
+    interval: 30s
+    input_series:
+      - series: 'up{job="prometheus",instance="localhost:9090"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_management_missing
+        exp_alerts:
+          - exp_labels: { job: management, deployment: squash-bot, severity: critical, service_key: management }
+      - eval_time: 2m
+        alertname: squash_monitoring_unavailable
+        exp_alerts: []
+
+  - name: static management scrape fails
+    interval: 30s
+    input_series:
+      - series: 'up{job="management",instance="management:9090"}'
+        values: '0x6'
+      - series: 'up{job="prometheus",instance="localhost:9090"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_management_missing
+        exp_alerts:
+          - exp_labels: { job: management, instance: 'management:9090', deployment: squash-bot, severity: critical, service_key: management }
+
+  - name: never registered inventory stays observable without SD target
+    interval: 30s
+    input_series:
+      - series: 'up{job="management",instance="management:9090"}'
+        values: '1x6'
+      - series: 'squash_registry_storage_healthy{job="management",instance="management:9090"}'
+        values: '1x6'
+      - series: 'squash_service_expected_instances{job="management",instance="management:9090",service_key="telegram"}'
+        values: '1x6'
+      - series: 'squash_service_live_instances{job="management",instance="management:9090",service_key="telegram"}'
+        values: '0x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_required_service_missing
+        exp_alerts:
+          - exp_labels: { service_key: telegram, deployment: squash-bot, severity: critical }
+
+  - name: registered target expires and SD up vanishes
+    interval: 30s
+    input_series:
+      - series: 'squash_registry_storage_healthy{job="management",instance="management:9090"}'
+        values: '1x7'
+      - series: 'squash_service_expected_instances{job="management",instance="management:9090",service_key="telegram"}'
+        values: '1x7'
+      - series: 'squash_service_live_instances{job="management",instance="management:9090",service_key="telegram"}'
+        values: '1 1 0x5'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: squash_required_service_missing
+        exp_alerts: []
+      - eval_time: 2m30s
+        alertname: squash_required_service_missing
+        exp_alerts:
+          - exp_labels: { service_key: telegram, deployment: squash-bot, severity: critical }
+
+  - name: storage outage must not masquerade as a missing service
+    interval: 30s
+    input_series:
+      - series: 'squash_registry_storage_healthy{job="management",instance="management:9090"}'
+        values: '0x6'
+      - series: 'squash_service_expected_instances{job="management",instance="management:9090",service_key="telegram"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_required_service_missing
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: squash_registry_storage_down
+        exp_alerts:
+          - exp_labels: { job: management, instance: 'management:9090', deployment: squash-bot, severity: critical, service_key: management }
+
+  - name: duplicate instances are unsupported except web
+    interval: 30s
+    input_series:
+      - series: 'squash_service_live_instances{job="management",instance="management:9090",service_key="booking.eversports.primary"}'
+        values: '2x6'
+      - series: 'squash_service_live_instances{job="management",instance="management:9090",service_key="web"}'
+        values: '2x6'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: squash_unsupported_duplicates
+        exp_alerts:
+          - exp_labels: { job: management, instance: 'management:9090', service_key: 'booking.eversports.primary', deployment: squash-bot, severity: critical }
+
+  - name: scraped service not ready while target is up
+    interval: 30s
+    input_series:
+      - series: 'up{job="discovered-services",instance="172.30.90.4:9091"}'
+        values: '1x8'
+      - series: 'squash_service_ready{job="discovered-services",instance="172.30.90.4:9091",service_key="booking.eversports.primary",service_kind="booking"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: squash_service_unready
+        exp_alerts:
+          - exp_labels: { job: discovered-services, instance: '172.30.90.4:9091', service_key: 'booking.eversports.primary', service_kind: booking, deployment: squash-bot, severity: critical }
+
+  - name: stalled scheduler before first completed poll
+    interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="management",instance="management:9090"}'
+        values: '0x50'
+      - series: 'squash_scheduler_poll_interval_seconds{job="management",instance="management:9090"}'
+        values: '300x50'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: squash_scheduler_stalled
+        exp_alerts:
+          - exp_labels: { deployment: squash-bot, severity: critical, service_key: management }
+
+  - name: most recent poll completed and is not stale
+    interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="management",instance="management:9090"}'
+        values: '0x50'
+      - series: 'squash_scheduler_poll_interval_seconds{job="management",instance="management:9090"}'
+        values: '300x50'
+      - series: 'squash_scheduler_last_completed_timestamp_seconds{job="management",exported_job="post_leaderboard",instance="management:9090"}'
+        values: '900x50'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: squash_scheduler_stalled
+        exp_alerts: []
+
+  - name: Prometheus self series absent from reachable query
+    interval: 30s
+    input_series:
+      - series: 'up{job="management",instance="management:9090"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_monitoring_unavailable
+        exp_alerts:
+          - exp_labels: { job: prometheus, deployment: squash-bot, severity: critical, service_key: prometheus }
+
+  - name: new unknown execution even before durable read
+    interval: 30s
+    input_series:
+      - series: 'booking_external_executions_total{kind="create",outcome="unknown"}'
+        values: '0 0 0 1x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_booking_unknown_new
+        exp_alerts:
+          - exp_labels: { deployment: squash-bot, severity: critical, service_key: booking }
+
+  - name: durable unknown survives an execution counter reset
+    interval: 30s
+    input_series:
+      - series: 'squash_management_booking_operations{job="management",state="outcome_unknown"}'
+        values: '2x6'
+      - series: 'booking_operations_unknown{job="discovered-services",service_key="booking.eversports.primary"}'
+        values: '1x6'
+      - series: 'booking_external_executions_total{outcome="unknown",kind="create"}'
+        values: '0x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: squash_management_unknown_durable
+        exp_alerts:
+          - exp_labels: { job: management, state: outcome_unknown, deployment: squash-bot, severity: critical, service_key: management }
+      - eval_time: 2m
+        alertname: squash_provider_unknown_durable
+        exp_alerts:
+          - exp_labels: { job: discovered-services, service_key: 'booking.eversports.primary', deployment: squash-bot, severity: critical }
+      - eval_time: 2m
+        alertname: squash_booking_unknown_new
+        exp_alerts: []
