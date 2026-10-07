@@ -61,8 +61,9 @@ This is split into independently buildable commits to keep lifecycle changes rev
 This is split before implementation because refresh/transport lifecycle have different failure boundaries:
 
 1. **2a — selector-isolated lookup:** coalesce concurrent refreshes for one selector while allowing independent selectors to fetch concurrently; preserve bounded cache/error semantics. **Commit:** `fix(discovery): isolate concurrent registry refreshes`.
-2. **2b — active refresh and transport retirement:** add cancellable refresh for active selectors and retire idle connections for removed endpoints without interrupting/replaying mutations. **Commit:** `fix(discovery): refresh active targets and retire removed connections`.
-3. **2c — registry/resolver acceptance matrix:** cover restart/expiry, late terminal requests, unknown contracts, DB failure, capacity limits and typed routing failures. **Commit:** `test(discovery): cover registry resolver failure matrix`.
+2. **2b — active refresh:** add cancellable bounded refresh for actively used remote selectors so a removed target is discarded without a subsequent business request. **Commit:** `fix(discovery): refresh active registry targets`.
+3. **2c — transport retirement:** retire idle connections for endpoints removed from a resolver snapshot without interrupting/replaying mutations. **Commit:** `fix(discovery): retire removed endpoint connections`.
+4. **2d — registry/resolver acceptance matrix:** cover restart/expiry, late terminal requests, unknown contracts, DB failure, capacity limits and typed routing failures. **Commit:** `test(discovery): cover registry resolver failure matrix`.
 
 - Preserve conservative monotonic lease deadlines, successful-empty replacement and still-valid-cache-only behavior after refresh failure.
 - Bound management-local registry operations as well as remote control calls.
