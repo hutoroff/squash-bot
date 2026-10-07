@@ -77,6 +77,15 @@ func TestServiceRegistryRoutesAreAuthenticatedBoundedAndTyped(t *testing.T) {
 	if response.Code != http.StatusGone {
 		t.Fatalf("gone heartbeat status = %d", response.Code)
 	}
+	repository.err = storage.ErrRegistryCapacity
+	request = httptest.NewRequest(http.MethodPut, "/internal/discovery/v1/instances/"+instanceID, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
+	response = httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("capacity registration status = %d", response.Code)
+	}
+
 	repository.err = errors.New("database unavailable")
 	request = httptest.NewRequest(http.MethodGet, "/internal/discovery/v1/catalog", nil)
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))

@@ -90,6 +90,22 @@ func TestServiceRegistryConcurrentMembershipLifecycleAndConflicts(t *testing.T) 
 	if _, err := repository.Register(ctx, second); err != nil {
 		t.Fatalf("expired full registration: %v", err)
 	}
+	if _, err := repository.Heartbeat(ctx, second.InstanceID, discovery.StateReady); err != nil {
+		t.Fatalf("replacement heartbeat: %v", err)
+	}
+	if err := repository.Deregister(ctx, second.InstanceID); err != nil {
+		t.Fatalf("deregister replacement: %v", err)
+	}
+	if err := repository.Deregister(ctx, second.InstanceID); err != nil {
+		t.Fatalf("idempotent deregistration: %v", err)
+	}
+	resolved, err = repository.Resolve(ctx, requirement)
+	if err != nil || len(resolved) != 0 {
+		t.Fatalf("resolved terminal instance = %+v err = %v", resolved, err)
+	}
+	if _, err := repository.Heartbeat(ctx, second.InstanceID, discovery.StateReady); !errors.Is(err, storage.ErrRegistryGone) {
+		t.Fatalf("terminal heartbeat = %v", err)
+	}
 	management := discovery.Descriptor{
 		SchemaVersion: 1, InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120431", ServiceKey: "management",
 		ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: "1",
