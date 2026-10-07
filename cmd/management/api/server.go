@@ -46,9 +46,10 @@ type Handler struct {
 	bookingMetrics          interface {
 		GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
 	}
-	reliableBooking *service.ReliableBookingExecutor
-	bookingScope    bookingapi.Scope
-	serviceRegistry *service.ServiceRegistryService
+	reliableBooking   *service.ReliableBookingExecutor
+	bookingScope      bookingapi.Scope
+	riskSessionSecret string
+	serviceRegistry   *service.ServiceRegistryService
 }
 
 func NewHandler(
@@ -87,6 +88,10 @@ func NewHandler(
 		credentialErrorCooldown: credentialErrorCooldown,
 	}
 }
+
+// SetRiskSessionSecret enables verification of a web-signed actor identity at
+// the risk authorization boundary. It does not enable any risk policy by itself.
+func (h *Handler) SetRiskSessionSecret(secret string) { h.riskSessionSecret = secret }
 
 func (h *Handler) SetServiceRegistry(registry *service.ServiceRegistryService) {
 	h.serviceRegistry = registry
