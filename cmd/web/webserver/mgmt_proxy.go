@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 type ManagementTarget struct {
 	staticURL   string
 	resolver    discovery.Resolver
 	requirement discovery.Requirement
+	metrics     *observability.DependencyMetrics
 }
 
 func NewStaticManagementTarget(rawURL string) *ManagementTarget {
@@ -27,6 +29,10 @@ func NewStaticManagementTarget(rawURL string) *ManagementTarget {
 
 func NewDiscoveredManagementTarget(resolver discovery.Resolver, requirement discovery.Requirement) *ManagementTarget {
 	return &ManagementTarget{resolver: resolver, requirement: requirement}
+}
+
+func (t *ManagementTarget) SetDependencyMetrics(metrics *observability.DependencyMetrics) {
+	t.metrics = metrics
 }
 
 func (t *ManagementTarget) Resolve(ctx context.Context) (string, error) {
@@ -59,8 +65,12 @@ type targetTransport struct {
 }
 
 func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	started := time.Now()
 	baseURL, err := t.target.Resolve(request.Context())
 	if err != nil {
+		if t.target.metrics != nil {
+			t.target.metrics.Observe("management", 0, err, started)
+		}
 		return nil, err
 	}
 	t.tracker.Observe(baseURL)
@@ -76,6 +86,13 @@ func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	response, err := t.base.RoundTrip(clone)
 	if err != nil {
 		discovery.Invalidate(t.target.resolver, t.target.requirement)
+	}
+	if t.target.metrics != nil {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		t.target.metrics.Observe("management", status, err, started)
 	}
 	return response, err
 }
