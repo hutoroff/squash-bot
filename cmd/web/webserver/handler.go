@@ -80,6 +80,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/users", h.users.handleListUsers)
 	mux.HandleFunc("PATCH /api/users/{userID}/server-owner", h.users.handleSetServerOwner)
+	mux.HandleFunc("POST /api/booking/operations/{id}/authorize-risk", h.users.handleAuthorizeBookingRisk)
 
 	mux.HandleFunc("GET /api/feature-flags", h.featureFlags.handle)
 	mux.HandleFunc("PATCH /api/feature-flags/{key}", h.featureFlags.handle)

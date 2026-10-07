@@ -113,6 +113,16 @@ func TestManagementConfig_Validate(t *testing.T) {
 	if err := invalidAdmin.Validate(); err == nil {
 		t.Fatal("expected management monitoring token reused as internal secret to fail")
 	}
+	sharedRiskSecret := *validBooking
+	sharedRiskSecret.RiskSessionSecret = sharedRiskSecret.InternalAPISecret
+	if err := sharedRiskSecret.Validate(); err == nil {
+		t.Fatal("booking-risk session secret must differ from the management bearer")
+	}
+	separateRiskSecret := *validBooking
+	separateRiskSecret.RiskSessionSecret = strOfLen(minSecretLength + 2)
+	if err := separateRiskSecret.Validate(); err != nil {
+		t.Fatalf("distinct booking-risk session secret: %v", err)
+	}
 	invalidBooking := *validBooking
 	invalidBooking.BookingCutoverAck = ""
 	if err := invalidBooking.Validate(); err == nil {

@@ -157,11 +157,50 @@ func TestBookingIntentRepoConcurrentAdmissionReplayAndDeletionGuards(t *testing.
 	if _, _, err := repository.ApplyOperationStatus(ctx, &changedRevision); err == nil {
 		t.Fatal("same revision accepted changed projection")
 	}
-	riskChild, created, err := intentService.AuthorizeDuplicateRisk(ctx, operationID, "risk:court-1:g1", credential.ID, "owner accepted possible duplicate")
-	if err != nil || !created || riskChild.ParentOperationID != operationID || riskChild.RootOperationID != operationID {
-		t.Fatalf("authorize risk child = child %+v created %t err %v", riskChild, created, err)
+	var createdRisks atomic.Int32
+	riskChildren := make(chan *models.ManagementBookingOperation, callers)
+	riskErrors := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			child, created, riskErr := intentService.AuthorizeDuplicateRisk(ctx, operationID, operation.Revision, "risk:court-1:g1", credential.ID, "owner accepted possible duplicate")
+			if riskErr != nil {
+				riskErrors <- riskErr
+				return
+			}
+			if created {
+				createdRisks.Add(1)
+			}
+			riskChildren <- child
+		}()
 	}
-	if _, _, err := intentService.AuthorizeDuplicateRisk(ctx, operationID, "risk:court-1:g1:second", credential.ID, "second child must fail"); err == nil {
+	wg.Wait()
+	close(riskErrors)
+	for riskErr := range riskErrors {
+		t.Fatalf("concurrent risk child admission: %v", riskErr)
+	}
+	close(riskChildren)
+	var riskChild *models.ManagementBookingOperation
+	for child := range riskChildren {
+		if riskChild == nil {
+			riskChild = child
+		} else if child.OperationID != riskChild.OperationID {
+			t.Fatalf("multiple risk children: %s and %s", child.OperationID, riskChild.OperationID)
+		}
+	}
+	if createdRisks.Load() != 1 || riskChild == nil || riskChild.ParentOperationID != operationID || riskChild.RootOperationID != operationID {
+		t.Fatalf("concurrent risk child = %+v created count %d", riskChild, createdRisks.Load())
+	}
+	staleRisk := *riskChild
+	staleRisk.OperationID = "cccccccc-cccc-7ccc-8ccc-cccccccccccc"
+	staleRisk.ParentExpectedRevision++
+	staleRisk.DedupKey = "risk:stale-revision"
+	staleRisk.RequestFingerprint = "stale"
+	if _, _, err := repository.AdmitOperation(ctx, &staleRisk); err == nil {
+		t.Fatal("database admitted risk child with stale parent revision")
+	}
+	if _, _, err := intentService.AuthorizeDuplicateRisk(ctx, operationID, operation.Revision, "risk:court-1:g1:second", credential.ID, "second child must fail"); err == nil {
 		t.Fatal("duplicate-risk root admitted a second child")
 	}
 	if _, _, err := repository.ApplyOperationStatus(ctx, &bookingapi.OperationStatus{

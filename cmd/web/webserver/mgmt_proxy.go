@@ -144,6 +144,12 @@ func (c mgmtClient) claims(w http.ResponseWriter, r *http.Request) (*JWTClaims, 
 // status code and body back verbatim. path must start with "/" and may carry a
 // query string. body may be nil.
 func (c mgmtClient) proxy(w http.ResponseWriter, r *http.Request, method, path string, body []byte) {
+	c.proxyWithSession(w, r, method, path, body, "")
+}
+
+// proxyWithSession is reserved for the explicitly authorized booking-risk
+// path. Ordinary proxy calls never forward a browser cookie to management.
+func (c mgmtClient) proxyWithSession(w http.ResponseWriter, r *http.Request, method, path string, body []byte, signedSession string) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -159,6 +165,9 @@ func (c mgmtClient) proxy(w http.ResponseWriter, r *http.Request, method, path s
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+c.mgmtSecret)
+	if signedSession != "" {
+		req.Header.Set("X-Web-Session", signedSession)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

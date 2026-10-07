@@ -107,6 +107,12 @@ Management may remain available for non-booking functions while booking is unava
 
 A caller that received `202` or lost its HTTP response reads/re-submits the **same immutable key**. It must not create a new key unless the explicit, linked duplicate-risk policy has been durably authorized.
 
+### Manual duplicate-risk exception (no automatic replacement)
+
+The owner-only web-session API `POST /api/booking/operations/{id}/authorize-risk` has **no UI** and is disabled when management lacks a distinct, 32-byte-or-longer `JWT_SECRET` shared with web or reliable booking is not configured. This route requires an exact same-origin browser `Origin`, the signed session cookie, and a JSON decision with `expected_revision` (from inspection), `credential_id` (the explicitly selected credential for the **same venue**), a nonempty bounded `reason`, and `accept_duplicate_risk: true`. Management independently verifies the signed canonical user ID and current server-owner status; an internal bearer alone or a supplied actor ID is not sufficient. This is a real provider mutation path: do not use it for routine testing or a production drill without separate owner authorization.
+
+Before authorizing, inspect the original key using authenticated management operation inspection and the booking ledger, confirm possible duplicate liability, and choose an account intentionally. The policy will reject if the original executor is still active, exact scope/court/time or parent revision differs, a credentialed read can reconcile a confirmed/no-effect result, or the original manual game has begun. Scheduled risk children are allowed only within the original venue-local `[00:00, 00:05)` opening window. It never overrides cancellations. A confirmed child does **not** resolve its unknown parent: inspect/reconcile each key and retain separate provider evidence and possible liability. Concurrent matching authorization yields the existing child, never another provider dispatch; an allocated but unsubmitted child remains inspectable and recovery must not submit it later. If the HTTP response is lost, inspect the same parent and linked child before attempting anything else. Never treat `202` as a successful court booking.
+
 ## 7. Failure response
 
 ### Readiness or database failure

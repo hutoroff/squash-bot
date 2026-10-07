@@ -347,6 +347,10 @@ func main() {
 	h.SetFeatureFlags(flagSvc)
 	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
+	h.SetRiskSessionSecret(cfg.RiskSessionSecret)
+	if bookingIntentSvc != nil && reliableBookingExecutor != nil && len(cfg.RiskSessionSecret) >= 32 {
+		h.SetRiskBookingService(service.NewRiskBookingService(bookingIntentSvc, reliableBookingExecutor, venueCredService, groupRepo, venueRepo, bookingScope, loc))
+	}
 	srv := api.NewObservedServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret, cfg.MonitoringToken, httpMetrics)
 	localReady := func(readyCtx context.Context) bool { return health.readiness(readyCtx).Ready }
 
