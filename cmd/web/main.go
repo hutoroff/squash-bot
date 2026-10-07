@@ -99,7 +99,8 @@ func main() {
 	users := webserver.NewUsersHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
 	h.SetFeatureFlags(webserver.NewFeatureFlagsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret))
-	srv := webserver.NewServer(":"+cfg.ServerPort, h)
+	httpMetrics := observability.NewHTTPMetrics()
+	srv := webserver.NewObservedServer(":"+cfg.ServerPort, h, httpMetrics)
 	descriptor := discovery.Descriptor{
 		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
 		ServiceKind: "web", Implementation: "squash-web", ReleaseVersion: Version,
@@ -122,7 +123,7 @@ func main() {
 		Readiness: func(context.Context) observability.Readiness {
 			listening := businessListening.Load()
 			return observability.Readiness{Ready: listening && !draining.Load(), Checks: map[string]bool{"business_listener": listening, "draining": !draining.Load()}}
-		}, Collectors: []prometheus.Collector{registrationMetrics},
+		}, Collectors: append([]prometheus.Collector{registrationMetrics}, httpMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure web admin listener", "err", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
@@ -195,11 +196,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // NewServer builds an http.Server with the handler's routes registered.
 // secret is the shared bearer token; all routes except /health and /version require it.
 func NewServer(addr string, h *Handler, secret, monitoringToken string) *http.Server {
+	return NewObservedServer(addr, h, secret, monitoringToken, nil)
+}
+
+func NewObservedServer(addr string, h *Handler, secret, monitoringToken string, metrics *observability.HTTPMetrics) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	var routes http.Handler = mux
+	if metrics != nil {
+		routes = metrics.WrapMux(mux)
+	}
+	routes = requireManagementBearer(secret, monitoringToken, routes)
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(requireManagementBearer(secret, monitoringToken, mux)),
+		Handler:      limitRequestBody(routes),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
