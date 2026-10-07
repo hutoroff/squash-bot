@@ -63,9 +63,13 @@ func main() {
 	defer cancelAdmin()
 	var transportReady atomic.Bool
 	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	managementGate := telegram.NewDependencyGate(cfg.DiscoveryMode != config.DiscoveryModeRegistry)
 	go func() {
 		<-signalCtx.Done()
 		transportReady.Store(false)
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			managementGate.SetAvailable(false)
+		}
 		discovery.BeginDrainLifecycle(lifecycleRef.Load())
 		cancel()
 	}()
@@ -161,6 +165,7 @@ func main() {
 			_, versionErr := mgmtClient.GetVersion(checkCtx)
 			checkCancel()
 			if versionErr == nil {
+				managementGate.SetAvailable(true)
 				slog.Info("management contract compatibility check passed", "contract", "management-api", "major", 1)
 				break
 			}
@@ -179,11 +184,22 @@ func main() {
 			return
 		}
 	}
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		go managementGate.Observe(ctx, 5*time.Second, func(observeCtx context.Context) error {
+			checkCtx, checkCancel := context.WithTimeout(observeCtx, 3*time.Second)
+			defer checkCancel()
+			_, err := mgmtClient.GetVersion(checkCtx)
+			return err
+		})
+	}
 	go func() {
 		if cfg.WebhookURL != "" {
 			opts := telegram.WebhookOptions{
 				PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
 				OnReady: func() { transportReady.Store(true) },
+			}
+			if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+				opts.AdmitUpdate = managementGate.Available
 			}
 			if runErr := bot.StartWebhook(ctx, opts); runErr != nil && ctx.Err() == nil {
 				slog.Warn("webhook mode unavailable, falling back to long-polling", "err", runErr)

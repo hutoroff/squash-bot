@@ -28,6 +28,9 @@ type WebhookOptions struct {
 	// OnReady is called after the listener is bound and Telegram accepted the
 	// webhook registration. It must not block startup.
 	OnReady func()
+	// AdmitUpdate, when set, must return true before an authenticated update is
+	// decoded or enqueued. A false result receives retryable HTTP 503.
+	AdmitUpdate func() bool
 }
 
 // StartWebhook registers the Telegram webhook and runs the HTTP listener until ctx
@@ -64,7 +67,7 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 	ch := make(chan tgbotapi.Update, 100)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+parsed.Path, webhookHandler(opts.Secret, ch))
+	mux.HandleFunc("POST "+parsed.Path, webhookHandler(opts.Secret, opts.AdmitUpdate, ch))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok")) //nolint:errcheck
@@ -141,7 +144,7 @@ const maxWebhookBodyBytes = 1 << 20
 // webhookHandler returns an http.HandlerFunc that validates the Telegram secret
 // header, decodes the Update body, and enqueues it on ch.
 // Factored out of StartWebhook so it can be tested without a live BotAPI.
-func webhookHandler(secret string, ch chan<- tgbotapi.Update) http.HandlerFunc {
+func webhookHandler(secret string, admitUpdate func() bool, ch chan<- tgbotapi.Update) http.HandlerFunc {
 	secretBytes := []byte(secret)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -155,6 +158,10 @@ func webhookHandler(secret string, ch chan<- tgbotapi.Update) http.HandlerFunc {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+		}
+		if admitUpdate != nil && !admitUpdate() {
+			http.Error(w, "management service unavailable", http.StatusServiceUnavailable)
+			return
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
