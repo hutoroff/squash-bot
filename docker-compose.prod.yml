@@ -40,7 +40,9 @@ services:
       DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
       DISCOVERY_URL: ${DISCOVERY_URL:-}
       DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
-      DISCOVERY_ALLOWED_CIDRS: ${DISCOVERY_ALLOWED_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      # Must match the trusted external bridge subnet (see monitoring/prometheus/README.md).
+      DISCOVERY_ALLOWED_CIDRS: ${DISCOVERY_ALLOWED_CIDRS:-172.30.90.0/24}
+      MONITORED_SERVICE_KEYS: '${MONITORED_SERVICE_KEYS:-[{"service_key":"management","contract":"management-api","major":1,"capabilities":["management.api"]},{"service_key":"telegram","contract":"telegram-transport","major":1},{"service_key":"web","contract":"web-api","major":1,"capabilities":["web.api"]}]}'
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       CRON_POLL: ${CRON_POLL:-*/5 * * * *}
@@ -68,6 +70,9 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # One active process only; stop the old instance before replacement.
+    deploy:
+      replicas: 1
     logging:
       driver: json-file
       options:
@@ -108,6 +113,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    deploy:
+      replicas: 1
     logging:
       driver: json-file
       options:
@@ -149,6 +156,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    deploy:
+      replicas: 1
     stop_grace_period: 110s
     logging:
       driver: json-file
@@ -196,6 +205,44 @@ services:
         max-file: "3"
     mem_limit: 128m
     cpus: 0.25
+    networks:
+      - internal
+
+  prometheus:
+    # Pinned multi-arch v3.9.1 manifest; upgrade only after config/retention validation.
+    image: prom/prometheus:v3.9.1@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-4GB}
+    volumes:
+      - type: bind
+        source: ./monitoring/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PROMETHEUS_TOKEN_FILE:?set an absolute path to a private token file}
+        target: /run/secrets/monitoring_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - prometheus_data:/prometheus
+    # Query access is host-local; do not publish to 0.0.0.0. No admin or remote-write receiver.
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+    cpus: 0.5
     networks:
       - internal
 
@@ -259,7 +306,9 @@ volumes:
   postgres_data:
   db_backups:
   logs:
+  prometheus_data:
 
 networks:
   internal:
-    driver: bridge
+    external: true
+    name: squash_services

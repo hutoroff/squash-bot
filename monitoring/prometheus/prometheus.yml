@@ -1,0 +1,32 @@
+# Monitoring bearer is a mounted file, never interpolated into this YAML.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+
+scrape_configs:
+  # Registry outages must not remove the management target.
+  - job_name: management
+    static_configs:
+      - targets: ['management:9090']
+        labels:
+          service_key: management
+          service_kind: management
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/monitoring_token
+
+  - job_name: discovered-services
+    # Scraping and target discovery each require their own bearer configuration.
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/monitoring_token
+    http_sd_configs:
+      - url: http://management:8080/internal/discovery/v1/prometheus-targets
+        refresh_interval: 15s
+        authorization:
+          type: Bearer
+          credentials_file: /run/secrets/monitoring_token
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

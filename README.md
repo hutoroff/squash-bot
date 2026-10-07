@@ -57,7 +57,7 @@ Four independently deployable binaries in one Go module:
 - Server-owner authority is DB-backed (`users.is_server_owner`) and enforced by `management` itself for every owner-only route (`GET /api/v1/users`, `PATCH /api/v1/users/{id}/server-owner`, `PATCH /api/v1/groups/{id}/auto-booking-allowed`, audit visibility). `web` forwards the caller's identity but never grants access on its own — a 403 from `management` is proxied verbatim. `SERVICE_ADMIN_IDS` (management-only) is a grant-only bootstrap seed applied at startup, not a live authorization source.
 - `web` additionally gates every route on a signed JWT session (`uid` claim); role changes made on the Users page take effect immediately for `GET /api/auth/me` since `is_server_owner` is always read live from `management`, never cached in the JWT.
 
-This is safe only because `management` and `booking` are never exposed to the internet — in `docker-compose.prod.yml` only `web` publishes a port; `management`, `booking`, and `postgres` are reachable exclusively over the internal Docker network. The single shared `INTERNAL_API_SECRET` is therefore the entire security boundary protecting those two services; treat it with the same care as a database password.
+This relies on `management` and `booking` never being exposed to the internet: in `docker-compose.prod.yml` only `web` publishes an ingress port; Prometheus publishes a **loopback-only** query port. `management`, `booking`, and `postgres` are reachable over the trusted external Docker bridge by other attached projects, so do not attach untrusted containers to it. The shared `INTERNAL_API_SECRET` is the coarse service-API authentication boundary; treat it like a database password.
 
 ## Quick Start
 
@@ -277,7 +277,7 @@ ghcr.io/<github_owner>/squash-web:<version>
 
 ## Production Deployment
 
-The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All four services and PostgreSQL run on a single server.
+The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built application images from Docker Hub instead of building from source. All four services, PostgreSQL and a pinned Prometheus image run on a single server. Production Compose requires an operator-created external bridge; see [Prometheus and network setup](monitoring/prometheus/README.md) before any authorized rollout. The local-development Compose file remains isolated.
 
 ### Server setup
 
@@ -289,15 +289,16 @@ systemctl enable docker
 # 2. Create the project directory
 mkdir -p /opt/squash-bot && cd /opt/squash-bot
 
-# 3. Copy docker-compose.prod.yml and create .env from .env.example
-#    Fill in all required values. Generate secrets:
+# 3. Copy docker-compose.prod.yml, monitoring/prometheus/prometheus.yml and
+#    create .env from .env.example. Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
 openssl rand -hex 32   # → POSTGRES_PASSWORD
 openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 # Also set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only token from
 # https://hub.docker.com/settings/security) — required by Watchtower to pull images.
 
-# 4. Lock down the .env file
+# 4. Lock down .env; before rollout, create the external network and the private
+#    PROMETHEUS_TOKEN_FILE (matching MONITORING_TOKEN) per the setup guide.
 chmod 600 .env
 
 # 5. Pull images and start only a mutually compatible release set.
@@ -328,7 +329,7 @@ Deployments follow a two-step process — release, then promote:
 
 3. **Auto-deploy** — [Watchtower](https://containrrr.dev/watchtower/) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
 
-`postgres` and `db-backup` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
+`postgres`, `db-backup` and pinned `prometheus` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
 
 ### Database backups
 
@@ -347,6 +348,8 @@ docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
 ```
 
 ### Health monitoring
+
+Production Compose includes Prometheus, scraping management statically and the remaining registered services via authenticated HTTP service discovery. Its query listener binds to host loopback only; it does **not** provision or connect the external Grafana instance. Review [network, token-file, retention and synthetic verification](monitoring/prometheus/README.md) before rollout. Prometheus/Grafana alerting is not a replacement for the existing fallback until end-to-end notification testing is authorized and complete.
 
 `scripts/healthcheck.sh` checks management liveness and booking's monitoring-authenticated admin readiness, then sends a Telegram alert if a service is down. The booking monitoring token expands only inside its container. Install the script in cron:
 
