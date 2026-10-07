@@ -69,13 +69,16 @@ func (t targetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	baseURL, err := t.target.Resolve(request.Context())
 	if err != nil {
 		if t.target.metrics != nil {
-			t.target.metrics.Observe("management", 0, err, started)
+			t.target.metrics.ObservePreDispatch("management", started)
 		}
 		return nil, err
 	}
 	t.tracker.Observe(baseURL)
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
+		if t.target.metrics != nil {
+			t.target.metrics.ObservePreDispatch("management", started)
+		}
 		return nil, err
 	}
 	clone := request.Clone(request.Context())

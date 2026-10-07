@@ -37,9 +37,16 @@ func NewObserved(baseURL, apiSecret string, metrics *observability.DependencyMet
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"), apiSecret: apiSecret,
-		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: observedManagementTransport(transport, metrics), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections), metrics: metrics,
 	}
+}
+
+func observedManagementTransport(base http.RoundTripper, metrics *observability.DependencyMetrics) http.RoundTripper {
+	if metrics != nil {
+		return metrics.RoundTripper("management", base)
+	}
+	return base
 }
 
 func NewDiscovered(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) *Client {
@@ -709,8 +716,12 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 	}
 	baseURL := c.baseURL
 	if c.resolver != nil {
+		started := time.Now()
 		endpoint, err := discovery.ResolveOne(ctx, c.resolver, c.requirement)
 		if err != nil {
+			if c.metrics != nil {
+				c.metrics.ObservePreDispatch("management", started)
+			}
 			return nil, fmt.Errorf("resolve management service: %w", err)
 		}
 		baseURL = strings.TrimRight(endpoint.API, "/")
@@ -729,12 +740,8 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 
 // do executes an HTTP request and decodes the JSON response into out (if non-nil).
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	started := time.Now()
 	req, err := c.newRequest(ctx, method, path, body)
 	if err != nil {
-		if c.metrics != nil {
-			c.metrics.Observe("management", 0, err, started)
-		}
 		return err
 	}
 	resp, err := c.httpClient.Do(req)
@@ -742,16 +749,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if c.resolver != nil {
 			discovery.Invalidate(c.resolver, c.requirement)
 		}
-		err = fmt.Errorf("%s %s: %w", method, path, err)
-		if c.metrics != nil {
-			c.metrics.Observe("management", 0, err, started)
-		}
-		return err
+		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	if c.metrics != nil {
-		c.metrics.Observe("management", resp.StatusCode, nil, started)
-	}
 
 	if resp.StatusCode >= 400 {
 		return parseErrorBody(resp)

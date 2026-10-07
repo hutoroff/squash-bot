@@ -101,12 +101,14 @@ func main() {
 	localReady := func(context.Context) bool { return transportReady.Load() }
 	registrationMetrics := observability.NewRegistrationMetrics()
 	dependencyMetrics := observability.NewDependencyMetrics()
+	httpMetrics := observability.NewHTTPMetrics()
+	updateMetrics := observability.NewUpdateMetrics()
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			ready := transportReady.Load()
 			return observability.Readiness{Ready: ready, Checks: map[string]bool{"transport": ready}}
-		}, Collectors: append([]prometheus.Collector{registrationMetrics}, dependencyMetrics.Collectors()...),
+		}, Collectors: append(append(append([]prometheus.Collector{registrationMetrics}, dependencyMetrics.Collectors()...), httpMetrics.Collectors()...), updateMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure telegram admin listener", "err", err)
@@ -162,6 +164,7 @@ func main() {
 	}
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
+	bot.SetUpdateMetrics(updateMetrics)
 	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 		for ctx.Err() == nil {
 			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -199,7 +202,7 @@ func main() {
 		if cfg.WebhookURL != "" {
 			opts := telegram.WebhookOptions{
 				PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
-				OnReady: func() { transportReady.Store(true) },
+				OnReady: func() { transportReady.Store(true) }, HTTPMetrics: httpMetrics,
 			}
 			if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 				opts.AdmitUpdate = managementGate.Available

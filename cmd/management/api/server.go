@@ -202,11 +202,10 @@ func NewServer(addr string, h *Handler, secret, monitoringToken string) *http.Se
 func NewObservedServer(addr string, h *Handler, secret, monitoringToken string, metrics *observability.HTTPMetrics) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	var routes http.Handler = mux
+	var routes http.Handler = requireManagementBearer(secret, monitoringToken, mux)
 	if metrics != nil {
-		routes = metrics.WrapMux(mux)
+		routes = metrics.WrapMuxHandler(mux, routes)
 	}
-	routes = requireManagementBearer(secret, monitoringToken, routes)
 	return &http.Server{
 		Addr:         addr,
 		Handler:      limitRequestBody(routes),

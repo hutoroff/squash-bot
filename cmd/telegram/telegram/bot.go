@@ -11,6 +11,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // pendingGameKey uniquely identifies a pending group-selection request.
@@ -278,6 +279,7 @@ type Bot struct {
 	editWorkers                     sync.Map      // map[gameID int64]*gameEditWorker
 	handlerSem                      chan struct{} // semaphore limiting concurrent update handlers
 	callbackRouter                  map[string]callbackHandler
+	updateMetrics                   *observability.UpdateMetrics
 }
 
 func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementClient, logger *slog.Logger) *Bot {
@@ -291,6 +293,9 @@ func New(api *tgbotapi.BotAPI, loc *time.Location, mgmtClient client.ManagementC
 	b.callbackRouter = b.buildCallbackRouter()
 	return b
 }
+
+// SetUpdateMetrics attaches the bounded handler-return counter before starting transport.
+func (b *Bot) SetUpdateMetrics(metrics *observability.UpdateMetrics) { b.updateMetrics = metrics }
 
 // allowedUpdates lists the Telegram update types the bot subscribes to.
 // Used by both the polling and webhook transports so the set stays consistent.
@@ -350,26 +355,35 @@ func (b *Bot) StartWithReady(ctx context.Context, ready func()) {
 }
 
 func (b *Bot) processUpdate(ctx context.Context, update tgbotapi.Update) {
+	kind, outcome := "other", "processed"
 	defer func() {
 		if r := recover(); r != nil {
+			outcome = "panic"
 			b.logger.Error("panic in update handler", "recover", r)
+		}
+		if b.updateMetrics != nil {
+			b.updateMetrics.Observe(kind, outcome)
 		}
 	}()
 
 	switch {
 	case update.Message != nil:
+		kind = "message"
 		slog.Debug("incoming message", "from", update.Message.From.ID, "chat", update.Message.Chat.ID)
 		if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
 			b.reconcileGroupIfUnknown(ctx, update.Message.Chat)
 		}
 		b.handleMessage(ctx, update.Message)
 	case update.CallbackQuery != nil:
+		kind = "callback"
 		slog.Debug("incoming callback", "from", update.CallbackQuery.From.ID, "data", update.CallbackQuery.Data)
 		b.handleCallback(ctx, update.CallbackQuery)
 	case update.MyChatMember != nil:
+		kind = "membership"
 		slog.Debug("my_chat_member update", "chat", update.MyChatMember.Chat.ID, "new_status", update.MyChatMember.NewChatMember.Status)
 		b.handleMyChatMember(ctx, update.MyChatMember)
 	default:
+		outcome = "ignored"
 		slog.Debug("unhandled update type", "update_id", update.UpdateID)
 	}
 }

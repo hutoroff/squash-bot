@@ -18,6 +18,38 @@ var sentinel = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok")) //nolint:errcheck
 })
 
+type recordedBookingHTTP struct {
+	method, route, status string
+	calls                 int
+}
+
+func (o *recordedBookingHTTP) ObserveHTTPRequest(method, route, status string, _ time.Duration) {
+	o.method, o.route, o.status = method, route, status
+	o.calls++
+}
+
+func TestBookingHTTPMetricsPreserveMuxPathValuesAndBoundedLabels(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v2/matches/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "123" {
+			t.Errorf("path value = %q", r.PathValue("id"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	observer := &recordedBookingHTTP{}
+	server := observeHTTP(observer, mux, requireBearer("secret", mux))
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/matches/123", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	server.ServeHTTP(httptest.NewRecorder(), req)
+	if observer.calls != 1 || observer.route != "GET /api/v2/matches/{id}" || observer.status != "204" {
+		t.Fatalf("observed = %+v", observer)
+	}
+	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("ARBITRARY_METHOD", "/random/secret", nil))
+	if observer.calls != 2 || observer.method != "OTHER" || observer.route != "unmatched" || observer.status != "401" {
+		t.Fatalf("fallback = %+v", observer)
+	}
+}
+
 func TestRequireBearer_HealthExempt(t *testing.T) {
 	h := requireBearer("secret", sentinel)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)

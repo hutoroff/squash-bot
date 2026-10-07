@@ -2,6 +2,8 @@
 
 The Go web service serves an embedded React SPA and authenticated proxies to management. It has no database dependency. A separate internal admin listener exposes monitoring-token-protected local health, version, descriptor, and Prometheus metrics; it reports ready only after the local business listener binds, and management availability is not a local readiness gate. Registration is independent of invocation. In `DISCOVERY_MODE=registry`, every management call resolves `MANAGEMENT_SERVICE_KEY` through a bounded authenticated resolver requiring the `management-api` v1 contract and `management.api` capability. The SPA remains available while management or the registry is unavailable, and registry mode never falls back to `MANAGEMENT_SERVICE_URL`. [main.go](../../cmd/web/main.go) wires handlers; [handler.go](../../cmd/web/webserver/handler.go) registers routes and SPA fallback.
 
+The protected admin metrics count web business requests by registered method-qualified route template with an unmatched/unsupported-method fallback, including the SPA while management is unavailable. Outgoing calls through the shared management target count the fixed `management` dependency (status or error and duration); registry failures before dispatch are counted without falling back to a static address. No raw URL, path, session ID, or user ID becomes a metric label.
+
 ## Authentication and identity
 
 [auth.go](../../cmd/web/webserver/auth.go) verifies the Telegram Login Widget HMAC and authentication timestamp, resolves the canonical identity through management, and issues an HS256 session cookie with a canonical `uid` claim.
