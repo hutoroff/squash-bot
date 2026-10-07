@@ -341,6 +341,9 @@ func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQ
 	}
 
 	// If the game has a venue, check whether auto-booking is available.
+	// A recognized discovery failure is shown in the callback notice while the
+	// existing manual-editor fallback remains available.
+	callbackText := ""
 	if game.Venue != nil && game.Venue.AutoBookingEnabled {
 		readiness, err := b.client.GetVenueBookingReadiness(ctx, game.Venue.ID, game.ChatID)
 		if err != nil {
@@ -357,6 +360,8 @@ func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQ
 			b.answerCallback(cb.ID, "")
 			b.renderCourtsModePicker(cb.Message.Chat.ID, cb.Message.MessageID, gameID, readiness.MaxCourts, lz)
 			return
+		} else {
+			callbackText = bookingReadinessMessage(lz, readiness.Reason)
 		}
 	}
 
@@ -377,7 +382,7 @@ func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQ
 		// game cannot steal the next text message from this chat.
 		b.pendingCourtsEdit.Delete(cb.Message.Chat.ID)
 		b.pendingManageCourtsToggle.Store(cb.Message.Chat.ID, state)
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(cb.ID, callbackText)
 		b.renderManageCourtsKeyboard(cb.Message.Chat.ID, cb.Message.MessageID, state, lz)
 		return
 	}
@@ -386,10 +391,23 @@ func (b *Bot) handleManageEditCourts(ctx context.Context, cb *tgbotapi.CallbackQ
 	// Clear any active toggle session so its buttons can no longer modify state.
 	b.pendingManageCourtsToggle.Delete(cb.Message.Chat.ID)
 	b.pendingCourtsEdit.Store(cb.Message.Chat.ID, gameID)
-	b.answerCallback(cb.ID, "")
+	b.answerCallback(cb.ID, callbackText)
 
 	prompt := tgbotapi.NewMessage(cb.Message.Chat.ID, lz.T(i18n.MsgSendNewCourts))
 	b.api.Send(prompt) //nolint:errcheck
+}
+
+func bookingReadinessMessage(lz *i18n.Localizer, reason string) string {
+	switch reason {
+	case "booking_service_unavailable":
+		return lz.T(i18n.MsgBookingServiceUnavailable)
+	case "booking_contract_incompatible":
+		return lz.T(i18n.MsgBookingContractIncompatible)
+	case "booking_service_ambiguous":
+		return lz.T(i18n.MsgBookingServiceAmbiguous)
+	default:
+		return ""
+	}
 }
 
 // renderCourtsModePicker edits the message to show Auto-book vs Manual selection.
