@@ -145,6 +145,9 @@ export type BookingReadinessReason =
   | 'auto_booking_disabled'
   | 'auto_booking_disallowed_by_owner'
   | 'no_usable_credentials'
+  | 'booking_service_unavailable'
+  | 'booking_contract_incompatible'
+  | 'booking_service_ambiguous'
 
 export interface BookingReadiness {
   ready: boolean

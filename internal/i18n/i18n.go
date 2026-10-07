@@ -354,7 +354,10 @@ const (
 	// BtnBookCancel: cancel button in count-picker
 	BtnBookCancel = "btn.book_cancel"
 	// MsgEditCourtsChooseMode: header text for the mode-picker message
-	MsgEditCourtsChooseMode = "msg.edit_courts_choose_mode"
+	MsgEditCourtsChooseMode        = "msg.edit_courts_choose_mode"
+	MsgBookingServiceUnavailable   = "msg.booking_service_unavailable"
+	MsgBookingContractIncompatible = "msg.booking_contract_incompatible"
+	MsgBookingServiceAmbiguous     = "msg.booking_service_ambiguous"
 	// MsgBookCountPrompt: header text for the count-picker message
 	MsgBookCountPrompt = "msg.book_count_prompt"
 	// MsgBookSuccess: Args: %d = booked count, %s = court labels
@@ -818,15 +821,18 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingNoCredentials: "⚠️ Auto-booking for *%s* skipped: no usable credentials available. Add credentials or wait for the cooldown to expire.",
 
 		// Auto-book on edit-courts
-		BtnEditCourtsAutoBook:   "🤖 Auto-book courts",
-		BtnEditCourtsManual:     "✏️ Edit manually",
-		BtnBookCancel:           "✕ Cancel",
-		MsgEditCourtsChooseMode: "How would you like to update courts?",
-		MsgBookCountPrompt:      "How many courts do you want to book?",
-		MsgBookSuccess:          "✅ Booked %d court(s): %s",
-		MsgBookPartial:          "⚠️ Booked %d of %d courts: %s. The rest could not be booked.",
-		MsgBookNoneBooked:       "❌ No courts could be booked. Please check credentials or try manually.",
-		MsgBookCanceled:         "Cancelled",
+		BtnEditCourtsAutoBook:          "🤖 Auto-book courts",
+		BtnEditCourtsManual:            "✏️ Edit manually",
+		BtnBookCancel:                  "✕ Cancel",
+		MsgEditCourtsChooseMode:        "How would you like to update courts?",
+		MsgBookingServiceUnavailable:   "Booking service is temporarily unavailable; use manual editing.",
+		MsgBookingContractIncompatible: "Booking service is incompatible; use manual editing.",
+		MsgBookingServiceAmbiguous:     "Multiple booking services are active; use manual editing.",
+		MsgBookCountPrompt:             "How many courts do you want to book?",
+		MsgBookSuccess:                 "✅ Booked %d court(s): %s",
+		MsgBookPartial:                 "⚠️ Booked %d of %d courts: %s. The rest could not be booked.",
+		MsgBookNoneBooked:              "❌ No courts could be booked. Please check credentials or try manually.",
+		MsgBookCanceled:                "Cancelled",
 
 		// Court cancellation confirmation
 		MsgCourtCancelPromptSingle: "Court *%s* has an active booking. To remove it the booking must be cancelled.\n\nProceed?",
@@ -1208,15 +1214,18 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingNoCredentials: "⚠️ Automatische Buchung für *%s* übersprungen: Keine verwendbaren Konten verfügbar. Füge Konten hinzu oder warte auf das Ende der Abklingzeit.",
 
 		// Auto-book on edit-courts
-		BtnEditCourtsAutoBook:   "🤖 Plätze automatisch buchen",
-		BtnEditCourtsManual:     "✏️ Manuell bearbeiten",
-		BtnBookCancel:           "✕ Abbrechen",
-		MsgEditCourtsChooseMode: "Wie möchtest du die Plätze aktualisieren?",
-		MsgBookCountPrompt:      "Wie viele Plätze möchtest du buchen?",
-		MsgBookSuccess:          "✅ %d Platz/Plätze gebucht: %s",
-		MsgBookPartial:          "⚠️ %d von %d Plätzen gebucht: %s. Die restlichen konnten nicht gebucht werden.",
-		MsgBookNoneBooked:       "❌ Keine Plätze konnten gebucht werden. Bitte Konten prüfen oder manuell buchen.",
-		MsgBookCanceled:         "Abgebrochen",
+		BtnEditCourtsAutoBook:          "🤖 Plätze automatisch buchen",
+		BtnEditCourtsManual:            "✏️ Manuell bearbeiten",
+		BtnBookCancel:                  "✕ Abbrechen",
+		MsgEditCourtsChooseMode:        "Wie möchtest du die Plätze aktualisieren?",
+		MsgBookingServiceUnavailable:   "Der Buchungsdienst ist vorübergehend nicht verfügbar; bitte manuell bearbeiten.",
+		MsgBookingContractIncompatible: "Der Buchungsdienst ist inkompatibel; bitte manuell bearbeiten.",
+		MsgBookingServiceAmbiguous:     "Mehrere Buchungsdienste sind aktiv; bitte manuell bearbeiten.",
+		MsgBookCountPrompt:             "Wie viele Plätze möchtest du buchen?",
+		MsgBookSuccess:                 "✅ %d Platz/Plätze gebucht: %s",
+		MsgBookPartial:                 "⚠️ %d von %d Plätzen gebucht: %s. Die restlichen konnten nicht gebucht werden.",
+		MsgBookNoneBooked:              "❌ Keine Plätze konnten gebucht werden. Bitte Konten prüfen oder manuell buchen.",
+		MsgBookCanceled:                "Abgebrochen",
 
 		// Court cancellation confirmation
 		MsgCourtCancelPromptSingle: "Platz *%s* hat eine aktive Buchung. Um ihn zu entfernen, muss die Buchung storniert werden.\n\nFortfahren?",
@@ -1598,15 +1607,18 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingNoCredentials: "⚠️ Автобронирование для *%s* пропущено: нет доступных аккаунтов. Добавьте аккаунты или подождите окончания периода блокировки.",
 
 		// Auto-book on edit-courts
-		BtnEditCourtsAutoBook:   "🤖 Автоматически забронировать корты",
-		BtnEditCourtsManual:     "✏️ Изменить вручную",
-		BtnBookCancel:           "✕ Отмена",
-		MsgEditCourtsChooseMode: "Как вы хотите обновить корты?",
-		MsgBookCountPrompt:      "Сколько кортов вы хотите забронировать?",
-		MsgBookSuccess:          "✅ Забронировано %d корт(ов): %s",
-		MsgBookPartial:          "⚠️ Забронировано %d из %d кортов: %s. Остальные не удалось забронировать.",
-		MsgBookNoneBooked:       "❌ Ни одного корта не удалось забронировать. Проверьте учётные данные или забронируйте вручную.",
-		MsgBookCanceled:         "Отменено",
+		BtnEditCourtsAutoBook:          "🤖 Автоматически забронировать корты",
+		BtnEditCourtsManual:            "✏️ Изменить вручную",
+		BtnBookCancel:                  "✕ Отмена",
+		MsgEditCourtsChooseMode:        "Как вы хотите обновить корты?",
+		MsgBookingServiceUnavailable:   "Сервис бронирования временно недоступен; используйте ручное редактирование.",
+		MsgBookingContractIncompatible: "Сервис бронирования несовместим; используйте ручное редактирование.",
+		MsgBookingServiceAmbiguous:     "Активно несколько сервисов бронирования; используйте ручное редактирование.",
+		MsgBookCountPrompt:             "Сколько кортов вы хотите забронировать?",
+		MsgBookSuccess:                 "✅ Забронировано %d корт(ов): %s",
+		MsgBookPartial:                 "⚠️ Забронировано %d из %d кортов: %s. Остальные не удалось забронировать.",
+		MsgBookNoneBooked:              "❌ Ни одного корта не удалось забронировать. Проверьте учётные данные или забронируйте вручную.",
+		MsgBookCanceled:                "Отменено",
 
 		// Court cancellation confirmation
 		MsgCourtCancelPromptSingle: "Корт *%s* имеет активное бронирование. Для его удаления необходимо отменить бронирование.\n\nПродолжить?",

@@ -34,6 +34,9 @@ export const READINESS_TEXT: Record<BookingReadinessReason, string> = {
   auto_booking_disabled: 'Auto-booking is off for this venue',
   auto_booking_disallowed_by_owner: 'Auto-booking is blocked for this group by the server owner',
   no_usable_credentials: 'No usable booking credentials — add one, or wait out the error cooldown',
+  booking_service_unavailable: 'The booking service is temporarily unavailable',
+  booking_contract_incompatible: 'The configured booking service is incompatible',
+  booking_service_ambiguous: 'More than one booking service is active; booking is paused',
 }
 
 /** Comma-separated storage format ⇄ list of trimmed, non-empty values. */

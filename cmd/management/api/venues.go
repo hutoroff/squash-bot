@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
@@ -308,6 +309,18 @@ func (h *Handler) bookingReadiness(w http.ResponseWriter, r *http.Request) {
 	reason := ""
 	if !ready {
 		reason = "no_usable_credentials"
+	} else if h.reliableBooking == nil {
+		ready, maxCourts, reason = false, 0, "booking_service_unavailable"
+	} else if availabilityErr := h.reliableBooking.VerifyAvailability(r.Context()); availabilityErr != nil {
+		ready, maxCourts = false, 0
+		switch {
+		case errors.Is(availabilityErr, discovery.ErrIncompatible):
+			reason = "booking_contract_incompatible"
+		case errors.Is(availabilityErr, discovery.ErrMultipleActive):
+			reason = "booking_service_ambiguous"
+		default:
+			reason = "booking_service_unavailable"
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ready":      ready,

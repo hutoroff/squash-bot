@@ -29,6 +29,10 @@ Admin-only callbacks must re-check rights, not trust that an earlier wizard step
 
 Private messages use user DM language preference, then Telegram `LanguageCode`, normalized to en/de/ru. Group-visible messages use group language and timezone. The user-language cache is a local optimization, not identity authority; a cold lookup can resolve identity and read the user separately.
 
+## Booking availability
+
+When an administrator selects **Edit Courts**, Telegram requests management booking readiness before offering auto-booking. For `booking_service_unavailable`, `booking_contract_incompatible`, or `booking_service_ambiguous`, it shows a localized callback notice and continues to the existing manual editor; it neither suppresses manual editing nor retries or dispatches a booking operation.
+
 ## Callback compatibility and state
 
 Callback dispatch splits `action:rawID` at the first colon; individual handlers parse the remaining payload. Old Telegram keyboards persist after deploys, so payload changes require compatibility handling. The router is the action source of truth; do not maintain a second exhaustive list here.
