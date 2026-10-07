@@ -113,6 +113,7 @@ func main() {
 	var registryRef atomic.Pointer[service.ServiceRegistryService]
 	registrationMetrics := observability.NewRegistrationMetrics()
 	httpMetrics := observability.NewHTTPMetrics()
+	dependencyMetrics := observability.NewDependencyMetrics()
 	registryCollector := observability.NewRegistryCollector(expectedServices, func(snapshotCtx context.Context) ([]discovery.MonitoringInstance, error) {
 		registry := registryRef.Load()
 		if registry == nil {
@@ -122,7 +123,7 @@ func main() {
 	})
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
-		Readiness: health.readiness, Collectors: append([]prometheus.Collector{registryCollector, registrationMetrics}, httpMetrics.Collectors()...),
+		Readiness: health.readiness, Collectors: append(append([]prometheus.Collector{registryCollector, registrationMetrics}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure management admin listener", "err", err)
@@ -238,6 +239,13 @@ func main() {
 		} else {
 			bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
 			reliableClient = service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+		}
+		for _, candidate := range []any{bookingClient, reliableClient} {
+			if observed, ok := candidate.(interface {
+				SetDependencyMetrics(*observability.DependencyMetrics)
+			}); ok {
+				observed.SetDependencyMetrics(dependencyMetrics)
+			}
 		}
 		reliableBookingExecutor, err = service.NewReliableBookingExecutor(
 			reliableClient, bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,

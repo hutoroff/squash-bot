@@ -13,6 +13,7 @@ import (
 
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // BookingSlot is a minimal representation of a court slot returned by the
@@ -105,6 +106,7 @@ type httpBookingClient struct {
 	reliableOnly bool
 	resolver     discovery.Resolver
 	requirement  discovery.Requirement
+	metrics      *observability.DependencyMetrics
 }
 
 // NewHTTPBookingClient creates a BookingServiceClient backed by the booking service HTTP API.
@@ -171,7 +173,7 @@ func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, passwor
 		req.Header.Set("X-Eversports-Password", password)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("list courts: %w", err)
@@ -212,7 +214,7 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 		req.Header.Set("X-Eversports-Password", password)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("list matches: %w", err)
@@ -259,7 +261,7 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, p
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return fmt.Errorf("cancel match %s: %w", matchUUID, err)
@@ -283,7 +285,7 @@ func (c *httpBookingClient) VerifyBinding(ctx context.Context, expected bookinga
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
 	req.Header.Set("Accept", "application/json")
-	response, err := c.httpClient.Do(req)
+	response, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return fmt.Errorf("read booking v2 descriptor: %w", err)
@@ -381,7 +383,7 @@ func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, pat
 		req.Header.Set("Idempotency-Key", string(idempotencyKey))
 	}
 
-	response, err := c.httpClient.Do(req)
+	response, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("booking v2 request: %w", err)
@@ -429,19 +431,42 @@ func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, pat
 	return nil, fmt.Errorf("decode booking v2 response: status %d contained no recognized contract document", response.StatusCode)
 }
 
+func (c *httpBookingClient) do(request *http.Request) (*http.Response, error) {
+	started := time.Now()
+	response, err := c.httpClient.Do(request)
+	if c.metrics != nil {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		c.metrics.Observe("booking", status, err, started)
+	}
+	return response, err
+}
+
 func (c *httpBookingClient) invalidateResolvedEndpoint() {
 	if c.resolver != nil {
 		discovery.Invalidate(c.resolver, c.requirement)
 	}
 }
 
+// SetDependencyMetrics records bounded logical booking dependency outcomes.
+func (c *httpBookingClient) SetDependencyMetrics(metrics *observability.DependencyMetrics) {
+	c.metrics = metrics
+}
+
 func (c *httpBookingClient) resolveBaseURL(ctx context.Context) (string, error) {
 	if c.resolver == nil {
 		return c.baseURL, nil
 	}
+	started := time.Now()
 	endpoint, err := discovery.ResolveOne(ctx, c.resolver, c.requirement)
 	if err != nil {
-		return "", fmt.Errorf("resolve booking service: %w", err)
+		err = fmt.Errorf("resolve booking service: %w", err)
+		if c.metrics != nil {
+			c.metrics.Observe("booking", 0, err, started)
+		}
+		return "", err
 	}
 	if endpoint.API == "" {
 		return "", fmt.Errorf("resolve booking service: %w", discovery.ErrNoEndpoint)
@@ -515,7 +540,7 @@ func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end
 	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		c.invalidateResolvedEndpoint()
 		return nil, fmt.Errorf("book match: %w", err)
