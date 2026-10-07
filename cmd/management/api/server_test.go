@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // sentinel is a trivial handler that always returns 200 with a known body,
@@ -20,6 +23,54 @@ var sentinel = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok")) //nolint:errcheck
 })
+
+func TestObservedServerCountsAuthenticatedAndUnauthenticatedOnce(t *testing.T) {
+	metrics := observability.NewHTTPMetrics()
+	server := NewObservedServer(":0", &Handler{version: "test"}, "secret", "monitoring", metrics)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/123", nil)
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, req)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("auth status = %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/version", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("version status = %d", response.Code)
+	}
+	registry := prometheus.NewRegistry()
+	for _, collector := range metrics.Collectors() {
+		registry.MustRegister(collector)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found401, found200 := false, false
+	for _, family := range families {
+		if family.GetName() != observability.MetricHTTPRequestsTotal {
+			continue
+		}
+		for _, metric := range family.Metric {
+			if metric.GetCounter().GetValue() != 1 {
+				t.Fatal("request double counted")
+			}
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["route"] == "GET /api/v1/games/{id}" && labels["status"] == "401" {
+				found401 = true
+			}
+			if labels["route"] == "GET /version" && labels["status"] == "200" {
+				found200 = true
+			}
+		}
+	}
+	if !found401 || !found200 {
+		t.Fatalf("auth=%t version=%t", found401, found200)
+	}
+}
 
 func TestRequireBearer_HealthExempt(t *testing.T) {
 	h := requireBearer("secret", sentinel)

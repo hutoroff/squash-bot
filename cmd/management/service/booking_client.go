@@ -464,11 +464,14 @@ func (c *httpBookingClient) resolveBaseURL(ctx context.Context) (string, error) 
 	if err != nil {
 		err = fmt.Errorf("resolve booking service: %w", err)
 		if c.metrics != nil {
-			c.metrics.Observe("booking", 0, err, started)
+			c.metrics.ObservePreDispatch("booking", started)
 		}
 		return "", err
 	}
 	if endpoint.API == "" {
+		if c.metrics != nil {
+			c.metrics.ObservePreDispatch("booking", started)
+		}
 		return "", fmt.Errorf("resolve booking service: %w", discovery.ErrNoEndpoint)
 	}
 	baseURL := strings.TrimRight(endpoint.API, "/")

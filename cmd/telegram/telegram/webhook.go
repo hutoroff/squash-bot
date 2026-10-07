@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // WebhookOptions configures the webhook transport.
@@ -31,6 +32,8 @@ type WebhookOptions struct {
 	// AdmitUpdate, when set, must return true before an authenticated update is
 	// decoded or enqueued. A false result receives retryable HTTP 503.
 	AdmitUpdate func() bool
+	// HTTPMetrics records the fixed webhook route, never the public secret path.
+	HTTPMetrics *observability.HTTPMetrics
 }
 
 // StartWebhook registers the Telegram webhook and runs the HTTP listener until ctx
@@ -67,7 +70,11 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 	ch := make(chan tgbotapi.Update, 100)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+parsed.Path, webhookHandler(opts.Secret, opts.AdmitUpdate, ch))
+	var handler http.Handler = webhookHandler(opts.Secret, opts.AdmitUpdate, ch)
+	if opts.HTTPMetrics != nil {
+		handler = opts.HTTPMetrics.WrapNamed("POST /telegram/webhook", handler)
+	}
+	mux.Handle("POST "+parsed.Path, handler)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok")) //nolint:errcheck

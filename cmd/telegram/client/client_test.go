@@ -11,7 +11,55 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+func TestTelegramManagementDependencyCoversDirectAndPreDispatchRequests(t *testing.T) {
+	metrics := observability.NewDependencyMetrics()
+	resolver, err := discovery.NewStaticResolver(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewDiscoveredObserved(resolver, discovery.Requirement{ServiceKey: "management", Contract: "management-api", Major: 1}, "test", metrics)
+	if _, err := client.GetVersion(context.Background()); !errors.Is(err, discovery.ErrNoEndpoint) {
+		t.Fatalf("pre-dispatch error = %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	client = NewObserved(server.URL, "test", metrics)
+	if _, err := client.GetNextGameForUser(context.Background(), 123); err != nil {
+		t.Fatal(err)
+	}
+	registry := prometheus.NewRegistry()
+	for _, collector := range metrics.Collectors() {
+		registry.MustRegister(collector)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundError, found204 := false, false
+	for _, family := range families {
+		if family.GetName() != observability.MetricDependencyRequestsTotal {
+			continue
+		}
+		for _, metric := range family.Metric {
+			if metric.GetCounter().GetValue() != 1 {
+				t.Fatal("request counted more than once")
+			}
+			for _, label := range metric.Label {
+				if label.GetName() == "outcome" {
+					foundError = foundError || label.GetValue() == "resolution_error"
+					found204 = found204 || label.GetValue() == "204"
+				}
+			}
+		}
+	}
+	if !foundError || !found204 {
+		t.Fatalf("predispatch=%t direct HTTP=%t", foundError, found204)
+	}
+}
 
 func TestDiscoveredClientResolvesManagementForEachRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

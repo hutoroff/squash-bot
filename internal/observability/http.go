@@ -24,23 +24,54 @@ func NewHTTPMetrics() *HTTPMetrics {
 func (m *HTTPMetrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{m.requests, m.duration}
 }
+
+// BoundedMethod prevents arbitrary method tokens from creating metric series.
+func BoundedMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead, http.MethodOptions:
+		return method
+	default:
+		return "OTHER"
+	}
+}
+
 func (m *HTTPMetrics) Observe(method, route string, status int, duration time.Duration) {
 	if route == "" {
 		route = "unmatched"
 	}
-	m.requests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
-	m.duration.WithLabelValues(method, route).Observe(duration.Seconds())
+	m.requests.WithLabelValues(BoundedMethod(method), route, strconv.Itoa(status)).Inc()
+	m.duration.WithLabelValues(BoundedMethod(method), route).Observe(duration.Seconds())
 }
 func (m *HTTPMetrics) WrapMux(mux *http.ServeMux) http.Handler {
+	return m.WrapMuxHandler(mux, mux)
+}
+
+// WrapMuxHandler pre-matches bounded patterns while preserving the mux's normal
+// dispatch (including path-value population and redirects) and outer middleware.
+func (m *HTTPMetrics) WrapMuxHandler(mux *http.ServeMux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &responseRecorder{ResponseWriter: w}
-		handler, pattern := mux.Handler(r)
-		handler.ServeHTTP(recorder, r)
+		_, pattern := mux.Handler(r)
+		next.ServeHTTP(recorder, r)
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
 		m.Observe(r.Method, pattern, recorder.status, time.Since(started))
+	})
+}
+
+// WrapNamed records a fixed route for handlers whose registered path is
+// operator-configured (for example Telegram's webhook URL).
+func (m *HTTPMetrics) WrapNamed(route string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &responseRecorder{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		if recorder.status == 0 {
+			recorder.status = http.StatusOK
+		}
+		m.Observe(r.Method, route, recorder.status, time.Since(started))
 	})
 }
 func (m *HTTPMetrics) Wrap(next http.Handler) http.Handler {
