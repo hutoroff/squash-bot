@@ -49,7 +49,10 @@ type Handler struct {
 	reliableBooking   *service.ReliableBookingExecutor
 	bookingScope      bookingapi.Scope
 	riskSessionSecret string
-	serviceRegistry   *service.ServiceRegistryService
+	riskBooking       interface {
+		AuthorizeAndDispatch(context.Context, bookingapi.OperationID, int64, int64, int64, string) (*models.ManagementBookingOperation, bool, error)
+	}
+	serviceRegistry *service.ServiceRegistryService
 }
 
 func NewHandler(
@@ -91,7 +94,8 @@ func NewHandler(
 
 // SetRiskSessionSecret enables verification of a web-signed actor identity at
 // the risk authorization boundary. It does not enable any risk policy by itself.
-func (h *Handler) SetRiskSessionSecret(secret string) { h.riskSessionSecret = secret }
+func (h *Handler) SetRiskSessionSecret(secret string)                     { h.riskSessionSecret = secret }
+func (h *Handler) SetRiskBookingService(risk *service.RiskBookingService) { h.riskBooking = risk }
 
 func (h *Handler) SetServiceRegistry(registry *service.ServiceRegistryService) {
 	h.serviceRegistry = registry
@@ -131,6 +135,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /internal/booking/operations/{id}", h.getBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/reconcile", h.reconcileBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/resolution", h.resolveBookingOperation)
+	mux.HandleFunc("POST /api/v1/booking/operations/{id}/authorize-risk", h.authorizeBookingRisk)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)

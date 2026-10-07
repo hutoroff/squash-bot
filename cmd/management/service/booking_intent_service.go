@@ -34,18 +34,19 @@ type BookingIntentRequest struct {
 }
 
 type BookingOperationRequest struct {
-	IntentID          int64
-	DedupKey          string
-	Kind              bookingapi.OperationKind
-	CourtUUID         string
-	CourtLabel        string
-	StartProvider     string
-	EndProvider       string
-	TargetMatchID     string
-	CredentialID      *int64
-	ParentOperationID bookingapi.OperationID
-	RootOperationID   bookingapi.OperationID
-	RiskReason        string
+	IntentID               int64
+	DedupKey               string
+	Kind                   bookingapi.OperationKind
+	CourtUUID              string
+	CourtLabel             string
+	StartProvider          string
+	EndProvider            string
+	TargetMatchID          string
+	CredentialID           *int64
+	ParentOperationID      bookingapi.OperationID
+	ParentExpectedRevision int64
+	RootOperationID        bookingapi.OperationID
+	RiskReason             string
 }
 
 type BookingIntentService struct {
@@ -133,7 +134,8 @@ func (s *BookingIntentService) AdmitOperation(ctx context.Context, request Booki
 		RequestFingerprint: fingerprint, Kind: request.Kind, CourtUUID: request.CourtUUID,
 		CourtLabel: request.CourtLabel, StartProvider: request.StartProvider, EndProvider: request.EndProvider,
 		TargetMatchID: request.TargetMatchID, CredentialID: request.CredentialID,
-		ParentOperationID: request.ParentOperationID, RootOperationID: rootOperationID, RiskReason: request.RiskReason,
+		ParentOperationID: request.ParentOperationID, ParentExpectedRevision: request.ParentExpectedRevision,
+		RootOperationID: rootOperationID, RiskReason: request.RiskReason,
 		State: models.ManagementBookingOperationPlanned, Phase: bookingapi.PhaseAdmission, Outcome: bookingapi.OutcomePending,
 	}
 	operation, created, err := s.repository.AdmitOperation(ctx, candidate)
@@ -154,19 +156,20 @@ func (s *BookingIntentService) AdmitOperation(ctx context.Context, request Booki
 // AuthorizeDuplicateRisk allocates one explicit child for a terminal unknown
 // creation. It is not called by ordinary scheduler/manual flows; policy and
 // operator authorization must happen before this boundary.
-func (s *BookingIntentService) AuthorizeDuplicateRisk(ctx context.Context, parentID bookingapi.OperationID, dedupKey string, credentialID int64, reason string) (*models.ManagementBookingOperation, bool, error) {
+func (s *BookingIntentService) AuthorizeDuplicateRisk(ctx context.Context, parentID bookingapi.OperationID, expectedRevision int64, dedupKey string, credentialID int64, reason string) (*models.ManagementBookingOperation, bool, error) {
 	parent, err := s.repository.GetOperation(ctx, parentID)
 	if err != nil {
 		return nil, false, fmt.Errorf("read duplicate-risk parent: %w", err)
 	}
-	if parent.Kind != bookingapi.OperationCreate || parent.State != models.ManagementBookingOperationOutcomeUnknown || parent.ParentOperationID != "" {
+	if expectedRevision <= 0 || parent.Revision != expectedRevision || parent.Kind != bookingapi.OperationCreate || parent.State != models.ManagementBookingOperationOutcomeUnknown || parent.ParentOperationID != "" {
 		return nil, false, fmt.Errorf("duplicate-risk parent is not an eligible root unknown creation")
 	}
 	return s.AdmitOperation(ctx, BookingOperationRequest{
 		IntentID: parent.IntentID, DedupKey: dedupKey, Kind: bookingapi.OperationCreate,
 		CourtUUID: parent.CourtUUID, CourtLabel: parent.CourtLabel,
 		StartProvider: parent.StartProvider, EndProvider: parent.EndProvider, CredentialID: &credentialID,
-		ParentOperationID: parent.OperationID, RootOperationID: parent.RootOperationID, RiskReason: reason,
+		ParentOperationID: parent.OperationID, ParentExpectedRevision: expectedRevision,
+		RootOperationID: parent.RootOperationID, RiskReason: reason,
 	})
 }
 
@@ -251,10 +254,10 @@ func validateBookingOperationRequest(request BookingOperationRequest) error {
 		return fmt.Errorf("management booking operation kind is invalid")
 	}
 	if request.ParentOperationID != "" {
-		if request.RootOperationID == "" || !validManagementRiskReason(request.RiskReason) {
+		if request.ParentExpectedRevision <= 0 || request.RootOperationID == "" || !validManagementRiskReason(request.RiskReason) {
 			return fmt.Errorf("management duplicate-risk operation requires root and reason")
 		}
-	} else if request.RootOperationID != "" || request.RiskReason != "" {
+	} else if request.ParentExpectedRevision != 0 || request.RootOperationID != "" || request.RiskReason != "" {
 		return fmt.Errorf("management ordinary operation cannot carry duplicate-risk provenance")
 	}
 	return nil

@@ -102,14 +102,16 @@ type ManagementConfig struct {
 	// SportsBookingServiceURL is the base URL of the booking service. Optional.
 	// When set, the cancellation reminder will attempt to cancel unused courts automatically,
 	// and the auto-booking scheduler will book courts when booking opens at midnight.
-	SportsBookingServiceURL string        `env:"SPORTS_BOOKING_SERVICE_URL"`
-	BookingServiceKey       string        `env:"BOOKING_SERVICE_KEY"`
-	BookingFacilityID       string        `env:"EVERSPORTS_FACILITY_ID"`
-	BookingFacilityUUID     string        `env:"EVERSPORTS_FACILITY_UUID"`
-	BookingFacilitySlug     string        `env:"EVERSPORTS_FACILITY_SLUG"`
-	BookingCutoverAck       string        `env:"BOOKING_RELIABLE_CUTOVER_ACK"`
-	BookingResponseWait     time.Duration `env:"MANAGEMENT_BOOKING_RESPONSE_WAIT" envDefault:"8s"`
-	BookingStatusPoll       time.Duration `env:"MANAGEMENT_BOOKING_STATUS_POLL" envDefault:"200ms"`
+	SportsBookingServiceURL string `env:"SPORTS_BOOKING_SERVICE_URL"`
+	BookingServiceKey       string `env:"BOOKING_SERVICE_KEY"`
+	BookingFacilityID       string `env:"EVERSPORTS_FACILITY_ID"`
+	BookingFacilityUUID     string `env:"EVERSPORTS_FACILITY_UUID"`
+	BookingFacilitySlug     string `env:"EVERSPORTS_FACILITY_SLUG"`
+	BookingCutoverAck       string `env:"BOOKING_RELIABLE_CUTOVER_ACK"`
+	// Optional unless the manual duplicate-risk route is used; absent means fail closed.
+	RiskSessionSecret   string        `env:"JWT_SECRET"`
+	BookingResponseWait time.Duration `env:"MANAGEMENT_BOOKING_RESPONSE_WAIT" envDefault:"8s"`
+	BookingStatusPoll   time.Duration `env:"MANAGEMENT_BOOKING_STATUS_POLL" envDefault:"200ms"`
 	// CredentialsEncryptionKey is a 32-byte (64 hex chars) AES-256 key used to
 	// encrypt venue booking credentials at rest. Optional at startup — credential
 	// operations will fail gracefully if this is not set.
@@ -154,6 +156,9 @@ func (c *ManagementConfig) Validate() error {
 		bookingEnabled = c.BookingServiceKey != ""
 	}
 	if bookingEnabled {
+		if c.RiskSessionSecret != "" && c.RiskSessionSecret == c.InternalAPISecret {
+			return fmt.Errorf("JWT_SECRET must differ from INTERNAL_API_SECRET for duplicate-risk authorization")
+		}
 		if c.BookingCutoverAck != "keyed-v2-only" {
 			return fmt.Errorf("BOOKING_RELIABLE_CUTOVER_ACK must be keyed-v2-only when booking is enabled")
 		}

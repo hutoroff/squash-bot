@@ -45,6 +45,8 @@ services:
       MONITORED_SERVICE_KEYS: '${MONITORED_SERVICE_KEYS:-[{"service_key":"management","contract":"management-api","major":1,"capabilities":["management.api"]},{"service_key":"telegram","contract":"telegram-transport","major":1},{"service_key":"web","contract":"web-api","major":1,"capabilities":["web.api"]}]}'
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      # Verification of the web-issued session at the manual risk boundary.
+      JWT_SECRET: ${JWT_SECRET}
       CRON_POLL: ${CRON_POLL:-*/5 * * * *}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}

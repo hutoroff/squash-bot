@@ -60,7 +60,12 @@ func (r *ReliableBookingRecovery) RunOnce(ctx context.Context) error {
 		} else if intent.Scope != r.scope {
 			recoverErr = fmt.Errorf("operation origin %q does not match configured booking binding", intent.Scope.ServiceKey)
 		}
-		if recoverErr == nil && operation.State == models.ManagementBookingOperationPlanned {
+		if recoverErr == nil && operation.State == models.ManagementBookingOperationPlanned && operation.ParentOperationID != "" {
+			// A risk child can only be dispatched during its explicit operator
+			// request and scheduling window. Recovery observes the same key but
+			// never initiates a late provider mutation.
+			recovered, recoverErr = r.executor.Observe(ctx, operation.OperationID)
+		} else if recoverErr == nil && operation.State == models.ManagementBookingOperationPlanned {
 			if operation.CredentialID == nil {
 				recoverErr = fmt.Errorf("planned operation has no credential reference")
 			} else {

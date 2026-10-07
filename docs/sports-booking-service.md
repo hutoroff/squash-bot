@@ -51,6 +51,8 @@ Credentials are supplied **per-request** by the management service — either vi
 
 Reliable mutation execution coordinates by a provider-scoped HMAC of normalized login, serializes all credential versions for that account, and uses a bounded disposable session cache. Password rotation selects fresh session material without changing durable operation replay identity. Fresh reconciliation/import sessions are never inserted into the cache. The legacy read handler retains its process-local per-credential clients until its remaining read routes are migrated.
 
+A terminal unknown create is **not** a failed booking and cannot be automatically replaced. Management's separate owner-only manual duplicate-risk workflow reconciles the original first, enforces the original court/time/scope and scheduling window, then authorizes at most one linked child with a newly selected venue credential. Booking rechecks the linked parent and account claims atomically. Parent and child must be inspected/resolved separately; a pending child does not prove success. See [manual duplicate-risk exception](booking-reliability-runbook.md#manual-duplicate-risk-exception).
+
 ## Running Locally
 
 These are manually authorized operator examples, **not agent verification commands**. They contact real Eversports accounts and the mutations can create or cancel actual bookings. Use local test doubles for development. Booking timestamps must retain the facility's local offset, not `Z`/UTC.

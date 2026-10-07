@@ -79,7 +79,7 @@ Edit `.env` and fill in the required values:
 TELEGRAM_BOT_TOKEN=     # from @BotFather
 TELEGRAM_BOT_NAME=      # bot username without @ (e.g. SquashBot)
 INTERNAL_API_SECRET=    # shared secret between services — generate with: openssl rand -hex 32
-JWT_SECRET=             # secret for web session tokens — generate with: openssl rand -hex 32
+JWT_SECRET=             # web session signing; management also verifies this for owner-only booking-risk decisions; distinct from INTERNAL_API_SECRET — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
 
@@ -464,7 +464,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
 | `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
-| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); generate with `openssl rand -hex 32` |
+| `JWT_SECRET`             | Yes for web; management's risk route | — | Signs web sessions (HS256 JWT, 7-day expiry; canonical `uid`, never a Telegram ID). Management verifies it independently for the owner-only manual booking-risk API. Use a distinct ≥32-byte secret from `INTERNAL_API_SECRET`; without it management disables this risk route. Generate with `openssl rand -hex 32`. |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `ADMIN_PORT`             | No       | `9090`  | Internal admin health/descriptor/metrics listener; do not publish externally. |
 | `MONITORING_TOKEN`       | Yes      | —       | Monitoring-only bearer for every admin route. |

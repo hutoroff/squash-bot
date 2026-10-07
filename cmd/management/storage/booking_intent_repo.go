@@ -152,15 +152,16 @@ func (r *BookingIntentRepo) AdmitOperation(ctx context.Context, candidate *model
 		var parentIntentID int64
 		var parentKind bookingapi.OperationKind
 		var parentState models.ManagementBookingOperationState
+		var parentRevision int64
 		var parentParentID *string
 		var parentRootID *string
 		if err := tx.QueryRow(ctx, `
-			SELECT intent_id, kind, state, parent_operation_id::text, root_operation_id::text
+			SELECT intent_id, kind, state, revision, parent_operation_id::text, root_operation_id::text
 			FROM management_booking_operations WHERE operation_id = $1 FOR UPDATE`, candidate.ParentOperationID,
-		).Scan(&parentIntentID, &parentKind, &parentState, &parentParentID, &parentRootID); err != nil {
+		).Scan(&parentIntentID, &parentKind, &parentState, &parentRevision, &parentParentID, &parentRootID); err != nil {
 			return nil, false, fmt.Errorf("lock management booking parent operation: %w", err)
 		}
-		if parentIntentID != candidate.IntentID || parentKind != bookingapi.OperationCreate || parentState != models.ManagementBookingOperationOutcomeUnknown || parentParentID != nil || parentRootID == nil || *parentRootID != string(candidate.RootOperationID) {
+		if parentIntentID != candidate.IntentID || parentKind != bookingapi.OperationCreate || parentState != models.ManagementBookingOperationOutcomeUnknown || parentRevision != candidate.ParentExpectedRevision || parentParentID != nil || parentRootID == nil || *parentRootID != string(candidate.RootOperationID) {
 			return nil, false, fmt.Errorf("invalid management booking duplicate-risk lineage")
 		}
 	}
