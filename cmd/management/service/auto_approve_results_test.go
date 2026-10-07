@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -83,6 +84,32 @@ func (m *mockPlayerRepo) GetByID(_ context.Context, id int64) (*models.Player, e
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
+func TestAutoApproveJob_ObservedFailureAndSkip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		repo *mockGameResultRepo
+		want string
+	}{
+		{"query error", &mockGameResultRepo{listErr: fmt.Errorf("database unavailable")}, "failure"},
+		{"no pending", &mockGameResultRepo{}, "skipped"},
+		{"decision error", &mockGameResultRepo{pendingResults: []*models.GameResult{{ID: 1}}, decideErr: fmt.Errorf("write failed")}, "failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audit, _ := newCaptureAuditSvc()
+			job := NewAutoApproveResultsJob(&mockTelegramAPI{}, nil, tc.repo, &mockPlayerRepo{}, audit, noopLogger())
+			if outcome := job.runWithOutcome(false); outcome != tc.want {
+				t.Fatalf("outcome=%q want=%q", outcome, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoBookingJob_ObservedMissingDependency(t *testing.T) {
+	if got := (&AutoBookingJob{}).runWithOutcome(false); got != "skipped_dependency" {
+		t.Fatalf("outcome=%q", got)
+	}
+}
+
 func TestAutoApproveJob_ApprovesPendingOlderThan48h(t *testing.T) {
 	resultRepo := &mockGameResultRepo{
 		pendingResults: []*models.GameResult{
@@ -106,7 +133,9 @@ func TestAutoApproveJob_ApprovesPendingOlderThan48h(t *testing.T) {
 	}
 
 	job := NewAutoApproveResultsJob(api, nil, resultRepo, playerRepo, auditSvc, noopLogger())
-	job.run(false)
+	if outcome := job.runWithOutcome(false); outcome != "success" {
+		t.Fatalf("auto approve outcome = %q", outcome)
+	}
 
 	// Verify Decide was called with auto_approved.
 	if len(resultRepo.decideCalls) != 1 {

@@ -76,6 +76,15 @@ func NewAutoBookingJob(
 
 func (j *AutoBookingJob) name() string   { return "auto_booking" }
 func (j *AutoBookingJob) run(force bool) { j.runAutoBooking(force) }
+func (j *AutoBookingJob) runWithOutcome(force bool) string {
+	if j.bookingClient == nil {
+		return "skipped_dependency"
+	}
+	j.runAutoBooking(force)
+	// Per-slot failures are handled internally; a normal return is not proof
+	// that bookings succeeded or that provider work was attempted.
+	return "unclassified"
+}
 
 func (j *AutoBookingJob) runAutoBooking(force bool) {
 	if j.bookingClient == nil {

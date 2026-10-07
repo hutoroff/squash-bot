@@ -4,7 +4,7 @@ Read this for cron timing, publication, booking/cancellation, or failure semanti
 
 ## Jobs and timing
 
-[main.go](../../cmd/management/main.go) constructs eight jobs and registers the poll plus a separate audit-retention cron. [Scheduler](../../cmd/management/service/scheduler.go) dispatches jobs sequentially within a poll; it does not provide a distributed lock or a guarantee against overlapping runs.
+[main.go](../../cmd/management/main.go) constructs eight jobs and registers the poll plus a separate audit-retention cron. [Scheduler](../../cmd/management/service/scheduler.go) dispatches jobs sequentially within a poll; it does not provide a distributed lock or a guarantee against overlapping runs. The admin metrics expose the configured poll interval, per-job completed outcomes, and the timestamp of the last **returned** run (a hung job never advances it). Jobs must explicitly report a business outcome: auto-approve reports success only for completed durable decisions, failure for decision/query errors, or skipped when no pending results; auto-booking reports `skipped_dependency` when no booking client is configured. Other legacy jobs and auto-booking's per-venue error paths currently report `unclassified` rather than a false business success; do not alert on this as a successful run. Completion timestamps are process-local and reset on restart.
 
 | Job/source (`cmd/management/service/`) | Timing / dedup to inspect |
 |---|---|

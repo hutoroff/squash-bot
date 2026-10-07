@@ -45,27 +45,29 @@ func (j *AutoApproveResultsJob) SetRatingService(rs *RatingService) {
 	j.ratingSvc = rs
 }
 
-func (j *AutoApproveResultsJob) name() string   { return "auto_approve_results" }
-func (j *AutoApproveResultsJob) run(force bool) { j.runAutoApprove() }
+func (j *AutoApproveResultsJob) name() string               { return "auto_approve_results" }
+func (j *AutoApproveResultsJob) run(force bool)             { j.runAutoApprove() }
+func (j *AutoApproveResultsJob) runWithOutcome(bool) string { return j.runAutoApprove() }
 
-func (j *AutoApproveResultsJob) runAutoApprove() {
+func (j *AutoApproveResultsJob) runAutoApprove() string {
 	ctx := context.Background()
 	cutoff := time.Now().Add(-autoApproveWindow)
 
 	pending, err := j.resultRepo.ListPendingOlderThan(ctx, cutoff)
 	if err != nil {
 		j.logger.Error("auto_approve_results: list pending", "err", err)
-		return
+		return "failure"
 	}
 	if len(pending) == 0 {
-		return
+		return "skipped"
 	}
 	j.logger.Info("auto_approve_results: processing", "count", len(pending))
-
+	outcome := "success"
 	for _, res := range pending {
 		now := time.Now()
 		if err := j.autoApproveOne(ctx, res, now); err != nil {
 			j.logger.Error("auto_approve_results: decide", "result_id", res.ID, "err", err)
+			outcome = "failure"
 			continue
 		}
 		res.Status = models.GameResultAutoApproved
@@ -84,6 +86,7 @@ func (j *AutoApproveResultsJob) runAutoApprove() {
 		// DM both author and opponent (best-effort).
 		j.dmAutoApproved(ctx, res)
 	}
+	return outcome
 }
 
 // autoApproveOne flips status to auto_approved and applies the rating in one

@@ -24,6 +24,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/config"
 	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/observability"
 	"github.com/hutoroff/squash-bot/migrations"
 	"github.com/prometheus/client_golang/prometheus"
@@ -114,6 +115,15 @@ func main() {
 	registrationMetrics := observability.NewRegistrationMetrics()
 	httpMetrics := observability.NewHTTPMetrics()
 	dependencyMetrics := observability.NewDependencyMetrics()
+	schedulerMetrics := observability.NewSchedulerMetrics(0)
+	var bookingMetricsRef atomic.Pointer[storage.BookingIntentRepo]
+	bookingCollector := observability.NewManagementBookingCollector(func(scrapeCtx context.Context) (*models.ManagementBookingMetrics, error) {
+		repo := bookingMetricsRef.Load()
+		if repo == nil {
+			return nil, fmt.Errorf("booking repository not initialized")
+		}
+		return repo.GetMetrics(scrapeCtx)
+	})
 	registryCollector := observability.NewRegistryCollector(expectedServices, func(snapshotCtx context.Context) ([]discovery.MonitoringInstance, error) {
 		registry := registryRef.Load()
 		if registry == nil {
@@ -123,7 +133,7 @@ func main() {
 	})
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
-		Readiness: health.readiness, Collectors: append(append([]prometheus.Collector{registryCollector, registrationMetrics}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...),
+		Readiness: health.readiness, Collectors: append(append(append([]prometheus.Collector{registryCollector, registrationMetrics, bookingCollector}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...), schedulerMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure management admin listener", "err", err)
@@ -164,6 +174,7 @@ func main() {
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
 	bookingIntentRepo := storage.NewBookingIntentRepo(pool)
+	bookingMetricsRef.Store(bookingIntentRepo)
 	auditEventRepo := storage.NewAuditEventRepo(pool)
 	gameResultRepo := storage.NewGameResultRepo(pool)
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
@@ -209,6 +220,7 @@ func main() {
 		slog.Error("unsupported CRON_POLL value", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
+	schedulerMetrics.SetPollInterval(pollWindow * 2)
 
 	var bookingClient service.BookingServiceClient
 	var bookingIntentSvc *service.BookingIntentService
@@ -294,6 +306,7 @@ func main() {
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)
 	scheduler := service.NewScheduler(logger, cancellationJob, halfwayCourtCheckJob, finalCourtCheckJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob, postLeaderboardJob)
+	scheduler.SetObserver(schedulerMetrics)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
