@@ -17,7 +17,7 @@ func registryDescriptor(instanceID string) discovery.Descriptor {
 		SchemaVersion: discovery.SchemaVersion, InstanceID: instanceID,
 		ServiceKey: "booking.eversports.test", ServiceKind: "booking", Implementation: "eversports", ReleaseVersion: "2.0.0",
 		Scope:        map[string]string{"facility_uuid": "facility-1", "sport": "squash"},
-		Endpoints:    discovery.Endpoints{API: "http://10.0.0.10:8081", Admin: "http://10.0.0.10:9090"},
+		Endpoints:    discovery.Endpoints{API: "http://10.0.0.10:8081", Admin: "http://10.0.0.10:9091"},
 		Contracts:    []discovery.Contract{{Name: "eversports-booking", Major: 2}},
 		Capabilities: []discovery.Capability{{Name: "booking.create", Contract: "eversports-booking", Major: 2}},
 		State:        discovery.StateStarting,
@@ -50,6 +50,15 @@ func TestServiceRegistryConcurrentMembershipLifecycleAndConflicts(t *testing.T) 
 	for _, descriptor := range []discovery.Descriptor{first, second} {
 		if _, err := repository.Heartbeat(ctx, descriptor.InstanceID, discovery.StateReady); err != nil {
 			t.Fatalf("heartbeat %s: %v", descriptor.InstanceID, err)
+		}
+	}
+	monitoring, err := repository.MonitoringInstances(ctx)
+	if err != nil || len(monitoring) != 2 {
+		t.Fatalf("monitoring instances = %+v err = %v", monitoring, err)
+	}
+	for _, instance := range monitoring {
+		if instance.State != discovery.StateReady || instance.Descriptor.Endpoints.Admin != "http://10.0.0.10:9091" {
+			t.Fatalf("monitoring instance = %+v", instance)
 		}
 	}
 	requirement := discovery.Requirement{ServiceKey: first.ServiceKey, Contract: "eversports-booking", Major: 2, RequiredCapabilities: []string{"booking.create"}, Scope: first.Scope}
@@ -114,6 +123,10 @@ func TestServiceRegistryConcurrentMembershipLifecycleAndConflicts(t *testing.T) 
 	}
 	if _, err := repository.Register(ctx, management); err != nil {
 		t.Fatalf("register empty-scope descriptor: %v", err)
+	}
+	monitoring, err = repository.MonitoringInstances(ctx)
+	if err != nil || len(monitoring) != 0 {
+		t.Fatalf("management must not be a monitoring target: %+v err = %v", monitoring, err)
 	}
 	catalog, err := repository.Catalog(ctx)
 	if err != nil || len(catalog) != 2 || len(catalog[0].Instances)+len(catalog[1].Instances) != 3 {
