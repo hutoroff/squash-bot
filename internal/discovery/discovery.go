@@ -107,6 +107,18 @@ type ResolvedEndpoint struct {
 	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 }
 
+// MonitoringInstance is an unexpired, non-terminal registry membership made
+// available to the monitoring HTTP service-discovery projection.
+type MonitoringInstance struct {
+	Descriptor Descriptor
+	State      InstanceState
+}
+
+type PrometheusTarget struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+}
+
 type Resolver interface {
 	Resolve(context.Context, Requirement) ([]ResolvedEndpoint, error)
 }

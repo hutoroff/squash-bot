@@ -209,6 +209,38 @@ func (r *ServiceRegistryRepo) Resolve(ctx context.Context, requirement discovery
 	return result, nil
 }
 
+// MonitoringInstances returns only active, unexpired memberships using
+// PostgreSQL time. Historical catalog entries and terminal instances are not
+// monitoring targets.
+func (r *ServiceRegistryRepo) MonitoringInstances(ctx context.Context) ([]discovery.MonitoringInstance, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT i.descriptor, i.reported_state FROM service_instances i
+		JOIN service_catalog c ON c.service_key = i.service_key
+		WHERE c.service_kind <> 'management' AND i.terminal_state IS NULL AND i.lease_expires_at > NOW()
+		ORDER BY i.service_key, i.instance_id`)
+	if err != nil {
+		return nil, fmt.Errorf("read monitoring service instances: %w", err)
+	}
+	defer rows.Close()
+	instances := make([]discovery.MonitoringInstance, 0)
+	for rows.Next() {
+		var raw []byte
+		var state discovery.InstanceState
+		if err := rows.Scan(&raw, &state); err != nil {
+			return nil, fmt.Errorf("scan monitoring service instance: %w", err)
+		}
+		var descriptor discovery.Descriptor
+		if err := json.Unmarshal(raw, &descriptor); err != nil {
+			return nil, fmt.Errorf("decode monitoring service instance: %w", err)
+		}
+		instances = append(instances, discovery.MonitoringInstance{Descriptor: descriptor, State: state})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate monitoring service instances: %w", err)
+	}
+	return instances, nil
+}
+
 func (r *ServiceRegistryRepo) Catalog(ctx context.Context) ([]discovery.CatalogEntry, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.service_key, c.service_kind, c.implementation, c.scope, c.contracts, c.capabilities,

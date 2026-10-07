@@ -124,6 +124,18 @@ func (h *Handler) resolveServiceInstances(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, endpoints)
 }
 
+func (h *Handler) getPrometheusTargets(w http.ResponseWriter, r *http.Request) {
+	if !h.requireServiceRegistry(w) {
+		return
+	}
+	targets, err := h.serviceRegistry.PrometheusTargets(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "service registry unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, targets)
+}
+
 func (h *Handler) getServiceCatalog(w http.ResponseWriter, r *http.Request) {
 	if !h.requireServiceRegistry(w) {
 		return

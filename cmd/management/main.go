@@ -300,7 +300,7 @@ func main() {
 	h.SetFeatureFlags(flagSvc)
 	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
-	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
+	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret, cfg.MonitoringToken)
 	localReady := func(readyCtx context.Context) bool { return health.readiness(readyCtx).Ready }
 
 	var lifecycle *discovery.Lifecycle

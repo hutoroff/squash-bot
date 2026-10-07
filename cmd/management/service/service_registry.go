@@ -23,6 +23,10 @@ type ServiceRegistryRepository interface {
 	Catalog(context.Context) ([]discovery.CatalogEntry, error)
 }
 
+type serviceRegistryMonitoringRepository interface {
+	MonitoringInstances(context.Context) ([]discovery.MonitoringInstance, error)
+}
+
 type ServiceRegistryService struct {
 	repository ServiceRegistryRepository
 	allowed    []*net.IPNet
@@ -95,6 +99,39 @@ func (s *ServiceRegistryService) Resolve(ctx context.Context, requirement discov
 }
 func (s *ServiceRegistryService) Catalog(ctx context.Context) ([]discovery.CatalogEntry, error) {
 	return s.repository.Catalog(ctx)
+}
+
+// PrometheusTargets projects active registry memberships to Prometheus HTTP SD.
+// Targets use the registered admin address only; descriptor-controlled paths,
+// scope, and release values are intentionally not exported as labels.
+func (s *ServiceRegistryService) PrometheusTargets(ctx context.Context) ([]discovery.PrometheusTarget, error) {
+	repository, ok := s.repository.(serviceRegistryMonitoringRepository)
+	if !ok {
+		return nil, fmt.Errorf("service registry monitoring snapshot unavailable")
+	}
+	instances, err := repository.MonitoringInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]discovery.PrometheusTarget, 0, len(instances))
+	for _, instance := range instances {
+		parsed, err := url.Parse(instance.Descriptor.Endpoints.Admin)
+		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return nil, fmt.Errorf("invalid monitoring admin endpoint for %s", instance.Descriptor.ServiceKey)
+		}
+		if _, _, err := net.SplitHostPort(parsed.Host); err != nil {
+			return nil, fmt.Errorf("invalid monitoring admin endpoint for %s", instance.Descriptor.ServiceKey)
+		}
+		targets = append(targets, discovery.PrometheusTarget{
+			Targets: []string{parsed.Host},
+			Labels: map[string]string{
+				"service_key":  instance.Descriptor.ServiceKey,
+				"service_kind": instance.Descriptor.ServiceKind,
+				"state":        string(instance.State),
+			},
+		})
+	}
+	return targets, nil
 }
 
 func sameDiscoveryScope(left, right map[string]string) bool {
