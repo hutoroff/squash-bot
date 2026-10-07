@@ -100,12 +100,13 @@ func main() {
 	}
 	localReady := func(context.Context) bool { return transportReady.Load() }
 	registrationMetrics := observability.NewRegistrationMetrics()
+	dependencyMetrics := observability.NewDependencyMetrics()
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			ready := transportReady.Load()
 			return observability.Readiness{Ready: ready, Checks: map[string]bool{"transport": ready}}
-		}, Collectors: []prometheus.Collector{registrationMetrics},
+		}, Collectors: append([]prometheus.Collector{registrationMetrics}, dependencyMetrics.Collectors()...),
 	})
 	if err != nil {
 		slog.Error("configure telegram admin listener", "err", err)
@@ -132,7 +133,7 @@ func main() {
 	tgAPI.Client = &http.Client{}
 	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
 
-	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	mgmtClient := client.NewObserved(cfg.ManagementServiceURL, cfg.InternalAPISecret, dependencyMetrics)
 	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
 		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
 		if resolverErr != nil {
@@ -144,7 +145,7 @@ func main() {
 			slog.Error("activate management discovery", "err", activateErr)
 			os.Exit(1)
 		}
-		mgmtClient = client.NewDiscovered(resolver, requirement, cfg.InternalAPISecret)
+		mgmtClient = client.NewDiscoveredObserved(resolver, requirement, cfg.InternalAPISecret, dependencyMetrics)
 	}
 
 	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {

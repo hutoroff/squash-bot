@@ -16,6 +16,7 @@ import (
 
 	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // Client wraps all HTTP calls to the management service.
@@ -26,21 +27,26 @@ type Client struct {
 	tracker     *discovery.EndpointTracker
 	resolver    discovery.Resolver
 	requirement discovery.Requirement
+	metrics     *observability.DependencyMetrics
 }
 
 // New creates a new Client targeting baseURL (e.g. "http://management:8080").
 // apiSecret is sent as a Bearer token in every request.
-func New(baseURL, apiSecret string) *Client {
+func New(baseURL, apiSecret string) *Client { return NewObserved(baseURL, apiSecret, nil) }
+func NewObserved(baseURL, apiSecret string, metrics *observability.DependencyMetrics) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"), apiSecret: apiSecret,
 		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections),
+		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections), metrics: metrics,
 	}
 }
 
 func NewDiscovered(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) *Client {
-	client := New("", apiSecret)
+	return NewDiscoveredObserved(resolver, requirement, apiSecret, nil)
+}
+func NewDiscoveredObserved(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string, metrics *observability.DependencyMetrics) *Client {
+	client := NewObserved("", apiSecret, metrics)
 	client.resolver = resolver
 	client.requirement = requirement
 	return client
@@ -723,8 +729,12 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 
 // do executes an HTTP request and decodes the JSON response into out (if non-nil).
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	started := time.Now()
 	req, err := c.newRequest(ctx, method, path, body)
 	if err != nil {
+		if c.metrics != nil {
+			c.metrics.Observe("management", 0, err, started)
+		}
 		return err
 	}
 	resp, err := c.httpClient.Do(req)
@@ -732,9 +742,16 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if c.resolver != nil {
 			discovery.Invalidate(c.resolver, c.requirement)
 		}
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		err = fmt.Errorf("%s %s: %w", method, path, err)
+		if c.metrics != nil {
+			c.metrics.Observe("management", 0, err, started)
+		}
+		return err
 	}
 	defer resp.Body.Close()
+	if c.metrics != nil {
+		c.metrics.Observe("management", resp.StatusCode, nil, started)
+	}
 
 	if resp.StatusCode >= 400 {
 		return parseErrorBody(resp)
