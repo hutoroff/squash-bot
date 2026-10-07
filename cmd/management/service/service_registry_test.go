@@ -11,6 +11,7 @@ import (
 type registryServiceRepositoryFake struct {
 	registered bool
 	catalog    []discovery.CatalogEntry
+	err        error
 }
 
 func (r *registryServiceRepositoryFake) Register(context.Context, discovery.Descriptor) (*discovery.Lease, error) {
@@ -22,11 +23,11 @@ func (*registryServiceRepositoryFake) Heartbeat(context.Context, string, discove
 }
 func (*registryServiceRepositoryFake) Drain(context.Context, string) error      { return nil }
 func (*registryServiceRepositoryFake) Deregister(context.Context, string) error { return nil }
-func (*registryServiceRepositoryFake) Resolve(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
-	return nil, nil
+func (r *registryServiceRepositoryFake) Resolve(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+	return nil, r.err
 }
 func (r *registryServiceRepositoryFake) Catalog(context.Context) ([]discovery.CatalogEntry, error) {
-	return r.catalog, nil
+	return r.catalog, r.err
 }
 
 func TestServiceRegistryClassifiesIncompatibleLogicalBinding(t *testing.T) {
@@ -38,6 +39,18 @@ func TestServiceRegistryClassifiesIncompatibleLogicalBinding(t *testing.T) {
 	_, err = service.Resolve(context.Background(), discovery.Requirement{ServiceKey: "booking.default", Contract: "eversports-booking", Major: 2, Scope: map[string]string{"facility_id": "one"}})
 	if !errors.Is(err, discovery.ErrIncompatible) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestServiceRegistryPropagatesStorageFailureInsteadOfEmptyResolution(t *testing.T) {
+	repository := &registryServiceRepositoryFake{err: errors.New("database unavailable")}
+	service, err := NewServiceRegistryService(repository, "10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Resolve(context.Background(), discovery.Requirement{ServiceKey: "booking.default", Contract: "eversports-booking", Major: 2, Scope: map[string]string{"facility_id": "one"}})
+	if err == nil || errors.Is(err, discovery.ErrIncompatible) {
+		t.Fatalf("storage failure was converted to resolution result: %v", err)
 	}
 }
 
