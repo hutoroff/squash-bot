@@ -18,6 +18,7 @@ import (
 	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/observability"
 	squashweb "github.com/hutoroff/squash-bot/web"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -115,19 +116,20 @@ func main() {
 		}
 	}
 	localReady := func(context.Context) bool { return businessListening.Load() && !draining.Load() }
+	registrationMetrics := observability.NewRegistrationMetrics()
 	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
 		Readiness: func(context.Context) observability.Readiness {
 			listening := businessListening.Load()
 			return observability.Readiness{Ready: listening && !draining.Load(), Checks: map[string]bool{"business_listener": listening, "draining": !draining.Load()}}
-		},
+		}, Collectors: []prometheus.Collector{registrationMetrics},
 	})
 	if err != nil {
 		slog.Error("configure web admin listener", "err", err)
 		os.Exit(1)
 	}
 
-	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger)
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger, registrationMetrics)
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}

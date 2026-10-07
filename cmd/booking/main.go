@@ -17,6 +17,8 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/booking/booking"
 	"github.com/hutoroff/squash-bot/internal/config"
 	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -63,6 +65,7 @@ func run() error {
 	}
 	errCh := make(chan serverResult, 2)
 	metrics := booking.NewMetrics()
+	registrationMetrics := observability.NewRegistrationMetrics()
 	registryURL := cfg.DiscoveryURL
 	advertiseHost := "booking"
 	if registryURL != "" {
@@ -79,7 +82,7 @@ func run() error {
 		ServiceKey: cfg.ServiceKey, InstanceID: uuid.NewString(),
 		APIEndpoint: "http://" + advertiseHost + ":" + cfg.ServerPort, AdminEndpoint: "http://" + advertiseHost + ":" + cfg.AdminServerPort,
 		Scope: configuredScope(cfg), Readiness: health.readiness,
-		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics,
+		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics, Collectors: []prometheus.Collector{registrationMetrics},
 	}
 	adminSrv, _, err := booking.NewAdminServer(adminConfig)
 	if err != nil {
@@ -91,9 +94,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	lifecycle, lifecycleErr := discovery.StartLifecycle(ctx, registryURL, cfg.InternalAPISecret, descriptor, func(readyCtx context.Context) bool {
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, func(readyCtx context.Context) bool {
 		return health.readiness(readyCtx).Ready
-	}, logger)
+	}, logger, registrationMetrics)
 	if lifecycleErr != nil {
 		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
 	}

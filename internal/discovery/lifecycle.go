@@ -17,8 +17,11 @@ const (
 	controlRequestTimeout      = 3 * time.Second
 )
 
+type RegistrationObserver interface{ Registered(*Lease) }
+
 type Lifecycle struct {
 	registrar  Registrar
+	observer   RegistrationObserver
 	descriptor Descriptor
 	readiness  func(context.Context) bool
 	logger     *slog.Logger
@@ -43,6 +46,8 @@ func NewLifecycle(registrar Registrar, descriptor Descriptor, readiness func(con
 	return &Lifecycle{registrar: registrar, descriptor: descriptor, readiness: readiness, logger: logger}, nil
 }
 
+func (l *Lifecycle) SetRegistrationObserver(observer RegistrationObserver) { l.observer = observer }
+
 func (l *Lifecycle) Run(ctx context.Context) {
 	registered := false
 	backoff := initialRegistrationBackoff
@@ -53,7 +58,10 @@ func (l *Lifecycle) Run(ctx context.Context) {
 				if l.stopping.Load() {
 					return context.Canceled
 				}
-				_, registerErr := l.registrar.Register(controlCtx, l.descriptor)
+				lease, registerErr := l.registrar.Register(controlCtx, l.descriptor)
+				if registerErr == nil && l.observer != nil {
+					l.observer.Registered(lease)
+				}
 				return registerErr
 			})
 			if err == nil {
@@ -72,7 +80,10 @@ func (l *Lifecycle) Run(ctx context.Context) {
 				if l.stopping.Load() {
 					return context.Canceled
 				}
-				_, heartbeatErr := l.registrar.Heartbeat(controlCtx, l.descriptor.InstanceID, state)
+				lease, heartbeatErr := l.registrar.Heartbeat(controlCtx, l.descriptor.InstanceID, state)
+				if heartbeatErr == nil && l.observer != nil {
+					l.observer.Registered(lease)
+				}
 				return heartbeatErr
 			})
 			if err != nil {
