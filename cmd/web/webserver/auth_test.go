@@ -15,7 +15,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/session"
 )
+
+func TestIssuedWebSessionIsVerifiableAtManagementRiskBoundary(t *testing.T) {
+	secret := strings.Repeat("s", 32)
+	token, err := issueJWT(secret, JWTClaims{UserID: 42, Exp: time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := session.VerifyUserID(secret, token); err != nil || id != 42 {
+		t.Fatalf("verify issued web session: id=%d err=%v", id, err)
+	}
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ The protected admin metrics count web business requests by registered method-qua
 [auth.go](../../cmd/web/webserver/auth.go) verifies the Telegram Login Widget HMAC and authentication timestamp, resolves the canonical identity through management, and issues an HS256 session cookie with a canonical `uid` claim.
 
 - Identity-resolution failure must not issue a fabricated session or substitute a Telegram ID for user ID.
-- Sessions do not contain authoritative owner roles. `/api/auth/me` reads management's current user/owner state; do not reintroduce a locally configured owner list.
+- Sessions do not contain authoritative owner roles. `/api/auth/me` reads management's current user/owner state; do not reintroduce a locally configured owner list. Management has a fail-closed verifier for the web-issued session's signed canonical user ID as preparation for Step 11; no duplicate-risk web route or dispatch is exposed yet.
 - Old cookies without canonical user ID are rejected. A `PlayerID` can be absent until first participation.
 - Cookies are HttpOnly/SameSite=Lax, with Secure derived from TLS or the trusted proxy's `X-Forwarded-Proto`. The proxy must overwrite that header; do not assume untrusted direct access is equivalent to a trusted proxy.
 - Frontend auth bootstrap distinguishes 401 from network/upstream errors. A transient management failure should show retry, not silently log the user out.
