@@ -14,8 +14,9 @@ import (
 func TestUpdateOutcomesAndWebhookMetricsAreBounded(t *testing.T) {
 	updates := observability.NewUpdateMetrics()
 	bot := &Bot{logger: telegramNoopLogger(), updateMetrics: updates}
-	bot.processUpdate(context.Background(), tgbotapi.Update{UpdateID: 1})                                         // not handled
-	bot.processUpdate(context.Background(), tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{ID: "panic"}}) // nil API; recovered
+	bot.processUpdate(context.Background(), tgbotapi.Update{UpdateID: 1})                                                                     // not handled
+	bot.processUpdate(context.Background(), tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{ID: "panic"}})                             // nil API; recovered
+	bot.processUpdate(context.Background(), tgbotapi.Update{MyChatMember: &tgbotapi.ChatMemberUpdated{Chat: tgbotapi.Chat{Type: "private"}}}) // handled no-op
 
 	httpMetrics := observability.NewHTTPMetrics()
 	ch := make(chan tgbotapi.Update, 1)
@@ -35,7 +36,7 @@ func TestUpdateOutcomesAndWebhookMetricsAreBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foundPanic, foundIgnored, foundWebhook := false, false, false
+	foundPanic, foundIgnored, foundWebhook, foundProcessed := false, false, false, false
 	for _, family := range families {
 		for _, metric := range family.Metric {
 			labels := map[string]string{}
@@ -52,13 +53,16 @@ func TestUpdateOutcomesAndWebhookMetricsAreBounded(t *testing.T) {
 				if labels["kind"] == "other" && labels["outcome"] == "ignored" {
 					foundIgnored = true
 				}
+				if labels["kind"] == "membership" && labels["outcome"] == "processed" {
+					foundProcessed = true
+				}
 			}
 			if family.GetName() == observability.MetricHTTPRequestsTotal && labels["route"] == "POST /telegram/webhook" && labels["status"] == "503" {
 				foundWebhook = true
 			}
 		}
 	}
-	if !foundPanic || !foundIgnored || !foundWebhook {
-		t.Fatalf("panic=%t ignored=%t webhook=%t", foundPanic, foundIgnored, foundWebhook)
+	if !foundPanic || !foundIgnored || !foundWebhook || !foundProcessed {
+		t.Fatalf("panic=%t ignored=%t webhook=%t processed=%t", foundPanic, foundIgnored, foundWebhook, foundProcessed)
 	}
 }
