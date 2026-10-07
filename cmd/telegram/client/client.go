@@ -23,6 +23,7 @@ type Client struct {
 	baseURL     string
 	apiSecret   string
 	httpClient  *http.Client
+	tracker     *discovery.EndpointTracker
 	resolver    discovery.Resolver
 	requirement discovery.Requirement
 }
@@ -30,13 +31,11 @@ type Client struct {
 // New creates a new Client targeting baseURL (e.g. "http://management:8080").
 // apiSecret is sent as a Bearer token in every request.
 func New(baseURL, apiSecret string) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &Client{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		apiSecret: apiSecret,
-		httpClient: &http.Client{
-			Timeout:       30 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		baseURL: strings.TrimRight(baseURL, "/"), apiSecret: apiSecret,
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections),
 	}
 }
 
@@ -709,6 +708,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 			return nil, fmt.Errorf("resolve management service: %w", err)
 		}
 		baseURL = strings.TrimRight(endpoint.API, "/")
+		c.tracker.Observe(baseURL)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bodyReader)
 	if err != nil {

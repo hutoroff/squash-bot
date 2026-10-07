@@ -101,6 +101,7 @@ type httpBookingClient struct {
 	baseURL      string
 	apiSecret    string
 	httpClient   *http.Client
+	tracker      *discovery.EndpointTracker
 	reliableOnly bool
 	resolver     discovery.Resolver
 	requirement  discovery.Requirement
@@ -145,15 +146,11 @@ func NewDiscoveredReliableBookingReadClient(resolver discovery.Resolver, require
 }
 
 func newHTTPBookingClient(baseURL, apiSecret string) *httpBookingClient {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &httpBookingClient{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		apiSecret: apiSecret,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		baseURL: strings.TrimRight(baseURL, "/"), apiSecret: apiSecret,
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections),
 	}
 }
 
@@ -449,7 +446,9 @@ func (c *httpBookingClient) resolveBaseURL(ctx context.Context) (string, error) 
 	if endpoint.API == "" {
 		return "", fmt.Errorf("resolve booking service: %w", discovery.ErrNoEndpoint)
 	}
-	return strings.TrimRight(endpoint.API, "/"), nil
+	baseURL := strings.TrimRight(endpoint.API, "/")
+	c.tracker.Observe(baseURL)
+	return baseURL, nil
 }
 
 func reliableStatusHTTPCode(status int) bool {
