@@ -52,6 +52,9 @@ func TestRegistryBookingMissingThenReadyRetainsOneDurableIntentAndKey(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := storage.NewVenueCredentialRepo(pool).Create(ctx, venue.ID, "fallback-must-not-run@example.test", ciphertext, 1, 1); err != nil {
+		t.Fatal(err)
+	}
 	courtBookings := storage.NewCourtBookingRepo(pool)
 	credentialService := NewVenueCredentialService(storage.NewVenueCredentialRepo(pool), storage.NewVenueRepo(pool), courtBookings, encryptor)
 	intents := storage.NewBookingIntentRepo(pool)
@@ -125,6 +128,13 @@ func TestRegistryBookingMissingThenReadyRetainsOneDurableIntentAndKey(t *testing
 	}
 	if replay := book(); len(replay.BookedLabels) != 0 || mutationCalls.Load() != 1 {
 		t.Fatalf("ordinary replay replaced uncertain create: %+v creates=%d", replay, mutationCalls.Load())
+	}
+	wrongScope := deps
+	changedBinding := *deps.reliable
+	changedBinding.scope.FacilityUUID = "wrong-facility"
+	wrongScope.reliable = &changedBinding
+	if _, err := bookFreeCourts(ctx, wrongScope, venue, groupID, date, "2030-01-10", "18:00", zone, 1, business); err == nil || mutationCalls.Load() != 1 {
+		t.Fatalf("changed facility replay must conflict before HTTP: err=%v calls=%d", err, mutationCalls.Load())
 	}
 	var operationCount, unknownCount, otherCredentialCount int
 	if err := pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE state = 'outcome_unknown'),count(*) FILTER (WHERE credential_id <> $1) FROM management_booking_operations`, credential.ID).Scan(&operationCount, &unknownCount, &otherCredentialCount); err != nil {

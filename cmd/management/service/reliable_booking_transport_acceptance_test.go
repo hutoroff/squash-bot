@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,96 @@ import (
 	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
 )
+
+func TestBookingContractAndFacilityMismatchNeverReceivesCredentialsOrMutation(t *testing.T) {
+	for _, mode := range []string{"static", "registry"} {
+		for _, mismatch := range []string{"v1", "other-facility"} {
+			t.Run(mode+"/"+mismatch, func(t *testing.T) {
+				var descriptorCalls, mutationCalls atomic.Int32
+				scope := testManagementBookingScope()
+				descriptor := bookingapi.Descriptor{Scope: scope, Contract: bookingapi.ContractName, ContractMajor: bookingapi.ContractMajor, Capabilities: []string{"create", "cancel", "status", "reconcile", "resolve"}}
+				if mismatch == "v1" {
+					descriptor.ContractMajor = 1
+				} else {
+					descriptor.Scope.FacilityUUID = "other-facility"
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v2/eversports/descriptor" {
+						descriptorCalls.Add(1)
+						_ = json.NewEncoder(w).Encode(descriptor)
+						return
+					}
+					mutationCalls.Add(1)
+					w.WriteHeader(http.StatusCreated)
+				}))
+				defer server.Close()
+				var client ReliableBookingServiceClient
+				if mode == "static" {
+					client = NewReliableHTTPBookingClient(server.URL, "synthetic-secret")
+				} else {
+					resolver := bookingResolverFunc(func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+						return []discovery.ResolvedEndpoint{{API: server.URL}}, nil
+					})
+					client = NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: scope.ServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor, Scope: map[string]string{"facility_uuid": scope.FacilityUUID}}, "synthetic-secret")
+				}
+				op := testPlannedManagementOperation()
+				executor, err := NewReliableBookingExecutor(client, &fakeBookingProjectionRepository{operation: op}, scope, time.Second, time.Millisecond)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := executor.ExecuteCreate(context.Background(), op, bookingapi.Credentials{Email: "account@example.test", Password: "synthetic-password"}); err == nil || descriptorCalls.Load() != 1 || mutationCalls.Load() != 0 {
+					t.Fatalf("wrong contract/scope dispatch: err=%v descriptor=%d mutation=%d", err, descriptorCalls.Load(), mutationCalls.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestRegistryOutageIsNotAnEmptyLedgerOrNewKey(t *testing.T) {
+	resolver := bookingResolverFunc(func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+		return nil, discovery.ErrUnavailable
+	})
+	client := NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: "booking.default", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor}, "synthetic-secret")
+	operation := testPlannedManagementOperation()
+	executor, err := NewReliableBookingExecutor(client, &fakeBookingProjectionRepository{operation: operation}, testManagementBookingScope(), time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := executor.ExecuteCreate(context.Background(), operation, bookingapi.Credentials{Email: "account@example.test", Password: "synthetic"})
+	if !errors.Is(err, discovery.ErrUnavailable) || result.OperationID != operation.OperationID || result.State != models.ManagementBookingOperationPlanned {
+		t.Fatalf("registry outage status=%+v err=%v", result, err)
+	}
+
+	var creates, statuses atomic.Int32
+	scope := testManagementBookingScope()
+	booking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/eversports/descriptor":
+			_ = json.NewEncoder(w).Encode(bookingapi.Descriptor{Scope: scope, Contract: bookingapi.ContractName, ContractMajor: bookingapi.ContractMajor, Capabilities: []string{"create", "cancel", "status", "reconcile", "resolve"}})
+		case "/api/v2/eversports/matches":
+			creates.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"ledger unavailable"}`))
+		default:
+			statuses.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"ledger unavailable"}`))
+		}
+	}))
+	defer booking.Close()
+	resolver = bookingResolverFunc(func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+		return []discovery.ResolvedEndpoint{{API: booking.URL}}, nil
+	})
+	client = NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: "booking.default", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor}, "synthetic-secret")
+	executor, err = NewReliableBookingExecutor(client, &fakeBookingProjectionRepository{operation: operation}, scope, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = executor.ExecuteCreate(context.Background(), operation, bookingapi.Credentials{Email: "account@example.test", Password: "synthetic"})
+	if err == nil || result.OperationID != operation.OperationID || result.State != models.ManagementBookingOperationPlanned || creates.Load() != 1 || statuses.Load() != 1 {
+		t.Fatalf("ledger outage must keep original pending key, no fallback: result=%+v err=%v creates=%d statuses=%d", result, err, creates.Load(), statuses.Load())
+	}
+}
 
 // A malformed/lost POST response can mean that a provider mutation happened.
 // Status must use the same key even when registry routing selects another

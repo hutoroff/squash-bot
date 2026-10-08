@@ -19,7 +19,7 @@ Use nearby bot tests with HTTP/fake management dependencies. Do not start a real
 
 [Webhook mode](../../cmd/telegram/telegram/webhook.go) registers an HTTPS public URL but binds a plain HTTP listener behind a TLS proxy. Incoming secrets are compared in constant time; config validation requires a sufficiently long secret when enabling webhook mode. Graceful shutdown does not delete the webhook.
 
-Polling deletes an existing webhook before starting updates. Startup can fall back from failed webhook setup to polling. Running another process is therefore not a harmless way to inspect behavior: it can change the shared bot's transport registration.
+Polling deletes an existing webhook before starting updates. Startup can fall back from failed webhook setup to polling; if a webhook listener fails **after** it reported ready, fallback clears readiness again until polling confirms webhook deletion. A failed deletion leaves transport readiness false. `cmd/telegram/main_test.go` covers fallback and live admission-gate wiring with a fake transport, and `polling_test.go` covers fake Bot API deletion and subscription; neither starts the real bot. Running another process is therefore not a harmless way to inspect behavior: it can change the shared bot's transport registration.
 
 Updates are processed concurrently with bounded handler concurrency. `sync.Map` protects the map operations, **not mutations of wizard objects stored as pointers**. Do not assume per-user sequential delivery. Wizard state is process-local and lost on restart; there is no distributed conversation coordination.
 
