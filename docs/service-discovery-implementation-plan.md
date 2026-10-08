@@ -211,6 +211,8 @@ This is split before implementation because refresh/transport lifecycle have dif
 
 ### Step 13 — Finalize operator handoff and reconcile canonical documentation (E)
 
+**Repository-local completion (2026-10-08):** The [unexecuted rollout handoff](service-discovery-rollout-runbook.md) sequences static/shadow monitoring, explicitly per-service invocation switches (production Compose's shared `DISCOVERY_MODE` cannot stage classes by a global flip), stop-before-start singleton replacement, static **keyed-v2** rollback, independent booking inventory/backup gates and a sanitized owner evidence template. README/example config, architecture/invariants, service and booking references, documentation index and design statuses distinguish implemented code from operational validation. Step 14 remains **NOT RUN** and owner-authorized; repository documentation is not proof of a provider, Grafana, firewall or whole-host drill.
+
 **Scope:** discovery/monitoring runbooks, root README/example config, architecture/invariants/service references, documentation index and affected design statuses.
 
 - Document shadow registration and monitoring with static invocation first; compare scope/leases and observe stable collection before switching one caller class at a time.

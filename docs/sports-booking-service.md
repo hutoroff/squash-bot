@@ -1,6 +1,6 @@
 # Sports Booking Service
 
-**booking** is an internal HTTP service (business port 8081, admin port 9091 by default) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. Reliable v2 mutations are admitted to a booking-owned PostgreSQL ledger before provider work; sessions and credentials remain memory-only. There is no service-level default account. The service is single-active and refuses startup when its database, identity-key continuity or singleton authority is unavailable. For execution constraints, see [Booking internals](services/booking.md).
+**booking** is an internal HTTP service (business port 8081, admin port 9091 by default) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. Reliable v2 mutations are admitted to a booking-owned PostgreSQL ledger before provider work; sessions and credentials remain memory-only. There is no service-level default account. The service is single-active and refuses startup when its database, identity-key continuity or singleton authority is unavailable. For execution constraints, see [Booking internals](services/booking.md). Production routing, shadow registration and static keyed-v2 rollback are **unexecuted** operator steps in the [discovery rollout handoff](service-discovery-rollout-runbook.md); management can call this service by a reviewed static v2 URL or exact registry binding only after independent [booking cutover gates](booking-reliability-runbook.md).
 
 ## Environment Variables
 
@@ -51,7 +51,7 @@ Credentials are supplied **per-request** by the management service — either vi
 
 Reliable mutation execution coordinates by a provider-scoped HMAC of normalized login, serializes all credential versions for that account, and uses a bounded disposable session cache. Password rotation selects fresh session material without changing durable operation replay identity. Fresh reconciliation/import sessions are never inserted into the cache. The legacy read handler retains its process-local per-credential clients until its remaining read routes are migrated.
 
-A terminal unknown create is **not** a failed booking and cannot be automatically replaced. Management's separate owner-only manual duplicate-risk workflow reconciles the original first, enforces the original court/time/scope and scheduling window, then authorizes at most one linked child with a newly selected venue credential. Booking rechecks the linked parent and account claims atomically. Parent and child must be inspected/resolved separately; a pending child does not prove success. See [manual duplicate-risk exception](booking-reliability-runbook.md#manual-duplicate-risk-exception).
+A terminal unknown create is **not** a failed booking and cannot be automatically replaced. Management's separate owner-only manual duplicate-risk workflow reconciles the original first, enforces the original court/time/scope and scheduling window, then authorizes at most one linked child with a newly selected venue credential. Booking rechecks the linked parent and account claims atomically. Parent and child must be inspected/resolved separately; a pending child does not prove success. See [manual duplicate-risk exception](booking-reliability-runbook.md#manual-duplicate-risk-exception-no-automatic-replacement).
 
 ## Running Locally
 
