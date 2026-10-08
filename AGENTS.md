@@ -51,7 +51,7 @@ telegram and management also call the Telegram Bot API directly.
 | Feature flags, defaults, scope, or evaluation | [Feature toggles](docs/feature-toggles.md) | `internal/featureflags`, management flag service/storage |
 | Setup or test failures | [Development](docs/development.md) | current commands and known verification gaps |
 
-The [documentation index](docs/README.md) distinguishes current references from proposals. Service discovery is **proposed, not implemented**.
+The [documentation index](docs/README.md) distinguishes current references from proposals. Service discovery and monitoring templates are **implemented locally**, but [operational acceptance and cutover](docs/service-discovery-rollout-runbook.md) remain owner-authorized and unverified.
 
 ## Conventions and critical behavior
 

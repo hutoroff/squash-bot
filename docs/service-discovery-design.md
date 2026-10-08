@@ -1,10 +1,10 @@
 # Service Discovery, Capability Registration, and Monitoring
 
-**Status:** Implementation in progress — A/B foundations and C core are committed; lifecycle, availability UX and runtime-degradation gaps remain. D and most of E are pending. See the [commit-by-commit completion plan](service-discovery-implementation-plan.md).
+**Status:** A–C and repository-local D monitoring templates/fixtures and E rollout configuration are implemented. The [acceptance matrix](service-discovery-acceptance-matrix.md) identifies partial process/cross-service checks; actual Grafana provisioning, network/notification drills and mutation cutover are **not** validated. Follow the [unexecuted operator handoff](service-discovery-rollout-runbook.md) and [completion plan](service-discovery-implementation-plan.md). Sections below retain original design proposals; the status notes and current service references distinguish what shipped from what still needs operational validation.
 
 **Code baseline reviewed:** `0bc2df1` for the original proposal; remaining-work assessment refreshed against `fffee2d`.
 
-**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) owns the durable idempotent booking API and management intent/recovery work. Management resolves booking through its local registry service, Telegram/web use bounded lease-aware remote resolution, callers enforce logical contract/capability/scope requirements, and registry mode has no static fallback. Committed code does not yet satisfy every A–C acceptance requirement: lifecycle ordering, active refresh/connection retirement, booking availability UX and Telegram runtime webhook gating still need work. Prometheus/Grafana package D and most operational cutover work in E remain pending; application-to-application Compose health dependencies have already been removed. Production booking mutation cutover also remains blocked on combined acceptance and the companion plan's inventory/import and drill gates.
+**Scope:** Self-registration and runtime capability availability in Docker Compose, with Prometheus and an existing external Grafana instance. The separate [booking reliability plan](booking-reliability-design.md) owns the durable idempotent booking API and management intent/recovery work. Management resolves booking through its local registry service, Telegram/web use bounded lease-aware remote resolution, callers enforce logical contract/capability/scope requirements, and registry mode has no static fallback. The lifecycle ordering, active refresh/connection retirement, booking availability UX and Telegram webhook gating have repository-local coverage. Prometheus HTTP SD and configuration and Grafana templates have synthetic coverage, **not** real scrape/network/provisioning/notification acceptance. Application-to-application Compose health dependencies have been removed. Production booking mutation cutover also remains blocked on combined acceptance and the companion plan's inventory/import and drill gates.
 
 ## 1. Executive decision
 
@@ -60,24 +60,24 @@ web ───────HTTP──▶ management ──HTTP─▶ booking ─�
 telegram and management independently call the external Telegram Bot API.
 ```
 
-The code, rather than older comments/documentation, is the source of truth for the observations below. Booking's direct SQL dependency and v2 API, the management reliable caller, shared registry/lifecycle, and discovery-aware invocation are implemented. Prometheus/Grafana integration and production cutover remain proposed.
+**Current repository-local snapshot (§3, updated after Step 12).** Code and the [current references](README.md) remain authoritative; local tests do not validate real network, provider, Grafana or cutover behavior. The `fffee2d` baseline is historical.
 
 | Area | Current behavior | Consequence |
 |---|---|---|
 | Wiring | `DISCOVERY_MODE` defaults to static. Registry mode constructs logical management/booking clients even when their target is initially absent; contradictory static URLs are rejected. | Registry bootstrap remains a central dependency for remote clients. |
 | HTTP clients | Telegram, web, and management booking clients resolve at the request boundary. Remote snapshots are bounded and lease-aware; transport failures invalidate the next lookup without replaying the failed request. | Business mutations still rely on their own idempotency semantics; discovery is not execution authority. |
-| Bootstrap | Static Telegram retains the one-shot release-major check; registry mode waits for compatible management before starting consumption. External Telegram authorization still precedes admin startup. | Initial registry dependency waiting exists; observable external initialization and subsequent webhook outage gating remain incomplete. |
-| Compose | Application-to-application health dependencies are removed; management/booking retain PostgreSQL startup dependencies. The network remains project-local. | Shared external networking and failure/recovery validation remain cutover work. |
+| Bootstrap | Static Telegram retains the one-shot release-major check; registry mode waits for compatible management before consumption. Its admin listener starts before bounded Telegram authorization; webhook admission rejects a known unavailable dependency. | Fake startup/transport checks exist; process-level Telegram and live dependency drills remain open. |
+| Compose | Application-to-application health dependencies are removed; management/booking retain PostgreSQL startup dependencies. Production declares an operator-created external bridge and pinned Prometheus; development keeps its local network. | Production bridge/interface/firewall and Grafana reachability remain owner-run gates. Shared `.env` `DISCOVERY_MODE` cannot stage one caller class without per-service overrides. |
 | Scheduler | Every management process starts cron, audit retention, and startup changelog publication. | A second management instance duplicates potential executors. |
-| Booking deduplication | Booking v2 durably deduplicates immutable operation keys; management now persists high-level intent and per-court UUIDv7 keys before static dispatch and replays/status-reads the same key. | Provider exactly-once is not guaranteed, and remaining §10.1 acceptance/operational gates still block cutover. |
+| Booking deduplication | Booking v2 durably deduplicates immutable operation keys; management persists high-level intent and per-court UUIDv7 keys before static or registry dispatch and replays/status-reads the same key. | Provider exactly-once is not guaranteed, and remaining §10.1 acceptance/operational gates still block cutover. |
 | Notifications | `game_notifier.go` has process-local locks; telegram has its own edit coalescer. | Multiple processes can still publish stale or duplicate message updates. |
 | Telegram transport | Wizard state is held in `sync.Map`; webhook acknowledges an in-memory enqueue; polling fallback deletes the webhook. | Multiple replicas and durable update processing require separate work. |
 | Booking execution | One PostgreSQL singleton authority, a durable operation/evidence ledger, and bounded account-scoped sessions coordinate one active booking process. | Replaceable singleton operation is supported; multi-active replicas and manual provider activity remain unsafe/unfenced. |
 | Routing scope | Eversports facility configuration is service-wide, not passed with every booking request. | Two booking processes with different facilities are not interchangeable replicas. |
 | Failure handling | The configured reliable path uses typed outcomes; only durable credential rejection with no-effect enters cooldown. The legacy test seam retains older classification. | Preserve conservative uncertainty handling and prove it across discovery failures; do not reintroduce implicit account rotation. |
-| Booking readiness | `api/venues.go:bookingReadiness` checks settings and credentials, not live provider availability. | Existing readiness can report a usable integration when its service is absent. |
-| Health | All binaries, including polling Telegram, expose protected admin health/metrics; booking includes database/singleton/coordinator readiness. | Startup readiness and drain/listener shutdown ordering still need completion. |
-| Monitoring | All services expose protected admin health/descriptor/version/metrics endpoints; booking adds bounded reliability metrics. Dynamic Prometheus discovery remains unimplemented. | Package D must reuse the existing bounded labels rather than duplicate or expose business identifiers. |
+| Booking readiness | `api/venues.go:bookingReadiness` checks group/venue/credentials and the configured keyed-v2 service binding without provider credentials; missing/incompatible/ambiguous targets have distinct fail-closed reasons. | Readiness is not a live provider checkout probe; no booking is sent by the check. |
+| Health | All binaries, including polling Telegram, expose protected admin health/metrics; booking includes database/singleton/coordinator readiness. Local startup/drain ordering has tests. | Actual replacement/host failure drills remain owner-run. |
+| Monitoring | All services expose protected admin health/descriptor/version/metrics; authenticated HTTP SD, expected-service gauges and a pinned Prometheus Compose template have offline checks. Grafana templates are not provisioned. | Real all-service scrapes, firewall isolation and notification delivery remain owner-run gates. |
 | Security | Internal HTTP APIs use one shared bearer secret on a private Docker network. | Acceptable for the current owner-operated deployment, but not a third-party plugin security boundary. |
 
 ## 4. Alternatives considered
@@ -289,7 +289,7 @@ Reliable booking tracks accepted executors even after an HTTP `202`/disconnect. 
 - Validate advertised addresses against the configured application network and approved ports. Do not advertise `localhost`, `0.0.0.0`, public ingress URLs, or arbitrary metadata-supplied metrics paths.
 - Use a shared named external bridge network for independently deployed Compose projects. Create it once; all relevant containers, including Prometheus, join it. Prevent conflicting `management` aliases from unrelated deployments.
 - No Docker socket access is required. Do not add it merely to obtain target addresses.
-- The current network named `internal` is a bridge name, not a reason to enable Docker's `internal: true`; application containers still need internet egress.
+- Development Compose retains a project-local `internal` bridge name; production Compose declares an operator-created shared external bridge. Neither is Docker `internal: true`: application containers still need internet egress, and the production bridge's membership is an explicit trust boundary.
 
 ## 9. Resolution, invocation, and failure semantics
 
@@ -365,11 +365,11 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 ### 10.1 Management integration with the reliable booking contract
 
-**Separate implementation task, required before booking v2 production mutation cutover.** The companion [booking reliability plan](booking-reliability-design.md) implements booking/shared foundations only. These requirements apply to static invocation too, not just registry mode. Existing group/venue permissions, scheduling windows, timezone behavior, publication and partial-cancellation semantics remain in force.
+**Implemented as a separate management work stream; production mutation cutover remains gated.** The companion [booking reliability plan](booking-reliability-design.md) owns booking/shared foundations, while management now provides static and registry-routed keyed-v2 callers. These requirements apply to static invocation too, not just registry mode. Existing group/venue permissions, scheduling windows, timezone behavior, publication and partial-cancellation semantics remain in force.
 
 #### M1. Durable business intent and operation identity
 
-**Implementation status:** implemented locally in migration 039, `BookingIntentService`, and `BookingIntentRepo`, and consumed by the static scheduled/manual create/cancel paths. Combined release acceptance remains pending.
+**Implementation status:** implemented locally in migration 039, `BookingIntentService`, and `BookingIntentRepo`, and consumed by static and registry-routed scheduled/manual create/cancel paths. Local combined fixtures are in the [matrix](service-discovery-acceptance-matrix.md); process-level release acceptance remains pending.
 
 - Persist a management-owned business intent and chosen operation UUID **before** HTTP dispatch. Cover scheduled auto-booking, manual `BookGameCourts`, scheduler cancellation (including halfway/final checks), and manual court removal/cancellation. Dispatch sites are `booking_core.go`, `court_cancellation.go` and `game_service.go`; update the shared client interface and fakes together.
 - Correlate intent with group/venue/game/time slot, requested count, selected court, credential reference, immutable provider/facility binding and execution generation. Each court creation/cancellation has its own key. Preserve the higher-level requested-count intent so replay cannot start a fresh set of court selections.
@@ -390,7 +390,7 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 #### M3. Failure and account policy
 
-**Implementation status:** local dispatch distinguishes typed credential no-effect, proven pre-admission conflict, pending/unknown, and dependency ambiguity; only durable credential rejection enters cooldown. Combined failure-matrix acceptance remains pending.
+**Implementation status:** local dispatch distinguishes typed credential no-effect, proven pre-admission conflict, pending/unknown and dependency ambiguity; only durable credential rejection enters cooldown. Static and registry fake/DB outcome fixtures exist; provider-side/process-level acceptance remains pending.
 
 - Only typed, positively identified `credential_rejected` affects cooldown. Network/registry/booking-DB outage, capacity rejection, business/key/resource/account conflict, unknown payment, malformed provider response and missing match ID must not poison credentials.
 - A positively established no-effect failure permits a deliberate new attempt/key under normal caller policy, with the relationship recorded. Never change the account/payload under the old key.
@@ -400,9 +400,9 @@ Extend the current booking-readiness response with stable reasons such as `booki
 
 #### M4. Explicit caller-controlled duplicate-risk creation
 
-**Implementation status:** an unexposed allocator preserves parent/root, payload/scope, reason, and one-child budget after terminal unknown. No automatic or HTTP policy authorizes it, so duplicate-risk dispatch remains disabled by default; operator workflow/notifications remain pending.
+**Implementation status:** an owner-only signed-web-session + live management-owner HTTP policy now authorizes **one** linked, explicitly acknowledged child after terminal unknown and stopped original execution. It requires expected revision, exact scope/time/window and explicit account selection; parent evidence remains separate and recovery cannot dispatch a planned risk child later. Without the signed session/configured reliable booking it remains unavailable; ordinary automation cannot authorize it. Fake/DB coverage is in the [matrix](service-discovery-acceptance-matrix.md), not a live provider test.
 
-The owner prefers exceptional controlled duplication to a missed booking. Implement an **opt-in caller policy**, disabled unless explicitly configured/authorized, not generic automatic retries. An automated management policy may authorize a particular replacement without a human prompt, but must persist that decision before dispatch.
+The owner prefers exceptional controlled duplication to a missed booking. The implemented **manual owner-only caller policy** requires an explicit decision, not a generic retry; automation has no replacement authority. The bullets below remain the design constraints, not permission to perform a real duplicate-risk booking.
 
 - Inspect the original operation first. Require booking's stopped-executor/unknown eligibility check; an HTTP timeout while checkout remains active is insufficient. Prefer useful bounded read-only reconciliation without treating empty reads as proof of no booking.
 - Allocate a **new** key, reference the unknown parent/root, acknowledge duplicate risk and record bounded reason/provenance. Preserve provider/facility/court/time. Another account is allowed only as an explicit choice on this new operation, never implicit rotation of the old attempt.
@@ -410,7 +410,7 @@ The owner prefers exceptional controlled duplication to a missed booking. Implem
 - Keep the parent unknown even if the child succeeds. Persist both results and possible liability, notify administrators, and retain unresolved-ancestor conflicts. Never automatically cancel a suspected duplicate.
 - Evaluate scheduling/deadline policy before authorizing new creation; this does not extend existing booking windows or replay missed deadlines. Booking rechecks eligibility atomically, so stale authorizations may conflict.
 - No corresponding automatic cancellation-risk override in this first contract. Observe/reconcile or escalate cancellation uncertainty instead.
-- Management owns policy authorization; registry metadata grants none. If implemented with a framework flag, default it disabled and update `docs/feature-toggles.md` plus consistency tests in that task. This proposal adds no implemented flag.
+- Management owns policy authorization; registry metadata grants none. The current owner-only path uses no framework flag; if one is introduced later, default it disabled and update `docs/feature-toggles.md` plus consistency tests.
 
 #### M5. Partial results, cancellation and business persistence
 
@@ -482,19 +482,19 @@ The HTTP SD endpoint returns the standard JSON format, for example:
   {
     "targets": ["<instance-ip>:9090"],
     "labels": {
-      "service_key": "booking.eversports.primary",
+      "service_key": "eversports.primary.squash",
       "service_kind": "booking",
-      "instance_id": "<process-uuid>"
+      "state": "ready"
     }
   }
 ]
 ```
 
-Monitoring target selection differs from request routing: include registered `starting`, `not_ready`, and `draining` instances while their leases are valid, not just routable ones. Exclude expired/deregistered entries. Do not add heartbeat timestamps or changing state as target labels, because changing labels creates new time series.
+Monitoring target selection differs from request routing: include registered `starting`, `not_ready`, and `draining` instances while their leases are valid, not just routable ones. Exclude expired/deregistered entries. The implemented HTTP SD labels are only `service_key`, `service_kind` and bounded `state`; state changes can create a new series, so do not add heartbeat timestamps, instance UUIDs or unbounded identifiers as labels.
 
 Return `200 []` only for a genuinely empty target set. Return `503` on registry/DB failure. Prometheus retains its current HTTP SD target list on refresh failure, but that cache does not survive a Prometheus restart [1].
 
-Example configuration shape (to be implemented and checked with the selected Prometheus version):
+Illustrative configuration shape; the checked [repository template](../monitoring/prometheus/prometheus.yml) and [offline validation](../monitoring/prometheus/README.md) are authoritative for exact fields. Installed Prometheus connectivity is unverified:
 
 ```yaml
 global:
@@ -532,7 +532,7 @@ HTTP SD authentication and metrics scraping authentication are separate configur
 
 ### 11.3 Minimum metrics
 
-Metric names below are proposed contracts for instrumentation/dashboards:
+Metric names below are original design targets; inspect the implemented [Go metric definitions](../internal/observability) and [generated monitoring fixtures](../monitoring/grafana/README.md) for exact current names:
 
 | Metric | Purpose / labels |
 |---|---|
@@ -671,12 +671,12 @@ The original deliverable was this proposal. Implementation now proceeds in the b
 
 | Package | Main changes | Depends on | Acceptance gate |
 |---|---|---|---|
-| **A. Contracts and health foundation** *(foundation committed; lifecycle gaps remain)* | Bounded descriptor/error types, resolver/registrar interfaces, exact-scope static resolver, internal admin listeners, monitoring auth, fixed service metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
-| **B. Registry and lifecycle** *(foundation committed; process ordering/acceptance remain)* | Registry service/repository/API, additive migrations, self-registration, heartbeats/draining, catalog, scope/address validation, bounded membership/tombstone retention, and registration retry. | A | Concurrent membership, restart/expiry, late-heartbeat, terminal-incarnation, and conflicting-descriptor tests pass; registration remains shadow-only and does not affect invocation. |
-| **C. Discovery-aware invocation** *(core committed; incomplete)* | Registry resolver in existing clients, explicit logical booking binding, contract filtering, typed errors and no implicit external mutation replay exist. Active refresh/connection retirement, availability UX and Telegram runtime webhook gating remain. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
+| **A. Contracts and health foundation** *(repository-local implementation/coverage)* | Bounded descriptor/error types, resolver/registrar interfaces, exact-scope static resolver, internal admin listeners, monitoring auth, fixed service metric vocabulary. | — | All four services, including polling telegram, expose protected metrics without exposing public admin endpoints. |
+| **B. Registry and lifecycle** *(repository-local implementation/coverage; process-level acceptance remains)* | Registry service/repository/API, additive migrations, self-registration, heartbeats/draining, catalog, scope/address validation, bounded membership/tombstone retention, and registration retry. | A | Concurrent membership, restart/expiry, late-heartbeat, terminal-incarnation, and conflicting-descriptor tests pass; registration remains shadow-only and does not affect invocation. |
+| **C. Discovery-aware invocation** *(repository-local implementation/coverage; live drill remains)* | Registry resolver in existing clients, explicit logical booking binding, contract filtering, typed errors and no implicit external mutation replay exist. Active refresh/connection retirement, availability UX and Telegram runtime webhook gating have focused local tests. | B; M for reliable-booking cutover | Booking appears/disappears without management restart; absence does not cool down credentials or redirect to another facility; reliable clients enforce v2/status capability. |
 | **M. Reliable booking caller integration — separate task** | All requirements in §10.1: durable intent/key allocation, status/reconciliation, explicit creation-risk policy, partial evidence, cancellation/origin semantics, notifications and coordinated activation. | Companion booking contract/fixtures; production activation requires its implementation | §10.1 gates pass in static mode before booking v2 production mutations. Discovery cannot substitute for this work. |
-| **D. Prometheus and external Grafana** | HTTP SD endpoint, expected-service metrics, Compose Prometheus/storage, dashboard and alert provisioning artifacts, secure Grafana connectivity runbook. | A, B | New instances are scraped automatically; disappearance and whole-host/Prometheus failure alert through external Grafana. |
-| **E. Cutover and operational documentation** | Shared Compose network, registry mode rollout, singleton guardrails, rollback runbook and canonical documentation updates. Application startup dependencies are already relaxed; do not duplicate shared facts into the CLAUDE adapter. | C, D | Full failure/recovery drill succeeds; legacy rollback tested; no implied multi-active support. |
+| **D. Prometheus and external Grafana** *(templates/fixtures local; installation open)* | HTTP SD endpoint, expected-service metrics, Compose Prometheus/storage, dashboard and alert provisioning artifacts, secure Grafana connectivity runbook. | A, B | New instances are scraped automatically; disappearance and whole-host/Prometheus failure alert through external Grafana. |
+| **E. Cutover and operational documentation** *(configuration/handoff local; owner execution open)* | Shared Compose network, registry mode rollout, singleton guardrails, rollback runbook and canonical documentation updates. Application startup dependencies are already relaxed; do not duplicate shared facts into the CLAUDE adapter. | C, D | Full failure/recovery drill succeeds; legacy rollback tested; no implied multi-active support. |
 
 D can proceed alongside C. First deploy registration and monitoring in shadow/static mode; switch invocation only after observing stable leases and checking target scopes. M can proceed independently against the companion contract and must gate reliable-booking production activation even if discovery is not yet enabled. Booking preparation includes metadata/admin/lifecycle seams, not an independently invented registry client. Do not combine either rollout with management or booking horizontal scaling.
 

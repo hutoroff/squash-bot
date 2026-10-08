@@ -1,6 +1,6 @@
 # Booking reliability and discovery preparation
 
-**Status:** Booking work packages P1–P7 and management M1–M6 are committed, including durable notification/metrics and restart-safe materialization. Discovery contracts, registry/lifecycle, and shadow registration are committed; discovery-aware invocation is implemented locally behind explicit static/registry mode. Production mutation cutover remains blocked on combined candidate review, legacy inventory/import, whole-database backup/restore, and the runbook drill. Owner decisions below remain authoritative for those operational gates.
+**Status:** Booking work packages P1–P7 and management M1–M6 are committed, including durable notification/metrics and restart-safe materialization. Discovery contracts, registry/lifecycle, shadow registration and static/registry invocation have repository-local coverage. [Step 12 evidence](service-discovery-acceptance-matrix.md) is not process-level or operational sign-off. Production mutation cutover remains blocked on owner legacy inventory/import, whole-database backup/restore, and the [booking](booking-reliability-runbook.md) and [discovery](service-discovery-rollout-runbook.md) drills. Owner decisions below remain authoritative for those operational gates.
 
 **Code baseline reviewed:** `78fcc52`.
 
@@ -25,11 +25,11 @@ A caller may explicitly authorize a **different operation** after an unknown cre
 - Booking owns these tables and migrations. No reads/writes of management business or registry tables, and no management HTTP dependency for operation admission or execution.
 - Booking must work with management stopped, given its database, local configuration, credentials supplied by the caller, and reachable Eversports. A shared database outage still affects both services.
 - Single-active booking deployment, stop-before-start replacement. Multi-active support is a later gate even if persistence tests exercise concurrent requests/connections.
-- Management is currently the only application caller. Its implementation is deferred; production mutation cutover waits for that task.
+- Management is the only implemented application caller, with keyed-v2 static/registry paths. Production mutation cutover waits for cross-service operational acceptance and owner inventory/restore gates, not a new caller implementation.
 - Request deduplication and cross-request booking conflicts are both required. Confirmed cancellation permits deliberate rebooking with a new key.
 - An accepted execution may continue after client disconnect, under a bounded service-owned deadline. No offline command queue or automatic restart replay.
 - No durable storage of provider passwords or session cookies in booking. The caller supplies credentials for fresh execution and provider reconciliation.
-- Automatic caller policy may explicitly authorize one exceptional replacement creation. No human confirmation is required by the booking contract, but authorization and a reason are required per operation.
+- The booking contract permits an explicitly authorized exceptional replacement creation, but the implemented management caller uses **manual signed-session, current-owner authorization** with reason, revision and account choice. Ordinary automation has no such permission.
 - Never overlap a replacement with a known active local checkout. Uncertain provider processing after a stopped/crashed executor remains part of the explicitly accepted risk.
 - Cancellation has no equivalent automatic duplicate-risk override in this first contract.
 - Keep contracts/admin health/metrics/draining, registration, and invocation separate from booking execution authority; registry leases never authorize provider work.
@@ -274,7 +274,7 @@ Add reusable `internal/observability`/lifecycle pieces rather than a second inco
 - Internal admin listener with `/health/live`, `/health/ready`, protected `/metrics`, and diagnostic `/version`; preserve `/health` as liveness alias. Readiness requires compatible booking schema, DB access, singleton admission and initialized API, and is false while draining. Individual unknown accounts are reported separately rather than making every account unavailable.
 - Official Prometheus Go collectors and bounded route/operation/outcome metrics, compatible with discovery §11. Expose durable unknown-operation counts/age, database/admission health and risk-replacement counts; never account/game/operation IDs as labels. Replays do not increment external-execution counters.
 - Monitoring-only bearer authorization and no public admin ports. Registry absence never controls booking mutation admission; DB/operation rules do.
-- Shutdown hooks ordered so a future registrar reports draining before admission closes and remains best-effort. Keep admin observable while executors finish. Future registration failure/lease expiry does not release business claims.
+- Shutdown hooks order the implemented registrar drain before admission closes, then deregister after tracked execution stops. Keep admin observable while executors finish. Registration failure/lease expiry does not release business claims.
 
 A direct authenticated client using an explicitly configured address can use booking with management stopped. A registry-only client still cannot resolve new addresses without the registry; do not add a silent legacy-URL bypass to discovery mode.
 
@@ -326,7 +326,7 @@ Focused existing command: `go test -count=1 -timeout 120s ./cmd/booking/...`. Ne
 3. Schedule a coordinated, owner-authorized mutation pause; stop old callers/executors. Check in-flight external outcomes before bringing up the new booking executor. Existing court-booking records alone may omit partial bookings: inspect/import verified active provider evidence via the new API and record unresolved gaps, rather than assume an empty ledger means an empty facility.
 4. Apply booking migrations and preserve management data. Configure DB/identity key/admin token and validated facility; run fake-provider migration/restart drills first. No claim that pre-cutover requests had idempotency keys or retrospective deduplication guarantees.
 5. Bring up one booking instance and upgraded management, initially using static invocation. Verify contract negotiation, keyed status/replay, partial-result handling, caller risk-policy audit and bounded shutdown before enabling scheduled mutations.
-6. Attach real discovery later; advertise v2 mutations/status only when implemented. Do not publish a v1 mutation capability as interchangeable with v2. Discovery cutover and reliability cutover need not occur together.
+6. Discovery registration and v2 capability advertisement are implemented locally; first observe them in shadow/static mode, then follow the separately authorized [per-caller rollout](service-discovery-rollout-runbook.md). Do not publish a v1 mutation capability as interchangeable with v2. Discovery cutover and reliability cutover need not occur together.
 7. Roll back discovery routing to static **without** rolling back the reliable booking contract. If application rollback requires a keyless booking binary/client, keep mutations disabled; retain status/evidence access through a compatible binary and resolve outstanding operations before any separately reviewed legacy resumption. Never drop booking tables to make rollback convenient.
 
 Open evidence limitations, not unanswered product decisions:
