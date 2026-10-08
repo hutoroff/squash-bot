@@ -12,6 +12,7 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Repository-local discovery/booking acceptance evidence and unresolved gates | [Acceptance matrix](service-discovery-acceptance-matrix.md) |
 | Unexecuted shadow rollout, static keyed-v2 rollback and owner evidence template | [Discovery rollout handoff](service-discovery-rollout-runbook.md) |
 | Current setup, commands, and verification limitations | [Development](development.md) |
+| Opt-in dedicated staging deployment with local images (not Step 14 acceptance) | [Staging deployment](staging-deployment.md) |
 | Local secret/dependency checks, scope, and remediation status | [Security checks and triage](security-checks.md) |
 | Local task/review/handoff procedure and agent setup | [Agent workflow](agent-workflow.md) |
 | Management business logic, authorization, persistence, results | [Management](services/management.md) |
