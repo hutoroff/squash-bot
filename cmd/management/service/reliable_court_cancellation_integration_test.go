@@ -4,17 +4,30 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/testutil"
 )
 
 func TestReliableCancellationReplaysWithoutSecondProviderMutation(t *testing.T) {
+	for _, mode := range []string{"static-fake", "registry-http"} {
+		t.Run(mode, func(t *testing.T) { testReliableCancellationReplay(t, mode) })
+	}
+}
+
+func testReliableCancellationReplay(t *testing.T, mode string) {
 	if err := testutil.CheckDocker(); err != nil {
 		t.Fatalf("integration test requires Docker: %v", err)
 	}
@@ -61,7 +74,43 @@ func TestReliableCancellationReplaysWithoutSecondProviderMutation(t *testing.T) 
 	intentRepo := storage.NewBookingIntentRepo(pool)
 	intents, _ := NewBookingIntentService(intentRepo)
 	mutationClient := &reliableCoreMutationClient{}
-	executor, _ := NewReliableBookingExecutor(mutationClient, intentRepo, testManagementBookingScope(), time.Second, time.Millisecond)
+	var client ReliableBookingServiceClient = mutationClient
+	var registryCancels atomic.Int32
+	var lastKey atomic.Value
+	if mode == "registry-http" {
+		scope := testManagementBookingScope()
+		booking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v2/eversports/descriptor" {
+				_ = json.NewEncoder(w).Encode(bookingapi.Descriptor{Scope: scope, Contract: bookingapi.ContractName, ContractMajor: bookingapi.ContractMajor, Capabilities: []string{"create", "cancel", "status", "reconcile", "resolve"}})
+				return
+			}
+			key := r.Header.Get("Idempotency-Key")
+			if r.Method == http.MethodDelete {
+				registryCancels.Add(1)
+				lastKey.Store(key)
+				if key == "" || r.URL.Path != "/api/v2/eversports/matches/match-1" {
+					t.Errorf("cancellation lost key or exact match: %s %q", r.URL.Path, key)
+				}
+				var credentials bookingapi.CancelRequest
+				if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil || credentials.Email != "person@example.com" || credentials.Password != "password" {
+					t.Errorf("cancellation account changed: %+v %v", credentials, err)
+				}
+			} else if r.Method == http.MethodGet {
+				if key != "" || !strings.HasSuffix(r.URL.Path, lastKey.Load().(string)) {
+					t.Errorf("status used new key or path: %s %q", r.URL.Path, key)
+				}
+			} else {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			_ = json.NewEncoder(w).Encode(bookingapi.OperationStatus{OperationID: lastKey.Load().(string), Kind: bookingapi.OperationCancel, State: bookingapi.StateSucceeded, Phase: bookingapi.PhaseFinalization, Outcome: bookingapi.OutcomeSuccess, Revision: 1, Evidence: &bookingapi.ProviderEvidence{MatchID: "match-1", State: "CANCELLED"}})
+		}))
+		defer booking.Close()
+		resolver := bookingResolverFunc(func(context.Context, discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+			return []discovery.ResolvedEndpoint{{InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120499", API: booking.URL}}, nil
+		})
+		client = NewDiscoveredReliableHTTPBookingClient(resolver, discovery.Requirement{ServiceKey: scope.ServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor}, "synthetic-secret")
+	}
+	executor, _ := NewReliableBookingExecutor(client, intentRepo, testManagementBookingScope(), time.Second, time.Millisecond)
 	credentialService := NewVenueCredentialService(storage.NewVenueCredentialRepo(pool), storage.NewVenueRepo(pool), courtBookings, encryptor)
 	job := &CancellationReminderJob{
 		courtBookingRepo: courtBookings, credService: credentialService,
@@ -81,8 +130,12 @@ func TestReliableCancellationReplaysWithoutSecondProviderMutation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("cancellation replay: %v", err)
 	}
-	if mutationClient.cancels.Load() != 1 {
-		t.Fatalf("provider cancellation calls = %d, want 1", mutationClient.cancels.Load())
+	cancelCalls := mutationClient.cancels.Load()
+	if mode == "registry-http" {
+		cancelCalls = registryCancels.Load()
+	}
+	if cancelCalls != 1 {
+		t.Fatalf("provider cancellation calls = %d, want 1", cancelCalls)
 	}
 	if len(first.canceledCourts) != 1 || len(second.canceledCourts) != 1 || updates != 2 {
 		t.Fatalf("results = first %+v second %+v updates %d", first, second, updates)
@@ -93,5 +146,14 @@ func TestReliableCancellationReplaysWithoutSecondProviderMutation(t *testing.T) 
 	}
 	if operationCount != 1 {
 		t.Fatalf("cancellation operations = %d, want 1", operationCount)
+	}
+	if mode == "registry-http" {
+		var storedKey string
+		if err := pool.QueryRow(ctx, `SELECT operation_id::text FROM management_booking_operations WHERE kind = 'cancel'`).Scan(&storedKey); err != nil {
+			t.Fatal(err)
+		}
+		if storedKey != lastKey.Load().(string) {
+			t.Fatalf("durable cancellation key %q was not used for HTTP %q", storedKey, lastKey.Load())
+		}
 	}
 }
