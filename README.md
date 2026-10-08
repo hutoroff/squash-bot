@@ -275,6 +275,10 @@ ghcr.io/<github_owner>/squash-booking-eversports:<version>
 ghcr.io/<github_owner>/squash-web:<version>
 ```
 
+## Dedicated staging (no application image release)
+
+For an explicitly authorized deployment to a **separate staging host with a clean checkout**, [the staging procedure](docs/staging-deployment.md) describes a one-command local image build and isolated Compose startup. It does not push to Docker Hub; management-driven booking is disabled and the booking container has no outbound route. It requires a separate staging bot (startup contacts Telegram), private configuration outside the checkout, and an operator review; it is **not** a production-cutover or live Step 14 acceptance procedure. Do not run the production or development Compose project as an ad hoc staging deployment.
+
 ## Production Deployment
 
 The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built application images from Docker Hub instead of building from source. All four services, PostgreSQL and a pinned Prometheus image run on a single server. Production Compose requires an operator-created external bridge; see [Prometheus and network setup](monitoring/prometheus/README.md) before any authorized rollout. The local-development Compose file remains isolated.

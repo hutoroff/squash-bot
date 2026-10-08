@@ -1,0 +1,221 @@
+# Dedicated staging host only. Never combine with docker-compose.prod.yml or the
+# development Compose file. No production .env, published admin/database ports,
+# Docker Hub application images, Watchtower, or provider mutations.
+services:
+  postgres:
+    image: postgres:15-alpine
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    environment:
+      POSTGRES_DB: squash_bot
+      POSTGRES_USER: squash_bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a staging-only password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squash_bot -d squash_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [backend]
+
+  management:
+    image: squash-staging/management:${STAGING_REV:?use scripts/staging-up.sh}
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.management
+      args:
+        VERSION: ${STAGING_REV:?use scripts/staging-up.sh}
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    environment:
+      DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD:?}@postgres:5432/squash_bot?sslmode=disable
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?use a separate staging bot}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a staging-only bearer}
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set a distinct staging monitor bearer}
+      JWT_SECRET: ${JWT_SECRET:?set a staging-only session key}
+      SERVER_PORT: "8080"
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: management
+      DISCOVERY_MODE: static
+      DISCOVERY_URL: http://management:8080
+      DISCOVERY_NETWORK_INTERFACE: eth0
+      DISCOVERY_ALLOWED_CIDRS: ${STAGING_BACKEND_SUBNET:?choose a private non-overlapping subnet}
+      # Include booking explicitly, even though management cannot dispatch it.
+      MONITORED_SERVICE_KEYS: '[{"service_key":"management","contract":"management-api","major":1,"capabilities":["management.api"]},{"service_key":"telegram","contract":"telegram-transport","major":1},{"service_key":"web","contract":"web-api","major":1,"capabilities":["web.api"]},{"service_key":"${BOOKING_SERVICE_KEY:?set a synthetic booking key}","contract":"eversports-booking","major":2,"capabilities":["booking.create","booking.cancel","booking.operations.get"]}]'
+      # Fail closed on all management-driven booking/cancellation dispatch.
+      SPORTS_BOOKING_SERVICE_URL: ""
+      BOOKING_SERVICE_KEY: ""
+      BOOKING_RELIABLE_CUTOVER_ACK: ""
+      CREDENTIALS_ENCRYPTION_KEY: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      backend:
+        interface_name: eth0
+      egress:
+        interface_name: eth1
+
+  telegram:
+    image: squash-staging/telegram:${STAGING_REV:?use scripts/staging-up.sh}
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+      args:
+        VERSION: ${STAGING_REV:?use scripts/staging-up.sh}
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?use a separate staging bot}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a staging-only bearer}
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set a staging-only monitor bearer}
+      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_KEY: management
+      DISCOVERY_MODE: static
+      DISCOVERY_URL: http://management:8080
+      DISCOVERY_NETWORK_INTERFACE: eth0
+      TELEGRAM_WEBHOOK_URL: ""
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: telegram
+    depends_on:
+      management:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      backend:
+        interface_name: eth0
+      egress:
+        interface_name: eth1
+
+  booking:
+    image: squash-staging/booking:${STAGING_REV:?use scripts/staging-up.sh}
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.booking
+      args:
+        VERSION: ${STAGING_REV:?use scripts/staging-up.sh}
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    environment:
+      BOOKING_DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD:?}@postgres:5432/squash_bot?sslmode=disable
+      BOOKING_IDENTITY_KEY: ${BOOKING_IDENTITY_KEY:?use a staging-only identity key}
+      BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:?set a synthetic booking key}
+      BOOKING_MONITORING_SECRET: ${MONITORING_TOKEN:?set a staging-only monitor bearer}
+      BOOKING_RELIABLE_CUTOVER_ACK: keyed-v2-only
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a staging-only bearer}
+      EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:?use a synthetic facility}
+      EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:?use a synthetic facility UUID}
+      EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:?use a synthetic slug}
+      EVERSPORTS_SQUASH_SPORT_UUID: ${EVERSPORTS_SQUASH_SPORT_UUID:?use a synthetic sport UUID}
+      SERVER_PORT: "8081"
+      BOOKING_ADMIN_PORT: "9091"
+      DISCOVERY_URL: http://management:8080
+      DISCOVERY_NETWORK_INTERFACE: eth0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 110s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${BOOKING_MONITORING_SECRET}' http://localhost:9091/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # The internal-only bridge has no external route to Eversports.
+    networks:
+      backend:
+        interface_name: eth0
+
+  web:
+    image: squash-staging/web:${STAGING_REV:?use scripts/staging-up.sh}
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VERSION: ${STAGING_REV:?use scripts/staging-up.sh}
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?use a separate staging bot}
+      TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME:?use the staging bot username}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a staging-only bearer}
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set a staging-only monitor bearer}
+      JWT_SECRET: ${JWT_SECRET:?set a staging-only session key}
+      MANAGEMENT_SERVICE_URL: http://management:8080
+      MANAGEMENT_SERVICE_KEY: management
+      SERVER_PORT: "8082"
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: web
+      DISCOVERY_MODE: static
+      DISCOVERY_URL: http://management:8080
+      DISCOVERY_NETWORK_INTERFACE: eth0
+    depends_on:
+      management:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${STAGING_WEB_PORT:-18082}:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${MONITORING_TOKEN}' http://localhost:9090/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      backend:
+        interface_name: eth0
+
+  prometheus:
+    image: prom/prometheus:v3.9.1@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=${STAGING_PROMETHEUS_RETENTION_SIZE:-1GB}
+    volumes:
+      - type: bind
+        source: ./monitoring/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGING_PROMETHEUS_TOKEN_FILE:?set an absolute staging monitor-token path}
+        target: /run/secrets/monitoring_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${STAGING_PROMETHEUS_PORT:-19090}:9090"
+    depends_on:
+      management:
+        condition: service_healthy
+    networks:
+      backend:
+        interface_name: eth0
+
+volumes:
+  postgres_data:
+  prometheus_data:
+
+networks:
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${STAGING_BACKEND_SUBNET:?choose a non-overlapping private subnet}
+  egress: {}
