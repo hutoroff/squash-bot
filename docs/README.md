@@ -9,6 +9,7 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Service ownership, dependency boundaries, identity, compatibility | [Architecture](architecture.md) |
 | Implemented feature flags, disabled defaults, scope, activation, rollback | [Feature toggles](feature-toggles.md) |
 | Critical behavior and nearby tests/known gaps | [Invariants](invariants.md) |
+| Repository-local discovery/booking acceptance evidence and unresolved gates | [Acceptance matrix](service-discovery-acceptance-matrix.md) |
 | Current setup, commands, and verification limitations | [Development](development.md) |
 | Local secret/dependency checks, scope, and remediation status | [Security checks and triage](security-checks.md) |
 | Local task/review/handoff procedure and agent setup | [Agent workflow](agent-workflow.md) |
@@ -25,7 +26,7 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 ## Plans — not descriptions of completed features
 
 - [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Dependency scan results and the subsequent remediation are tracked separately; safeguards are not containment.
-- [Service discovery, registration, and monitoring](service-discovery-design.md): **partially implemented**. A/B foundations and C core are committed; subsequent lifecycle, availability UX and monitoring work includes repository-local Prometheus configuration and external Grafana templates. Actual Grafana provisioning and operational acceptance remain. Much of the §10.1 reliable management caller exists, but its explicit risk workflow and combined/cutover gates remain incomplete. Discovery does not provide multi-active replica safety.
+- [Service discovery, registration, and monitoring](service-discovery-design.md): **partially implemented**. A/B foundations and C core are committed; subsequent lifecycle, availability UX and monitoring work includes repository-local Prometheus configuration and external Grafana templates. Actual Grafana provisioning and operational acceptance remain. The §10.1 manual risk workflow is implemented locally; combined acceptance and booking cutover/operational gates remain incomplete. Discovery does not provide multi-active replica safety.
 - [Service discovery completion plan](service-discovery-implementation-plan.md): baseline `fffee2d`, verified remaining gaps and ordered implementation/acceptance steps, each ending in a local commit. Separates repository work from owner-authorized operational validation.
 - [Booking reliability and discovery preparation](booking-reliability-design.md): **P1–P7 foundations and substantial management integration are committed; production mutation cutover remains blocked**. Booking-owned persistence, keyed v2 execution/recovery/import, lifecycle, observability and discovery registration are wired. Combined acceptance, legacy inventory/import and backup/restore/cutover drills remain gates; no exactly-once provider or multi-active guarantee.
 

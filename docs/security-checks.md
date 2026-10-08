@@ -42,6 +42,10 @@ node --test scripts/checks/secrets.integration.mjs
 
 The first command uses disposable Git indexes, fake scanner responses, and synthetic files, without commits or network access; it also runs inside `make check-fast`/`make check`. The second explicitly downloads/runs pinned Gitleaks against fake tokens in an isolated temporary repository, confirms index/worktree/untracked/template/test detection, then checks clean replacements. It does not use an external account or contact a token issuer. Keep it separate from the offline edit loop.
 
+## Subsequent scan — 2026-10-08 (open findings)
+
+`make check-security` on the Step 12 acceptance candidate **fails** the locked npm audit threshold. Prospective Gitleaks passed; pinned govulncheck reported zero reachable vulnerabilities (one advisory in a required module was reported as not imported/called). The unchanged frontend lockfile now has three newly reported vulnerable packages: **high** `source-map-js@1.2.1` via Vite/PostCSS and jsdom/css-tree ([GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)), and **moderate** `vitest@4.1.4` plus `@vitest/mocker@4.1.4` ([GHSA-82fw-gwwq-j7x9](https://github.com/advisories/GHSA-82fw-gwwq-j7x9)). npm indicates fixes are available, but no dependency change or exception is part of the Step 12 test scope. Review the compatible locked update and rerun frontend build/tests, `make check`, and the unchanged security scan in a separate owner-reviewed task. The high finding is blocking under the current threshold; passing `make check` does not clear it.
+
 ## Dependency remediation — 2026-09-05
 
 The failing baseline was reproduced at `a72c400` before the owner-authorized dependency updates: **14 reachable Go advisories and 10 npm vulnerable-package findings**. With the local remediation applied, the unchanged `make check-security` reports **zero reachable Go vulnerabilities and zero npm findings at every severity**. This is a dated result for the checked source/lockfiles, not a permanent guarantee or a container/host vulnerability scan.
