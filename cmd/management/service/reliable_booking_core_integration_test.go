@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -29,6 +30,18 @@ func (*reliableCoreReadClient) CancelMatch(context.Context, string, string, stri
 }
 func (*reliableCoreReadClient) BookMatch(context.Context, string, string, string, string, string) (*BookMatchResult, error) {
 	panic("keyless create called")
+}
+
+type rejectFirstCourtBookingSave struct {
+	CourtBookingRepository
+	fail atomic.Bool
+}
+
+func (r *rejectFirstCourtBookingSave) Save(ctx context.Context, booking *models.CourtBooking) error {
+	if r.fail.Swap(false) {
+		return errors.New("synthetic local court-booking write failure")
+	}
+	return r.CourtBookingRepository.Save(ctx, booking)
 }
 
 type reliableCoreMutationClient struct {
@@ -109,9 +122,11 @@ func TestReliableBookFreeCourtsPersistsBeforeDispatchAndReplaysWithoutMutation(t
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	flakyCourtBooking := &rejectFirstCourtBookingSave{CourtBookingRepository: courtBookings}
+	flakyCourtBooking.fail.Store(true)
 	deps := bookingDeps{
 		bookingClient: &reliableCoreReadClient{}, credService: credentialService,
-		courtBookingRepo: courtBookings, logger: logger,
+		courtBookingRepo: flakyCourtBooking, logger: logger,
 		reliable: &reliableBookingDeps{intents: intentService, executor: executor, scope: testManagementBookingScope()},
 	}
 	venue.AutoBookingCourts = "1"
@@ -121,6 +136,13 @@ func TestReliableBookFreeCourtsPersistsBeforeDispatchAndReplaysWithoutMutation(t
 	first, err := bookFreeCourts(ctx, deps, venue, groupID, gameDate, "2030-01-10", "18:00", gameDate.Location(), 1, business)
 	if err != nil {
 		t.Fatalf("first booking: %v", err)
+	}
+	var afterFailedProjection int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM court_bookings WHERE credential_id = $1`, credential.ID).Scan(&afterFailedProjection); err != nil {
+		t.Fatal(err)
+	}
+	if afterFailedProjection != 0 || mutationClient.creates.Load() != 1 {
+		t.Fatalf("external success before local write failure: court rows=%d creates=%d", afterFailedProjection, mutationClient.creates.Load())
 	}
 	second, err := bookFreeCourts(ctx, deps, venue, groupID, gameDate, "2030-01-10", "18:00", gameDate.Location(), 1, business)
 	if err != nil {

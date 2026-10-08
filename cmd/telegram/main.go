@@ -199,21 +199,7 @@ func main() {
 		})
 	}
 	go func() {
-		if cfg.WebhookURL != "" {
-			opts := telegram.WebhookOptions{
-				PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
-				OnReady: func() { transportReady.Store(true) }, HTTPMetrics: httpMetrics,
-			}
-			if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
-				opts.AdmitUpdate = managementGate.Available
-			}
-			if runErr := bot.StartWebhook(ctx, opts); runErr != nil && ctx.Err() == nil {
-				slog.Warn("webhook mode unavailable, falling back to long-polling", "err", runErr)
-				bot.StartWithReady(ctx, func() { transportReady.Store(true) })
-			}
-		} else {
-			bot.StartWithReady(ctx, func() { transportReady.Store(true) })
-		}
+		runTelegramTransport(ctx, bot, *cfg, httpMetrics, managementGate.Available, transportReady.Store)
 		errCh <- nil
 	}()
 	if err := <-errCh; err != nil {
@@ -235,6 +221,34 @@ func main() {
 		slog.Error("telegram listener shutdown", "err", err)
 	}
 	slog.Info("telegram stopped")
+}
+
+// telegramTransport is the narrow startup seam for locally testing the
+// webhook-to-polling transition without starting a real Telegram session.
+type telegramTransport interface {
+	StartWebhook(context.Context, telegram.WebhookOptions) error
+	StartWithReady(context.Context, func())
+}
+
+func runTelegramTransport(ctx context.Context, bot telegramTransport, cfg config.TelegramConfig, metrics *observability.HTTPMetrics, admit func() bool, ready func(bool)) {
+	if cfg.WebhookURL != "" {
+		opts := telegram.WebhookOptions{
+			PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
+			OnReady: func() { ready(true) }, HTTPMetrics: metrics,
+		}
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			opts.AdmitUpdate = admit
+		}
+		if err := bot.StartWebhook(ctx, opts); err != nil && ctx.Err() == nil {
+			slog.Warn("webhook mode unavailable, falling back to long-polling", "err", err)
+			// A listener can fail *after* it reported ready. Polling is not safe
+			// until Telegram accepts deleteWebhook, so clear stale readiness.
+			ready(false)
+			bot.StartWithReady(ctx, func() { ready(true) })
+		}
+		return
+	}
+	bot.StartWithReady(ctx, func() { ready(true) })
 }
 
 func majorPart(v string) string {
