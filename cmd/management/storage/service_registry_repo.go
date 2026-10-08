@@ -233,6 +233,10 @@ func (r *ServiceRegistryRepo) MonitoringInstances(ctx context.Context) ([]discov
 		if err := json.Unmarshal(raw, &descriptor); err != nil {
 			return nil, fmt.Errorf("decode monitoring service instance: %w", err)
 		}
+		// The descriptor is an immutable registration snapshot; readiness is
+		// updated by heartbeats in the separate reported_state column. Use
+		// that authoritative state when counting compatible live instances.
+		descriptor.State = state
 		instances = append(instances, discovery.MonitoringInstance{Descriptor: descriptor, State: state})
 	}
 	if err := rows.Err(); err != nil {

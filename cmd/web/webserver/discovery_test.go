@@ -2,8 +2,12 @@ package webserver
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +60,62 @@ func TestWebManagementDependencyCountsPreDispatchFailure(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("pre-dispatch failure not recorded")
+	}
+}
+
+type switchableManagementResolver struct{ endpoint atomic.Value }
+
+func (s *switchableManagementResolver) Resolve(_ context.Context, _ discovery.Requirement) ([]discovery.ResolvedEndpoint, error) {
+	address := s.endpoint.Load().(string)
+	if address == "" {
+		return []discovery.ResolvedEndpoint{}, nil
+	}
+	return []discovery.ResolvedEndpoint{{API: address}}, nil
+}
+
+func TestWebSessionSurvivesManagementTargetReplacementAndOutage(t *testing.T) {
+	secret := strings.Repeat("j", 32)
+	token, err := issueJWT(secret, JWTClaims{UserID: 42, Exp: time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	endpoint := func(label string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			if r.URL.Path != "/api/v1/users" || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("m", 32) || r.Header.Get("X-Caller-User-Id") != "42" || r.Header.Get("Cookie") != "" {
+				t.Errorf("unsafe redirected request: path=%q actor=%q cookie=%q", r.URL.Path, r.Header.Get("X-Caller-User-Id"), r.Header.Get("Cookie"))
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(label))
+		}))
+	}
+	first, second := endpoint("first"), endpoint("second")
+	defer first.Close()
+	defer second.Close()
+	resolver := &switchableManagementResolver{}
+	resolver.endpoint.Store(first.URL)
+	target := NewDiscoveredManagementTarget(resolver, discovery.Requirement{ServiceKey: "management", Contract: "management-api", Major: 1})
+	auth := NewAuthHandlerWithTarget("bot", "bot", secret, target, strings.Repeat("m", 32), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewUsersHandlerWithTarget(auth, target, strings.Repeat("m", 32))
+	call := func() (int, string, string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		w := httptest.NewRecorder()
+		handler.handleListUsers(w, r)
+		return w.Code, w.Body.String(), w.Header().Get("Set-Cookie")
+	}
+	if status, body, _ := call(); status != 200 || body != "first" {
+		t.Fatalf("first %d %q", status, body)
+	}
+	resolver.endpoint.Store("")
+	if status, _, cookie := call(); status != http.StatusBadGateway || cookie != "" {
+		t.Fatalf("outage status=%d cookie=%q", status, cookie)
+	}
+	resolver.endpoint.Store(second.URL)
+	if status, body, cookie := call(); status != 200 || body != "second" || cookie != "" || requests.Load() != 2 {
+		t.Fatalf("replacement status=%d body=%q cookie=%q calls=%d", status, body, cookie, requests.Load())
 	}
 }
 
