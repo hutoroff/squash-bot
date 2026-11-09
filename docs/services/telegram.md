@@ -1,6 +1,8 @@
 # Telegram service
 
-The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access.
+The bot owns Telegram transport, command/callback handling, rendering, and in-memory conversation state. All application data operations go through management HTTP, not direct database access. A monitoring-token-protected admin listener starts before Telegram Bot API authorization and exposes local health, version, descriptor, and Prometheus metrics in both webhook and polling modes; it remains unready until polling safely begins or a webhook listener is bound and registered. Bootstrap authorization is bounded; it is separate from the optional webhook listener. Registration is independent of invocation. In static mode Telegram performs the existing release-major check against `MANAGEMENT_SERVICE_URL`. With `DISCOVERY_MODE=registry`, the admin listener and registration start first; Telegram resolves `MANAGEMENT_SERVICE_KEY` through the authenticated registry, requires the `management-api` v1 contract and `management.api` capability, and begins update consumption only after a compatible target responds. Registry mode never falls back to the static URL. After startup it makes bounded management compatibility checks. In webhook mode, a known unavailable management dependency (or local shutdown drain) rejects newly authenticated updates with retryable `503` before decoding or enqueueing; successful checks reopen admission without bot restart. Static mode preserves existing webhook admission behavior.
+
+The protected admin metrics record outbound management calls by fixed `management` target and bounded HTTP status/error, including resolution failures before dispatch (both webhook and polling modes). Webhook HTTP metrics use a constant route label, not the public webhook path; update metrics count processed, ignored, and recovered-panic outcomes with bounded update kinds. `processed` means the handler returned, **not** that management calls or Telegram replies succeeded, and an already accepted in-memory update is not durably queued. Rejected webhook requests are counted as HTTP `503`, not as processed updates.
 
 ## Entry points and test seams
 
@@ -17,7 +19,7 @@ Use nearby bot tests with HTTP/fake management dependencies. Do not start a real
 
 [Webhook mode](../../cmd/telegram/telegram/webhook.go) registers an HTTPS public URL but binds a plain HTTP listener behind a TLS proxy. Incoming secrets are compared in constant time; config validation requires a sufficiently long secret when enabling webhook mode. Graceful shutdown does not delete the webhook.
 
-Polling deletes an existing webhook before starting updates. Startup can fall back from failed webhook setup to polling. Running another process is therefore not a harmless way to inspect behavior: it can change the shared bot's transport registration.
+Polling deletes an existing webhook before starting updates. Startup can fall back from failed webhook setup to polling; if a webhook listener fails **after** it reported ready, fallback clears readiness again until polling confirms webhook deletion. A failed deletion leaves transport readiness false. `cmd/telegram/main_test.go` covers fallback and live admission-gate wiring with a fake transport, and `polling_test.go` covers fake Bot API deletion and subscription; neither starts the real bot. Running another process is therefore not a harmless way to inspect behavior: it can change the shared bot's transport registration.
 
 Updates are processed concurrently with bounded handler concurrency. `sync.Map` protects the map operations, **not mutations of wizard objects stored as pointers**. Do not assume per-user sequential delivery. Wizard state is process-local and lost on restart; there is no distributed conversation coordination.
 
@@ -28,6 +30,10 @@ Resolve the Telegram user through `resolveUser` before canonical user-keyed mana
 Admin-only callbacks must re-check rights, not trust that an earlier wizard step was authorized. Group administration comes from Telegram at runtime. Server-owner authority is managed by management, not a separate bot-local list.
 
 Private messages use user DM language preference, then Telegram `LanguageCode`, normalized to en/de/ru. Group-visible messages use group language and timezone. The user-language cache is a local optimization, not identity authority; a cold lookup can resolve identity and read the user separately.
+
+## Booking availability
+
+When an administrator selects **Edit Courts**, Telegram requests management booking readiness before offering auto-booking. For `booking_service_unavailable`, `booking_contract_incompatible`, or `booking_service_ambiguous`, it shows a localized callback notice and continues to the existing manual editor; it neither suppresses manual editing nor retries or dispatches a booking operation.
 
 ## Callback compatibility and state
 
@@ -59,4 +65,4 @@ Score input is always author:opponent, not winner:loser. Shared validation requi
 
 Management result/leaderboard requests use `/api/v1/users/{userID}/...`, not old `/players/{tgID}` routes. Use the typed `HTTPError` and existing sentinel mappings for API failures; distinguish conflict/partial success from a generic error. Verify method contracts in the client rather than copying a request shape from a stale reference.
 
-Nearby regression anchors include `commands_test.go`, `game_manage_handlers_test.go`, `venue_handlers_test.go`, `newgame_handlers_test.go`, `result_handlers_test.go`, `webhook_test.go`, and `bot_coalescer_test.go`. The dedicated [client contract tests](../../cmd/telegram/client/client_test.go) cover representative canonical identity/actor payloads, partial responses, and status mappings. These remain selected scenarios rather than exhaustive route or callback coverage. See [invariants](../invariants.md) and [verification](../development.md).
+Nearby regression anchors include `commands_test.go`, `game_manage_handlers_test.go`, `venue_handlers_test.go`, `newgame_handlers_test.go`, `result_handlers_test.go`, `webhook_test.go`, `polling_test.go` (local fake Bot API readiness/subscription only), and `bot_coalescer_test.go`. The dedicated [client contract tests](../../cmd/telegram/client/client_test.go) cover representative canonical identity/actor payloads, partial responses, and status mappings. These remain selected scenarios rather than exhaustive route or callback coverage. See [invariants](../invariants.md) and [verification](../development.md).

@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/booking/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -22,15 +25,19 @@ type Readiness struct {
 }
 
 type AdminConfig struct {
-	Addr         string
-	Secret       string
-	Version      string
-	ServiceKey   string
-	Scope        bookingapi.Scope
-	Readiness    func(context.Context) Readiness
-	Running      func() int
-	LedgerHealth func(context.Context) (storage.LedgerHealth, error)
-	Metrics      *Metrics
+	Addr          string
+	Secret        string
+	Version       string
+	ServiceKey    string
+	InstanceID    string
+	APIEndpoint   string
+	AdminEndpoint string
+	Scope         bookingapi.Scope
+	Readiness     func(context.Context) Readiness
+	Running       func() int
+	LedgerHealth  func(context.Context) (storage.LedgerHealth, error)
+	Metrics       *Metrics
+	Collectors    []prometheus.Collector
 }
 
 type Metrics struct {
@@ -41,9 +48,41 @@ type Metrics struct {
 	operationOutcomes  *prometheus.CounterVec
 }
 
+func AdminDescriptor(cfg AdminConfig) (discovery.Descriptor, error) {
+	if _, err := uuid.Parse(cfg.InstanceID); err != nil {
+		return discovery.Descriptor{}, fmt.Errorf("booking admin instance ID must be a UUID: %w", err)
+	}
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: cfg.InstanceID, ServiceKey: cfg.ServiceKey,
+		ServiceKind: "booking", Implementation: cfg.Scope.Provider, ReleaseVersion: cfg.Version,
+		Scope:     map[string]string{"facility_id": cfg.Scope.FacilityID, "facility_uuid": cfg.Scope.FacilityUUID, "facility_slug": cfg.Scope.FacilitySlug, "sport": cfg.Scope.Sport},
+		Endpoints: discovery.Endpoints{API: cfg.APIEndpoint, Admin: cfg.AdminEndpoint},
+		Contracts: []discovery.Contract{{Name: bookingapi.ContractName, Major: bookingapi.ContractMajor, Minor: 0}},
+		Capabilities: []discovery.Capability{
+			{Name: "booking.courts.list", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.slots.list", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.create", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.cancel", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.operations.get", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.operations.reconcile", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.operations.resolve", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+			{Name: "booking.import", Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor},
+		},
+		State: discovery.StateReady,
+	}
+	if err := descriptor.Validate(); err != nil {
+		return discovery.Descriptor{}, fmt.Errorf("invalid booking admin descriptor: %w", err)
+	}
+	return descriptor, nil
+}
+
 func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 	if cfg.Addr == "" || cfg.Secret == "" || cfg.Readiness == nil || cfg.Running == nil || cfg.LedgerHealth == nil {
 		return nil, nil, fmt.Errorf("booking admin address, secret, and health sources are required")
+	}
+	descriptor, err := AdminDescriptor(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
 	metrics := cfg.Metrics
 	if metrics == nil {
@@ -52,6 +91,25 @@ func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	registry.MustRegister(metrics.httpRequests, metrics.httpDuration, metrics.externalExecutions, metrics.externalDuration, metrics.operationOutcomes)
+	for _, collector := range cfg.Collectors {
+		if collector == nil {
+			return nil, nil, fmt.Errorf("booking admin collector cannot be nil")
+		}
+		if err := registry.Register(collector); err != nil {
+			return nil, nil, err
+		}
+	}
+	registry.MustRegister(
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: observability.MetricBuildInfo, Help: "Static service build identity.", ConstLabels: prometheus.Labels{"service_key": cfg.ServiceKey, "service_kind": "booking", "version": cfg.Version}}, func() float64 { return 1 }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: observability.MetricServiceReady, Help: "Whether locally owned service readiness gates pass.", ConstLabels: prometheus.Labels{"service_key": cfg.ServiceKey, "service_kind": "booking"}}, func() float64 {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if cfg.Readiness(ctx).Ready {
+				return 1
+			}
+			return 0
+		}),
+	)
 	registry.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "booking_ready", Help: "Whether all booking readiness gates pass."}, func() float64 {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -126,7 +184,9 @@ func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 		writeJSON(w, http.StatusOK, map[string]bool{"live": true})
 	})
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
-		readiness := cfg.Readiness(r.Context())
+		readyCtx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		readiness := cfg.Readiness(readyCtx)
 		status := http.StatusOK
 		if !readiness.Ready {
 			status = http.StatusServiceUnavailable
@@ -137,13 +197,7 @@ func NewAdminServer(cfg AdminConfig) (*http.Server, *Metrics, error) {
 		writeJSON(w, http.StatusOK, map[string]string{"version": cfg.Version})
 	})
 	mux.HandleFunc("GET /descriptor", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service_key": cfg.ServiceKey, "provider": cfg.Scope.Provider,
-			"facility_id": cfg.Scope.FacilityID, "facility_uuid": cfg.Scope.FacilityUUID,
-			"facility_slug": cfg.Scope.FacilitySlug, "sport": cfg.Scope.Sport,
-			"contract": "eversports-booking", "contract_major": 2,
-			"capabilities": []string{"create", "cancel", "status", "reconcile", "resolve", "import"},
-		})
+		writeJSON(w, http.StatusOK, descriptor)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 

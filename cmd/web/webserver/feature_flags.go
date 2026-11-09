@@ -12,7 +12,10 @@ import (
 type FeatureFlagsHandler struct{ mgmtClient }
 
 func NewFeatureFlagsHandler(auth *AuthHandler, mgmtURL, secret string) *FeatureFlagsHandler {
-	return &FeatureFlagsHandler{newMgmtClient(auth, mgmtURL, secret)}
+	return NewFeatureFlagsHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), secret)
+}
+func NewFeatureFlagsHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, secret string) *FeatureFlagsHandler {
+	return &FeatureFlagsHandler{newMgmtClientWithTarget(auth, target, secret)}
 }
 func (h *Handler) SetFeatureFlags(flags *FeatureFlagsHandler) { h.featureFlags = flags }
 
@@ -49,7 +52,7 @@ func (f *FeatureFlagsHandler) handle(w http.ResponseWriter, r *http.Request) {
 		f.proxy(w, r, http.MethodPatch, path, body)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, f.mgmtURL+path, nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, f.mgmtTarget.requestBaseURL()+path, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal error")
 		return

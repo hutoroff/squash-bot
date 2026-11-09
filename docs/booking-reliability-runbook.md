@@ -1,8 +1,8 @@
 # Reliable booking cutover, rollback, and recovery runbook
 
-This is the operational handoff for the implemented booking reliability foundation. It does **not** authorize a deployment or a real Eversports mutation. A static management keyed-v2 integration candidate now persists and replays durable create/cancel operations, but production mutation cutover remains blocked until the remaining [management integration gates](service-discovery-design.md#101-management-integration-with-the-reliable-booking-contract), combined review, inventory/import, and this runbook's drills pass.
+This is the operational handoff for the implemented booking reliability foundation. It does **not** authorize a deployment or a real Eversports mutation. Static and registry-routed management keyed-v2 integration candidates persist and replay durable create/cancel operations. Local fakes and disposable-DB checks are recorded in the [acceptance matrix](service-discovery-acceptance-matrix.md), but production mutation cutover remains blocked until process/operational acceptance, owner inventory/import, and this runbook's drills pass. The separate [discovery rollout handoff](service-discovery-rollout-runbook.md) sequences shadow monitoring, invocation and static keyed-v2 rollback.
 
-The booking service is replaceable but single-active. PostgreSQL and Eversports remain required dependencies; discovery registration is not implemented and is not an execution lock.
+The booking service is replaceable but single-active. PostgreSQL and Eversports remain required dependencies; optional discovery registration is implemented but is **not** execution authority or a replacement for booking's PostgreSQL singleton.
 
 ## 1. Hard gates
 
@@ -14,7 +14,7 @@ Do not begin production mutation cutover unless every item is true:
 - Active legacy provider bookings have been inventoried. Verifiable records are imported through the keyed v2 import API; unresolved gaps stay explicit and block unsafe assumptions.
 - One booking instance is configured. No rollout mechanism can overlap active executors.
 - A fresh database backup and a successful disposable restore drill exist.
-- The fake-provider restart/authority-loss drill and the repository's full checks pass on the exact candidate.
+- The fake-provider restart/authority-loss drill and the repository's full checks pass on the exact candidate; record process-level and operational gaps from the [acceptance matrix](service-discovery-acceptance-matrix.md) explicitly.
 - An owner has scheduled a mutation pause and approved the cutover.
 
 `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is an explicit startup acknowledgement that booking rejects keyless v1 mutations. Leave it unset until the management gates above pass. The acknowledgement prevents accidental startup with old assumptions; it does **not** prove management compatibility by itself.
@@ -93,11 +93,11 @@ A stale backup can omit provider effects that happened after the snapshot. After
 8. Exercise same-key replay and status using fakes or an owner-authorized non-mutating check. A real booking/cancellation requires separate explicit authorization.
 9. End the mutation pause only after management intent persistence, local result upserts, warnings/unknown handling, and cancellation ownership are observed working.
 
-Management may remain available for non-booking functions while booking is unavailable. Discovery registration can be attached later and must not change the v2 safety boundary.
+Management may remain available for non-booking functions while booking is unavailable. Optional discovery registration is already implemented and can run in shadow mode with static keyed-v2 routing; it never changes the v2 safety boundary or authorizes an unverified production switch.
 
 ## 6. Normal replacement and shutdown
 
-- Mark future discovery state draining when a registrar exists; today, stop routing callers first.
+- If shadow/registry registration is enabled, mark the existing lease draining before closing admission. Callers must stop selecting this instance, whether routing is still static or registry-based.
 - Close admission before stopping the business listener.
 - Keep the admin listener available while tracked execution drains.
 - Allow the configured execution/finalization budget to finish; do not shorten Compose grace below it.
@@ -106,6 +106,12 @@ Management may remain available for non-booking functions while booking is unava
 - On restart, recovery classifies durable evidence only and never replays provider mutations.
 
 A caller that received `202` or lost its HTTP response reads/re-submits the **same immutable key**. It must not create a new key unless the explicit, linked duplicate-risk policy has been durably authorized.
+
+### Manual duplicate-risk exception (no automatic replacement)
+
+The owner-only web-session API `POST /api/booking/operations/{id}/authorize-risk` has **no UI** and is disabled when management lacks a distinct, 32-byte-or-longer `JWT_SECRET` shared with web or reliable booking is not configured. This route requires an exact same-origin browser `Origin`, the signed session cookie, and a JSON decision with `expected_revision` (from inspection), `credential_id` (the explicitly selected credential for the **same venue**), a nonempty bounded `reason`, and `accept_duplicate_risk: true`. Management independently verifies the signed canonical user ID and current server-owner status; an internal bearer alone or a supplied actor ID is not sufficient. This is a real provider mutation path: do not use it for routine testing or a production drill without separate owner authorization.
+
+Before authorizing, inspect the original key using authenticated management operation inspection and the booking ledger, confirm possible duplicate liability, and choose an account intentionally. The policy will reject if the original executor is still active, exact scope/court/time or parent revision differs, a credentialed read can reconcile a confirmed/no-effect result, or the original manual game has begun. Scheduled risk children are allowed only within the original venue-local `[00:00, 00:05)` opening window. It never overrides cancellations. A confirmed child does **not** resolve its unknown parent: inspect/reconcile each key and retain separate provider evidence and possible liability. Concurrent matching authorization yields the existing child, never another provider dispatch; an allocated but unsubmitted child remains inspectable and recovery must not submit it later. If the HTTP response is lost, inspect the same parent and linked child before attempting anything else. Never treat `202` as a successful court booking.
 
 ## 7. Failure response
 
@@ -127,7 +133,7 @@ Stop the non-authoritative process. Do not remove the advisory lock or terminate
 
 ## 8. Rollback
 
-Preferred rollback changes routing/configuration while retaining the reliable booking binary, v2 contract, ledger, identity key, and evidence.
+Preferred rollback changes **invocation** from registry to the reviewed static **keyed-v2** URL while retaining optional shadow registration, the reliable booking binary, v2 contract, ledger, identity key, and evidence. See the [per-caller static rollback procedure](service-discovery-rollout-runbook.md#4-routing-rollback-and-incidents).
 
 If application rollback would require an old keyless booking binary or old management client:
 

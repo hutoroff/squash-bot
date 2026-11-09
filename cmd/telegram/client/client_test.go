@@ -9,7 +9,74 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+func TestTelegramManagementDependencyCoversDirectAndPreDispatchRequests(t *testing.T) {
+	metrics := observability.NewDependencyMetrics()
+	resolver, err := discovery.NewStaticResolver(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewDiscoveredObserved(resolver, discovery.Requirement{ServiceKey: "management", Contract: "management-api", Major: 1}, "test", metrics)
+	if _, err := client.GetVersion(context.Background()); !errors.Is(err, discovery.ErrNoEndpoint) {
+		t.Fatalf("pre-dispatch error = %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	client = NewObserved(server.URL, "test", metrics)
+	if _, err := client.GetNextGameForUser(context.Background(), 123); err != nil {
+		t.Fatal(err)
+	}
+	registry := prometheus.NewRegistry()
+	for _, collector := range metrics.Collectors() {
+		registry.MustRegister(collector)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundError, found204 := false, false
+	for _, family := range families {
+		if family.GetName() != observability.MetricDependencyRequestsTotal {
+			continue
+		}
+		for _, metric := range family.Metric {
+			if metric.GetCounter().GetValue() != 1 {
+				t.Fatal("request counted more than once")
+			}
+			for _, label := range metric.Label {
+				if label.GetName() == "outcome" {
+					foundError = foundError || label.GetValue() == "resolution_error"
+					found204 = found204 || label.GetValue() == "204"
+				}
+			}
+		}
+	}
+	if !foundError || !found204 {
+		t.Fatalf("predispatch=%t direct HTTP=%t", foundError, found204)
+	}
+}
+
+func TestDiscoveredClientResolvesManagementForEachRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertRequest(t, r, http.MethodGet, "/version")
+		writeJSONResponse(t, w, http.StatusOK, map[string]string{"version": "1.0.0"})
+	}))
+	defer server.Close()
+	descriptor := discovery.Descriptor{SchemaVersion: discovery.SchemaVersion, InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e07120436", ServiceKey: "management", ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: "1", Endpoints: discovery.Endpoints{API: server.URL, Admin: server.URL}, Contracts: []discovery.Contract{{Name: "management-api", Major: 1}}, Capabilities: []discovery.Capability{{Name: "management.api", Contract: "management-api", Major: 1}}, State: discovery.StateReady}
+	resolver, err := discovery.NewStaticResolver([]discovery.Descriptor{descriptor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewDiscovered(resolver, discovery.Requirement{ServiceKey: "management", Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}, "test-api-secret")
+	if version, err := client.GetVersion(context.Background()); err != nil || version != "1.0.0" {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+}
 
 func TestResolveUser_HTTPContract(t *testing.T) {
 	var got map[string]any

@@ -57,7 +57,7 @@ Four independently deployable binaries in one Go module:
 - Server-owner authority is DB-backed (`users.is_server_owner`) and enforced by `management` itself for every owner-only route (`GET /api/v1/users`, `PATCH /api/v1/users/{id}/server-owner`, `PATCH /api/v1/groups/{id}/auto-booking-allowed`, audit visibility). `web` forwards the caller's identity but never grants access on its own — a 403 from `management` is proxied verbatim. `SERVICE_ADMIN_IDS` (management-only) is a grant-only bootstrap seed applied at startup, not a live authorization source.
 - `web` additionally gates every route on a signed JWT session (`uid` claim); role changes made on the Users page take effect immediately for `GET /api/auth/me` since `is_server_owner` is always read live from `management`, never cached in the JWT.
 
-This is safe only because `management` and `booking` are never exposed to the internet — in `docker-compose.prod.yml` only `web` publishes a port; `management`, `booking`, and `postgres` are reachable exclusively over the internal Docker network. The single shared `INTERNAL_API_SECRET` is therefore the entire security boundary protecting those two services; treat it with the same care as a database password.
+This relies on `management` and `booking` never being exposed to the internet: in `docker-compose.prod.yml` only `web` publishes an ingress port; Prometheus publishes a **loopback-only** query port. `management`, `booking`, and `postgres` are reachable over the trusted external Docker bridge by other attached projects, so do not attach untrusted containers to it. The shared `INTERNAL_API_SECRET` is the coarse service-API authentication boundary; treat it like a database password.
 
 ## Quick Start
 
@@ -79,7 +79,8 @@ Edit `.env` and fill in the required values:
 TELEGRAM_BOT_TOKEN=     # from @BotFather
 TELEGRAM_BOT_NAME=      # bot username without @ (e.g. SquashBot)
 INTERNAL_API_SECRET=    # shared secret between services — generate with: openssl rand -hex 32
-JWT_SECRET=             # secret for web session tokens — generate with: openssl rand -hex 32
+MONITORING_TOKEN=       # admin health/metrics bearer, distinct from INTERNAL_API_SECRET — generate with: openssl rand -hex 32
+JWT_SECRET=             # web session signing; management also verifies this for owner-only booking-risk decisions; distinct from INTERNAL_API_SECRET — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
 
@@ -91,7 +92,7 @@ TIMEZONE=UTC
 docker-compose up --build
 ```
 
-Migrations run automatically on startup.
+Migrations run automatically on startup. The `booking` container also needs the booking variables from the `booking` section of `.env.example`; until they are set it exits and restarts while the other services run normally.
 
 ### 3. Add the bot to your group
 
@@ -275,9 +276,13 @@ ghcr.io/<github_owner>/squash-booking-eversports:<version>
 ghcr.io/<github_owner>/squash-web:<version>
 ```
 
+## Dedicated staging (no application image release)
+
+For an explicitly authorized deployment to a **separate staging host with a clean checkout**, [the staging procedure](docs/staging-deployment.md) describes a one-command local image build and isolated Compose startup. It does not push to Docker Hub; management-driven booking is disabled and the booking container has no outbound route. It requires a separate staging bot (startup contacts Telegram), private configuration outside the checkout, and an operator review; it is **not** a production-cutover or live Step 14 acceptance procedure. Do not run the production or development Compose project as an ad hoc staging deployment.
+
 ## Production Deployment
 
-The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built images from Docker Hub instead of building from source. All four services and PostgreSQL run on a single server.
+The project ships a dedicated `docker-compose.prod.yml` for production that uses pre-built application images from Docker Hub instead of building from source. All four services, PostgreSQL and a pinned Prometheus image run on a single server. Production Compose requires an operator-created external bridge; see [Prometheus and network setup](monitoring/prometheus/README.md) before any authorized rollout. The local-development Compose file remains isolated.
 
 ### Server setup
 
@@ -289,15 +294,18 @@ systemctl enable docker
 # 2. Create the project directory
 mkdir -p /opt/squash-bot && cd /opt/squash-bot
 
-# 3. Copy docker-compose.prod.yml and create .env from .env.example
-#    Fill in all required values. Generate secrets:
+# 3. Copy docker-compose.prod.yml, monitoring/prometheus/prometheus.yml and
+#    create .env from .env.example. Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
+openssl rand -hex 32   # → MONITORING_TOKEN (admin/Prometheus bearer; must differ from INTERNAL_API_SECRET)
 openssl rand -hex 32   # → POSTGRES_PASSWORD
 openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 # Also set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only token from
 # https://hub.docker.com/settings/security) — required by Watchtower to pull images.
 
-# 4. Lock down the .env file
+# 4. Lock down .env; before rollout, create the external network and the private
+#    PROMETHEUS_TOKEN_FILE (matching MONITORING_TOKEN) per the setup guide.
+#    `docker compose config --quiet` fails with a named variable if a required one is missing.
 chmod 600 .env
 
 # 5. Pull images and start only a mutually compatible release set.
@@ -316,10 +324,12 @@ Variables required by `docker-compose.prod.yml` in addition to the per-service o
 | `DOCKERHUB_TOKEN` | Yes | Read-only Docker Hub token used by Watchtower to pull updated images. |
 | `MANAGEMENT_VERSION`, `TELEGRAM_VERSION`, `BOOKING_VERSION`, `WEB_VERSION` | No | Image tag per service; default `stable`. |
 | `TELEGRAM_SERVER_PORT` | No | Telegram webhook listener port inside the container; default `8083`. |
+| `PROMETHEUS_TOKEN_FILE` | Yes | Absolute host path to a private file holding exactly `MONITORING_TOKEN`; Compose refuses to start without it. See [Prometheus setup](monitoring/prometheus/README.md). |
+| `PROMETHEUS_HOST_PORT`, `PROMETHEUS_RETENTION_SIZE` | No | Loopback-only Prometheus port and TSDB size cap; defaults `9090` and `4GB`. |
 
-Prod compose sets `DATABASE_URL`, `BOOKING_DATABASE_URL`, `MANAGEMENT_SERVICE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`) and `LOG_DIR` itself; values for those in `.env` are ignored there.
+Prod compose sets `DATABASE_URL`, `BOOKING_DATABASE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`), `ADMIN_PORT`/`BOOKING_ADMIN_PORT`, `SERVICE_KEY`, `LOG_DIR` and booking's `BOOKING_MONITORING_SECRET` (copied from `MONITORING_TOKEN`) itself; values for those in `.env` are ignored there. `MANAGEMENT_SERVICE_URL` defaults to `http://management:8080`, `DISCOVERY_NETWORK_INTERFACE` to `eth0` and `DISCOVERY_ALLOWED_CIDRS` to `172.30.90.0/24` unless overridden.
 
-Migrations run automatically on first startup. **Current reliability work is still not production-cutover ready:** management's static keyed-v2 create/cancel, durable intent, status recovery, typed failure handling, origin binding, and internal inspection/reconciliation plumbing are implemented, but the remaining management acceptance gates, legacy inventory/import drill, bounded operator notifications/metrics, and independent rollout review are not complete. `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is required whenever `SPORTS_BOOKING_SERVICE_URL` enables this path; it only acknowledges that keyless mutations are forbidden and does not replace the [cutover runbook](docs/booking-reliability-runbook.md). Do not promote the candidate until those hard gates pass. Once a compatible release set is approved, verify everything is healthy:
+Migrations run automatically on first startup. **The repository-local discovery/reliable-booking candidate is not production-cutover ready:** keyed-v2 management create/cancel, durable intent and risk authorization, status recovery, typed failures, origin binding, and bounded operator notifications/metrics are implemented and have [synthetic acceptance evidence](docs/service-discovery-acceptance-matrix.md). Cross-service operational validation, legacy inventory/import, a whole-database backup/disposable restore and independent rollout approval remain open. `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is required whenever management enables booking through a static URL **or** a registry booking key; it only acknowledges that keyless mutations are forbidden. Follow both the [booking runbook](docs/booking-reliability-runbook.md) and [discovery rollout handoff](docs/service-discovery-rollout-runbook.md) before any owner-authorized cutover. Do not promote the candidate until those hard gates pass. Once a compatible release set is approved, verify everything is healthy:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
@@ -340,7 +350,7 @@ Deployments follow a two-step process — release, then promote:
 
 3. **Auto-deploy** — [Watchtower](https://containrrr.dev/watchtower/) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
 
-`postgres` and `db-backup` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
+`postgres`, `db-backup` and pinned `prometheus` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
 
 ### Database backups
 
@@ -359,6 +369,10 @@ docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
 ```
 
 ### Health monitoring
+
+Production Compose includes Prometheus, scraping management statically and the remaining registered services via authenticated HTTP service discovery. Its query listener binds to host loopback only; it does **not** provision or connect the external Grafana instance. Follow the [staged shadow-monitoring, per-caller cutover and rollback handoff](docs/service-discovery-rollout-runbook.md) alongside [network, token-file, retention and synthetic verification](monitoring/prometheus/README.md) and [external Grafana dashboard/alert templates and secure query guidance](monitoring/grafana/README.md) before rollout. Grafana is **not** provisioned by Compose; confirm the installed Grafana version before using those templates. Prometheus/Grafana alerting is not a replacement for the existing fallback until end-to-end notification testing is authorized and complete.
+
+To connect an existing Grafana instance, follow [the step-by-step Grafana setup](monitoring/grafana/README.md#configuring-grafana-for-this-service): provision the `Squash Prometheus` data source, the `Squash Bot / Service health` dashboard, the `squash-service-health` alert rule group and a Telegram contact point from the files in `monitoring/grafana/`, using Grafana-side variables for the Prometheus URL and the separate monitoring bot. The notification policy route is merged into the existing tree by hand, never provisioned as a whole file.
 
 `scripts/healthcheck.sh` checks management liveness and booking's monitoring-authenticated admin readiness, then sends a Telegram alert if a service is down. The booking monitoring token expands only inside its container. Install the script in cron:
 
@@ -409,6 +423,8 @@ Guest spots count toward capacity.
 
 ## Environment Variables
 
+All services accept optional shadow registration through `DISCOVERY_URL`. `DISCOVERY_MODE` defaults to `static`; production Compose supplies the same `.env` value to management, Telegram and web, so **one-class-at-a-time** rollout/rollback needs a reviewed per-service override or separate projects and rendered-config verification—do not flip the shared value globally first. In `registry` mode management resolves booking by `BOOKING_SERVICE_KEY`, while Telegram and web resolve management by `MANAGEMENT_SERVICE_KEY`. Static target URLs must be empty in registry mode and are never fallback targets. Resolvers enforce contract/capability/scope compatibility, reject multiple active instances, cache only within registry leases, and force rediscovery after transport failures without automatically replaying mutations. `SERVICE_ADVERTISE_HOST` may provide an explicit non-loopback instance IP; otherwise `DISCOVERY_NETWORK_INTERFACE` selects the container interface. Management bounds registrations to `DISCOVERY_ALLOWED_CIDRS`. Registry unavailability does not stop otherwise healthy services, and it never enables a legacy booking fallback.
+
 ### management
 
 | Variable               | Required | Default           | Description                                         |
@@ -417,13 +433,20 @@ Guest spots count toward capacity.
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
 | `INTERNAL_API_SECRET`  | Yes      | —                 | Shared secret that the telegram and web services present when calling management; at least 32 characters (the service refuses to start otherwise); generate with `openssl rand -hex 32` |
 | `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
+| `ADMIN_PORT`           | No       | `9090`            | Internal admin health/descriptor/metrics listener; do not publish externally. |
+| `MONITORING_TOKEN`     | Yes      | —                 | Monitoring-only bearer for every admin route; at least 32 characters and different from `INTERNAL_API_SECRET`. |
+| `SERVICE_KEY`          | No       | `management`      | Stable logical identity advertised by the admin descriptor. |
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables only the durable keyed-v2 create/cancel integration; no v1 mutation fallback exists. |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | `static` uses `SPORTS_BOOKING_SERVICE_URL`; `registry` requires the registry bootstrap URL and uses `BOOKING_SERVICE_KEY`. |
+| `DISCOVERY_ALLOWED_CIDRS` | No | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Networks from which registry registrations are accepted. Production Compose narrows it to `172.30.90.0/24`, the external bridge subnet. |
+| `MONITORED_SERVICE_KEYS` | No | management, telegram, web | JSON array of expected singleton bindings exported as registry health metrics; the configured booking binding is appended automatically. See [registry inventory health](docs/services/management.md#registry-inventory-health). |
+| `SPORTS_BOOKING_SERVICE_URL` | In static mode to enable booking | _(empty)_ | Base URL of the booking service (e.g. `http://booking:8081`); enables only durable keyed-v2 create/cancel integration and must be empty in registry mode. |
 | `BOOKING_SERVICE_KEY` / `EVERSPORTS_FACILITY_ID` / `EVERSPORTS_FACILITY_UUID` / `EVERSPORTS_FACILITY_SLUG` | When booking enabled | — | Must match booking's immutable provider/facility binding. Existing operations fail closed rather than being sent to a changed binding. |
 | `BOOKING_RELIABLE_CUTOVER_ACK` | When booking enabled | — | Must equal `keyed-v2-only`; acknowledges that keyless mutation traffic is rejected, not that rollout gates passed. |
+| `JWT_SECRET` | No | _(empty)_ | Same value as the web service. Lets management verify web sessions for the owner-only manual booking-risk route; when unset that route stays disabled. Must differ from `INTERNAL_API_SECRET` when booking is enabled. |
 | `MANAGEMENT_BOOKING_RESPONSE_WAIT` | No | `8s` | Bounded foreground wait/status-observation budget after keyed admission. |
 | `MANAGEMENT_BOOKING_STATUS_POLL` | No | `200ms` | Poll interval while a v2 operation remains accepted/running. |
 | `CREDENTIALS_ENCRYPTION_KEY` | When booking enabled | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
@@ -437,7 +460,9 @@ Guest spots count toward capacity.
 | Variable                 | Required | Default           | Description                                         |
 |--------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://management:8080`) |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | Select static URL routing or authenticated registry resolution. |
+| `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
+| `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service; at least 32 characters |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
@@ -445,6 +470,9 @@ Guest spots count toward capacity.
 | `TELEGRAM_WEBHOOK_URL`   | No       | _(empty)_         | Full public HTTPS URL Telegram should POST updates to (e.g. `https://example.com/telegram/webhook`). When set, the bot uses webhook mode instead of long-polling. |
 | `TELEGRAM_WEBHOOK_SECRET`| In webhook mode | _(empty)_   | Secret sent as `X-Telegram-Bot-Api-Secret-Token` and validated on every incoming webhook request. Required (at least 16 characters) when `TELEGRAM_WEBHOOK_URL` is set. Generate with `openssl rand -hex 32`. |
 | `SERVER_PORT`            | No       | `8083`            | Local plain-HTTP port the webhook listener binds to (webhook mode only). A TLS-terminating reverse proxy should forward `TELEGRAM_WEBHOOK_URL` traffic to `telegram:<SERVER_PORT>` on the internal network. |
+| `ADMIN_PORT`             | No       | `9090`            | Internal admin listener, also available in polling mode. |
+| `MONITORING_TOKEN`       | Yes      | —                 | Monitoring-only bearer for admin health, descriptor, version, and metrics routes. |
+| `SERVICE_KEY`            | No       | `telegram`        | Stable logical identity advertised by the admin descriptor. |
 
 > **Webhook mode:** set `TELEGRAM_WEBHOOK_URL` to a public `https://…` URL and point your reverse proxy to `telegram:<SERVER_PORT>` (no public port mapping needed — the proxy terminates TLS). Generate the secret with `openssl rand -hex 32`. Leave `TELEGRAM_WEBHOOK_URL` empty to fall back to long-polling. In `docker-compose.prod.yml`, set the port via `TELEGRAM_SERVER_PORT` (mapped to the telegram container's `SERVER_PORT`); a bare `SERVER_PORT` in the shared `.env` is not passed through there.
 
@@ -458,10 +486,15 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 |--------------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
-| `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
+| `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | Select static URL routing or authenticated registry resolution. |
+| `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
+| `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service (at least 32 characters); used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
-| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); at least 32 characters (the service refuses to start otherwise); generate with `openssl rand -hex 32` |
+| `JWT_SECRET`             | Yes      | —       | Signs web sessions (HS256 JWT, 7-day expiry; canonical `uid`, never a Telegram ID). At least 32 characters and distinct from `INTERNAL_API_SECRET`; generate with `openssl rand -hex 32`. Share the same value with management for the manual booking-risk route. |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
+| `ADMIN_PORT`             | No       | `9090`  | Internal admin health/descriptor/metrics listener; do not publish externally. |
+| `MONITORING_TOKEN`       | Yes      | —       | Monitoring-only bearer for every admin route. |
+| `SERVICE_KEY`            | No       | `web`   | Stable logical identity advertised by the admin descriptor. |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
 | `LOG_DIR`                | No       | _(empty)_ | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`   | Timezone for date formatting                                                                                            |
@@ -483,11 +516,11 @@ A single 5-minute poll (configured via `CRON_POLL`) runs the following tasks, ea
 
 Each job has its own eligibility and deduplication rules; `game_days` does not gate every job. Auto-booking checks existing results by venue/date/time; `last_auto_booking_at` records successful activity rather than gating execution. Other jobs use venue timestamps, game completion/check flags, or result status. These guards do not guarantee exactly-once external operations across concurrent instances or crashes.
 
-**Auto-booking**: fires at midnight in each group's timezone when the target date (`today + booking_opens_days`) matches configured game days. Requires `SPORTS_BOOKING_SERVICE_URL`, group permission, an enabled squash venue with courts/preferred time slots, a positive `auto_booking_courts_count`, and usable per-venue credentials. Processes every preferred slot independently, skipping slots with an existing result or a failed dedup lookup. It attempts up to `auto_booking_courts_count` courts per slot; `auto_booking_courts` optionally controls court preference order. Successful slots save an `auto_booking_results` row and **immediately create an unpublished game** (`message_id = NULL`) linked to it. Admins see the game in `/games` (marked `📝`) before publication. `last_auto_booking_at` is updated after any booked slot. Success and several failure summaries are silent admin DMs; missing/failed credentials have distinct audible notifications. External booking and local persistence are not one transaction; see [booking failure semantics](docs/services/management-scheduling.md#booking-and-publication-lifecycle).
+**Auto-booking**: fires at midnight in each group's timezone when the target date (`today + booking_opens_days`) matches configured game days. Requires a configured keyed booking binding (static URL or registry key), group permission, an enabled squash venue with courts/preferred time slots, a positive `auto_booking_courts_count`, and usable per-venue credentials. Processes every preferred slot independently, skipping slots with an existing result or a failed dedup lookup. It attempts up to `auto_booking_courts_count` courts per slot; `auto_booking_courts` optionally controls court preference order. Successful slots save an `auto_booking_results` row and **immediately create an unpublished game** (`message_id = NULL`) linked to it. Admins see the game in `/games` (marked `📝`) before publication. `last_auto_booking_at` is updated after any booked slot. Success and several failure summaries are silent admin DMs; missing/failed credentials have distinct audible notifications. External booking and local persistence are not one transaction; see [booking failure semantics](docs/services/management-scheduling.md#booking-and-publication-lifecycle).
 
 **Halfway court check**: fires on the first poll at or after the venue's Web-only preventive cancellation point: 1/3, 1/2 (default), or 2/3 of the interval from booking opening to the grace-period deadline (`game_date - venue.grace_period_hours`). Booking opening is local midnight on the game's calendar date minus `booking_opens_days`, in the group's timezone. Releases half (rounded down) of the currently-unneeded courts. Deduped via `halfway_court_check_done` flag. Reuses the same court-selection and cancellation logic as the cancellation reminder below. Skipped (without marking done) until the game has at least one active court booking, so it's retried automatically once auto-booking runs. Sends a group notification only when courts were actually canceled; cancellation failures DM group admins. The cancellation reminder (below) and a final check just before the grace-period deadline are unaffected and still clean up any remaining excess courts closer to the game.
 
-**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When `SPORTS_BOOKING_SERVICE_URL` is configured, automatically cancels fully-unused units using the game's snapshotted players-per-unit before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback. Notifications report the remaining free spots and the sport's unit noun.
+**Cancellation reminder**: fires when `now ≈ game_date - (venue.grace_period_hours + 6h)`. Deduped via `notified_day_before` flag. When the keyed booking binding is configured, automatically cancels fully-unused units using the game's snapshotted players-per-unit before notifying. When a game is linked to a specific auto-booking result (via `game_id`), only the court bookings for that time slot are considered — so two same-day sessions each cancel only their own courts. Courts to cancel are selected in two phases: **phase 1** — if `auto_booking_courts` is configured, iterate it in reverse (lowest-priority first) and pick booked courts up to the cancel target; **phase 2** — for any remaining slots not covered by phase 1, apply a consecutive-grouping fallback. Notifications report the remaining free spots and the sport's unit noun.
 
 **Booking reminder**: fires at 10 AM in each group's timezone on configured game days (`venue.game_days`). Deduped via `venue.last_booking_reminder_at` (one per calendar day per venue). For venues with auto-booking enabled: fetches all `auto_booking_results` for the target date. For each result with a linked game: if the game is still unpublished (`message_id = NULL`), **publishes it** (sends pinned announcement, sets `message_id`); if already published, skips. If the game record is missing (DB error), falls back to a DM to group admins. If no results exist (auto-booking didn't run or failed), DMs all group admins with a booking reminder instead. For venues without auto-booking: checks whether a game already exists on the target date; if so, skips silently; otherwise DMs group admins.
 
@@ -512,7 +545,7 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 
 **booking** exposes a keyed reliable v2 API on port 8081 and a separately authenticated internal admin listener on port 9091. It owns a PostgreSQL operation/evidence ledger and singleton execution authority while keeping provider credentials/sessions bounded and memory-only. There is no service-level default account, no safe keyless mutation fallback, and no multi-active guarantee.
 
-See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API/configuration and the [reliable booking runbook](docs/booking-reliability-runbook.md) for backup, cutover, rollback, and incident handling. Management v2 integration is still mandatory before production mutation cutover.
+See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API/configuration and the [reliable booking runbook](docs/booking-reliability-runbook.md) for backup, cutover, rollback, and incident handling. Management's keyed-v2 integration exists locally; the [operational acceptance and booking hard gates](docs/service-discovery-rollout-runbook.md) still block production mutation cutover.
 
 ## Project Structure
 

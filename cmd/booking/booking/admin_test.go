@@ -14,7 +14,8 @@ import (
 func TestAdminServerRequiresSeparateBearerAndReportsReadiness(t *testing.T) {
 	ready := false
 	srv, _, err := NewAdminServer(AdminConfig{
-		Addr: ":9091", Secret: "monitoring-secret", Version: "1.2.3", ServiceKey: "booking.primary",
+		Addr: ":9091", Secret: "monitoring-secret", Version: "1.2.3", ServiceKey: "booking.primary", InstanceID: "0195f8db-7a6f-7c7b-8f71-0f6e0712042e",
+		APIEndpoint: "http://booking:8081", AdminEndpoint: "http://booking:9091",
 		Scope: bookingapi.Scope{Provider: "eversports", FacilityID: "facility", FacilityUUID: "uuid", FacilitySlug: "slug", Sport: "squash"},
 		Readiness: func(context.Context) Readiness {
 			return Readiness{Ready: ready, Database: true, Singleton: ready, Coordinator: ready}
@@ -48,7 +49,7 @@ func TestAdminServerRequiresSeparateBearerAndReportsReadiness(t *testing.T) {
 		t.Fatalf("ready status = %d, want 200", got)
 	}
 	descriptor := request("/descriptor", true)
-	if descriptor.Code != http.StatusOK || strings.Contains(descriptor.Body.String(), "secret") || !strings.Contains(descriptor.Body.String(), `"contract_major":2`) {
+	if descriptor.Code != http.StatusOK || strings.Contains(descriptor.Body.String(), "secret") || !strings.Contains(descriptor.Body.String(), `"contracts":[{"name":"eversports-booking","major":2`) {
 		t.Fatalf("descriptor = %d %s", descriptor.Code, descriptor.Body.String())
 	}
 	metrics := request("/metrics", true)

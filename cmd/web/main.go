@@ -8,12 +8,17 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/web/webserver"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	squashweb "github.com/hutoroff/squash-bot/web"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -56,31 +61,109 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
+	var businessListening, draining atomic.Bool
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
-	auth := webserver.NewAuthHandler(
-		cfg.TelegramBotToken,
-		cfg.TelegramBotName,
-		cfg.JWTSecret,
-		cfg.ManagementServiceURL,
-		cfg.InternalAPISecret,
-		logger,
-	)
-	games := webserver.NewGamesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	audit := webserver.NewAuditHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	groups := webserver.NewGroupsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	venues := webserver.NewVenuesHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	prefs := webserver.NewPrefsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
-	users := webserver.NewUsersHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	dependencyMetrics := observability.NewDependencyMetrics()
+	managementTarget := webserver.NewStaticManagementTarget(cfg.ManagementServiceURL)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
+		if resolverErr != nil {
+			slog.Error("configure management discovery", "err", resolverErr)
+			os.Exit(1)
+		}
+		requirement := discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}
+		if activateErr := resolver.Activate(ctx, requirement); activateErr != nil {
+			slog.Error("activate management discovery", "err", activateErr)
+			os.Exit(1)
+		}
+		managementTarget = webserver.NewDiscoveredManagementTarget(resolver, requirement)
+	}
+	managementTarget.SetDependencyMetrics(dependencyMetrics)
+	auth := webserver.NewAuthHandlerWithTarget(cfg.TelegramBotToken, cfg.TelegramBotName, cfg.JWTSecret, managementTarget, cfg.InternalAPISecret, logger)
+	games := webserver.NewGamesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	audit := webserver.NewAuditHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	groups := webserver.NewGroupsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	venues := webserver.NewVenuesHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	prefs := webserver.NewPrefsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
+	users := webserver.NewUsersHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret)
 	h := webserver.NewHandler(distFS, Version, logger, auth, games, audit, groups, venues, prefs, users)
-	h.SetFeatureFlags(webserver.NewFeatureFlagsHandler(auth, cfg.ManagementServiceURL, cfg.InternalAPISecret))
-	srv := webserver.NewServer(":"+cfg.ServerPort, h)
-
-	slog.Info("web starting", "port", cfg.ServerPort, "version", Version)
-	if err := webserver.Run(ctx, srv, logger); err != nil {
-		slog.Error("HTTP server error", "err", err)
+	h.SetFeatureFlags(webserver.NewFeatureFlagsHandlerWithTarget(auth, managementTarget, cfg.InternalAPISecret))
+	httpMetrics := observability.NewHTTPMetrics()
+	srv := webserver.NewObservedServer(":"+cfg.ServerPort, h, httpMetrics)
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "web", Implementation: "squash-web", ReleaseVersion: Version,
+		Endpoints: discovery.Endpoints{API: "http://web:" + cfg.ServerPort, Admin: "http://web:" + cfg.AdminServerPort},
+		Contracts: []discovery.Contract{{Name: "web-api", Major: 1, Minor: 0}}, State: discovery.StateReady,
+	}
+	registryURL := cfg.DiscoveryURL
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
+		}
+	}
+	localReady := func(context.Context) bool { return businessListening.Load() && !draining.Load() }
+	registrationMetrics := observability.NewRegistrationMetrics()
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
+		Readiness: func(context.Context) observability.Readiness {
+			listening := businessListening.Load()
+			return observability.Readiness{Ready: listening && !draining.Load(), Checks: map[string]bool{"business_listener": listening, "draining": !draining.Load()}}
+		}, Collectors: append(append([]prometheus.Collector{registrationMetrics}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...),
+	})
+	if err != nil {
+		slog.Error("configure web admin listener", "err", err)
 		os.Exit(1)
+	}
+
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger, registrationMetrics)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	lifecycleRef.Store(lifecycle)
+	defer discovery.ShutdownLifecycle(lifecycle)
+
+	slog.Info("web starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- webserver.RunWithReady(ctx, srv, logger, func() {
+			businessListening.Store(true)
+		})
+	}()
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
+	if err := <-errCh; err != nil {
+		slog.Error("web listener stopped", "err", err)
+		draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycle)
+		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
+		<-errCh
+		os.Exit(1)
+	}
+	draining.Store(true)
+	discovery.BeginDrainLifecycle(lifecycle)
+	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
+	if err := <-errCh; err != nil {
+		slog.Error("web listener shutdown", "err", err)
 	}
 	slog.Info("web stopped")
 }

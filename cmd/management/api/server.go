@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // defaultCredentialErrorCooldown is used when the caller does not pass an explicit cooldown.
@@ -44,8 +46,13 @@ type Handler struct {
 	bookingMetrics          interface {
 		GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
 	}
-	reliableBooking *service.ReliableBookingExecutor
-	bookingScope    bookingapi.Scope
+	reliableBooking   *service.ReliableBookingExecutor
+	bookingScope      bookingapi.Scope
+	riskSessionSecret string
+	riskBooking       interface {
+		AuthorizeAndDispatch(context.Context, bookingapi.OperationID, int64, int64, int64, string) (*models.ManagementBookingOperation, bool, error)
+	}
+	serviceRegistry *service.ServiceRegistryService
 }
 
 func NewHandler(
@@ -85,6 +92,15 @@ func NewHandler(
 	}
 }
 
+// SetRiskSessionSecret enables verification of a web-signed actor identity at
+// the risk authorization boundary. It does not enable any risk policy by itself.
+func (h *Handler) SetRiskSessionSecret(secret string)                     { h.riskSessionSecret = secret }
+func (h *Handler) SetRiskBookingService(risk *service.RiskBookingService) { h.riskBooking = risk }
+
+func (h *Handler) SetServiceRegistry(registry *service.ServiceRegistryService) {
+	h.serviceRegistry = registry
+}
+
 func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService, metrics interface {
 	GetMetrics(context.Context) (*models.ManagementBookingMetrics, error)
 }, executor *service.ReliableBookingExecutor, scope bookingapi.Scope) {
@@ -97,6 +113,13 @@ func (h *Handler) SetReliableBookingAdmin(intents *service.BookingIntentService,
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /version", h.getVersion)
+	mux.HandleFunc("PUT /internal/discovery/v1/instances/{instance_id}", h.registerServiceInstance)
+	mux.HandleFunc("POST /internal/discovery/v1/instances/{instance_id}/heartbeat", h.heartbeatServiceInstance)
+	mux.HandleFunc("POST /internal/discovery/v1/instances/{instance_id}/drain", h.drainServiceInstance)
+	mux.HandleFunc("DELETE /internal/discovery/v1/instances/{instance_id}", h.deregisterServiceInstance)
+	mux.HandleFunc("GET /internal/discovery/v1/resolve", h.resolveServiceInstances)
+	mux.HandleFunc("GET /internal/discovery/v1/catalog", h.getServiceCatalog)
+	mux.HandleFunc("GET /internal/discovery/v1/prometheus-targets", h.getPrometheusTargets)
 
 	// Games
 	mux.HandleFunc("POST /api/v1/games", h.createGame)
@@ -112,6 +135,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /internal/booking/operations/{id}", h.getBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/reconcile", h.reconcileBookingOperation)
 	mux.HandleFunc("POST /internal/booking/operations/{id}/resolution", h.resolveBookingOperation)
+	mux.HandleFunc("POST /api/v1/booking/operations/{id}/authorize-risk", h.authorizeBookingRisk)
 	// Participations
 	mux.HandleFunc("POST /api/v1/games/{id}/join", h.joinGame)
 	mux.HandleFunc("POST /api/v1/games/{id}/skip", h.skipGame)
@@ -181,12 +205,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 // NewServer builds an http.Server with the handler's routes registered.
 // secret is the shared bearer token; all routes except /health and /version require it.
-func NewServer(addr string, h *Handler, secret string) *http.Server {
+func NewServer(addr string, h *Handler, secret, monitoringToken string) *http.Server {
+	return NewObservedServer(addr, h, secret, monitoringToken, nil)
+}
+
+func NewObservedServer(addr string, h *Handler, secret, monitoringToken string, metrics *observability.HTTPMetrics) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	var routes http.Handler = requireManagementBearer(secret, monitoringToken, mux)
+	if metrics != nil {
+		routes = metrics.WrapMuxHandler(mux, routes)
+	}
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(requireBearer(secret, mux)),
+		Handler:      limitRequestBody(routes),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -207,15 +239,26 @@ func limitRequestBody(next http.Handler) http.Handler {
 // The /health and /version endpoints are exempt so container health checks and version
 // probes work without credentials.
 // Comparison is constant-time to prevent timing-based secret oracle attacks.
+// requireBearer remains the single-token wrapper used by focused route tests.
 func requireBearer(secret string, next http.Handler) http.Handler {
+	return requireManagementBearer(secret, secret, next)
+}
+
+func requireManagementBearer(secret, monitoringToken string, next http.Handler) http.Handler {
 	expected := []byte("Bearer " + secret)
+	monitoringExpected := []byte("Bearer " + monitoringToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" || r.URL.Path == "/version" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, expected) != 1 {
+		if r.URL.Path == "/internal/discovery/v1/prometheus-targets" {
+			if subtle.ConstantTimeCompare(got, monitoringExpected) != 1 {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+		} else if subtle.ConstantTimeCompare(got, expected) != 1 {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -254,17 +297,31 @@ func decodeJSON(r *http.Request, v any) error {
 
 // Run starts the server and blocks until ctx is cancelled, then gracefully shuts down.
 func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
+	return RunWithReady(ctx, srv, logger, nil)
+}
+
+// RunWithReady invokes listening after the TCP listener is successfully bound,
+// before serving requests. It lets local readiness distinguish a constructed
+// server from a process that can actually accept business traffic.
+func RunWithReady(ctx context.Context, srv *http.Server, logger *slog.Logger, listening func()) error {
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("HTTP server listening", "addr", listener.Addr().String())
+	if listening != nil {
+		listening()
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		if serveErr := srv.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
 		}
 	}()
 
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr := <-errCh:
+		return serveErr
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

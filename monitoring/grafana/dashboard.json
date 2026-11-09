@@ -1,0 +1,793 @@
+{
+  "uid": "squash-service-discovery",
+  "title": "Squash Bot / Service health",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": [
+    "squash-bot",
+    "discovery"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Expected and ready instances",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "squash_service_expected_instances",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_service_live_instances",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "Management inventory remains present for never-registered services."
+    },
+    {
+      "id": 2,
+      "title": "Scrape success and service readiness",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "up",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_service_ready",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "Missing discovered up series does not mean healthy; check inventory."
+    },
+    {
+      "id": 3,
+      "title": "Build versions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "squash_build_info",
+          "refId": "A",
+          "legendFormat": "{{service_key}} {{version}}"
+        }
+      ],
+      "description": "Version is only a label on build info."
+    },
+    {
+      "id": 4,
+      "title": "Lease / registry storage",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "squash_discovery_registration_success",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_registry_storage_healthy",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 5,
+      "title": "Last registration age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - (squash_discovery_last_success_timestamp_seconds > 0)",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "No series means no successful registration yet; see expected/live inventory."
+    },
+    {
+      "id": 6,
+      "title": "HTTP failures (application and booking)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (job, status) (increase(squash_http_requests_total{status=~\"5..\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "sum by (job, status) (increase(booking_http_requests_total{status=~\"5..\"}[5m]))",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 7,
+      "title": "HTTP p95 latency",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(squash_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(booking_http_request_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 8,
+      "title": "Dependency failures",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (job, target, outcome) (increase(squash_dependency_requests_total{outcome=~\"transport_error|resolution_error|5..\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 9,
+      "title": "Provider execution outcomes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (kind, outcome) (increase(booking_external_executions_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "Counter resets on restart; use durable unresolved panels too."
+    },
+    {
+      "id": 10,
+      "title": "Durable unknown / pending",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "booking_operations_unknown",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_management_booking_operations{state=\"outcome_unknown\"}",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_management_booking_pending_notifications",
+          "refId": "C",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 11,
+      "title": "Oldest unresolved age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "booking_oldest_unknown_age_seconds",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_management_booking_oldest_pending_age_seconds",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 12,
+      "title": "Booking storage / risk",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "squash_management_booking_storage_healthy",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "booking_database_healthy",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_management_booking_risk_authorized",
+          "refId": "C",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "booking_risk_replacements",
+          "refId": "D",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "Booking database health is process readiness; ledger-read errors can yield zero, not proof of no unknowns."
+    },
+    {
+      "id": 13,
+      "title": "Scheduler last completion age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - squash_scheduler_last_completed_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "The application scheduler job label is exported_job; job remains management."
+    },
+    {
+      "id": 14,
+      "title": "Scheduler outcomes / interval",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exported_job, outcome) (increase(squash_scheduler_runs_total[30m]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "squash_scheduler_poll_interval_seconds",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": "Unclassified is not business success."
+    },
+    {
+      "id": 15,
+      "title": "Go/process memory",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "go_memstats_heap_alloc_bytes",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "process_resident_memory_bytes",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 16,
+      "title": "Goroutines / Prometheus health",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "go_goroutines",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "prometheus_tsdb_head_series",
+          "refId": "B",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        },
+        {
+          "expr": "up{job=\"prometheus\"}",
+          "refId": "C",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 17,
+      "title": "Dependency p95 latency",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job, target) (rate(squash_dependency_request_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 18,
+      "title": "Provider execution p95 latency",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(booking_external_execution_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 19,
+      "title": "Telegram update outcomes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (kind, outcome) (increase(squash_telegram_updates_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "id": 20,
+      "title": "Prometheus TSDB size",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "squash_prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "prometheus_tsdb_storage_blocks_bytes",
+          "refId": "A",
+          "legendFormat": "{{__name__}} {{service_key}} {{job}} {{exported_job}} {{outcome}} {{state}}"
+        }
+      ],
+      "description": ""
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -16,12 +17,17 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/management/api"
 	"github.com/hutoroff/squash-bot/cmd/management/service"
 	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 	"github.com/hutoroff/squash-bot/migrations"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -58,8 +64,83 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
+	// Keep lifecycle health observable while database, migrations and external
+	// Telegram initialization run. Readiness remains false until all local
+	// requirements and the business listener are available.
+	health := &managementHealthSource{}
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		health.draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "management", Implementation: "squash-management", ReleaseVersion: Version,
+		Endpoints:    discovery.Endpoints{API: "http://management:" + cfg.ServerPort, Admin: "http://management:" + cfg.AdminServerPort},
+		Contracts:    []discovery.Contract{{Name: "management-api", Major: 1, Minor: 0}},
+		Capabilities: []discovery.Capability{{Name: "management.api", Contract: "management-api", Major: 1}}, State: discovery.StateReady,
+	}
+	registryURL := cfg.DiscoveryURL
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			descriptor.Endpoints = discovery.Endpoints{API: "http://" + host + ":" + cfg.ServerPort, Admin: "http://" + host + ":" + cfg.AdminServerPort}
+		}
+	}
+	expectedServices, err := discovery.ParseMonitoredServices(cfg.MonitoredServiceKeys)
+	if err != nil {
+		slog.Error("parse monitored service inventory", "err", err)
+		os.Exit(1)
+	}
+	if cfg.BookingServiceKey != "" {
+		present := false
+		for _, expected := range expectedServices {
+			present = present || expected.ServiceKey == cfg.BookingServiceKey
+		}
+		if !present {
+			expectedServices = append(expectedServices, discovery.MonitoredService{ServiceKey: cfg.BookingServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor, Capabilities: []string{"booking.courts.list", "booking.slots.list", "booking.create", "booking.cancel", "booking.operations.get", "booking.operations.reconcile", "booking.operations.resolve"}, Scope: map[string]string{"facility_id": cfg.BookingFacilityID, "facility_uuid": cfg.BookingFacilityUUID, "facility_slug": cfg.BookingFacilitySlug, "sport": "squash"}})
+		}
+	}
+	var registryRef atomic.Pointer[service.ServiceRegistryService]
+	registrationMetrics := observability.NewRegistrationMetrics()
+	httpMetrics := observability.NewHTTPMetrics()
+	dependencyMetrics := observability.NewDependencyMetrics()
+	schedulerMetrics := observability.NewSchedulerMetrics(0)
+	var bookingMetricsRef atomic.Pointer[storage.BookingIntentRepo]
+	bookingCollector := observability.NewManagementBookingCollector(func(scrapeCtx context.Context) (*models.ManagementBookingMetrics, error) {
+		repo := bookingMetricsRef.Load()
+		if repo == nil {
+			return nil, fmt.Errorf("booking repository not initialized")
+		}
+		return repo.GetMetrics(scrapeCtx)
+	})
+	registryCollector := observability.NewRegistryCollector(expectedServices, func(snapshotCtx context.Context) ([]discovery.MonitoringInstance, error) {
+		registry := registryRef.Load()
+		if registry == nil {
+			return nil, fmt.Errorf("service registry not initialized")
+		}
+		return registry.MonitoringInstances(snapshotCtx)
+	})
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
+		Readiness: health.readiness, Collectors: append(append(append([]prometheus.Collector{registryCollector, registrationMetrics, bookingCollector}, httpMetrics.Collectors()...), dependencyMetrics.Collectors()...), schedulerMetrics.Collectors()...),
+	})
+	if err != nil {
+		slog.Error("configure management admin listener", "err", err)
+		os.Exit(1)
+	}
+	errCh := make(chan error, 2)
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
 
 	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -67,11 +148,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	health.pool.Store(pool)
 
 	if err := runMigrations(cfg.DatabaseURL); err != nil {
 		slog.Error("run migrations", "err", err)
 		os.Exit(1)
 	}
+	health.migrationsComplete.Store(true)
 	slog.Info("migrations applied")
 
 	tgAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
@@ -91,11 +174,18 @@ func main() {
 	autoBookingResultRepo := storage.NewAutoBookingResultRepo(pool)
 	courtBookingRepo := storage.NewCourtBookingRepo(pool)
 	bookingIntentRepo := storage.NewBookingIntentRepo(pool)
+	bookingMetricsRef.Store(bookingIntentRepo)
 	auditEventRepo := storage.NewAuditEventRepo(pool)
 	gameResultRepo := storage.NewGameResultRepo(pool)
 	playerRatingRepo := storage.NewPlayerRatingRepo(pool)
 	ratingChangeRepo := storage.NewRatingChangeRepo(pool)
 	userRepo := storage.NewUserRepo(pool)
+	registryService, err := service.NewServiceRegistryService(storage.NewServiceRegistryRepo(pool), cfg.DiscoveryAllowedCIDRs)
+	if err != nil {
+		slog.Error("configure service registry", "err", err)
+		os.Exit(1)
+	}
+	registryRef.Store(registryService)
 
 	auditSvc := service.NewAuditService(auditEventRepo, logger)
 	serverOwnerIDs := parseAdminIDs(cfg.ServiceAdminIDs)
@@ -130,6 +220,7 @@ func main() {
 		slog.Error("unsupported CRON_POLL value", "spec", cfg.CronPoll, "err", err)
 		os.Exit(1)
 	}
+	schedulerMetrics.SetPollInterval(pollWindow * 2)
 
 	var bookingClient service.BookingServiceClient
 	var bookingIntentSvc *service.BookingIntentService
@@ -137,8 +228,8 @@ func main() {
 	var reliableBookingRecovery *service.ReliableBookingRecovery
 	var reliableBookingNotifier *service.ReliableBookingNotifier
 	var bookingScope bookingapi.Scope
-	if cfg.SportsBookingServiceURL != "" {
-		bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+	bookingEnabled := cfg.SportsBookingServiceURL != "" || (cfg.DiscoveryMode == config.DiscoveryModeRegistry && cfg.BookingServiceKey != "")
+	if bookingEnabled {
 		bookingIntentSvc, err = service.NewBookingIntentService(bookingIntentRepo)
 		if err != nil {
 			slog.Error("init durable booking intent service", "err", err)
@@ -148,9 +239,28 @@ func main() {
 			ServiceKey: cfg.BookingServiceKey, Provider: "eversports", FacilityID: cfg.BookingFacilityID,
 			FacilityUUID: cfg.BookingFacilityUUID, FacilitySlug: cfg.BookingFacilitySlug, Sport: "squash",
 		}
+		var reliableClient service.ReliableBookingServiceClient
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			requirement := discovery.Requirement{
+				ServiceKey: cfg.BookingServiceKey, Contract: bookingapi.ContractName, Major: bookingapi.ContractMajor,
+				RequiredCapabilities: []string{"booking.courts.list", "booking.slots.list", "booking.create", "booking.cancel", "booking.operations.get", "booking.operations.reconcile", "booking.operations.resolve"},
+				Scope:                map[string]string{"facility_id": cfg.BookingFacilityID, "facility_uuid": cfg.BookingFacilityUUID, "facility_slug": cfg.BookingFacilitySlug, "sport": "squash"},
+			}
+			bookingClient = service.NewDiscoveredReliableBookingReadClient(registryService, requirement, cfg.InternalAPISecret)
+			reliableClient = service.NewDiscoveredReliableHTTPBookingClient(registryService, requirement, cfg.InternalAPISecret)
+		} else {
+			bookingClient = service.NewReliableBookingReadClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+			reliableClient = service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret)
+		}
+		for _, candidate := range []any{bookingClient, reliableClient} {
+			if observed, ok := candidate.(interface {
+				SetDependencyMetrics(*observability.DependencyMetrics)
+			}); ok {
+				observed.SetDependencyMetrics(dependencyMetrics)
+			}
+		}
 		reliableBookingExecutor, err = service.NewReliableBookingExecutor(
-			service.NewReliableHTTPBookingClient(cfg.SportsBookingServiceURL, cfg.InternalAPISecret),
-			bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,
+			reliableClient, bookingIntentRepo, bookingScope, cfg.BookingResponseWait, cfg.BookingStatusPoll,
 		)
 		if err != nil {
 			slog.Error("init reliable booking executor", "err", err)
@@ -166,9 +276,9 @@ func main() {
 			slog.Error("init reliable booking notifier", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("keyed v2 booking service enabled", "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
+		slog.Info("keyed v2 booking service enabled", "discovery_mode", cfg.DiscoveryMode, "booking_service", cfg.SportsBookingServiceURL, "service_key", cfg.BookingServiceKey)
 	} else {
-		slog.Info("booking service disabled (SPORTS_BOOKING_SERVICE_URL not set); auto-cancellation and auto-booking disabled")
+		slog.Info("booking service disabled; auto-cancellation and auto-booking disabled")
 	}
 
 	gameService := service.NewGameService(gameRepo, venueRepo, participationRepo, guestRepo, groupRepo, auditSvc, tgAPI, loc, logger, courtBookingRepo, bookingClient, venueCredService, autoBookingResultRepo, cfg.ResultWindowDays)
@@ -196,6 +306,7 @@ func main() {
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)
 	scheduler := service.NewScheduler(logger, cancellationJob, halfwayCourtCheckJob, finalCourtCheckJob, bookingReminderJob, dayAfterJob, autoBookingJob, autoApproveResultsJob, postLeaderboardJob)
+	scheduler.SetObserver(schedulerMetrics)
 
 	c := cron.New(cron.WithLocation(loc))
 	if _, err := c.AddFunc(cfg.CronPoll, scheduler.RunScheduledTasks); err != nil {
@@ -234,13 +345,50 @@ func main() {
 	adminResolver := service.NewAdminGroupsResolver(groupRepo, userRepo, tgAPI, logger)
 	h := api.NewHandler(gameService, gameResultSvc, ratingSvc, partService, venueService, venueCredService, groupRepo, playerRepo, userRepo, auditSvc, adminResolver, logger, Version, cfg.CredentialErrorCooldown)
 	h.SetFeatureFlags(flagSvc)
+	h.SetServiceRegistry(registryService)
 	h.SetReliableBookingAdmin(bookingIntentSvc, bookingIntentRepo, reliableBookingExecutor, bookingScope)
-	srv := api.NewServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret)
+	h.SetRiskSessionSecret(cfg.RiskSessionSecret)
+	if bookingIntentSvc != nil && reliableBookingExecutor != nil && len(cfg.RiskSessionSecret) >= 32 {
+		h.SetRiskBookingService(service.NewRiskBookingService(bookingIntentSvc, reliableBookingExecutor, venueCredService, groupRepo, venueRepo, bookingScope, loc))
+	}
+	srv := api.NewObservedServer(":"+cfg.ServerPort, h, cfg.InternalAPISecret, cfg.MonitoringToken, httpMetrics)
+	localReady := func(readyCtx context.Context) bool { return health.readiness(readyCtx).Ready }
 
-	slog.Info("management starting", "port", cfg.ServerPort, "version", Version)
-	if err := api.Run(ctx, srv, logger); err != nil {
-		slog.Error("HTTP server error", "err", err)
+	var lifecycle *discovery.Lifecycle
+	if registryURL != "" {
+		// Management owns the registry service. Register locally instead of
+		// routing its own lifecycle traffic through the business HTTP listener.
+		lifecycle, err = discovery.StartLifecycleWithRegistrarObserved(ctx, registryService, descriptor, localReady, logger, registrationMetrics)
+		if err != nil {
+			logger.Warn("service discovery lifecycle unavailable", "err", err)
+		}
+	}
+	lifecycleRef.Store(lifecycle)
+	defer discovery.ShutdownLifecycle(lifecycle)
+
+	slog.Info("management starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version)
+	go func() {
+		errCh <- api.RunWithReady(ctx, srv, logger, func() {
+			health.businessListening.Store(true)
+		})
+	}()
+	if err := <-errCh; err != nil {
+		slog.Error("management listener stopped", "err", err)
+		discovery.BeginDrainLifecycle(lifecycle)
+		health.draining.Store(true)
+		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
+		<-errCh
 		os.Exit(1)
+	}
+	discovery.BeginDrainLifecycle(lifecycle)
+	health.draining.Store(true)
+	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
+	if err := <-errCh; err != nil {
+		slog.Error("management listener shutdown", "err", err)
 	}
 	slog.Info("management stopped")
 }

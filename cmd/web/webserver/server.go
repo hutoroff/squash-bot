@@ -3,8 +3,11 @@ package webserver
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // maxRequestBodyBytes bounds request bodies to guard against memory/CPU
@@ -13,12 +16,17 @@ import (
 const maxRequestBodyBytes = 1 << 20
 
 // NewServer builds an http.Server with the handler's routes registered.
-func NewServer(addr string, h *Handler) *http.Server {
+func NewServer(addr string, h *Handler) *http.Server { return NewObservedServer(addr, h, nil) }
+func NewObservedServer(addr string, h *Handler, metrics *observability.HTTPMetrics) *http.Server {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	var routes http.Handler = mux
+	if metrics != nil {
+		routes = metrics.WrapMux(mux)
+	}
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(mux),
+		Handler:      limitRequestBody(routes),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -37,17 +45,31 @@ func limitRequestBody(next http.Handler) http.Handler {
 
 // Run starts the server and blocks until ctx is cancelled, then gracefully shuts down.
 func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
+	return RunWithReady(ctx, srv, logger, nil)
+}
+
+// RunWithReady invokes listening after the TCP listener is successfully bound,
+// before serving requests. It lets local readiness distinguish a constructed
+// server from a process that can actually accept business traffic.
+func RunWithReady(ctx context.Context, srv *http.Server, logger *slog.Logger, listening func()) error {
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("HTTP server listening", "addr", listener.Addr().String())
+	if listening != nil {
+		listening()
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		if serveErr := srv.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
 		}
 	}()
 
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr := <-errCh:
+		return serveErr
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

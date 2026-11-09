@@ -33,6 +33,11 @@ func NewReliableBookingExecutor(client ReliableBookingServiceClient, repository 
 	return &ReliableBookingExecutor{client: client, repository: repository, scope: scope, waitTimeout: waitTimeout, pollInterval: pollInterval}, nil
 }
 
+// VerifyAvailability checks the configured booking binding without provider credentials or a mutation.
+func (e *ReliableBookingExecutor) VerifyAvailability(ctx context.Context) error {
+	return e.client.VerifyBinding(ctx, e.scope)
+}
+
 func (e *ReliableBookingExecutor) ExecuteCreate(ctx context.Context, operation *models.ManagementBookingOperation, credentials bookingapi.Credentials) (*models.ManagementBookingOperation, error) {
 	if operation == nil || operation.Kind != bookingapi.OperationCreate {
 		return nil, fmt.Errorf("planned management create operation is required")

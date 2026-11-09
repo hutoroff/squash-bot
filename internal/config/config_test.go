@@ -24,7 +24,7 @@ func TestTelegramConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "polling mode, strong secret",
-			cfg:     TelegramConfig{InternalAPISecret: longSecret},
+			cfg:     TelegramConfig{InternalAPISecret: longSecret, ManagementServiceURL: "http://management:8080", ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram"},
 			wantErr: false,
 		},
 		{
@@ -49,9 +49,14 @@ func TestTelegramConfig_Validate(t *testing.T) {
 		{
 			name: "webhook mode with a valid webhook secret",
 			cfg: TelegramConfig{
-				InternalAPISecret: longSecret,
-				WebhookURL:        "https://example.com/hook",
-				WebhookSecret:     longWebhookSecret,
+				InternalAPISecret:    longSecret,
+				WebhookURL:           "https://example.com/hook",
+				WebhookSecret:        longWebhookSecret,
+				ManagementServiceURL: "http://management:8080",
+				ServerPort:           "8083",
+				AdminServerPort:      "9090",
+				MonitoringToken:      strOfLen(minSecretLength + 1),
+				ServiceKey:           "telegram",
 			},
 			wantErr: false,
 		},
@@ -64,17 +69,21 @@ func TestTelegramConfig_Validate(t *testing.T) {
 			}
 		})
 	}
+	registry := TelegramConfig{InternalAPISecret: longSecret, ServerPort: "8083", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "telegram", ManagementServiceKey: "management", DiscoveryMode: DiscoveryModeRegistry, DiscoveryURL: "http://management:8080"}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("registry config: %v", err)
+	}
 }
 
 func TestManagementConfig_Validate(t *testing.T) {
-	if err := (&ManagementConfig{InternalAPISecret: strOfLen(minSecretLength)}).Validate(); err != nil {
+	if err := (&ManagementConfig{InternalAPISecret: strOfLen(minSecretLength), ServerPort: "8080", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "management"}).Validate(); err != nil {
 		t.Errorf("expected no error for a %d-char secret, got %v", minSecretLength, err)
 	}
 	if err := (&ManagementConfig{InternalAPISecret: "short"}).Validate(); err == nil {
 		t.Error("expected error for a short INTERNAL_API_SECRET")
 	}
 	validBooking := &ManagementConfig{
-		InternalAPISecret: strOfLen(minSecretLength), SportsBookingServiceURL: "http://booking:8081",
+		InternalAPISecret: strOfLen(minSecretLength), ServerPort: "8080", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "management", SportsBookingServiceURL: "http://booking:8081",
 		BookingServiceKey: "eversports.primary.squash", BookingFacilityID: "76443",
 		BookingFacilityUUID: "facility-uuid", BookingFacilitySlug: "facility-slug",
 		BookingCutoverAck: "keyed-v2-only", BookingResponseWait: 8 * time.Second, BookingStatusPoll: 200 * time.Millisecond,
@@ -82,6 +91,37 @@ func TestManagementConfig_Validate(t *testing.T) {
 	}
 	if err := validBooking.Validate(); err != nil {
 		t.Fatalf("expected reliable management booking config to pass: %v", err)
+	}
+	invalidDiscovery := *validBooking
+	invalidDiscovery.DiscoveryURL = "https://user:secret@example.test/path"
+	if err := invalidDiscovery.Validate(); err == nil {
+		t.Fatal("expected invalid discovery bootstrap URL to fail")
+	}
+	registryBooking := *validBooking
+	registryBooking.DiscoveryMode = DiscoveryModeRegistry
+	registryBooking.DiscoveryURL = "http://management:8080"
+	registryBooking.SportsBookingServiceURL = ""
+	if err := registryBooking.Validate(); err != nil {
+		t.Fatalf("expected registry booking configuration to pass: %v", err)
+	}
+	registryBooking.SportsBookingServiceURL = "http://booking:8081"
+	if err := registryBooking.Validate(); err == nil {
+		t.Fatal("expected registry mode with static booking URL to fail")
+	}
+	invalidAdmin := *validBooking
+	invalidAdmin.MonitoringToken = invalidAdmin.InternalAPISecret
+	if err := invalidAdmin.Validate(); err == nil {
+		t.Fatal("expected management monitoring token reused as internal secret to fail")
+	}
+	sharedRiskSecret := *validBooking
+	sharedRiskSecret.RiskSessionSecret = sharedRiskSecret.InternalAPISecret
+	if err := sharedRiskSecret.Validate(); err == nil {
+		t.Fatal("booking-risk session secret must differ from the management bearer")
+	}
+	separateRiskSecret := *validBooking
+	separateRiskSecret.RiskSessionSecret = strOfLen(minSecretLength + 2)
+	if err := separateRiskSecret.Validate(); err != nil {
+		t.Fatalf("distinct booking-risk session secret: %v", err)
 	}
 	invalidBooking := *validBooking
 	invalidBooking.BookingCutoverAck = ""
@@ -146,7 +186,7 @@ func TestWebConfig_Validate(t *testing.T) {
 	}{
 		{
 			name:    "both secrets strong",
-			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret},
+			cfg:     WebConfig{InternalAPISecret: longSecret, JWTSecret: longSecret, ManagementServiceURL: "http://management:8080", ServerPort: "8082", AdminServerPort: "9090", MonitoringToken: strOfLen(minSecretLength + 1), ServiceKey: "web"},
 			wantErr: false,
 		},
 		{

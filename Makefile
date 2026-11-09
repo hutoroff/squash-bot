@@ -9,7 +9,7 @@ CHECK_SECRETS_TIMEOUT ?= 600
 CHECK_SECURITY_TIMEOUT ?= 1200
 BOUNDED = node scripts/checks/run-bounded.mjs
 
-.PHONY: doctor bootstrap check-fast check check-secrets check-security
+.PHONY: doctor bootstrap check-fast check check-secrets check-security staging-config-check staging-up
 
 doctor:
 	@command -v node >/dev/null 2>&1 || { printf 'ERROR: Node is required for bounded prerequisite checks; see web/frontend/.node-version.\n' >&2; exit 1; }
@@ -29,3 +29,11 @@ check-secrets:
 
 check-security:
 	@$(BOUNDED) "$(CHECK_SECURITY_TIMEOUT)" "Security verification" ./scripts/checks/check-security.sh
+
+# Neither target is part of routine verification. staging-up builds and starts
+# services on an explicitly confirmed dedicated staging Docker host.
+staging-config-check:
+	@node scripts/checks/staging-config-check.mjs
+
+staging-up:
+	@sh scripts/staging-up.sh

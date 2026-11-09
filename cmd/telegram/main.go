@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/telegram/client"
 	"github.com/hutoroff/squash-bot/cmd/telegram/telegram"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -50,47 +56,199 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	adminCtx, cancelAdmin := context.WithCancel(context.Background())
+	defer cancelAdmin()
+	var transportReady atomic.Bool
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	managementGate := telegram.NewDependencyGate(cfg.DiscoveryMode != config.DiscoveryModeRegistry)
+	go func() {
+		<-signalCtx.Done()
+		transportReady.Store(false)
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			managementGate.SetAvailable(false)
+		}
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
-	tgAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
+	apiEndpoint := ""
+	adminEndpoint := "http://telegram:" + cfg.AdminServerPort
+	registryURL := cfg.DiscoveryURL
+	if cfg.WebhookURL != "" {
+		apiEndpoint = "http://telegram:" + cfg.ServerPort
+	}
+	if registryURL != "" {
+		if host, hostErr := discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface); hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+		} else {
+			adminEndpoint = "http://" + host + ":" + cfg.AdminServerPort
+			if cfg.WebhookURL != "" {
+				apiEndpoint = "http://" + host + ":" + cfg.ServerPort
+			}
+		}
+	}
+	descriptor := discovery.Descriptor{
+		SchemaVersion: discovery.SchemaVersion, InstanceID: uuid.NewString(), ServiceKey: cfg.ServiceKey,
+		ServiceKind: "telegram", Implementation: "squash-telegram", ReleaseVersion: Version,
+		Endpoints: discovery.Endpoints{API: apiEndpoint, Admin: adminEndpoint},
+		Contracts: []discovery.Contract{{Name: "telegram-transport", Major: 1, Minor: 0}}, State: discovery.StateReady,
+	}
+	localReady := func(context.Context) bool { return transportReady.Load() }
+	registrationMetrics := observability.NewRegistrationMetrics()
+	dependencyMetrics := observability.NewDependencyMetrics()
+	httpMetrics := observability.NewHTTPMetrics()
+	updateMetrics := observability.NewUpdateMetrics()
+	adminSrv, err := observability.NewAdminServer(observability.AdminConfig{
+		Addr: ":" + cfg.AdminServerPort, Token: cfg.MonitoringToken, Version: Version, Descriptor: descriptor,
+		Readiness: func(context.Context) observability.Readiness {
+			ready := transportReady.Load()
+			return observability.Readiness{Ready: ready, Checks: map[string]bool{"transport": ready}}
+		}, Collectors: append(append(append([]prometheus.Collector{registrationMetrics}, dependencyMetrics.Collectors()...), httpMetrics.Collectors()...), updateMetrics.Collectors()...),
+	})
+	if err != nil {
+		slog.Error("configure telegram admin listener", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("telegram starting", "admin_port", cfg.AdminServerPort, "version", Version)
+	errCh := make(chan error, 2)
+	go func() { errCh <- observability.Run(adminCtx, adminSrv, logger) }()
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, localReady, logger, registrationMetrics)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	lifecycleRef.Store(lifecycle)
+	defer discovery.ShutdownLifecycle(lifecycle)
+
+	// Bootstrap authorization is deliberately bounded; long polling retains its
+	// existing unbounded transport after the bot identity has been verified.
+	tgAPI, err := tgbotapi.NewBotAPIWithClient(cfg.TelegramBotToken, tgbotapi.APIEndpoint, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
 		slog.Error("create bot API", "err", err)
 		os.Exit(1)
 	}
+	tgAPI.Client = &http.Client{}
 	logger.Info("authorized on account", "username", tgAPI.Self.UserName)
 
-	mgmtClient := client.New(cfg.ManagementServiceURL, cfg.InternalAPISecret)
+	mgmtClient := client.NewObserved(cfg.ManagementServiceURL, cfg.InternalAPISecret, dependencyMetrics)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		resolver, resolverErr := discovery.NewRegistryResolver(cfg.DiscoveryURL, cfg.InternalAPISecret)
+		if resolverErr != nil {
+			slog.Error("configure management discovery", "err", resolverErr)
+			os.Exit(1)
+		}
+		requirement := discovery.Requirement{ServiceKey: cfg.ManagementServiceKey, Contract: "management-api", Major: 1, RequiredCapabilities: []string{"management.api"}}
+		if activateErr := resolver.Activate(ctx, requirement); activateErr != nil {
+			slog.Error("activate management discovery", "err", activateErr)
+			os.Exit(1)
+		}
+		mgmtClient = client.NewDiscoveredObserved(resolver, requirement, cfg.InternalAPISecret, dependencyMetrics)
+	}
 
-	mgmtVersion, err := mgmtClient.GetVersion(ctx)
-	if err != nil {
-		slog.Error("check management service version", "err", err)
-		os.Exit(1)
+	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {
+		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
+		if versionErr != nil {
+			slog.Error("check management service version", "err", versionErr)
+			os.Exit(1)
+		}
+		if majorPart(Version) != majorPart(mgmtVersion) {
+			slog.Error("management service major version mismatch", "bot_version", Version, "management_version", mgmtVersion)
+			os.Exit(1)
+		}
+		slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 	}
-	if majorPart(Version) != majorPart(mgmtVersion) {
-		slog.Error("management service major version mismatch",
-			"bot_version", Version, "management_version", mgmtVersion)
-		os.Exit(1)
-	}
-	slog.Info("version compatibility check passed", "bot", Version, "management", mgmtVersion)
 
 	bot := telegram.New(tgAPI, loc, mgmtClient, logger)
+	bot.SetUpdateMetrics(updateMetrics)
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		for ctx.Err() == nil {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
+			_, versionErr := mgmtClient.GetVersion(checkCtx)
+			checkCancel()
+			if versionErr == nil {
+				managementGate.SetAvailable(true)
+				slog.Info("management contract compatibility check passed", "contract", "management-api", "major", 1)
+				break
+			}
+			logger.Warn("waiting for compatible management service", "err", versionErr)
+			select {
+			case <-ctx.Done():
+				break
+			case <-time.After(5 * time.Second):
+			}
+		}
+		if ctx.Err() != nil {
+			discovery.BeginDrainLifecycle(lifecycle)
+			discovery.DeregisterLifecycle(lifecycle)
+			cancelAdmin()
+			<-errCh
+			return
+		}
+	}
+	if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+		go managementGate.Observe(ctx, 5*time.Second, func(observeCtx context.Context) error {
+			checkCtx, checkCancel := context.WithTimeout(observeCtx, 3*time.Second)
+			defer checkCancel()
+			_, err := mgmtClient.GetVersion(checkCtx)
+			return err
+		})
+	}
+	go func() {
+		runTelegramTransport(ctx, bot, *cfg, httpMetrics, managementGate.Available, transportReady.Store)
+		errCh <- nil
+	}()
+	if err := <-errCh; err != nil {
+		slog.Error("telegram listener stopped", "err", err)
+		transportReady.Store(false)
+		discovery.BeginDrainLifecycle(lifecycle)
+		cancel()
+		discovery.DeregisterLifecycle(lifecycle)
+		cancelAdmin()
+		<-errCh
+		os.Exit(1)
+	}
+	transportReady.Store(false)
+	discovery.BeginDrainLifecycle(lifecycle)
+	cancel()
+	discovery.DeregisterLifecycle(lifecycle)
+	cancelAdmin()
+	if err := <-errCh; err != nil {
+		slog.Error("telegram listener shutdown", "err", err)
+	}
+	slog.Info("telegram stopped")
+}
 
-	slog.Info("telegram starting", "version", Version)
+// telegramTransport is the narrow startup seam for locally testing the
+// webhook-to-polling transition without starting a real Telegram session.
+type telegramTransport interface {
+	StartWebhook(context.Context, telegram.WebhookOptions) error
+	StartWithReady(context.Context, func())
+}
+
+func runTelegramTransport(ctx context.Context, bot telegramTransport, cfg config.TelegramConfig, metrics *observability.HTTPMetrics, admit func() bool, ready func(bool)) {
 	if cfg.WebhookURL != "" {
 		opts := telegram.WebhookOptions{
-			PublicURL:  cfg.WebhookURL,
-			ListenPort: cfg.ServerPort,
-			Secret:     cfg.WebhookSecret,
+			PublicURL: cfg.WebhookURL, ListenPort: cfg.ServerPort, Secret: cfg.WebhookSecret,
+			OnReady: func() { ready(true) }, HTTPMetrics: metrics,
+		}
+		if cfg.DiscoveryMode == config.DiscoveryModeRegistry {
+			opts.AdmitUpdate = admit
 		}
 		if err := bot.StartWebhook(ctx, opts); err != nil && ctx.Err() == nil {
 			slog.Warn("webhook mode unavailable, falling back to long-polling", "err", err)
-			bot.Start(ctx)
+			// A listener can fail *after* it reported ready. Polling is not safe
+			// until Telegram accepts deleteWebhook, so clear stale readiness.
+			ready(false)
+			bot.StartWithReady(ctx, func() { ready(true) })
 		}
-	} else {
-		bot.Start(ctx)
+		return
 	}
-	slog.Info("telegram stopped")
+	bot.StartWithReady(ctx, func() { ready(true) })
 }
 
 func majorPart(v string) string {

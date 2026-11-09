@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: squash_bot
       POSTGRES_USER: squash_bot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -30,12 +30,23 @@ services:
       - internal
 
   management:
-    image: ${DOCKERHUB_USERNAME}/squash-management:${MANAGEMENT_VERSION:-stable}
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME in .env}/squash-management:${MANAGEMENT_VERSION:-stable}
     environment:
-      DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
+      DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/squash_bot?sslmode=disable
       SERVER_PORT: "8080"
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: management
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set MONITORING_TOKEN in .env (32+ chars, not INTERNAL_API_SECRET)}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
+      DISCOVERY_URL: ${DISCOVERY_URL:-}
+      DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
+      # Must match the trusted external bridge subnet (see monitoring/prometheus/README.md).
+      DISCOVERY_ALLOWED_CIDRS: ${DISCOVERY_ALLOWED_CIDRS:-172.30.90.0/24}
+      MONITORED_SERVICE_KEYS: '${MONITORED_SERVICE_KEYS:-[{"service_key":"management","contract":"management-api","major":1,"capabilities":["management.api"]},{"service_key":"telegram","contract":"telegram-transport","major":1},{"service_key":"web","contract":"web-api","major":1,"capabilities":["web.api"]}]}'
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET in .env (32+ chars)}
+      # Verification of the web-issued session at the manual risk boundary.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ chars)}
       CRON_POLL: ${CRON_POLL:-*/5 * * * *}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
@@ -58,14 +69,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      booking:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header=\"Authorization: Bearer $${MONITORING_TOKEN}\" http://localhost:9090/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # One active process only; stop the old instance before replacement.
+    deploy:
+      replicas: 1
     logging:
       driver: json-file
       options:
@@ -77,11 +89,13 @@ services:
       - internal
 
   telegram:
-    image: ${DOCKERHUB_USERNAME}/squash-telegram-bot:${TELEGRAM_VERSION:-stable}
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME in .env}/squash-telegram-bot:${TELEGRAM_VERSION:-stable}
     environment:
-      MANAGEMENT_SERVICE_URL: http://management:8080
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET in .env (32+ chars)}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/telegram
@@ -91,12 +105,21 @@ services:
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       SERVER_PORT: ${TELEGRAM_SERVER_PORT:-8083}
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: telegram
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set MONITORING_TOKEN in .env (32+ chars, not INTERNAL_API_SECRET)}
+      DISCOVERY_URL: ${DISCOVERY_URL:-}
+      DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
     volumes:
       - logs:/logs
-    depends_on:
-      management:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header=\"Authorization: Bearer $${MONITORING_TOKEN}\" http://localhost:9090/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    deploy:
+      replicas: 1
     logging:
       driver: json-file
       options:
@@ -108,20 +131,22 @@ services:
       - internal
 
   booking:
-    image: ${DOCKERHUB_USERNAME}/squash-booking-eversports:${BOOKING_VERSION:-stable}
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME in .env}/squash-booking-eversports:${BOOKING_VERSION:-stable}
     environment:
       SERVER_PORT: "8081"
       BOOKING_ADMIN_PORT: "9091"
-      BOOKING_DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD}@postgres:5432/squash_bot?sslmode=disable
+      BOOKING_DATABASE_URL: postgres://squash_bot:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/squash_bot?sslmode=disable
       BOOKING_IDENTITY_KEY: ${BOOKING_IDENTITY_KEY:-}
       BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:-}
-      BOOKING_MONITORING_SECRET: ${BOOKING_MONITORING_SECRET:-}
+      BOOKING_MONITORING_SECRET: ${MONITORING_TOKEN:?set MONITORING_TOKEN in .env (32+ chars, not INTERNAL_API_SECRET)}
       BOOKING_RELIABLE_CUTOVER_ACK: ${BOOKING_RELIABLE_CUTOVER_ACK:-}
+      DISCOVERY_URL: ${DISCOVERY_URL:-}
+      DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
       EVERSPORTS_FACILITY_ID: ${EVERSPORTS_FACILITY_ID:-}
       EVERSPORTS_FACILITY_UUID: ${EVERSPORTS_FACILITY_UUID:-}
       EVERSPORTS_FACILITY_SLUG: ${EVERSPORTS_FACILITY_SLUG:-}
       EVERSPORTS_SQUASH_SPORT_UUID: ${EVERSPORTS_SQUASH_SPORT_UUID:-}
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET in .env (32+ chars)}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/booking
@@ -131,11 +156,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --header='Authorization: Bearer $${BOOKING_MONITORING_SECRET}' http://localhost:9091/health/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header=\"Authorization: Bearer $${BOOKING_MONITORING_SECRET}\" http://localhost:9091/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    deploy:
+      replicas: 1
     stop_grace_period: 110s
     logging:
       driver: json-file
@@ -148,26 +175,30 @@ services:
       - internal
 
   web:
-    image: ${DOCKERHUB_USERNAME}/squash-web:${WEB_VERSION:-stable}
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME in .env}/squash-web:${WEB_VERSION:-stable}
     environment:
       SERVER_PORT: "8082"
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME}
-      MANAGEMENT_SERVICE_URL: http://management:8080
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
-      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_PORT: "9090"
+      SERVICE_KEY: web
+      MONITORING_TOKEN: ${MONITORING_TOKEN:?set MONITORING_TOKEN in .env (32+ chars, not INTERNAL_API_SECRET)}
+      DISCOVERY_MODE: ${DISCOVERY_MODE:-static}
+      DISCOVERY_URL: ${DISCOVERY_URL:-}
+      DISCOVERY_NETWORK_INTERFACE: ${DISCOVERY_NETWORK_INTERFACE:-eth0}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME:?set TELEGRAM_BOT_NAME in .env}
+      MANAGEMENT_SERVICE_URL: ${MANAGEMENT_SERVICE_URL-http://management:8080}
+      MANAGEMENT_SERVICE_KEY: ${MANAGEMENT_SERVICE_KEY:-management}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET in .env (32+ chars)}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ chars)}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TIMEZONE: ${TIMEZONE:-UTC}
       LOG_DIR: /logs/web
     volumes:
       - logs:/logs
-    depends_on:
-      management:
-        condition: service_healthy
     ports:
       - "8082:8082"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header=\"Authorization: Bearer $${MONITORING_TOKEN}\" http://localhost:9090/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -182,12 +213,50 @@ services:
     networks:
       - internal
 
+  prometheus:
+    # Pinned multi-arch v3.9.1 manifest; upgrade only after config/retention validation.
+    image: prom/prometheus:v3.9.1@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-4GB}
+    volumes:
+      - type: bind
+        source: ./monitoring/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PROMETHEUS_TOKEN_FILE:?set an absolute path to a private token file}
+        target: /run/secrets/monitoring_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - prometheus_data:/prometheus
+    # Query access is host-local; do not publish to 0.0.0.0. No admin or remote-write receiver.
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - internal
+
   db-backup:
     image: postgres:15-alpine
     environment:
       PGHOST: postgres
       PGUSER: squash_bot
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       PGDATABASE: squash_bot
     entrypoint: /bin/sh
     command:
@@ -225,8 +294,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      REPO_USER: ${DOCKERHUB_USERNAME}
-      REPO_PASS: ${DOCKERHUB_TOKEN}
+      REPO_USER: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME in .env}
+      REPO_PASS: ${DOCKERHUB_TOKEN:?set DOCKERHUB_TOKEN in .env}
       WATCHTOWER_POLL_INTERVAL: "300"
       WATCHTOWER_CLEANUP: "true"
     restart: unless-stopped
@@ -242,7 +311,9 @@ volumes:
   postgres_data:
   db_backups:
   logs:
+  prometheus_data:
 
 networks:
   internal:
-    driver: bridge
+    external: true
+    name: squash_services

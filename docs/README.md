@@ -9,7 +9,10 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Service ownership, dependency boundaries, identity, compatibility | [Architecture](architecture.md) |
 | Implemented feature flags, disabled defaults, scope, activation, rollback | [Feature toggles](feature-toggles.md) |
 | Critical behavior and nearby tests/known gaps | [Invariants](invariants.md) |
+| Repository-local discovery/booking acceptance evidence and unresolved gates | [Acceptance matrix](service-discovery-acceptance-matrix.md) |
+| Unexecuted shadow rollout, static keyed-v2 rollback and owner evidence template | [Discovery rollout handoff](service-discovery-rollout-runbook.md) |
 | Current setup, commands, and verification limitations | [Development](development.md) |
+| Opt-in dedicated staging deployment with local images (not Step 14 acceptance) | [Staging deployment](staging-deployment.md) |
 | Local secret/dependency checks, scope, and remediation status | [Security checks and triage](security-checks.md) |
 | Local task/review/handoff procedure and agent setup | [Agent workflow](agent-workflow.md) |
 | Management business logic, authorization, persistence, results | [Management](services/management.md) |
@@ -19,14 +22,17 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Booking API/configuration and explicitly requested manual operations | [Booking operator reference](sports-booking-service.md) |
 | Reliable booking backup, cutover, rollback, and incident handling | [Booking reliability runbook](booking-reliability-runbook.md) |
 | Web session/proxy authorization, React and test conventions | [Web](services/web.md) |
+| Production Prometheus network, token file, retention and synthetic config check | [Prometheus template](../monitoring/prometheus/README.md) |
+| Grafana data source, dashboard, alert rules and notification setup for an external instance | [Grafana setup and templates](../monitoring/grafana/README.md) |
 
 Exact routes, signatures, configuration defaults, and database schema live in code and migrations. References explain decisions and hazards and link to those sources; they are not parallel API/schema catalogs.
 
 ## Plans — not descriptions of completed features
 
 - [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Dependency scan results and the subsequent remediation are tracked separately; safeguards are not containment.
-- [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Its §10.1 is the mandatory, still-unimplemented management integration task for the reliable booking contract. Booking's authenticated admin metrics/descriptor preparation exists, but no registry, runtime capability resolution, or replica safety exists.
-- [Booking reliability and discovery preparation](booking-reliability-design.md): **P1–P6 implemented; P7 operational handoff in progress**. Booking-owned persistence, durable conflict protection, keyed v2 execution/recovery/import, lifecycle, and observability are wired. Management integration and real registration remain separate; no exactly-once provider or multi-active guarantee.
+- [Service discovery, registration, and monitoring](service-discovery-design.md): **implemented in the repository, not operationally accepted**. A–C lifecycle/invocation and D monitoring templates/fixtures have local tests; Grafana provisioning, full process-level acceptance, live transport/network failure drills and production cutover remain open. The §10.1 manual risk workflow is implemented locally. Discovery does not provide multi-active replica safety.
+- [Service discovery completion plan](service-discovery-implementation-plan.md): baseline `fffee2d`, verified remaining gaps and ordered implementation/acceptance steps, each ending in a local commit. Separates repository work from owner-authorized operational validation.
+- [Booking reliability and discovery preparation](booking-reliability-design.md): **P1–P7 foundations and keyed management integration are implemented; production mutation cutover remains blocked**. Booking-owned persistence, keyed v2 execution/recovery/import, lifecycle, observability and discovery registration are wired. The [matrix](service-discovery-acceptance-matrix.md) distinguishes synthetic coverage from cross-service gaps; owner legacy inventory/import and backup/restore/cutover drills remain gates. No exactly-once provider or multi-active guarantee.
 
 ## Documentation ownership
 

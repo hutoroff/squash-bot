@@ -23,7 +23,7 @@ func validUpdateBody(t *testing.T) []byte {
 func TestWebhookHandler_ValidSecretAndBody(t *testing.T) {
 	const secret = "test-secret"
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler(secret, ch)
+	h := webhookHandler(secret, nil, ch)
 
 	body := validUpdateBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(body))
@@ -45,9 +45,51 @@ func TestWebhookHandler_ValidSecretAndBody(t *testing.T) {
 	}
 }
 
+func TestWebhookHandler_RejectsAuthenticatedUpdateWhenDependencyUnavailable(t *testing.T) {
+	const secret = "test-secret"
+	ch := make(chan tgbotapi.Update, 1)
+	h := webhookHandler(secret, func() bool { return false }, ch)
+
+	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(validUpdateBody(t)))
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secret)
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rr.Code)
+	}
+	if len(ch) != 0 {
+		t.Error("unavailable dependency must not enqueue the update")
+	}
+}
+
+func TestWebhookHandler_ResumesAdmissionAfterDependencyRecovery(t *testing.T) {
+	gate := NewDependencyGate(false)
+	ch := make(chan tgbotapi.Update, 1)
+	h := webhookHandler("", gate.Available, ch)
+
+	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(validUpdateBody(t)))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable status = %d", rr.Code)
+	}
+
+	gate.SetAvailable(true)
+	req = httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(validUpdateBody(t)))
+	rr = httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("recovered status = %d", rr.Code)
+	}
+	if len(ch) != 1 {
+		t.Fatalf("recovered update queue length = %d", len(ch))
+	}
+}
+
 func TestWebhookHandler_WrongSecret(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("correct-secret", ch)
+	h := webhookHandler("correct-secret", nil, ch)
 
 	body := validUpdateBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(body))
@@ -66,7 +108,7 @@ func TestWebhookHandler_WrongSecret(t *testing.T) {
 
 func TestWebhookHandler_MissingSecret(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("required-secret", ch)
+	h := webhookHandler("required-secret", nil, ch)
 
 	body := validUpdateBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(body))
@@ -82,7 +124,7 @@ func TestWebhookHandler_MissingSecret(t *testing.T) {
 
 func TestWebhookHandler_NoSecret_Skips_Validation(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("", ch) // empty secret = no validation
+	h := webhookHandler("", nil, ch) // empty secret = no validation
 
 	body := validUpdateBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(body))
@@ -97,7 +139,7 @@ func TestWebhookHandler_NoSecret_Skips_Validation(t *testing.T) {
 
 func TestWebhookHandler_NonPOST(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("", ch)
+	h := webhookHandler("", nil, ch)
 
 	req := httptest.NewRequest(http.MethodGet, "/hook", nil)
 	rr := httptest.NewRecorder()
@@ -111,7 +153,7 @@ func TestWebhookHandler_NonPOST(t *testing.T) {
 
 func TestWebhookHandler_BodyTooLarge(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("", ch)
+	h := webhookHandler("", nil, ch)
 
 	// A valid Update JSON padded past the limit with a bogus field Telegram
 	// would never send — decoding must fail before consuming the whole body.
@@ -132,7 +174,7 @@ func TestWebhookHandler_BodyTooLarge(t *testing.T) {
 
 func TestWebhookHandler_BadBody(t *testing.T) {
 	ch := make(chan tgbotapi.Update, 1)
-	h := webhookHandler("", ch)
+	h := webhookHandler("", nil, ch)
 
 	req := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader([]byte("not json")))
 	rr := httptest.NewRecorder()

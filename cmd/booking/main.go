@@ -9,11 +9,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hutoroff/squash-bot/cmd/booking/booking"
 	"github.com/hutoroff/squash-bot/internal/config"
+	"github.com/hutoroff/squash-bot/internal/discovery"
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -43,8 +48,16 @@ func run() error {
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
-	ctx, cancel := context.WithCancel(signalCtx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	health := &runtimeHealthSource{}
+	var lifecycleRef atomic.Pointer[discovery.Lifecycle]
+	go func() {
+		<-signalCtx.Done()
+		health.draining.Store(true)
+		discovery.BeginDrainLifecycle(lifecycleRef.Load())
+		cancel()
+	}()
 
 	type serverResult struct {
 		name string
@@ -52,17 +65,43 @@ func run() error {
 	}
 	errCh := make(chan serverResult, 2)
 	metrics := booking.NewMetrics()
-	health := &runtimeHealthSource{}
-	adminSrv, _, err := booking.NewAdminServer(booking.AdminConfig{
+	registrationMetrics := observability.NewRegistrationMetrics()
+	registryURL := cfg.DiscoveryURL
+	advertiseHost := "booking"
+	if registryURL != "" {
+		var hostErr error
+		advertiseHost, hostErr = discovery.ResolveAdvertiseHost(cfg.ServiceAdvertiseHost, cfg.DiscoveryNetworkInterface)
+		if hostErr != nil {
+			logger.Warn("service discovery registration disabled", "err", hostErr)
+			registryURL = ""
+			advertiseHost = "booking"
+		}
+	}
+	adminConfig := booking.AdminConfig{
 		Addr: ":" + cfg.AdminServerPort, Secret: cfg.MonitoringSecret, Version: Version,
-		ServiceKey: cfg.ServiceKey, Scope: configuredScope(cfg), Readiness: health.readiness,
-		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics,
-	})
+		ServiceKey: cfg.ServiceKey, InstanceID: uuid.NewString(),
+		APIEndpoint: "http://" + advertiseHost + ":" + cfg.ServerPort, AdminEndpoint: "http://" + advertiseHost + ":" + cfg.AdminServerPort,
+		Scope: configuredScope(cfg), Readiness: health.readiness,
+		Running: health.running, LedgerHealth: health.ledgerHealth, Metrics: metrics, Collectors: []prometheus.Collector{registrationMetrics},
+	}
+	adminSrv, _, err := booking.NewAdminServer(adminConfig)
 	if err != nil {
 		return fmt.Errorf("configure booking admin server: %w", err)
 	}
 	go func() { errCh <- serverResult{name: "admin", err: adminSrv.ListenAndServe()} }()
 	logger.Info("booking admin listener starting", "admin_port", cfg.AdminServerPort)
+	descriptor, err := booking.AdminDescriptor(adminConfig)
+	if err != nil {
+		return err
+	}
+	lifecycle, lifecycleErr := discovery.StartLifecycleObserved(ctx, registryURL, cfg.InternalAPISecret, descriptor, func(readyCtx context.Context) bool {
+		return health.readiness(readyCtx).Ready
+	}, logger, registrationMetrics)
+	if lifecycleErr != nil {
+		logger.Warn("service discovery lifecycle unavailable", "err", lifecycleErr)
+	}
+	lifecycleRef.Store(lifecycle)
+	defer discovery.ShutdownLifecycle(lifecycle)
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 45*time.Second)
 	runtime, handler, err := buildReliableRuntime(startupCtx, cfg, logger, metrics)
@@ -105,7 +144,11 @@ func run() error {
 		":"+cfg.ServerPort, handler, cfg.InternalAPISecret, metrics, cfg.HTTPResponseWait+10*time.Second,
 	)
 	logger.Info("booking starting", "port", cfg.ServerPort, "admin_port", cfg.AdminServerPort, "version", Version, "reliable_api", true)
-	go func() { errCh <- serverResult{name: "business", err: businessSrv.ListenAndServe()} }()
+	go func() {
+		errCh <- serverResult{name: "business", err: booking.ServeWithReady(businessSrv, logger, func() {
+			health.businessListening.Store(true)
+		})}
+	}()
 
 	var runErr error
 	select {
@@ -116,6 +159,11 @@ func run() error {
 		cancel()
 	case <-ctx.Done():
 	}
+	// Exclude this singleton from new discovery resolution before closing
+	// admission or the business listener. Keep the admin listener up through
+	// tracked-executor draining so its not-ready state remains observable.
+	health.draining.Store(true)
+	discovery.BeginDrainLifecycle(lifecycle)
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancelShutdown()
 	if err := businessSrv.Shutdown(shutdownCtx); err != nil {
@@ -124,6 +172,7 @@ func run() error {
 	if err := runtime.shutdown(shutdownCtx); err != nil {
 		runErr = errors.Join(runErr, err)
 	}
+	discovery.DeregisterLifecycle(lifecycle)
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("shut down booking admin HTTP server: %w", err))
 	}

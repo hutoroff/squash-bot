@@ -5,9 +5,12 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // maxRequestBodyBytes bounds request bodies to guard against memory/CPU
@@ -36,13 +39,13 @@ func NewObservedServerWithWriteTimeout(addr string, h *Handler, secret string, o
 	}
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	var routes http.Handler = mux
+	var routes http.Handler = requireBearer(secret, mux)
 	if observer != nil {
-		routes = observeHTTP(observer, routes)
+		routes = observeHTTP(observer, mux, routes)
 	}
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(requireBearer(secret, routes)),
+		Handler:      limitRequestBody(routes),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  60 * time.Second,
@@ -59,7 +62,7 @@ func limitRequestBody(next http.Handler) http.Handler {
 	})
 }
 
-func observeHTTP(observer HTTPObserver, next http.Handler) http.Handler {
+func observeHTTP(observer HTTPObserver, mux *http.ServeMux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w}
@@ -67,11 +70,11 @@ func observeHTTP(observer HTTPObserver, next http.Handler) http.Handler {
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
-		route := r.Pattern
+		_, route := mux.Handler(r)
 		if route == "" {
 			route = "unmatched"
 		}
-		observer.ObserveHTTPRequest(r.Method, route, strconv.Itoa(recorder.status), time.Since(started))
+		observer.ObserveHTTPRequest(observability.BoundedMethod(r.Method), route, strconv.Itoa(recorder.status), time.Since(started))
 	})
 }
 
@@ -110,8 +113,7 @@ func requireBearer(secret string, next http.Handler) http.Handler {
 func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := ServeWithReady(srv, logger, nil); err != nil {
 			errCh <- err
 		}
 	}()
@@ -125,6 +127,23 @@ func Run(ctx context.Context, srv *http.Server, logger *slog.Logger) error {
 		logger.Info("HTTP server shutting down")
 		return srv.Shutdown(shutCtx)
 	}
+}
+
+// ServeWithReady binds and serves business traffic. listening runs only after
+// the TCP listener exists, allowing callers to expose accurate local readiness.
+func ServeWithReady(srv *http.Server, logger *slog.Logger, listening func()) error {
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("HTTP server listening", "addr", listener.Addr().String())
+	if listening != nil {
+		listening()
+	}
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

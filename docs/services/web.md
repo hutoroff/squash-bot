@@ -1,20 +1,22 @@
 # Web service and frontend
 
-The Go web service serves an embedded React SPA and authenticated proxies to management. It has no database dependency. [main.go](../../cmd/web/main.go) wires handlers; [handler.go](../../cmd/web/webserver/handler.go) registers routes and SPA fallback.
+The Go web service serves an embedded React SPA and authenticated proxies to management. It has no database dependency. A separate internal admin listener exposes monitoring-token-protected local health, version, descriptor, and Prometheus metrics; it reports ready only after the local business listener binds, and management availability is not a local readiness gate. Registration is independent of invocation. In `DISCOVERY_MODE=registry`, every management call resolves `MANAGEMENT_SERVICE_KEY` through a bounded authenticated resolver requiring the `management-api` v1 contract and `management.api` capability. The SPA remains available while management or the registry is unavailable, and registry mode never falls back to `MANAGEMENT_SERVICE_URL`. [main.go](../../cmd/web/main.go) wires handlers; [handler.go](../../cmd/web/webserver/handler.go) registers routes and SPA fallback.
+
+The protected admin metrics count web business requests by registered method-qualified route template with an unmatched/unsupported-method fallback, including the SPA while management is unavailable. Outgoing calls through the shared management target count the fixed `management` dependency (status or error and duration); registry failures before dispatch are counted without falling back to a static address. No raw URL, path, session ID, or user ID becomes a metric label.
 
 ## Authentication and identity
 
 [auth.go](../../cmd/web/webserver/auth.go) verifies the Telegram Login Widget HMAC and authentication timestamp, resolves the canonical identity through management, and issues an HS256 session cookie with a canonical `uid` claim.
 
 - Identity-resolution failure must not issue a fabricated session or substitute a Telegram ID for user ID.
-- Sessions do not contain authoritative owner roles. `/api/auth/me` reads management's current user/owner state; do not reintroduce a locally configured owner list.
+- Sessions do not contain authoritative owner roles. `/api/auth/me` reads management's current user/owner state; do not reintroduce a locally configured owner list. Management independently verifies the web-issued session's signed canonical user ID and current owner role for the manual booking-risk route; an internal bearer or spoofed actor field cannot authorize it.
 - Old cookies without canonical user ID are rejected. A `PlayerID` can be absent until first participation.
 - Cookies are HttpOnly/SameSite=Lax, with Secure derived from TLS or the trusted proxy's `X-Forwarded-Proto`. The proxy must overwrite that header; do not assume untrusted direct access is equivalent to a trusted proxy.
 - Frontend auth bootstrap distinguishes 401 from network/upstream errors. A transient management failure should show retry, not silently log the user out.
 
 ## Proxy authorization
 
-[mgmt_proxy.go](../../cmd/web/webserver/mgmt_proxy.go) holds shared proxy/identity/group-authorization helpers. Domain handlers live in `games.go`, `groups.go`, `venues.go`, `prefs.go`, `users.go`, and `audit.go`.
+[mgmt_proxy.go](../../cmd/web/webserver/mgmt_proxy.go) holds shared proxy/identity/group-authorization helpers. Domain handlers live in `games.go`, `groups.go`, `venues.go`, `prefs.go`, `users.go`, and `audit.go`. The operator-only `POST /api/booking/operations/{id}/authorize-risk` has no UI and requires an exact same-origin `Origin` header, a valid session cookie, explicit risk acknowledgement, parent revision, credential choice, and reason. Only this route sends the signed session to management via `X-Web-Session`; management rechecks owner authorization and booking eligibility. Ordinary proxies never forward web sessions or accept a caller-provided actor for this action.
 
 - Derive action identity from the JWT, never a user-supplied body/query ID. `decodeWithActor` overwrites actor fields.
 - Group-admin routes use the caller's authorized group list from management. Server owners are already included by that lookup; do not add a second owner shortcut. Owner-only routes such as the auto-booking master switch instead forward the authenticated actor and rely on management's owner check.

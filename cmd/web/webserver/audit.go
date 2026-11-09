@@ -19,11 +19,15 @@ type AuditHandler struct {
 
 // NewAuditHandler creates an AuditHandler.
 func NewAuditHandler(auth *AuthHandler, mgmtURL, mgmtSecret string) *AuditHandler {
+	return NewAuditHandlerWithTarget(auth, NewStaticManagementTarget(mgmtURL), mgmtSecret)
+}
+
+func NewAuditHandlerWithTarget(auth *AuthHandler, target *ManagementTarget, mgmtSecret string) *AuditHandler {
 	return &AuditHandler{
 		auth:       auth,
-		mgmtURL:    mgmtURL,
+		mgmtURL:    target.requestBaseURL(),
 		mgmtSecret: mgmtSecret,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: newTargetHTTPClient(target, 10*time.Second),
 	}
 }
 

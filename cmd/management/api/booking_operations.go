@@ -26,6 +26,8 @@ func (h *Handler) getBookingMetrics(w http.ResponseWriter, r *http.Request) {
 type managementBookingOperationResponse struct {
 	OperationID   bookingapi.OperationID                 `json:"operation_id"`
 	IntentID      int64                                  `json:"intent_id"`
+	ParentID      bookingapi.OperationID                 `json:"parent_operation_id,omitempty"`
+	RootID        bookingapi.OperationID                 `json:"root_operation_id,omitempty"`
 	Kind          bookingapi.OperationKind               `json:"kind"`
 	State         models.ManagementBookingOperationState `json:"state"`
 	Phase         bookingapi.OperationPhase              `json:"phase"`
@@ -166,7 +168,7 @@ func (h *Handler) bookingOperationUsesCurrentScope(r *http.Request, operation *m
 
 func projectManagementBookingOperation(operation *models.ManagementBookingOperation) managementBookingOperationResponse {
 	return managementBookingOperationResponse{
-		OperationID: operation.OperationID, IntentID: operation.IntentID, Kind: operation.Kind,
+		OperationID: operation.OperationID, IntentID: operation.IntentID, ParentID: operation.ParentOperationID, RootID: operation.RootOperationID, Kind: operation.Kind,
 		State: operation.State, Phase: operation.Phase, Outcome: operation.Outcome, Code: operation.Code,
 		Warnings: operation.Warnings, ResultExpired: operation.ResultExpired,
 		CourtUUID: operation.CourtUUID, CourtLabel: operation.CourtLabel, TargetMatchID: operation.TargetMatchID,

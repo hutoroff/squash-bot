@@ -2,10 +2,19 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"log/slog"
+
+	"github.com/hutoroff/squash-bot/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // sentinel is a trivial handler that always returns 200 with a known body,
@@ -14,6 +23,54 @@ var sentinel = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok")) //nolint:errcheck
 })
+
+func TestObservedServerCountsAuthenticatedAndUnauthenticatedOnce(t *testing.T) {
+	metrics := observability.NewHTTPMetrics()
+	server := NewObservedServer(":0", &Handler{version: "test"}, "secret", "monitoring", metrics)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/games/123", nil)
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, req)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("auth status = %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/version", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("version status = %d", response.Code)
+	}
+	registry := prometheus.NewRegistry()
+	for _, collector := range metrics.Collectors() {
+		registry.MustRegister(collector)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found401, found200 := false, false
+	for _, family := range families {
+		if family.GetName() != observability.MetricHTTPRequestsTotal {
+			continue
+		}
+		for _, metric := range family.Metric {
+			if metric.GetCounter().GetValue() != 1 {
+				t.Fatal("request double counted")
+			}
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["route"] == "GET /api/v1/games/{id}" && labels["status"] == "401" {
+				found401 = true
+			}
+			if labels["route"] == "GET /version" && labels["status"] == "200" {
+				found200 = true
+			}
+		}
+	}
+	if !found401 || !found200 {
+		t.Fatalf("auth=%t version=%t", found401, found200)
+	}
+}
 
 func TestRequireBearer_HealthExempt(t *testing.T) {
 	h := requireBearer("secret", sentinel)
@@ -106,4 +163,48 @@ func TestLimitRequestBody_RejectsBodyOverLimit(t *testing.T) {
 func TestRegisterRoutes_NoPatternConflicts(t *testing.T) {
 	h := &Handler{}
 	h.RegisterRoutes(http.NewServeMux())
+}
+
+func TestRunWithReadyDoesNotSignalWhenBindFails(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+
+	var signaled atomic.Bool
+	err = RunWithReady(context.Background(), &http.Server{Addr: occupied.Addr().String(), Handler: sentinel}, slog.Default(), func() {
+		signaled.Store(true)
+	})
+	if err == nil {
+		t.Fatal("RunWithReady() succeeded with an occupied address")
+	}
+	if signaled.Load() {
+		t.Fatal("readiness callback ran after bind failure")
+	}
+}
+
+func TestRunWithReadySignalsOnlyAfterListenerBinds(t *testing.T) {
+	srv := &http.Server{Addr: "127.0.0.1:0", Handler: sentinel}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listening := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithReady(ctx, srv, slog.Default(), func() { close(listening) })
+	}()
+	select {
+	case <-listening:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not become ready")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunWithReady() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
+	}
 }

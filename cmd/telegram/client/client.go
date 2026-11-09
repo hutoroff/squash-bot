@@ -14,26 +14,49 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hutoroff/squash-bot/internal/discovery"
 	"github.com/hutoroff/squash-bot/internal/models"
+	"github.com/hutoroff/squash-bot/internal/observability"
 )
 
 // Client wraps all HTTP calls to the management service.
 type Client struct {
-	baseURL    string
-	apiSecret  string
-	httpClient *http.Client
+	baseURL     string
+	apiSecret   string
+	httpClient  *http.Client
+	tracker     *discovery.EndpointTracker
+	resolver    discovery.Resolver
+	requirement discovery.Requirement
+	metrics     *observability.DependencyMetrics
 }
 
 // New creates a new Client targeting baseURL (e.g. "http://management:8080").
 // apiSecret is sent as a Bearer token in every request.
-func New(baseURL, apiSecret string) *Client {
+func New(baseURL, apiSecret string) *Client { return NewObserved(baseURL, apiSecret, nil) }
+func NewObserved(baseURL, apiSecret string, metrics *observability.DependencyMetrics) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &Client{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		apiSecret: apiSecret,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		baseURL: strings.TrimRight(baseURL, "/"), apiSecret: apiSecret,
+		httpClient: &http.Client{Timeout: 30 * time.Second, Transport: observedManagementTransport(transport, metrics), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		tracker:    discovery.NewEndpointTracker(transport.CloseIdleConnections), metrics: metrics,
 	}
+}
+
+func observedManagementTransport(base http.RoundTripper, metrics *observability.DependencyMetrics) http.RoundTripper {
+	if metrics != nil {
+		return metrics.RoundTripper("management", base)
+	}
+	return base
+}
+
+func NewDiscovered(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string) *Client {
+	return NewDiscoveredObserved(resolver, requirement, apiSecret, nil)
+}
+func NewDiscoveredObserved(resolver discovery.Resolver, requirement discovery.Requirement, apiSecret string, metrics *observability.DependencyMetrics) *Client {
+	client := NewObserved("", apiSecret, metrics)
+	client.resolver = resolver
+	client.requirement = requirement
+	return client
 }
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -691,7 +714,20 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	baseURL := c.baseURL
+	if c.resolver != nil {
+		started := time.Now()
+		endpoint, err := discovery.ResolveOne(ctx, c.resolver, c.requirement)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.ObservePreDispatch("management", started)
+			}
+			return nil, fmt.Errorf("resolve management service: %w", err)
+		}
+		baseURL = strings.TrimRight(endpoint.API, "/")
+		c.tracker.Observe(baseURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -710,6 +746,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if c.resolver != nil {
+			discovery.Invalidate(c.resolver, c.requirement)
+		}
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()

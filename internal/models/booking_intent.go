@@ -101,21 +101,24 @@ type ManagementBookingOperation struct {
 	TargetMatchID      string
 	CredentialID       *int64
 	ParentOperationID  bookingapi.OperationID
-	RootOperationID    bookingapi.OperationID
-	RiskReason         string
-	State              ManagementBookingOperationState
-	Phase              bookingapi.OperationPhase
-	Outcome            bookingapi.OutcomeCategory
-	Code               bookingapi.ErrorCode
-	Warnings           []string
-	ResultExpired      bool
-	ProviderState      string
-	BookingUUID        string
-	BookingID          *int64
-	PaymentID          *int64
-	MatchID            string
-	Revision           int64
-	CompletedAt        *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// Transient compare-and-swap guard checked under the parent's database lock;
+	// not a persisted column or part of the provider mutation payload.
+	ParentExpectedRevision int64 `json:"-"`
+	RootOperationID        bookingapi.OperationID
+	RiskReason             string
+	State                  ManagementBookingOperationState
+	Phase                  bookingapi.OperationPhase
+	Outcome                bookingapi.OutcomeCategory
+	Code                   bookingapi.ErrorCode
+	Warnings               []string
+	ResultExpired          bool
+	ProviderState          string
+	BookingUUID            string
+	BookingID              *int64
+	PaymentID              *int64
+	MatchID                string
+	Revision               int64
+	CompletedAt            *time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
