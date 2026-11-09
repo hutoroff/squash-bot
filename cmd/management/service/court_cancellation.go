@@ -146,6 +146,10 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 		selected = append(selected, selectCourtsToCancel(remaining, courtsToCancel-len(selected))...)
 	}
 
+	if j.reliableBooking != nil {
+		return j.cancelUsingBookingEntriesReliable(ctx, game, entryByLabel, selected, courtsToCancel, updateFn)
+	}
+
 	// Cancel selected courts one by one.
 	var canceledLabels []int
 	var cancelErrors []error

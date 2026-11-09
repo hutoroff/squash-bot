@@ -26,6 +26,8 @@ var errUnauthorized = errors.New("eversports: unauthorized")
 // unknown facility slug). Callers can test for it with errors.Is.
 var ErrNotFound = errors.New("eversports: not found")
 
+type noRedirectContextKey struct{}
+
 const (
 	defaultBaseURL = "https://www.eversports.de"
 
@@ -98,13 +100,31 @@ type Client struct {
 	logger *slog.Logger
 }
 
-// New creates a new Eversports client.
+// New creates a new Eversports client with the legacy HTTP timeout.
 func New(email, password string, logger *slog.Logger) *Client {
+	return NewWithTimeout(email, password, logger, 30*time.Second)
+}
+
+// NewWithTimeout creates a client whose every provider request is bounded by
+// the supplied timeout. Orchestration owns any authorized second attempt.
+func NewWithTimeout(email, password string, logger *slog.Logger, timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	jar, _ := cookiejar.New(nil) // never errors with nil options
 	return &Client{
 		http: &http.Client{
-			Jar:     jar,
-			Timeout: 30 * time.Second,
+			Jar:       jar,
+			Timeout:   timeout,
+			Transport: http.DefaultTransport,
+			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+				// Provider mutations opt out of redirects so a 307/308 cannot replay
+				// a POST. Existing read/login navigation keeps its prior behavior.
+				if len(via) > 0 && via[0].Context().Value(noRedirectContextKey{}) == true {
+					return http.ErrUseLastResponse
+				}
+				return nil
+			},
 		},
 		baseURL:  defaultBaseURL,
 		email:    email,
@@ -113,10 +133,28 @@ func New(email, password string, logger *slog.Logger) *Client {
 	}
 }
 
+// Close discards all in-memory credentials and session cookies. Callers must
+// ensure no request is using the client while it is closed.
+func (c *Client) Close() error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	jar, _ := cookiejar.New(nil)
+	c.http.Jar = jar
+	c.email = ""
+	c.password = ""
+	c.loggedIn.Store(false)
+	c.userID.Store("")
+	return nil
+}
+
 // Login authenticates with Eversports via the GraphQL login mutation.
 // On success, the `et` session cookie is stored in the client's cookie jar
 // and all subsequent requests will be authenticated automatically.
 func (c *Client) Login(ctx context.Context) error {
+	// Never carry a provider-user alias across a fresh authentication attempt.
+	// If the response omits a validated user ID, durable mutation execution must
+	// stop before dispatch rather than bind the account using stale evidence.
+	c.userID.Store("")
 	payload := gqlRequest{
 		OperationName: "LoginCredentialLogin",
 		Variables: map[string]any{
@@ -137,31 +175,34 @@ func (c *Client) Login(ctx context.Context) error {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("eversports: marshal login payload: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("marshal login payload: %w", err)}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("eversports: create login request: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("create login request: %w", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setBrowserHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("eversports: login request: %w", err)
+		return &AuthenticationError{Err: fmt.Errorf("login request: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("eversports: login HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
+		respBody, _ := readProviderResponse(resp.Body)
+		return &AuthenticationError{Err: fmt.Errorf("login HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))}
 	}
 
 	// The response body may be empty; the session is established via the `et`
 	// cookie that the CookieJar stores automatically. We parse the body only
 	// when present to surface any GraphQL-level errors (e.g. wrong password).
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := readProviderResponse(resp.Body)
+	if err != nil {
+		return &AuthenticationError{Err: fmt.Errorf("read login response: %w", err)}
+	}
 	if len(respBody) > 0 {
 		var gqlResp gqlLoginResponse
 		if err := json.Unmarshal(respBody, &gqlResp); err != nil {
@@ -173,10 +214,13 @@ func (c *Client) Login(ctx context.Context) error {
 		} else {
 			cl := gqlResp.Data.CredentialLogin
 			if len(cl.Errors) > 0 {
-				return fmt.Errorf("eversports: login error: %s", cl.Errors[0].Message)
+				// The reverse-engineered contract has no stable captured error ID
+				// proving which ExpectedErrors mean invalid credentials. Keep the
+				// error typed but do not trigger credential cooldown from message text.
+				return &AuthenticationError{Err: fmt.Errorf("login error: %s", cl.Errors[0].Message)}
 			}
 			if len(gqlResp.Errors) > 0 {
-				return fmt.Errorf("eversports: graphql error: %s", gqlResp.Errors[0].Message)
+				return &AuthenticationError{Err: fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)}
 			}
 			if cl.User.ID != "" {
 				c.userID.Store(cl.User.ID)
@@ -186,7 +230,7 @@ func (c *Client) Login(ctx context.Context) error {
 
 	// Confirm that the `et` cookie was actually set by the server.
 	if !c.hasCookie("et") {
-		return fmt.Errorf("eversports: login succeeded HTTP-wise but no 'et' session cookie was returned")
+		return &AuthenticationError{Err: fmt.Errorf("login succeeded HTTP-wise but no 'et' session cookie was returned")}
 	}
 
 	c.loggedIn.Store(true)
@@ -213,6 +257,21 @@ func (c *Client) EnsureLoggedIn(ctx context.Context) error {
 	return c.Login(ctx)
 }
 
+// Reauthenticate discards the current cookie and establishes a fresh session.
+// Durable mutation orchestration calls it only after recording a provider
+// response that positively established no effect and explicitly allowed retry.
+func (c *Client) Reauthenticate(ctx context.Context) error {
+	c.invalidateSession()
+	return c.EnsureLoggedIn(ctx)
+}
+
+// ProviderUserID returns the provider user identifier learned at login. It is
+// for deriving a keyed alias in memory; callers must not persist the raw value.
+func (c *Client) ProviderUserID() string {
+	value, _ := c.userID.Load().(string)
+	return value
+}
+
 // invalidateSession clears the logged-in flag so the next EnsureLoggedIn call
 // triggers a fresh login. Called when an API response signals session expiry.
 //
@@ -222,6 +281,7 @@ func (c *Client) EnsureLoggedIn(ctx context.Context) error {
 // the stale value, turning the re-login into a silent no-op.
 func (c *Client) invalidateSession() {
 	c.loggedIn.Store(false)
+	c.userID.Store("")
 	if u, err := url.Parse(c.baseURL); err == nil {
 		// MaxAge < 0 tells the jar to delete the cookie. Mutating the jar is
 		// safe for concurrent use; replacing c.http.Jar would not be.
@@ -242,6 +302,10 @@ func (c *Client) doAuthed(ctx context.Context, method, rawURL string, body io.Re
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return c.http.Do(req)
+}
+
+func (c *Client) doAuthedMutation(ctx context.Context, method, rawURL string, body io.Reader) (*http.Response, error) {
+	return c.doAuthed(context.WithValue(ctx, noRedirectContextKey{}, true), method, rawURL, body)
 }
 
 // hasCookie returns true if the CookieJar holds a cookie with the given name
@@ -266,7 +330,22 @@ func setBrowserHeaders(req *http.Request) {
 
 // bodySnippetLimit caps how much of a response body is embedded in errors and
 // logs. Eversports login pages and Cloudflare challenges run to several KB.
-const bodySnippetLimit = 300
+const (
+	bodySnippetLimit        = 300
+	maxProviderResponseBody = 1 << 20
+)
+
+func readProviderResponse(body io.Reader) ([]byte, error) {
+	limited := io.LimitReader(body, maxProviderResponseBody+1)
+	result, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(result) > maxProviderResponseBody {
+		return nil, fmt.Errorf("provider response exceeds %d bytes", maxProviderResponseBody)
+	}
+	return result, nil
+}
 
 // bodySnippet renders a response body for inclusion in an error or log entry:
 // whitespace is collapsed so the result stays on one line, and the output is

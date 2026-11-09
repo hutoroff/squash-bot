@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -12,6 +13,10 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
+	bookingservice "github.com/hutoroff/squash-bot/cmd/booking/service"
+	"github.com/hutoroff/squash-bot/cmd/booking/storage"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
+	"github.com/jackc/pgx/v5"
 )
 
 // eversportsClient is the subset of *eversports.Client methods used by Handler.
@@ -42,6 +47,18 @@ type Handler struct {
 	facilityUUID string
 	facilitySlug string
 
+	coordinator         ReliableCoordinator
+	reliableStatus      OperationStatusReader
+	reconciler          ReliableReconciler
+	importer            ReliableImporter
+	reliableScope       bookingapi.Scope
+	reliableIdentityKey []byte
+	reliableEnabled     bool
+	responseWait        time.Duration
+	statusPollInterval  time.Duration
+	providerCallTimeout time.Duration
+	providerSportUUID   string
+
 	// credClients caches per-credential Eversports clients keyed by email:password.
 	// This avoids re-logging in on every booking request for the same account.
 	credClients sync.Map // map[string]*eversports.Client
@@ -57,8 +74,93 @@ func NewHandler(logger *slog.Logger, version, facilityID, facilityUUID, facility
 	}
 }
 
+type ReliableCoordinator interface {
+	SubmitCreate(context.Context, bookingapi.ValidatedCreate, bookingapi.Credentials) (*storage.Admission, error)
+	SubmitCancel(context.Context, bookingapi.ValidatedCancel, bookingapi.Credentials) (*storage.Admission, error)
+}
+
+type OperationStatusReader interface {
+	GetStatus(context.Context, bookingapi.OperationID) (*bookingapi.OperationStatus, error)
+	StatusFromOperation(context.Context, *storage.Operation) (*bookingapi.OperationStatus, error)
+}
+
+type ReliableReconciler interface {
+	Reconcile(context.Context, bookingapi.OperationID, bookingapi.Credentials) (*bookingapi.OperationStatus, error)
+	Resolve(context.Context, bookingapi.OperationID, bookingapi.OperationID, bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error)
+}
+
+type ReliableImporter interface {
+	Import(context.Context, bookingapi.OperationID, bookingapi.ImportRequest) (*bookingservice.ImportResponse, error)
+}
+
+type ReliableAPIConfig struct {
+	Coordinator         ReliableCoordinator
+	Status              OperationStatusReader
+	Reconciler          ReliableReconciler
+	Importer            ReliableImporter
+	Scope               bookingapi.Scope
+	IdentityKey         []byte
+	ResponseWait        time.Duration
+	PollInterval        time.Duration
+	ProviderCallTimeout time.Duration
+	ProviderSportUUID   string
+}
+
+// ConfigureReliableAPI enables v2 mutation/status routes and disables keyless
+// legacy mutations. P6 owns constructing these dependencies during startup.
+func (h *Handler) ConfigureReliableAPI(cfg ReliableAPIConfig) error {
+	if cfg.Coordinator == nil || cfg.Status == nil || cfg.Reconciler == nil || cfg.Importer == nil {
+		return fmt.Errorf("reliable booking coordinator, status reader, reconciler, and importer are required")
+	}
+	if cfg.ResponseWait == 0 {
+		cfg.ResponseWait = 20 * time.Second
+	} else if cfg.ResponseWait < 0 {
+		return fmt.Errorf("reliable booking response wait must be positive")
+	}
+	if cfg.PollInterval == 0 {
+		cfg.PollInterval = 25 * time.Millisecond
+	} else if cfg.PollInterval < 0 {
+		return fmt.Errorf("reliable booking poll interval must be positive")
+	}
+	if cfg.ProviderCallTimeout == 0 {
+		cfg.ProviderCallTimeout = 20 * time.Second
+	} else if cfg.ProviderCallTimeout < 0 {
+		return fmt.Errorf("reliable booking provider call timeout must be positive")
+	}
+	if cfg.ProviderSportUUID == "" {
+		return fmt.Errorf("reliable booking provider sport UUID is required")
+	}
+	// Reuse contract validation so an incomplete trusted scope or identity key
+	// cannot leave a handler that accepts requests but fails after admission.
+	if _, err := bookingapi.ValidateCancel("018f8d2c-6f7a-7b01-9341-aaaaaaaaaaaa", cfg.Scope, cfg.IdentityKey, "config-check", bookingapi.CancelRequest{Email: "config@example.invalid", Password: "config-check"}); err != nil {
+		return fmt.Errorf("invalid reliable booking API configuration: %w", err)
+	}
+	if h.facilityID != cfg.Scope.FacilityID || h.facilityUUID != cfg.Scope.FacilityUUID || h.facilitySlug != cfg.Scope.FacilitySlug {
+		return fmt.Errorf("reliable booking scope does not match handler facility configuration")
+	}
+	h.coordinator = cfg.Coordinator
+	h.reliableStatus = cfg.Status
+	h.reconciler = cfg.Reconciler
+	h.importer = cfg.Importer
+	h.reliableScope = cfg.Scope
+	h.reliableIdentityKey = append([]byte(nil), cfg.IdentityKey...)
+	h.responseWait = cfg.ResponseWait
+	h.statusPollInterval = cfg.PollInterval
+	h.providerCallTimeout = cfg.ProviderCallTimeout
+	h.providerSportUUID = cfg.ProviderSportUUID
+	h.reliableEnabled = true
+	return nil
+}
+
 // getOrCreateCredClient returns a cached eversportsClient for the given credentials,
 // creating and storing one if none exists yet.
+func (h *Handler) sportUUID() string {
+	if h.providerSportUUID != "" {
+		return h.providerSportUUID
+	}
+	return squashSportUUID
+}
+
 func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient {
 	key := email + ":" + password
 	if v, ok := h.credClients.Load(key); ok {
@@ -69,15 +171,20 @@ func (h *Handler) getOrCreateCredClient(email, password string) eversportsClient
 	return c
 }
 
-// clientFromRequest returns a per-credential client when X-Eversports-Email and
-// X-Eversports-Password headers are present, otherwise nil.
-func (h *Handler) clientFromRequest(r *http.Request) eversportsClient {
+// clientFromRequest returns a per-credential client and cleanup callback. In
+// reliable mode, read routes use disposable bounded-time clients rather than
+// retaining credentials in the legacy unbounded cache.
+func (h *Handler) clientFromRequest(r *http.Request) (eversportsClient, func()) {
 	if email := r.Header.Get("X-Eversports-Email"); email != "" {
 		if password := r.Header.Get("X-Eversports-Password"); password != "" {
-			return h.getOrCreateCredClient(email, password)
+			if h.reliableEnabled {
+				client := eversports.NewWithTimeout(email, password, h.logger, h.providerCallTimeout)
+				return client, func() { _ = client.Close() }
+			}
+			return h.getOrCreateCredClient(email, password), func() {}
 		}
 	}
-	return nil
+	return nil, func() {}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -90,6 +197,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/eversports/matches/{id}", h.cancelMatch)
 	mux.HandleFunc("GET /api/v1/eversports/courts", h.getCourts)
 	mux.HandleFunc("GET /api/v1/eversports/facility", h.getFacility)
+
+	mux.HandleFunc("GET /api/v2/eversports/descriptor", h.getReliableDescriptor)
+	mux.HandleFunc("GET /api/v2/eversports/matches", h.listMatches)
+	mux.HandleFunc("POST /api/v2/eversports/matches", h.createMatchV2)
+	mux.HandleFunc("GET /api/v2/eversports/matches/{id}", h.getMatch)
+	mux.HandleFunc("DELETE /api/v2/eversports/matches/{id}", h.cancelMatchV2)
+	mux.HandleFunc("GET /api/v2/eversports/courts", h.getCourts)
+	mux.HandleFunc("GET /api/v2/eversports/facility", h.getFacility)
+	mux.HandleFunc("GET /api/v2/eversports/operations/{id}", h.getOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/reconcile", h.reconcileOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/operations/{id}/resolution", h.resolveOperationV2)
+	mux.HandleFunc("POST /api/v2/eversports/imports", h.importBookingV2)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -101,6 +220,16 @@ func (h *Handler) getVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
 }
 
+func (h *Handler) getReliableDescriptor(w http.ResponseWriter, _ *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, bookingapi.Descriptor{
+		Scope: h.reliableScope, Contract: bookingapi.ContractName, ContractMajor: bookingapi.ContractMajor,
+		Capabilities: []string{"create", "cancel", "status", "reconcile", "resolve", "import"},
+	})
+}
+
 func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -108,7 +237,8 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
@@ -135,6 +265,11 @@ type createMatchRequest struct {
 }
 
 func (h *Handler) createMatch(w http.ResponseWriter, r *http.Request) {
+	if h.reliableEnabled {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorContractUpgradeRequired,
+			"v1 booking mutations are disabled; use the keyed v2 contract", "", "", "")
+		return
+	}
 	if h.facilityUUID == "" {
 		writeError(w, http.StatusInternalServerError, "booking creation requires EVERSPORTS_FACILITY_UUID to be configured")
 		return
@@ -203,6 +338,11 @@ type cancelMatchRequest struct {
 }
 
 func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
+	if h.reliableEnabled {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorContractUpgradeRequired,
+			"v1 booking mutations are disabled; use the keyed v2 contract", "", "", "")
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "match id is required")
@@ -224,6 +364,332 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) createMatchV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.CreateRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	validated, err := bookingapi.ValidateCreate(string(operationID), h.reliableScope, h.reliableIdentityKey, request)
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid booking request", string(operationID), "", "")
+		return
+	}
+	admission, err := h.coordinator.SubmitCreate(r.Context(), validated, bookingapi.Credentials{Email: request.Email, Password: request.Password})
+	if err != nil {
+		h.writeSubmissionError(w, operationID, err)
+		return
+	}
+	h.writeAdmission(w, r, admission)
+}
+
+func (h *Handler) cancelMatchV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.CancelRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	validated, err := bookingapi.ValidateCancel(string(operationID), h.reliableScope, h.reliableIdentityKey, r.PathValue("id"), request)
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid cancellation request", string(operationID), "", "")
+		return
+	}
+	admission, err := h.coordinator.SubmitCancel(r.Context(), validated, bookingapi.Credentials{Email: request.Email, Password: request.Password})
+	if err != nil {
+		h.writeSubmissionError(w, operationID, err)
+		return
+	}
+	h.writeAdmission(w, r, admission)
+}
+
+func (h *Handler) getOperationV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, err := bookingapi.ParseOperationID(r.PathValue("id"))
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid operation ID", "", "", "")
+		return
+	}
+	status, err := h.reliableStatus.GetStatus(r.Context(), operationID)
+	var expired *bookingservice.ResultExpiredError
+	if errors.As(err, &expired) {
+		writeJSON(w, http.StatusGone, status)
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.writeContractError(w, http.StatusNotFound, bookingapi.ErrorOperationNotFound, "operation not found", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	if err != nil {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "operation status unavailable", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Handler) reconcileOperationV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, err := bookingapi.ParseOperationID(r.PathValue("id"))
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid operation ID", "", "", "")
+		return
+	}
+	var request bookingapi.ReconcileRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	status, err := h.reconciler.Reconcile(r.Context(), operationID, bookingapi.Credentials{Email: request.Email, Password: request.Password})
+	h.writeReconciliationResult(w, operationID, status, err)
+}
+
+func (h *Handler) resolveOperationV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	operationID, err := bookingapi.ParseOperationID(r.PathValue("id"))
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid operation ID", "", "", "")
+		return
+	}
+	eventKey, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.ResolutionRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	status, err := h.reconciler.Resolve(r.Context(), operationID, eventKey, request)
+	h.writeReconciliationResult(w, operationID, status, err)
+}
+
+func (h *Handler) importBookingV2(w http.ResponseWriter, r *http.Request) {
+	if !h.requireReliableAPI(w) {
+		return
+	}
+	importID, ok := h.operationKey(w, r)
+	if !ok {
+		return
+	}
+	var request bookingapi.ImportRequest
+	if !decodeStrictJSON(w, r, &request) {
+		return
+	}
+	result, err := h.importer.Import(r.Context(), importID, request)
+	if err != nil {
+		if errors.Is(err, bookingservice.ErrReconciliationUnresolved) || errors.Is(err, bookingservice.ErrVerificationMismatch) {
+			h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "provider reads did not verify an importable booking", string(importID), "", "")
+			return
+		}
+		var validation *bookingapi.ValidationError
+		if errors.As(err, &validation) {
+			h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid booking import request", string(importID), "", "")
+			return
+		}
+		var conflict *storage.ConflictError
+		if errors.As(err, &conflict) {
+			conflictingID := string(importID)
+			if conflict.ConflictingOperationID != "" {
+				conflictingID = conflict.ConflictingOperationID
+			}
+			h.writeContractError(w, http.StatusConflict, conflict.Code, "booking import conflicts with durable state", conflictingID, "", "")
+			return
+		}
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking import dependency unavailable", string(importID), "", "")
+		return
+	}
+	if result == nil || result.Status == nil {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking import status unavailable", string(importID), "", "")
+		return
+	}
+	httpStatus := http.StatusOK
+	if result.Created {
+		httpStatus = http.StatusCreated
+	}
+	writeJSON(w, httpStatus, result.Status)
+}
+
+func (h *Handler) writeReconciliationResult(w http.ResponseWriter, operationID bookingapi.OperationID, status *bookingapi.OperationStatus, err error) {
+	var expired *bookingservice.ResultExpiredError
+	if errors.As(err, &expired) {
+		if status == nil {
+			status = expired.Status
+		}
+		writeJSON(w, http.StatusGone, status)
+		return
+	}
+	if err == nil {
+		if status == nil {
+			h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "operation status unavailable", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+			return
+		}
+		w.Header().Set("Location", status.StatusURL)
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if errors.Is(err, bookingservice.ErrReconciliationUnresolved) || errors.Is(err, bookingservice.ErrVerificationMismatch) {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "provider read did not prove a safe terminal outcome", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	var validation *bookingapi.ValidationError
+	if errors.As(err, &validation) {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "invalid reconciliation request", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.writeContractError(w, http.StatusNotFound, bookingapi.ErrorOperationNotFound, "operation not found", string(operationID), "", "")
+		return
+	}
+	var conflict *storage.ConflictError
+	if errors.As(err, &conflict) {
+		h.writeSubmissionError(w, operationID, err)
+		return
+	}
+	h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "reconciliation dependency unavailable", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+}
+
+func (h *Handler) writeAdmission(w http.ResponseWriter, r *http.Request, admission *storage.Admission) {
+	if admission == nil || admission.Operation == nil {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "operation acceptance unavailable", "", "", "")
+		return
+	}
+	status, err := h.reliableStatus.StatusFromOperation(r.Context(), admission.Operation)
+	var expired *bookingservice.ResultExpiredError
+	if errors.As(err, &expired) {
+		writeJSON(w, http.StatusGone, status)
+		return
+	}
+	if err != nil {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "operation accepted; inspect status", string(admission.Operation.OperationID), string(admission.Operation.Phase), bookingservice.OperationStatusURL(admission.Operation.OperationID))
+		return
+	}
+	if status.State == bookingapi.StateAccepted || status.State == bookingapi.StateRunning {
+		status = h.waitForTerminal(r.Context(), status)
+	}
+	h.writeMutationStatus(w, status)
+}
+
+func (h *Handler) waitForTerminal(requestCtx context.Context, initial *bookingapi.OperationStatus) *bookingapi.OperationStatus {
+	ctx, cancel := context.WithTimeout(requestCtx, h.responseWait)
+	defer cancel()
+	status := initial
+	ticker := time.NewTicker(h.statusPollInterval)
+	defer ticker.Stop()
+	for status.State == bookingapi.StateAccepted || status.State == bookingapi.StateRunning {
+		select {
+		case <-ctx.Done():
+			return status
+		case <-ticker.C:
+			updated, err := h.reliableStatus.GetStatus(ctx, bookingapi.OperationID(status.OperationID))
+			if err == nil {
+				status = updated
+			}
+		}
+	}
+	return status
+}
+
+func (h *Handler) writeMutationStatus(w http.ResponseWriter, status *bookingapi.OperationStatus) {
+	if status == nil {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "operation status unavailable", "", "", "")
+		return
+	}
+	w.Header().Set("Location", status.StatusURL)
+	httpStatus := http.StatusAccepted
+	switch status.State {
+	case bookingapi.StateSucceeded:
+		httpStatus = http.StatusOK
+		if status.Kind == bookingapi.OperationCreate {
+			httpStatus = http.StatusCreated
+		}
+	case bookingapi.StateRejectedNoEffect, bookingapi.StateNotDispatched:
+		httpStatus = http.StatusUnprocessableEntity
+	case bookingapi.StateOutcomeUnknown:
+		httpStatus = http.StatusConflict
+	}
+	writeJSON(w, httpStatus, status)
+}
+
+func (h *Handler) writeSubmissionError(w http.ResponseWriter, operationID bookingapi.OperationID, err error) {
+	var conflict *storage.ConflictError
+	if errors.As(err, &conflict) {
+		responseID, statusURL := string(operationID), ""
+		if parsed, parseErr := bookingapi.ParseOperationID(conflict.ConflictingOperationID); parseErr == nil {
+			responseID = string(parsed)
+			if conflict.ConflictingResourceKind != "import" {
+				statusURL = bookingservice.OperationStatusURL(parsed)
+			}
+		}
+		h.writeContractError(w, http.StatusConflict, conflict.Code, "booking operation conflicts with durable state", responseID, "", statusURL)
+		return
+	}
+	var uncertain *bookingservice.AdmissionUncertainError
+	if errors.As(err, &uncertain) {
+		h.writeContractError(w, http.StatusConflict, bookingapi.ErrorOperationOutcomeUnknown, "operation acceptance is uncertain; inspect this operation key", string(operationID), "", bookingservice.OperationStatusURL(operationID))
+		return
+	}
+	if errors.Is(err, bookingservice.ErrCoordinatorClosed) || errors.Is(err, bookingservice.ErrExecutionCapacity) || errors.Is(err, bookingservice.ErrSessionCapacity) {
+		h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking service unavailable before admission", "", "", "")
+		return
+	}
+	h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "booking dependency unavailable", "", "", "")
+}
+
+func (h *Handler) requireReliableAPI(w http.ResponseWriter) bool {
+	if h.reliableEnabled {
+		return true
+	}
+	h.writeContractError(w, http.StatusServiceUnavailable, bookingapi.ErrorDependencyUnavailable, "reliable booking API is not initialized", "", "", "")
+	return false
+}
+
+func (h *Handler) operationKey(w http.ResponseWriter, r *http.Request) (bookingapi.OperationID, bool) {
+	values := r.Header.Values("Idempotency-Key")
+	if len(values) != 1 {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "exactly one Idempotency-Key header is required", "", "", "")
+		return "", false
+	}
+	operationID, err := bookingapi.ParseOperationID(values[0])
+	if err != nil {
+		h.writeContractError(w, http.StatusBadRequest, bookingapi.ErrorInvalidRequest, "Idempotency-Key must be a canonical UUID", "", "", "")
+		return "", false
+	}
+	return operationID, true
+}
+
+func (h *Handler) writeContractError(w http.ResponseWriter, status int, code bookingapi.ErrorCode, message, operationID, phase, statusURL string) {
+	writeJSON(w, status, bookingapi.ErrorResponse{Code: code, Message: message, OperationID: operationID, Phase: phase, StatusURL: statusURL})
+}
+
+func decodeStrictJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		writeJSON(w, http.StatusBadRequest, bookingapi.ErrorResponse{Code: bookingapi.ErrorInvalidRequest, Message: "invalid JSON request"})
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, bookingapi.ErrorResponse{Code: bookingapi.ErrorInvalidRequest, Message: "request must contain one JSON value"})
+		return false
+	}
+	return true
 }
 
 // listMatches returns court reservations for the given date from the
@@ -288,13 +754,14 @@ func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
 	}
 
-	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, h.sportUUID(), date)
 	if err != nil {
 		h.logger.Error("eversports get courts for games failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -392,13 +859,14 @@ func (h *Handler) getCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return
 	}
 
-	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, squashSportUUID, date)
+	courts, err := es.GetCourts(r.Context(), h.facilityID, h.facilitySlug, squashSportID, squashSportSlug, squashSportName, h.sportUUID(), date)
 	if err != nil {
 		h.logger.Error("eversports get courts failed", "err", err)
 		writeError(w, http.StatusBadGateway, "get courts failed: "+err.Error())
@@ -415,7 +883,8 @@ func (h *Handler) getFacility(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "slug query parameter is required")
 		return
 	}
-	es := h.clientFromRequest(r)
+	es, cleanup := h.clientFromRequest(r)
+	defer cleanup()
 	if es == nil {
 		writeError(w, http.StatusBadRequest, "X-Eversports-Email and X-Eversports-Password headers are required")
 		return

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func strOfLen(n int) string {
 	s := make([]byte, n)
@@ -70,14 +73,66 @@ func TestManagementConfig_Validate(t *testing.T) {
 	if err := (&ManagementConfig{InternalAPISecret: "short"}).Validate(); err == nil {
 		t.Error("expected error for a short INTERNAL_API_SECRET")
 	}
+	validBooking := &ManagementConfig{
+		InternalAPISecret: strOfLen(minSecretLength), SportsBookingServiceURL: "http://booking:8081",
+		BookingServiceKey: "eversports.primary.squash", BookingFacilityID: "76443",
+		BookingFacilityUUID: "facility-uuid", BookingFacilitySlug: "facility-slug",
+		BookingCutoverAck: "keyed-v2-only", BookingResponseWait: 8 * time.Second, BookingStatusPoll: 200 * time.Millisecond,
+		CredentialsEncryptionKey: "configured",
+	}
+	if err := validBooking.Validate(); err != nil {
+		t.Fatalf("expected reliable management booking config to pass: %v", err)
+	}
+	invalidBooking := *validBooking
+	invalidBooking.BookingCutoverAck = ""
+	if err := invalidBooking.Validate(); err == nil {
+		t.Fatal("expected booking configuration without keyed-v2 acknowledgement to fail")
+	}
 }
 
 func TestBookingConfig_Validate(t *testing.T) {
-	if err := (&BookingConfig{InternalAPISecret: strOfLen(minSecretLength)}).Validate(); err != nil {
-		t.Errorf("expected no error for a %d-char secret, got %v", minSecretLength, err)
+	valid := func() BookingConfig {
+		return BookingConfig{
+			InternalAPISecret: strOfLen(minSecretLength), MonitoringSecret: strOfLen(minSecretLength + 1),
+			CutoverAcknowledgement: BookingReliableCutoverAcknowledgement,
+			IdentityKey:            strOfLen(64), ServerPort: "8081", AdminServerPort: "9091",
+			HTTPResponseWait: 20, ExecutionTimeout: 90, ProviderCallTimeout: 20,
+			FinalizationTimeout: 5, AdmissionWait: 1, ShutdownTimeout: 100,
+			SingletonCheckInterval: 5, RetentionInterval: 24, RetentionAge: 90,
+			SessionIdleTimeout: 10, RetentionBatchSize: 100, SessionCapacity: 32,
+		}
 	}
-	if err := (&BookingConfig{InternalAPISecret: "short"}).Validate(); err == nil {
+	cfg := valid()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
+	cfg = valid()
+	cfg.CutoverAcknowledgement = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected missing reliable cutover acknowledgement to fail")
+	}
+	cfg = valid()
+	cfg.InternalAPISecret = "short"
+	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for a short INTERNAL_API_SECRET")
+	}
+	cfg = valid()
+	cfg.MonitoringSecret = cfg.InternalAPISecret
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected separate monitoring and business secrets")
+	}
+	cfg = valid()
+	cfg.IdentityKey = "not-hex"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected invalid identity key error")
+	}
+	cfg = valid()
+	cfg.ProviderCallTimeout = 21 * time.Second
+	cfg.ExecutionTimeout = 90 * time.Second
+	cfg.FinalizationTimeout = 5 * time.Second
+	cfg.ShutdownTimeout = 100 * time.Second
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected provider timeout above hard maximum to fail")
 	}
 }
 

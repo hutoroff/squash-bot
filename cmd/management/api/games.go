@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/management/service"
+	"github.com/hutoroff/squash-bot/cmd/management/storage"
 	"github.com/hutoroff/squash-bot/internal/models"
 	"github.com/hutoroff/squash-bot/internal/sport"
 	"github.com/jackc/pgx/v5"
@@ -144,6 +145,7 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		ActorUserID    int64  `json:"actor_user_id"`
 		ActorDisplay   string `json:"actor_display"`
 		CancelBookings bool   `json:"cancel_bookings"`
+		RequestKey     string `json:"request_key"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -151,8 +153,21 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CancelBookings {
-		canceledLabels, cancelErrors, svcErr := h.gameService.RemoveCourtsAndCancelBookings(r.Context(), id, req.Courts)
+		if !service.ValidManagementBookingRequestKey(req.RequestKey) {
+			writeError(w, http.StatusBadRequest, "valid request_key is required when cancel_bookings is true")
+			return
+		}
+		canceledLabels, cancelErrors, svcErr := h.gameService.RemoveCourtsAndCancelBookingsWithRequestKey(r.Context(), id, req.Courts, req.RequestKey)
 		if svcErr != nil {
+			if errors.Is(svcErr, service.ErrInvalidBookingRequestKey) {
+				writeError(w, http.StatusBadRequest, svcErr.Error())
+				return
+			}
+			var conflict *storage.BookingIntentConflictError
+			if errors.As(svcErr, &conflict) {
+				writeError(w, http.StatusConflict, "booking request key conflicts with an existing request")
+				return
+			}
 			h.logger.Error("updateCourts (cancel)", "err", svcErr, "id", id)
 			writeError(w, http.StatusInternalServerError, svcErr.Error())
 			return
@@ -342,6 +357,7 @@ func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
 		GroupID      int64  `json:"group_id"`
 		ActorUserID  int64  `json:"actor_user_id"`
 		ActorDisplay string `json:"actor_display"`
+		RequestKey   string `json:"request_key"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -351,8 +367,12 @@ func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "count must be a positive integer")
 		return
 	}
+	if !service.ValidManagementBookingRequestKey(req.RequestKey) {
+		writeError(w, http.StatusBadRequest, "valid request_key is required")
+		return
+	}
 
-	result, err := h.gameService.BookGameCourts(r.Context(), id, req.Count, req.ActorUserID, req.ActorDisplay, h.credentialErrorCooldown)
+	result, err := h.gameService.BookGameCourtsWithRequestKey(r.Context(), id, req.Count, req.ActorUserID, req.ActorDisplay, h.credentialErrorCooldown, req.RequestKey)
 	if err != nil {
 		if errors.Is(err, service.ErrGameNotFound) {
 			writeError(w, http.StatusNotFound, "game not found")
@@ -360,6 +380,15 @@ func (h *Handler) bookCourts(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, service.ErrAutoBookingNotAvailable) {
 			writeError(w, http.StatusConflict, "auto-booking not available for this game")
+			return
+		}
+		if errors.Is(err, service.ErrInvalidBookingRequestKey) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var conflict *storage.BookingIntentConflictError
+		if errors.As(err, &conflict) {
+			writeError(w, http.StatusConflict, "booking request key conflicts with an existing request")
 			return
 		}
 		h.logger.Error("bookCourts", "err", err, "id", id)

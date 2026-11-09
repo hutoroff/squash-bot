@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -14,16 +15,36 @@ import (
 // request this API handles.
 const maxRequestBodyBytes = 1 << 20
 
+type HTTPObserver interface {
+	ObserveHTTPRequest(method, route, status string, duration time.Duration)
+}
+
 // NewServer builds an http.Server with the handler's routes registered.
-// secret is the shared bearer token; all routes except /health and /version require it.
+// Only /health is public; business and legacy version routes require the
+// business bearer token. Rich version data is exposed by the admin listener.
 func NewServer(addr string, h *Handler, secret string) *http.Server {
+	return NewObservedServer(addr, h, secret, nil)
+}
+
+func NewObservedServer(addr string, h *Handler, secret string, observer HTTPObserver) *http.Server {
+	return NewObservedServerWithWriteTimeout(addr, h, secret, observer, 30*time.Second)
+}
+
+func NewObservedServerWithWriteTimeout(addr string, h *Handler, secret string, observer HTTPObserver, writeTimeout time.Duration) *http.Server {
+	if writeTimeout <= 0 {
+		writeTimeout = 30 * time.Second
+	}
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	var routes http.Handler = mux
+	if observer != nil {
+		routes = observeHTTP(observer, routes)
+	}
 	return &http.Server{
 		Addr:         addr,
-		Handler:      limitRequestBody(requireBearer(secret, mux)),
+		Handler:      limitRequestBody(requireBearer(secret, routes)),
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: writeTimeout,
 		IdleTimeout:  60 * time.Second,
 	}
 }
@@ -38,12 +59,41 @@ func limitRequestBody(next http.Handler) http.Handler {
 	})
 }
 
+func observeHTTP(observer HTTPObserver, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		if recorder.status == 0 {
+			recorder.status = http.StatusOK
+		}
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		observer.ObserveHTTPRequest(r.Method, route, strconv.Itoa(recorder.status), time.Since(started))
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
 // requireBearer validates the Authorization: Bearer <secret> header.
-// /health and /version are exempt.
+// Only the compatibility liveness endpoint is exempt.
 func requireBearer(secret string, next http.Handler) http.Handler {
 	expected := []byte("Bearer " + secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/version" {
+		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}

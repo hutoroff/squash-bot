@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 )
 
@@ -122,7 +122,7 @@ func (c *Client) GetMatchByID(ctx context.Context, matchID string) (*Booking, er
 		}
 		defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
+		respBytes, err := readProviderResponse(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("eversports: read Match response: %w", err)
 		}
@@ -178,84 +178,119 @@ const cancelMatchMutation = `mutation CancelMatch($matchId: ID!, $origin: Origin
   }
 }`
 
+type cancelMatchPayload struct {
+	Typename string `json:"__typename"`
+	// BallsportMatch fields
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	RelativeLink string `json:"relativeLink"`
+	// ExpectedErrors fields
+	Errors []struct {
+		ID      string `json:"id"`
+		Message string `json:"message"`
+		Path    string `json:"path"`
+	} `json:"errors"`
+}
+
 // gqlCancelMatchResponse is the GraphQL response envelope for the CancelMatch mutation.
 type gqlCancelMatchResponse struct {
 	Data struct {
-		CancelMatch struct {
-			Typename string `json:"__typename"`
-			// BallsportMatch fields
-			ID           string `json:"id"`
-			State        string `json:"state"`
-			RelativeLink string `json:"relativeLink"`
-			// ExpectedErrors fields
-			Errors []struct {
-				ID      string `json:"id"`
-				Message string `json:"message"`
-				Path    string `json:"path"`
-			} `json:"errors"`
-		} `json:"cancelMatch"`
+		CancelMatch cancelMatchPayload `json:"cancelMatch"`
 	} `json:"data"`
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`
 }
 
-// CancelMatch cancels a booking by its UUID.
-// It logs in automatically if no session is held, and retries once on HTTP 401.
-func (c *Client) CancelMatch(ctx context.Context, matchID string) (*CancellationResult, error) {
-	do := func() (*CancellationResult, error) {
-		payload := gqlRequest{
-			OperationName: "CancelMatch",
-			Variables: map[string]any{
-				"matchId": matchID,
-				"origin":  "ORIGIN_MARKETPLACE",
-			},
-			Query: cancelMatchMutation,
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("eversports: marshal CancelMatch request: %w", err)
-		}
-		resp, err := c.doAuthed(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("eversports: CancelMatch request: %w", err)
-		}
-		defer resp.Body.Close()
+// CancelMatchOnce performs exactly one cancellation mutation. It assumes a
+// session was established and never reauthenticates or retries.
+func (c *Client) CancelMatchOnce(ctx context.Context, matchID string) (*CancellationResult, error) {
+	payload := gqlRequest{
+		OperationName: "CancelMatch",
+		Variables: map[string]any{
+			"matchId": matchID,
+			"origin":  "ORIGIN_MARKETPLACE",
+		},
+		Query: cancelMatchMutation,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeRequestBuildFailed, false,
+			fmt.Errorf("marshal CancelMatch request: %w", err))
+	}
+	resp, err := c.doAuthedMutation(ctx, http.MethodPost, c.baseURL+graphqlEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeTransportError, false,
+			fmt.Errorf("CancelMatch request: %w", err))
+	}
+	defer resp.Body.Close()
 
-		respBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("eversports: read CancelMatch response: %w", err)
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", errUnauthorized)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("eversports: CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes))
-		}
-		if err := htmlAuthError("CancelMatch", respBytes); err != nil {
-			return nil, err
-		}
-
-		var gqlResp gqlCancelMatchResponse
-		if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
-			return nil, fmt.Errorf("eversports: decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes))
-		}
-		if len(gqlResp.Errors) > 0 {
-			return nil, gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
-		}
-		// ExpectedErrors are business-rule rejections (e.g. past the cancellation
-		// deadline) — a real answer, never retried.
-		cm := gqlResp.Data.CancelMatch
-		if len(cm.Errors) > 0 {
-			return nil, fmt.Errorf("eversports: CancelMatch error: %s", cm.Errors[0].Message)
-		}
-		c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
-		return &CancellationResult{
-			ID:           cm.ID,
-			State:        cm.State,
-			RelativeLink: cm.RelativeLink,
-		}, nil
+	respBytes, err := readProviderResponse(resp.Body)
+	if err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeResponseReadFailed, false,
+			fmt.Errorf("read CancelMatch response: %w", err))
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, errUnauthorized)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeHTTPError, false,
+			fmt.Errorf("CancelMatch HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes)))
+	}
+	if err := htmlAuthError("CancelMatch", respBytes); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, err)
 	}
 
-	return withAuth(ctx, c, do)
+	var gqlResp gqlCancelMatchResponse
+	if err := json.Unmarshal(respBytes, &gqlResp); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeInvalidResponse, false,
+			fmt.Errorf("decode CancelMatch response: %w (body: %s)", err, bodySnippet(respBytes)))
+	}
+	if len(gqlResp.Errors) > 0 {
+		topErr := gqlTopLevelError("CancelMatch", gqlResp.Errors[0].Message)
+		if errors.Is(topErr, errUnauthorized) {
+			return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeAuthenticationExpired, true, topErr)
+		}
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeProviderError, false, topErr)
+	}
+	cm := gqlResp.Data.CancelMatch
+	if len(cm.Errors) > 0 {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationNoEffect, MutationCodeProviderRejected, false,
+			fmt.Errorf("CancelMatch error: %s", cm.Errors[0].Message))
+	}
+	if err := validateCancellationResponse(cm, matchID); err != nil {
+		return nil, mutationFailure(MutationPhaseCancellation, MutationUnknown, MutationCodeInvalidResponse, false, err)
+	}
+	c.logger.Info("eversports match cancelled", "matchId", matchID, "state", cm.State)
+	return &CancellationResult{ID: cm.ID, State: cm.State, RelativeLink: cm.RelativeLink}, nil
+}
+
+// CancelMatch preserves the legacy one-auth-retry behavior. Durable v2
+// orchestration journals each attempt and calls CancelMatchOnce directly.
+func (c *Client) CancelMatch(ctx context.Context, matchID string) (*CancellationResult, error) {
+	if err := c.EnsureLoggedIn(ctx); err != nil {
+		return nil, loginMutationFailure(err)
+	}
+	result, err := c.CancelMatchOnce(ctx, matchID)
+	var mutationErr *MutationError
+	if errors.As(err, &mutationErr) && mutationErr.RetrySafe && errors.Is(err, errUnauthorized) {
+		if loginErr := c.Reauthenticate(ctx); loginErr != nil {
+			return nil, loginMutationFailure(loginErr)
+		}
+		return c.CancelMatchOnce(ctx, matchID)
+	}
+	return result, err
+}
+
+func validateCancellationResponse(response cancelMatchPayload, requestedMatchID string) error {
+	if response.Typename != "BallsportMatch" {
+		return fmt.Errorf("CancelMatch returned unexpected type %q", response.Typename)
+	}
+	if response.ID == "" || response.ID != requestedMatchID {
+		return fmt.Errorf("CancelMatch returned a mismatched or empty match identifier")
+	}
+	if response.State != "CANCELLED" {
+		return fmt.Errorf("CancelMatch returned unconfirmed state %q", response.State)
+	}
+	return nil
 }

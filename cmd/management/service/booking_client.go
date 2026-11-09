@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 )
 
 // BookingSlot is a minimal representation of a court slot returned by the
@@ -66,27 +69,77 @@ type BookingServiceClient interface {
 	BookMatch(ctx context.Context, courtUUID, start, end, login, password string) (*BookMatchResult, error)
 }
 
+// ReliableBookingServiceClient exposes the keyed v2 mutation and ledger-read
+// contract. Callers must durably allocate operationID before invoking it.
+type ReliableBookingServiceClient interface {
+	VerifyBinding(context.Context, bookingapi.Scope) error
+	SubmitCreateOperation(context.Context, bookingapi.OperationID, bookingapi.CreateRequest) (*bookingapi.OperationStatus, error)
+	SubmitCancelOperation(context.Context, bookingapi.OperationID, string, bookingapi.CancelRequest) (*bookingapi.OperationStatus, error)
+	GetOperationStatus(context.Context, bookingapi.OperationID) (*bookingapi.OperationStatus, error)
+	ReconcileOperation(context.Context, bookingapi.OperationID, bookingapi.ReconcileRequest) (*bookingapi.OperationStatus, error)
+	ResolveOperation(context.Context, bookingapi.OperationID, bookingapi.OperationID, bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error)
+}
+
+// BookingContractError is a typed v2 rejection. It contains only the bounded,
+// sanitized booking contract response, never provider response bodies.
+type BookingContractError struct {
+	HTTPStatus  int
+	Code        bookingapi.ErrorCode
+	OperationID bookingapi.OperationID
+	State       string
+	Phase       string
+	StatusURL   string
+}
+
+func (e *BookingContractError) Error() string {
+	return fmt.Sprintf("booking v2 request rejected: status=%d code=%s operation_id=%s", e.HTTPStatus, e.Code, e.OperationID)
+}
+
 // httpBookingClient is the production implementation of BookingServiceClient.
 type httpBookingClient struct {
-	baseURL    string
-	apiSecret  string
-	httpClient *http.Client
+	baseURL      string
+	apiSecret    string
+	httpClient   *http.Client
+	reliableOnly bool
 }
 
 // NewHTTPBookingClient creates a BookingServiceClient backed by the booking service HTTP API.
 // baseURL is e.g. "http://booking:8081".
 func NewHTTPBookingClient(baseURL, apiSecret string) BookingServiceClient {
+	return newHTTPBookingClient(baseURL, apiSecret)
+}
+
+// NewReliableHTTPBookingClient creates a keyed v2 booking client. Unlike the
+// legacy interface, it has no keyless mutation methods.
+func NewReliableHTTPBookingClient(baseURL, apiSecret string) ReliableBookingServiceClient {
+	client := newHTTPBookingClient(baseURL, apiSecret)
+	client.reliableOnly = true
+	return client
+}
+
+// NewReliableBookingReadClient exposes facility reads through the existing
+// interface while failing closed if a keyless mutation path is reached.
+func NewReliableBookingReadClient(baseURL, apiSecret string) BookingServiceClient {
+	client := newHTTPBookingClient(baseURL, apiSecret)
+	client.reliableOnly = true
+	return client
+}
+
+func newHTTPBookingClient(baseURL, apiSecret string) *httpBookingClient {
 	return &httpBookingClient{
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		apiSecret: apiSecret,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
 
 func (c *httpBookingClient) ListCourts(ctx context.Context, date, login, password string) ([]BookingCourt, error) {
-	url := fmt.Sprintf("%s/api/v1/eversports/courts?date=%s", c.baseURL, date)
+	url := fmt.Sprintf("%s/api/v2/eversports/courts?date=%s", c.baseURL, date)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -121,7 +174,7 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 	if my {
 		myStr = "true"
 	}
-	url := fmt.Sprintf("%s/api/v1/eversports/matches?date=%s&startTime=%s&endTime=%s&my=%s",
+	url := fmt.Sprintf("%s/api/v2/eversports/matches?date=%s&startTime=%s&endTime=%s&my=%s",
 		c.baseURL, date, startTime, endTime, myStr)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -152,6 +205,9 @@ func (c *httpBookingClient) ListMatches(ctx context.Context, date, startTime, en
 }
 
 func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, password string) error {
+	if c.reliableOnly {
+		return &BookingContractError{HTTPStatus: http.StatusConflict, Code: bookingapi.ErrorContractUpgradeRequired}
+	}
 	url := fmt.Sprintf("%s/api/v1/eversports/matches/%s", c.baseURL, matchUUID)
 
 	var body io.Reader
@@ -185,7 +241,190 @@ func (c *httpBookingClient) CancelMatch(ctx context.Context, matchUUID, login, p
 	return nil
 }
 
+func (c *httpBookingClient) VerifyBinding(ctx context.Context, expected bookingapi.Scope) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v2/eversports/descriptor", nil)
+	if err != nil {
+		return fmt.Errorf("build booking v2 descriptor request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+	req.Header.Set("Accept", "application/json")
+	response, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("read booking v2 descriptor: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxReliableBookingResponseBytes+1))
+	if err != nil || len(body) > maxReliableBookingResponseBytes {
+		return fmt.Errorf("read booking v2 descriptor: invalid bounded response")
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("booking v2 descriptor unavailable: status %d", response.StatusCode)
+	}
+	var descriptor bookingapi.Descriptor
+	if err := json.Unmarshal(body, &descriptor); err != nil {
+		return fmt.Errorf("decode booking v2 descriptor: %w", err)
+	}
+	if descriptor.Contract != bookingapi.ContractName || descriptor.ContractMajor != bookingapi.ContractMajor || descriptor.Scope != expected {
+		return fmt.Errorf("booking v2 descriptor does not match the durable binding")
+	}
+	required := map[string]bool{"create": false, "cancel": false, "status": false, "reconcile": false, "resolve": false}
+	for _, capability := range descriptor.Capabilities {
+		if _, ok := required[capability]; ok {
+			required[capability] = true
+		}
+	}
+	for _, present := range required {
+		if !present {
+			return fmt.Errorf("booking v2 descriptor is missing required capabilities")
+		}
+	}
+	return nil
+}
+
+func (c *httpBookingClient) SubmitCreateOperation(ctx context.Context, operationID bookingapi.OperationID, request bookingapi.CreateRequest) (*bookingapi.OperationStatus, error) {
+	return c.doReliableOperation(ctx, http.MethodPost, "/api/v2/eversports/matches", operationID, operationID, request)
+}
+
+func (c *httpBookingClient) SubmitCancelOperation(ctx context.Context, operationID bookingapi.OperationID, matchID string, request bookingapi.CancelRequest) (*bookingapi.OperationStatus, error) {
+	if strings.TrimSpace(matchID) == "" {
+		return nil, fmt.Errorf("booking v2 cancellation match ID is required")
+	}
+	return c.doReliableOperation(ctx, http.MethodDelete, "/api/v2/eversports/matches/"+url.PathEscape(matchID), operationID, operationID, request)
+}
+
+func (c *httpBookingClient) GetOperationStatus(ctx context.Context, operationID bookingapi.OperationID) (*bookingapi.OperationStatus, error) {
+	status, err := c.doReliableOperation(ctx, http.MethodGet, "/api/v2/eversports/operations/"+url.PathEscape(string(operationID)), "", operationID, nil)
+	return requireBookingOperationID(status, operationID, err)
+}
+
+func (c *httpBookingClient) ReconcileOperation(ctx context.Context, operationID bookingapi.OperationID, request bookingapi.ReconcileRequest) (*bookingapi.OperationStatus, error) {
+	status, err := c.doReliableOperation(ctx, http.MethodPost, "/api/v2/eversports/operations/"+url.PathEscape(string(operationID))+"/reconcile", "", operationID, request)
+	return requireBookingOperationID(status, operationID, err)
+}
+
+func (c *httpBookingClient) ResolveOperation(ctx context.Context, operationID, eventKey bookingapi.OperationID, request bookingapi.ResolutionRequest) (*bookingapi.OperationStatus, error) {
+	status, err := c.doReliableOperation(ctx, http.MethodPost, "/api/v2/eversports/operations/"+url.PathEscape(string(operationID))+"/resolution", eventKey, operationID, request)
+	return requireBookingOperationID(status, operationID, err)
+}
+
+func requireBookingOperationID(status *bookingapi.OperationStatus, expected bookingapi.OperationID, err error) (*bookingapi.OperationStatus, error) {
+	if err != nil || status == nil {
+		return status, err
+	}
+	if status.OperationID != string(expected) {
+		return nil, fmt.Errorf("booking v2 status operation ID mismatch")
+	}
+	return status, nil
+}
+
+const maxReliableBookingResponseBytes = 1 << 20
+
+func (c *httpBookingClient) doReliableOperation(ctx context.Context, method, path string, idempotencyKey, expectedOperationID bookingapi.OperationID, payload any) (*bookingapi.OperationStatus, error) {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("encode booking v2 request: %w", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("build booking v2 request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiSecret)
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", string(idempotencyKey))
+	}
+
+	response, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("booking v2 request: %w", err)
+	}
+	defer response.Body.Close()
+	limited := io.LimitReader(response.Body, maxReliableBookingResponseBytes+1)
+	responseBody, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("read booking v2 response: %w", err)
+	}
+	if len(responseBody) > maxReliableBookingResponseBytes {
+		return nil, fmt.Errorf("booking v2 response exceeds %d bytes", maxReliableBookingResponseBytes)
+	}
+
+	var status bookingapi.OperationStatus
+	if err := json.Unmarshal(responseBody, &status); err == nil && status.OperationID != "" && status.State != "" && status.Kind != "" && status.Outcome != "" {
+		if !reliableStatusHTTPCode(response.StatusCode) || !validReliableOperationStatus(&status) {
+			return nil, fmt.Errorf("decode booking v2 status: invalid contract state")
+		}
+		parsedID, parseErr := bookingapi.ParseOperationID(status.OperationID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode booking v2 status: invalid operation ID")
+		}
+		if expectedOperationID != "" && parsedID != expectedOperationID {
+			return nil, fmt.Errorf("booking v2 status operation ID mismatch")
+		}
+		return &status, nil
+	}
+
+	var contractError bookingapi.ErrorResponse
+	if err := json.Unmarshal(responseBody, &contractError); err == nil && contractError.Code != "" {
+		operationID := bookingapi.OperationID(contractError.OperationID)
+		if contractError.OperationID != "" {
+			parsedID, parseErr := bookingapi.ParseOperationID(contractError.OperationID)
+			if parseErr != nil {
+				return nil, fmt.Errorf("decode booking v2 error: invalid operation ID")
+			}
+			operationID = parsedID
+		}
+		return nil, &BookingContractError{
+			HTTPStatus: response.StatusCode, Code: contractError.Code, OperationID: operationID,
+			State: contractError.State, Phase: contractError.Phase, StatusURL: contractError.StatusURL,
+		}
+	}
+	return nil, fmt.Errorf("decode booking v2 response: status %d contained no recognized contract document", response.StatusCode)
+}
+
+func reliableStatusHTTPCode(status int) bool {
+	switch status {
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusGone:
+		return true
+	default:
+		return false
+	}
+}
+
+func validReliableOperationStatus(status *bookingapi.OperationStatus) bool {
+	if status == nil || (status.Kind != bookingapi.OperationCreate && status.Kind != bookingapi.OperationCancel) {
+		return false
+	}
+	switch status.Phase {
+	case bookingapi.PhaseAdmission, bookingapi.PhaseLogin, bookingapi.PhaseReserve, bookingapi.PhasePayment,
+		bookingapi.PhaseMatchAttachment, bookingapi.PhaseCancellation, bookingapi.PhaseFinalization:
+	default:
+		return false
+	}
+	switch status.State {
+	case bookingapi.StateAccepted, bookingapi.StateRunning:
+		return status.Outcome == bookingapi.OutcomePending
+	case bookingapi.StateNotDispatched, bookingapi.StateRejectedNoEffect:
+		return status.Outcome == bookingapi.OutcomeNoEffect
+	case bookingapi.StateSucceeded:
+		return status.Outcome == bookingapi.OutcomeSuccess || status.Outcome == bookingapi.OutcomeSuccessWithWarning
+	case bookingapi.StateOutcomeUnknown:
+		return status.Outcome == bookingapi.OutcomeUnknown
+	default:
+		return false
+	}
+}
+
 func (c *httpBookingClient) BookMatch(ctx context.Context, courtUUID, start, end, login, password string) (*BookMatchResult, error) {
+	if c.reliableOnly {
+		return nil, &BookingContractError{HTTPStatus: http.StatusConflict, Code: bookingapi.ErrorContractUpgradeRequired}
+	}
 	url := fmt.Sprintf("%s/api/v1/eversports/matches", c.baseURL)
 
 	payload := map[string]string{

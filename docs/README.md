@@ -17,6 +17,7 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Bot callbacks, wizard state, formatting, HTTP client | [Telegram](services/telegram.md) |
 | Eversports session handling and checkout hazards | [Booking internals](services/booking.md) |
 | Booking API/configuration and explicitly requested manual operations | [Booking operator reference](sports-booking-service.md) |
+| Reliable booking backup, cutover, rollback, and incident handling | [Booking reliability runbook](booking-reliability-runbook.md) |
 | Web session/proxy authorization, React and test conventions | [Web](services/web.md) |
 
 Exact routes, signatures, configuration defaults, and database schema live in code and migrations. References explain decisions and hazards and link to those sources; they are not parallel API/schema catalogs.
@@ -24,7 +25,8 @@ Exact routes, signatures, configuration defaults, and database schema live in co
 ## Plans — not descriptions of completed features
 
 - [AI-first local development plan](ai-first-development-plan.md): staged improvements; its status/progress section identifies what exists. Steps 1–5 provide shared project knowledge, the local `make` verification interface, a focused regression pack, concise final-state handoff/review evidence, and lightweight local safeguards. Dependency scan results and the subsequent remediation are tracked separately; safeguards are not containment.
-- [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Do not assume a registry, runtime capability resolution, metrics, or replica safety exists.
+- [Service discovery, registration, and monitoring](service-discovery-design.md): **proposed, not implemented**. Its §10.1 is the mandatory, still-unimplemented management integration task for the reliable booking contract. Booking's authenticated admin metrics/descriptor preparation exists, but no registry, runtime capability resolution, or replica safety exists.
+- [Booking reliability and discovery preparation](booking-reliability-design.md): **P1–P6 implemented; P7 operational handoff in progress**. Booking-owned persistence, durable conflict protection, keyed v2 execution/recovery/import, lifecycle, and observability are wired. Management integration and real registration remain separate; no exactly-once provider or multi-active guarantee.
 
 ## Documentation ownership
 

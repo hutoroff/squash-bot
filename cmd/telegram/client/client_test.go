@@ -99,15 +99,15 @@ func TestPartialAndErrorStatusMappings(t *testing.T) {
 			})
 		})
 
-		canceled, failed, err := c.UpdateCourtsAndCancelBookings(context.Background(), 44, -10044, "3", "@alice", 7001)
+		canceled, failed, err := c.UpdateCourtsAndCancelBookings(context.Background(), 44, -10044, "3", "@alice", 7001, "telegram:callback-1")
 		if err != nil {
 			t.Fatalf("UpdateCourtsAndCancelBookings: %v", err)
 		}
 		if !reflect.DeepEqual(canceled, []string{"1"}) || !reflect.DeepEqual(failed, []CancelFailure{{Court: "2", Reason: "upstream timeout"}}) {
 			t.Errorf("partial response = canceled %v failed %+v", canceled, failed)
 		}
-		if got["cancel_bookings"] != true || got["actor_user_id"] != float64(7001) {
-			t.Errorf("partial request body lost cancellation/actor fields: %#v", got)
+		if got["cancel_bookings"] != true || got["actor_user_id"] != float64(7001) || got["request_key"] != "telegram:callback-1" {
+			t.Errorf("partial request body lost cancellation/actor/request-key fields: %#v", got)
 		}
 	})
 

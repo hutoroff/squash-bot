@@ -237,7 +237,7 @@ Each service has an independent version (`MAJOR.MINOR.BUILD`) stored in:
 - `cmd/booking/VERSION`
 - `cmd/web/VERSION`
 
-The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. HTTP-serving services expose `GET /version` returning `{"version": "1.0.0"}`; telegram exposes it only in webhook mode. The telegram bot additionally calls management's `GET /version` at startup and refuses to start if the request fails or major versions differ.
+The version is injected at build time (`-ldflags "-X main.Version=..."`) and logged on startup. HTTP-serving services expose `GET /version` returning `{"version": "1.0.0"}`; booking requires business authentication on that listener and also exposes it through its separately authenticated internal admin listener. Telegram exposes it only in webhook mode. The telegram bot additionally calls management's `GET /version` at startup and refuses to start if the request fails or major versions differ.
 
 ### Releasing a service
 
@@ -300,7 +300,9 @@ openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 # 4. Lock down the .env file
 chmod 600 .env
 
-# 5. Pull images and start
+# 5. Pull images and start only a mutually compatible release set.
+# Reliable booking and management now have a static keyed-v2 integration candidate;
+# complete the linked cutover runbook and explicit acknowledgement before promotion.
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
@@ -315,9 +317,9 @@ Variables required by `docker-compose.prod.yml` in addition to the per-service o
 | `MANAGEMENT_VERSION`, `TELEGRAM_VERSION`, `BOOKING_VERSION`, `WEB_VERSION` | No | Image tag per service; default `stable`. |
 | `TELEGRAM_SERVER_PORT` | No | Telegram webhook listener port inside the container; default `8083`. |
 
-Prod compose sets `DATABASE_URL`, `MANAGEMENT_SERVICE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`) and `LOG_DIR` itself; values for those in `.env` are ignored there.
+Prod compose sets `DATABASE_URL`, `BOOKING_DATABASE_URL`, `MANAGEMENT_SERVICE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`) and `LOG_DIR` itself; values for those in `.env` are ignored there.
 
-Migrations run automatically on first startup. Verify everything is healthy:
+Migrations run automatically on first startup. **Current reliability work is still not production-cutover ready:** management's static keyed-v2 create/cancel, durable intent, status recovery, typed failure handling, origin binding, and internal inspection/reconciliation plumbing are implemented, but the remaining management acceptance gates, legacy inventory/import drill, bounded operator notifications/metrics, and independent rollout review are not complete. `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is required whenever `SPORTS_BOOKING_SERVICE_URL` enables this path; it only acknowledges that keyless mutations are forbidden and does not replace the [cutover runbook](docs/booking-reliability-runbook.md). Do not promote the candidate until those hard gates pass. Once a compatible release set is approved, verify everything is healthy:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
@@ -349,17 +351,7 @@ Verify a backup exists:
 docker compose -f docker-compose.prod.yml exec db-backup ls -lh /backups/
 ```
 
-To restore from the most recent backup:
-```bash
-# Find the latest dump inside the backup container
-LATEST=$(docker compose -f docker-compose.prod.yml exec -T db-backup \
-  sh -c 'ls -t /backups/squash_bot_*.dump | head -1')
-
-# Pipe it into pg_restore on the postgres container
-docker compose -f docker-compose.prod.yml exec -T db-backup cat "$LATEST" | \
-  docker compose -f docker-compose.prod.yml exec -T postgres \
-    pg_restore -U squash_bot -d squash_bot --clean --if-exists
-```
+A production restore is a disaster-recovery action, not a routine deployment step. Stop all mutation-capable application services first, preserve the booking identity key, and follow the [reliable booking restore/rollback runbook](docs/booking-reliability-runbook.md#4-backup-and-disposable-restore-drill). Practice against a disposable database before an authorized production restore. A stale dump may omit Eversports effects after its snapshot, so restoring rows must never automatically resume booking/cancellation traffic or imply that an empty ledger means no provider bookings exist.
 
 To copy a backup to the host for safekeeping:
 ```bash
@@ -368,7 +360,7 @@ docker compose -f docker-compose.prod.yml cp db-backup:/backups/ ./backups/
 
 ### Health monitoring
 
-`scripts/healthcheck.sh` pings the `/health` endpoints and sends a Telegram alert if a service is down. Install it in cron:
+`scripts/healthcheck.sh` checks management liveness and booking's monitoring-authenticated admin readiness, then sends a Telegram alert if a service is down. The booking monitoring token expands only inside its container. Install the script in cron:
 
 ```bash
 # Set the env vars for the script (use the same bot token; CHAT_ID is your personal Telegram chat ID)
@@ -429,8 +421,12 @@ Guest spots count toward capacity.
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
-| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables automatic court cancellation in the cancellation reminder and automatic court booking at midnight when booking opens |
-| `CREDENTIALS_ENCRYPTION_KEY` | No | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
+| `SPORTS_BOOKING_SERVICE_URL` | No | _(empty)_        | Base URL of the booking service (e.g. `http://booking:8081`); when set, enables only the durable keyed-v2 create/cancel integration; no v1 mutation fallback exists. |
+| `BOOKING_SERVICE_KEY` / `EVERSPORTS_FACILITY_ID` / `EVERSPORTS_FACILITY_UUID` / `EVERSPORTS_FACILITY_SLUG` | When booking enabled | — | Must match booking's immutable provider/facility binding. Existing operations fail closed rather than being sent to a changed binding. |
+| `BOOKING_RELIABLE_CUTOVER_ACK` | When booking enabled | — | Must equal `keyed-v2-only`; acknowledges that keyless mutation traffic is rejected, not that rollout gates passed. |
+| `MANAGEMENT_BOOKING_RESPONSE_WAIT` | No | `8s` | Bounded foreground wait/status-observation budget after keyed admission. |
+| `MANAGEMENT_BOOKING_STATUS_POLL` | No | `200ms` | Poll interval while a v2 operation remains accepted/running. |
+| `CREDENTIALS_ENCRYPTION_KEY` | When booking enabled | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
 | `CREDENTIAL_ERROR_COOLDOWN`  | No | `24h`            | How long a credential is skipped after a booking error before being retried (Go duration string, e.g. `24h`, `12h30m`). |
 | `SERVICE_ADMIN_IDS`          | No | _(empty)_        | Comma-separated Telegram user IDs granted the `is_server_owner` role at startup. Grant-only and idempotent: re-running with the same list is a no-op, and removing an ID here does **not** revoke an existing owner — the `users` table is the source of truth once seeded. Manage ownership afterwards via the web UI's Users page (`GET/PATCH /api/v1/users*`), not this variable. Not read by the web service. |
 | `AUDIT_RETENTION_DAYS`       | No | `365`            | How long audit events are kept (days). A daily cron job deletes rows older than this threshold. |
@@ -514,9 +510,9 @@ When the bot is promoted or demoted in a group, it updates its admin status acco
 
 ## Sports Booking Service
 
-**booking** is a lightweight HTTP service (port 8081) that connects to [Eversports](https://www.eversports.de/) using credentials supplied per request. It supports listing, creating, and cancelling court bookings; there is no service-level default account.
+**booking** exposes a keyed reliable v2 API on port 8081 and a separately authenticated internal admin listener on port 9091. It owns a PostgreSQL operation/evidence ledger and singleton execution authority while keeping provider credentials/sessions bounded and memory-only. There is no service-level default account, no safe keyless mutation fallback, and no multi-active guarantee.
 
-See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API endpoints, environment variables, and local run instructions.
+See [docs/sports-booking-service.md](docs/sports-booking-service.md) for API/configuration and the [reliable booking runbook](docs/booking-reliability-runbook.md) for backup, cutover, rollback, and incident handling. Management v2 integration is still mandatory before production mutation cutover.
 
 ## Project Structure
 

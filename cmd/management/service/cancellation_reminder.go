@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/hutoroff/squash-bot/internal/bookingapi"
 	"github.com/hutoroff/squash-bot/internal/gameformat"
 	"github.com/hutoroff/squash-bot/internal/i18n"
 	"github.com/hutoroff/squash-bot/internal/models"
@@ -29,6 +30,13 @@ type CancellationReminderJob struct {
 	loc                   *time.Location
 	logger                *slog.Logger
 	pollWindow            time.Duration // timing gate: ±pollWindow around reminderAt
+	reliableBooking       *reliableBookingDeps
+}
+
+func (j *CancellationReminderJob) SetReliableBooking(intents *BookingIntentService, executor *ReliableBookingExecutor, scope bookingapi.Scope) {
+	if intents != nil && executor != nil {
+		j.reliableBooking = &reliableBookingDeps{intents: intents, executor: executor, scope: scope}
+	}
 }
 
 func NewCancellationReminderJob(
