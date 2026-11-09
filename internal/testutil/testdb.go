@@ -109,7 +109,7 @@ func CheckDocker() error {
 		return fmt.Errorf("Docker CLI not found: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // parallel package startup on CI can make `docker info` slow
 	defer cancel()
 	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
 		if ctx.Err() != nil {
