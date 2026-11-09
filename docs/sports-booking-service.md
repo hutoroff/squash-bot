@@ -18,10 +18,11 @@
 | `BOOKING_HTTP_RESPONSE_WAIT` | No | `20s` | Wait for terminal completion before returning `202`. |
 | `BOOKING_EXECUTION_TIMEOUT` / `BOOKING_PROVIDER_CALL_TIMEOUT` | No | `90s` / `20s` | Service-owned total execution and per-provider-request bounds. |
 | `BOOKING_FINALIZATION_TIMEOUT` / `BOOKING_ADMISSION_WAIT` | No | `5s` / `1s` | DB-only finalization and admission capacity bounds. |
-| `BOOKING_SHUTDOWN_TIMEOUT` | No | `100s` | Shared listener/drain/resource-close budget; must cover execution plus finalization. |
+| `BOOKING_SHUTDOWN_TIMEOUT` / `BOOKING_SINGLETON_CHECK_INTERVAL` | No | `100s` / `5s` | Shared listener/drain/resource-close budget (must cover execution plus finalization) and singleton-ownership recheck interval. |
 | `BOOKING_RETENTION_INTERVAL` / `BOOKING_RETENTION_AGE` / `BOOKING_RETENTION_BATCH_SIZE` | No | `24h` / `2160h` / `100` | Bounded physical result-detail compaction schedule. |
 | `BOOKING_SESSION_CAPACITY` / `BOOKING_SESSION_IDLE_TIMEOUT` | No | `32` / `10m` | Disposable in-memory session-cache bounds. |
 | `LOG_LEVEL` / `LOG_DIR` / `TIMEZONE` | No | `INFO` / empty / `UTC` | Logging and process timezone settings. |
+| `DISCOVERY_URL` / `SERVICE_ADVERTISE_HOST` / `DISCOVERY_NETWORK_INTERFACE` | No | empty | Optional shadow registration with management's registry (HTTP origin, explicit instance IP, or interface for IP detection). Booking stays fully usable without it and never treats registration as execution authority. |
 
 ## API Endpoints
 

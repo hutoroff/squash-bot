@@ -79,6 +79,7 @@ Edit `.env` and fill in the required values:
 TELEGRAM_BOT_TOKEN=     # from @BotFather
 TELEGRAM_BOT_NAME=      # bot username without @ (e.g. SquashBot)
 INTERNAL_API_SECRET=    # shared secret between services — generate with: openssl rand -hex 32
+MONITORING_TOKEN=       # admin health/metrics bearer, distinct from INTERNAL_API_SECRET — generate with: openssl rand -hex 32
 JWT_SECRET=             # web session signing; management also verifies this for owner-only booking-risk decisions; distinct from INTERNAL_API_SECRET — generate with: openssl rand -hex 32
 TIMEZONE=UTC
 ```
@@ -91,7 +92,7 @@ TIMEZONE=UTC
 docker-compose up --build
 ```
 
-Migrations run automatically on startup.
+Migrations run automatically on startup. The `booking` container also needs the booking variables from the `booking` section of `.env.example`; until they are set it exits and restarts while the other services run normally.
 
 ### 3. Add the bot to your group
 
@@ -296,6 +297,7 @@ mkdir -p /opt/squash-bot && cd /opt/squash-bot
 # 3. Copy docker-compose.prod.yml, monitoring/prometheus/prometheus.yml and
 #    create .env from .env.example. Fill in all required values. Generate secrets:
 openssl rand -hex 32   # → INTERNAL_API_SECRET
+openssl rand -hex 32   # → MONITORING_TOKEN (admin/Prometheus bearer; must differ from INTERNAL_API_SECRET)
 openssl rand -hex 32   # → POSTGRES_PASSWORD
 openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 # Also set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (read-only token from
@@ -303,6 +305,7 @@ openssl rand -hex 32   # → JWT_SECRET (web service session signing)
 
 # 4. Lock down .env; before rollout, create the external network and the private
 #    PROMETHEUS_TOKEN_FILE (matching MONITORING_TOKEN) per the setup guide.
+#    `docker compose config --quiet` fails with a named variable if a required one is missing.
 chmod 600 .env
 
 # 5. Pull images and start only a mutually compatible release set.
@@ -321,8 +324,10 @@ Variables required by `docker-compose.prod.yml` in addition to the per-service o
 | `DOCKERHUB_TOKEN` | Yes | Read-only Docker Hub token used by Watchtower to pull updated images. |
 | `MANAGEMENT_VERSION`, `TELEGRAM_VERSION`, `BOOKING_VERSION`, `WEB_VERSION` | No | Image tag per service; default `stable`. |
 | `TELEGRAM_SERVER_PORT` | No | Telegram webhook listener port inside the container; default `8083`. |
+| `PROMETHEUS_TOKEN_FILE` | Yes | Absolute host path to a private file holding exactly `MONITORING_TOKEN`; Compose refuses to start without it. See [Prometheus setup](monitoring/prometheus/README.md). |
+| `PROMETHEUS_HOST_PORT`, `PROMETHEUS_RETENTION_SIZE` | No | Loopback-only Prometheus port and TSDB size cap; defaults `9090` and `4GB`. |
 
-Prod compose sets `DATABASE_URL`, `BOOKING_DATABASE_URL`, `MANAGEMENT_SERVICE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`) and `LOG_DIR` itself; values for those in `.env` are ignored there.
+Prod compose sets `DATABASE_URL`, `BOOKING_DATABASE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`), `ADMIN_PORT`/`BOOKING_ADMIN_PORT`, `SERVICE_KEY`, `LOG_DIR` and booking's `BOOKING_MONITORING_SECRET` (copied from `MONITORING_TOKEN`) itself; values for those in `.env` are ignored there. `MANAGEMENT_SERVICE_URL` defaults to `http://management:8080`, `DISCOVERY_NETWORK_INTERFACE` to `eth0` and `DISCOVERY_ALLOWED_CIDRS` to `172.30.90.0/24` unless overridden.
 
 Migrations run automatically on first startup. **The repository-local discovery/reliable-booking candidate is not production-cutover ready:** keyed-v2 management create/cancel, durable intent and risk authorization, status recovery, typed failures, origin binding, and bounded operator notifications/metrics are implemented and have [synthetic acceptance evidence](docs/service-discovery-acceptance-matrix.md). Cross-service operational validation, legacy inventory/import, a whole-database backup/disposable restore and independent rollout approval remain open. `BOOKING_RELIABLE_CUTOVER_ACK=keyed-v2-only` is required whenever management enables booking through a static URL **or** a registry booking key; it only acknowledges that keyless mutations are forbidden. Follow both the [booking runbook](docs/booking-reliability-runbook.md) and [discovery rollout handoff](docs/service-discovery-rollout-runbook.md) before any owner-authorized cutover. Do not promote the candidate until those hard gates pass. Once a compatible release set is approved, verify everything is healthy:
 
@@ -434,9 +439,12 @@ All services accept optional shadow registration through `DISCOVERY_URL`. `DISCO
 | `LOG_DIR`              | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`             | No       | `UTC`             | Timezone for dates in messages                      |
 | `DISCOVERY_MODE` / `DISCOVERY_URL` | No | `static` / _(empty)_ | `static` uses `SPORTS_BOOKING_SERVICE_URL`; `registry` requires the registry bootstrap URL and uses `BOOKING_SERVICE_KEY`. |
+| `DISCOVERY_ALLOWED_CIDRS` | No | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Networks from which registry registrations are accepted. Production Compose narrows it to `172.30.90.0/24`, the external bridge subnet. |
+| `MONITORED_SERVICE_KEYS` | No | management, telegram, web | JSON array of expected singleton bindings exported as registry health metrics; the configured booking binding is appended automatically. See [registry inventory health](docs/services/management.md#registry-inventory-health). |
 | `SPORTS_BOOKING_SERVICE_URL` | In static mode to enable booking | _(empty)_ | Base URL of the booking service (e.g. `http://booking:8081`); enables only durable keyed-v2 create/cancel integration and must be empty in registry mode. |
 | `BOOKING_SERVICE_KEY` / `EVERSPORTS_FACILITY_ID` / `EVERSPORTS_FACILITY_UUID` / `EVERSPORTS_FACILITY_SLUG` | When booking enabled | — | Must match booking's immutable provider/facility binding. Existing operations fail closed rather than being sent to a changed binding. |
 | `BOOKING_RELIABLE_CUTOVER_ACK` | When booking enabled | — | Must equal `keyed-v2-only`; acknowledges that keyless mutation traffic is rejected, not that rollout gates passed. |
+| `JWT_SECRET` | No | _(empty)_ | Same value as the web service. Lets management verify web sessions for the owner-only manual booking-risk route; when unset that route stays disabled. Must differ from `INTERNAL_API_SECRET` when booking is enabled. |
 | `MANAGEMENT_BOOKING_RESPONSE_WAIT` | No | `8s` | Bounded foreground wait/status-observation budget after keyed admission. |
 | `MANAGEMENT_BOOKING_STATUS_POLL` | No | `200ms` | Poll interval while a v2 operation remains accepted/running. |
 | `CREDENTIALS_ENCRYPTION_KEY` | When booking enabled | _(empty)_        | 64 hex characters (32 bytes) used as the AES-256-GCM key for encrypting venue booking credentials at rest; generate with `openssl rand -hex 32`. When unset, the credential management API returns 503. |
@@ -480,7 +488,7 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `MANAGEMENT_SERVICE_URL` | In static mode | — | Base URL of the management service; must be empty in registry mode. |
 | `MANAGEMENT_SERVICE_KEY` | In registry mode | `management` | Logical management target requiring the `management-api` v1 contract and `management.api` capability. |
 | `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service (at least 32 characters); used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
-| `JWT_SECRET`             | Yes for web; management's risk route | — | Signs web sessions (HS256 JWT, 7-day expiry; canonical `uid`, never a Telegram ID). Management verifies it independently for the owner-only manual booking-risk API. Use a distinct ≥32-byte secret from `INTERNAL_API_SECRET`; without it management disables this risk route. Generate with `openssl rand -hex 32`. |
+| `JWT_SECRET`             | Yes      | —       | Signs web sessions (HS256 JWT, 7-day expiry; canonical `uid`, never a Telegram ID). At least 32 characters and distinct from `INTERNAL_API_SECRET`; generate with `openssl rand -hex 32`. Share the same value with management for the manual booking-risk route. |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `ADMIN_PORT`             | No       | `9090`  | Internal admin health/descriptor/metrics listener; do not publish externally. |
 | `MONITORING_TOKEN`       | Yes      | —       | Monitoring-only bearer for every admin route. |
