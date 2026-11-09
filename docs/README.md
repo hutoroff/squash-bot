@@ -22,6 +22,8 @@ Start with [AGENTS.md](../AGENTS.md) for agent working rules or [README.md](../R
 | Booking API/configuration and explicitly requested manual operations | [Booking operator reference](sports-booking-service.md) |
 | Reliable booking backup, cutover, rollback, and incident handling | [Booking reliability runbook](booking-reliability-runbook.md) |
 | Web session/proxy authorization, React and test conventions | [Web](services/web.md) |
+| Production Prometheus network, token file, retention and synthetic config check | [Prometheus template](../monitoring/prometheus/README.md) |
+| Grafana data source, dashboard, alert rules and notification setup for an external instance | [Grafana setup and templates](../monitoring/grafana/README.md) |
 
 Exact routes, signatures, configuration defaults, and database schema live in code and migrations. References explain decisions and hazards and link to those sources; they are not parallel API/schema catalogs.
 

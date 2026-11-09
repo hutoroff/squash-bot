@@ -2,6 +2,37 @@
 
 These files are repository-local templates for an **existing external Grafana OSS instance**, not an application Compose service or permission to modify Grafana. The current Grafana version, organization/folder permissions and provisioner are **not known** from this repository. Shapes follow the [Grafana 10.4 file-provisioning format](https://grafana.com/docs/grafana/v10.4/alerting/set-up/provision-alerting-resources/file-provisioning/) (Grafana-managed multi-dimensional rules and JSON equivalents of the documented YAML examples). The pinned Prometheus 3.9.1 image checks every alert's PromQL offline. Actual import/export round-trips against the owner's Grafana version, contact tests, firewall and data-source connectivity are **Step 14 owner-authorized gates**, not accomplished by these checks. Do not apply incompatible templates speculatively.
 
+## Configuring Grafana for this service
+
+Prerequisites: a running production Compose stack (Prometheus included), an existing Grafana OSS instance with unified alerting and file-provisioning access, and an owner-approved private route from Grafana to the Prometheus query port (see the next section). Every value below is supplied through Grafana's provisioning environment; nothing from the application `.env` is reused.
+
+| Grafana-side variable | Value |
+|---|---|
+| `SQUASH_PROMETHEUS_URL` | Private or HTTPS-proxy URL that reaches `127.0.0.1:9090` on the application host. Never a browser-facing URL. |
+| `SQUASH_GRAFANA_QUERY_TOKEN` | Only with the proxy data source: the proxy's own query bearer. Not `MONITORING_TOKEN`, not `INTERNAL_API_SECRET`. |
+| `SQUASH_MONITORING_TELEGRAM_TOKEN`, `SQUASH_MONITORING_TELEGRAM_CHAT_ID` | A separate monitoring bot and monitoring chat for alert delivery. |
+
+1. **Data source.** Copy one of `datasource-private.example.yaml` (VPN/private route) or `datasource-proxy.example.yaml` (authenticated HTTPS proxy) into Grafana's `provisioning/datasources/`. Both create the data source `Squash Prometheus` with UID `squash_prometheus` and `access: proxy`. Keep the UID: the dashboard and every alert rule reference it.
+2. **Dashboard.** Copy `dashboard-provider.example.yaml` into `provisioning/dashboards/` and adapt `orgId`, `folder` and `options.path` to the instance. Copy `dashboard.json` into that path (default `/etc/grafana/squash-dashboards`). This provisions the folder `Squash Bot` and the dashboard `Squash Bot / Service health` (UID `squash-service-discovery`, 30s refresh): expected versus ready instances, scrape success and readiness, build versions, registry lease and storage health, HTTP and dependency failures and p95 latency, provider execution outcomes and unresolved booking operations, scheduler completion age, Telegram update outcomes, Go/process memory, and Prometheus TSDB size. The provider sets `allowUiUpdates: false`; change panels in the repository, not in the UI.
+3. **Contact point.** Copy `contact-point.example.json` into `provisioning/alerting/`. It creates the Telegram contact point `squash-monitoring-telegram` with resolved notifications enabled. If a contact with the same name or UID already exists, merge or rename instead of overwriting.
+4. **Alert rules.** Copy `alerts.json` into `provisioning/alerting/`. It provisions the rule group `squash-service-health` in folder `Squash Bot`, evaluated every 30s. All rules carry `severity=critical` and `deployment=squash-bot`; rules about one service also carry `service_key`. `Provider booking unresolved` is provisioned **paused**; unpause it only after the booking key is part of `MONITORED_SERVICE_KEYS` or the auto-added booking binding.
+5. **Notification policy.** Do not copy `policy.example.json` as a file: Grafana replaces the whole policy tree. Export the instance's current tree, add the child route from the example (matcher `deployment = squash-bot`, receiver `squash-monitoring-telegram`, grouped by `deployment`, `service_key`, `alertname`, waits 30s/5m/1h), replace `REPLACE_WITH_EXISTING_ROOT_CONTACT` with the real root receiver, and make sure Grafana's own `DatasourceError` and `DatasourceNoData` alerts also reach a monitored contact. `mute-time.example.json` is optional and unattached; attach it to the child route only for a real maintenance window.
+6. **Reload and confirm.** Restart Grafana or reload provisioning, then: the data source test succeeds, dashboard panels show the `management` job, all ten rules evaluate to Normal, and a test notification from the contact point arrives in the monitoring chat. Keep `scripts/healthcheck.sh` running until a real alert and its resolved message have been observed end to end.
+
+| Rule | Fires when | First check |
+|---|---|---|
+| Management unreachable | Static `up{job="management"}` is 0 or absent for 1m. | Management container, admin port 9090, `MONITORING_TOKEN` match. |
+| Required service missing | An expected service key has fewer live instances than expected for 1m while registry storage is healthy. | Service container logs, `DISCOVERY_URL`, lease renewal. |
+| Registry storage unavailable | Management cannot read the registry snapshot for 1m. | PostgreSQL health and management database logs. |
+| Unsupported duplicate instances | More than one live instance of management, telegram or booking for 30s. | Stray container from a previous deployment. |
+| Service not ready | A scraped instance reports readiness 0 for 2m. | That service's `/health/ready` checks in its logs. |
+| Scheduler stalled | The last sequential scheduler job has not completed within two poll intervals plus 60s. | Management cron logs, database latency. |
+| New unknown provider execution | Booking records a provider execution with unknown outcome. | [Booking reliability runbook](../../docs/booking-reliability-runbook.md). |
+| Management booking unresolved / Provider booking unresolved | Durable unknown operation gauges are above zero. | Same runbook; these persist across restarts until resolved. |
+| Prometheus monitoring unavailable | Prometheus cannot scrape itself for 1m. | Prometheus container, disk headroom, token file mount. |
+
+`alerts.json` and `dashboard.json` are generated. Edit `generate.mjs`, run `node monitoring/grafana/generate.mjs` from the repository root, then run the offline verification below. Hand-edits to the JSON files fail the `--check` comparison.
+
 ## Safe query connectivity and secret boundaries
 
 - Grafana must query Prometheus **server-side** (`access: proxy`), through a private address/VPN path to the application host's query port. Compose binds that port to host `127.0.0.1` by default: a remote VPN route needs an explicitly approved private binding, firewall and verification from outside. Do not use Docker DNS `prometheus` from the separate Grafana host. Alternatively, leave the origin bound to loopback and use an HTTPS reverse proxy on the application host that connects to `127.0.0.1:9090`, requires **separate query authentication**, and restricts sources to Grafana's address(es). Test both an authorized Grafana query and an unauthorized external attempt before use. Never expose `:9090` directly to the internet or proxy the application admin/registry ports; do not enable Prometheus lifecycle, admin or remote-write receiver endpoints. Beware Docker-published-port/firewall bypass behavior: external reachability needs its own operational test.
