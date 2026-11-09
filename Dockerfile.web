@@ -22,7 +22,7 @@ COPY --from=frontend-builder /app/web/frontend/dist ./web/frontend/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.Version=${VERSION}" -o /web ./cmd/web
 
 
-FROM alpine:3.18
+FROM alpine:3.24
 
 RUN apk --no-cache add ca-certificates tzdata wget
 
