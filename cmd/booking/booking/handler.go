@@ -232,8 +232,8 @@ func (h *Handler) cancelMatch(w http.ResponseWriter, r *http.Request) {
 // Requires ?date=YYYY-MM-DD.
 // Optional ?startTime=HHMM and ?endTime=HHMM restrict to a time window (inclusive).
 // Optional ?my=true|false filters by whether the authenticated user owns the reservation.
-// EVERSPORTS_FACILITY_ID, EVERSPORTS_FACILITY_SLUG, EVERSPORTS_SPORT_ID, and
-// EVERSPORTS_SPORT_UUID must be configured (same requirements as /courts).
+// EVERSPORTS_FACILITY_ID and EVERSPORTS_FACILITY_SLUG must be configured
+// (same requirements as /courts); the squash sport identifiers are constants.
 func (h *Handler) listMatches(w http.ResponseWriter, r *http.Request) {
 	if h.facilityID == "" || h.facilitySlug == "" {
 		writeError(w, http.StatusInternalServerError, "games endpoint requires EVERSPORTS_FACILITY_ID and EVERSPORTS_FACILITY_SLUG to be configured")

@@ -9,7 +9,7 @@
 | `EVERSPORTS_FACILITY_ID`    | No       | _(empty)_         | Numeric facility ID required for `GET /api/v1/eversports/matches` and `GET /api/v1/eversports/courts`. Find it in the venue page URL (e.g. `eversports.de/s/venue-name-76443`). |
 | `EVERSPORTS_FACILITY_UUID`  | No       | `6266968c-…`      | UUID of the facility used when creating bookings via `POST /api/v1/eversports/matches`. Find it in the `facilityUuid` field of the `/checkout/api/payableitem/courtbooking` request body in browser DevTools. |
 | `EVERSPORTS_FACILITY_SLUG`  | No       | _(empty)_         | Facility slug from the venue URL on eversports.de (e.g. `squash-house-berlin-03`). Required for `GET /api/v1/eversports/matches` and `GET /api/v1/eversports/courts`. |
-| `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service         |
+| `INTERNAL_API_SECRET`       | Yes      | —                 | Shared secret for authenticating calls to this service; at least 32 characters (the service refuses to start otherwise) |
 | `SERVER_PORT`               | No       | `8081`            | HTTP API listen port                                           |
 | `LOG_LEVEL`                 | No       | `INFO`            | `INFO` or `DEBUG`                                              |
 | `LOG_DIR`                   | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |

@@ -305,6 +305,18 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
+Variables required by `docker-compose.prod.yml` in addition to the per-service ones in [Environment Variables](#environment-variables):
+
+| Variable | Required | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | Yes | Database password, also used to build management's `DATABASE_URL` and by `db-backup`. Generate with `openssl rand -hex 32`. |
+| `DOCKERHUB_USERNAME` | Yes | Docker Hub namespace the images are pulled from (`<username>/squash-management`, …). |
+| `DOCKERHUB_TOKEN` | Yes | Read-only Docker Hub token used by Watchtower to pull updated images. |
+| `MANAGEMENT_VERSION`, `TELEGRAM_VERSION`, `BOOKING_VERSION`, `WEB_VERSION` | No | Image tag per service; default `stable`. |
+| `TELEGRAM_SERVER_PORT` | No | Telegram webhook listener port inside the container; default `8083`. |
+
+Prod compose sets `DATABASE_URL`, `MANAGEMENT_SERVICE_URL`, `SERVER_PORT` (telegram's from `TELEGRAM_SERVER_PORT`) and `LOG_DIR` itself; values for those in `.env` are ignored there.
+
 Migrations run automatically on first startup. Verify everything is healthy:
 
 ```bash
@@ -411,7 +423,7 @@ Guest spots count toward capacity.
 |------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`   | Yes      | —                 | Bot token from @BotFather (used by the scheduler to send messages) |
 | `DATABASE_URL`         | Yes      | —                 | PostgreSQL connection string                        |
-| `INTERNAL_API_SECRET`  | Yes      | —                 | Shared secret for authenticating calls from the telegram bot; generate with `openssl rand -hex 32` |
+| `INTERNAL_API_SECRET`  | Yes      | —                 | Shared secret that the telegram and web services present when calling management; at least 32 characters (the service refuses to start otherwise); generate with `openssl rand -hex 32` |
 | `SERVER_PORT`          | No       | `8080`            | HTTP API listen port                                |
 | `CRON_POLL`            | No       | `*/5 * * * *`     | How often to poll for scheduled tasks (every 5 min) |
 | `LOG_LEVEL`            | No       | `INFO`            | `INFO` or `DEBUG`                                   |
@@ -430,7 +442,7 @@ Guest spots count toward capacity.
 |--------------------------|----------|-------------------|-----------------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —                 | Bot token from @BotFather                           |
 | `MANAGEMENT_SERVICE_URL` | Yes      | —                 | Base URL of the management service (e.g. `http://management:8080`) |
-| `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service  |
+| `INTERNAL_API_SECRET`    | Yes      | —                 | Must match the value set on the management service; at least 32 characters |
 | `LOG_LEVEL`              | No       | `INFO`            | `INFO` or `DEBUG`                                   |
 | `LOG_DIR`                | No       | _(empty)_         | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
 | `TIMEZONE`               | No       | `UTC`             | Timezone for dates in messages                      |
@@ -438,7 +450,7 @@ Guest spots count toward capacity.
 | `TELEGRAM_WEBHOOK_SECRET`| In webhook mode | _(empty)_   | Secret sent as `X-Telegram-Bot-Api-Secret-Token` and validated on every incoming webhook request. Required (at least 16 characters) when `TELEGRAM_WEBHOOK_URL` is set. Generate with `openssl rand -hex 32`. |
 | `SERVER_PORT`            | No       | `8083`            | Local plain-HTTP port the webhook listener binds to (webhook mode only). A TLS-terminating reverse proxy should forward `TELEGRAM_WEBHOOK_URL` traffic to `telegram:<SERVER_PORT>` on the internal network. |
 
-> **Webhook mode:** set `TELEGRAM_WEBHOOK_URL` to a public `https://…` URL and point your reverse proxy to `telegram:<SERVER_PORT>` (no public port mapping needed — the proxy terminates TLS). Generate the secret with `openssl rand -hex 32`. Leave `TELEGRAM_WEBHOOK_URL` empty to fall back to long-polling.
+> **Webhook mode:** set `TELEGRAM_WEBHOOK_URL` to a public `https://…` URL and point your reverse proxy to `telegram:<SERVER_PORT>` (no public port mapping needed — the proxy terminates TLS). Generate the secret with `openssl rand -hex 32`. Leave `TELEGRAM_WEBHOOK_URL` empty to fall back to long-polling. In `docker-compose.prod.yml`, set the port via `TELEGRAM_SERVER_PORT` (mapped to the telegram container's `SERVER_PORT`); a bare `SERVER_PORT` in the shared `.env` is not passed through there.
 
 ### booking
 
@@ -451,8 +463,8 @@ See [docs/sports-booking-service.md](docs/sports-booking-service.md) for the ful
 | `TELEGRAM_BOT_TOKEN`     | Yes      | —       | Bot token from @BotFather; used to verify Telegram Login Widget callbacks (HMAC-SHA256 check)                           |
 | `TELEGRAM_BOT_NAME`      | Yes      | —       | Bot username **without** `@` (e.g. `SquashBot`); embedded in the Login Widget so Telegram knows which bot to authorise |
 | `MANAGEMENT_SERVICE_URL` | Yes      | —       | Base URL of the management service (e.g. `http://management:8080`); pre-set in `docker-compose.yml`       |
-| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service; used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
-| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); generate with `openssl rand -hex 32` |
+| `INTERNAL_API_SECRET`    | Yes      | —       | Must match the value on the management service (at least 32 characters); used to call `POST /api/v1/identities/resolve` (login) and every other `/api/v1/*` proxy call, including `GET /api/v1/users/{id}/games` (games list) |
+| `JWT_SECRET`             | Yes      | —       | Signs and verifies session cookies (HS256 JWT, 7-day expiry; claim is the canonical `uid`, never a Telegram ID); at least 32 characters (the service refuses to start otherwise); generate with `openssl rand -hex 32` |
 | `SERVER_PORT`            | No       | `8082`  | HTTP listen port                                                                                                        |
 | `LOG_LEVEL`              | No       | `INFO`  | `INFO` or `DEBUG`                                                                                                       |
 | `LOG_DIR`                | No       | _(empty)_ | If set, writes log files to `$LOG_DIR/app.log` with rotation (10 MB / 5 backups, gzip). Stdout logging is always preserved. |
