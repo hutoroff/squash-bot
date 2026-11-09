@@ -93,6 +93,36 @@ func (s *AuditService) RecordCourtsReserved(ctx context.Context, gameID, groupID
 	})
 }
 
+// RecordGameCanceled records an admin calling a game off by removing every court.
+func (s *AuditService) RecordGameCanceled(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {
+	uid, display := userActor(actorUserID, actorDisplay)
+	s.record(ctx, &models.AuditEvent{
+		EventType:    models.AuditEventGameCanceled,
+		Visibility:   models.AuditVisibilityGroupAdmin,
+		ActorKind:    models.AuditActorUser,
+		ActorUserID:  uid,
+		ActorDisplay: display,
+		GroupID:      groupIDPtr(groupID),
+		SubjectType:  models.AuditSubjectGame,
+		SubjectID:    fmt.Sprintf("%d", gameID),
+		Description:  "Game canceled: all courts removed",
+	})
+}
+
+// RecordGameCanceledBySystem records the scheduler releasing every court of a game
+// nobody registered for.
+func (s *AuditService) RecordGameCanceledBySystem(ctx context.Context, gameID, groupID int64) {
+	s.record(ctx, &models.AuditEvent{
+		EventType:   models.AuditEventGameCanceled,
+		Visibility:  models.AuditVisibilityGroupAdmin,
+		ActorKind:   models.AuditActorSystem,
+		GroupID:     groupIDPtr(groupID),
+		SubjectType: models.AuditSubjectGame,
+		SubjectID:   fmt.Sprintf("%d", gameID),
+		Description: "Game canceled automatically: all courts released, no players registered",
+	})
+}
+
 // Participation events
 
 func (s *AuditService) RecordPlayerJoined(ctx context.Context, gameID, groupID, actorUserID int64, actorDisplay string) {

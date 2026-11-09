@@ -3,6 +3,7 @@ import type { AuditEventType } from './types'
 export const EVENT_LABELS: Record<AuditEventType, string> = {
   'game.created': 'Game created',
   'game.courts_reserved': 'Courts reserved',
+  'game.canceled': 'Game canceled',
   'game.published': 'Game published',
   'game.courts_auto_booked': 'Courts auto-booked',
   'game.result_submitted': 'Result submitted',

@@ -159,6 +159,12 @@ func (j *HalfwayCourtCheckJob) processHalfwayCheck(ctx context.Context, game *mo
 		return
 	}
 
+	if game.CourtsCount == 0 {
+		j.logger.Info("halfway court check: skipping game without courts", "game_id", game.ID)
+		j.markDone(ctx, game.ID)
+		return
+	}
+
 	count := registeredCount + guestCount
 	capacity := game.Capacity()
 	playersPerCourt := capacity / game.CourtsCount

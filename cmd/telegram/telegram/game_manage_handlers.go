@@ -612,7 +612,7 @@ func (b *Bot) renderManageCourtsKeyboard(chatID int64, messageID int, state *man
 	selected := manageCourtsSelectedString(state)
 	confirmLabel := lz.Tf(i18n.MsgNewGameConfirmCourts, selected)
 	if selected == "" {
-		confirmLabel = lz.T(i18n.MsgNewGameSelectCourts)
+		confirmLabel = lz.T(i18n.BtnRemoveAllCourts)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData(confirmLabel, fmt.Sprintf("manage_court_confirm:%d", state.gameID)),
@@ -696,10 +696,6 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 	}
 
 	courts := manageCourtsSelectedString(state)
-	if courts == "" {
-		b.answerCallback(cb.ID, lz.T(i18n.MsgNewGameNoCourtsSelected))
-		return
-	}
 
 	// Re-verify admin status before persisting changes.
 	game, ok2 := b.checkManageAdmin(ctx, cb, gameID, lz)
@@ -717,7 +713,8 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 			b.sendText(cb.Message.Chat.ID, lz.T(i18n.MsgSomethingWentWrong), nil)
 			return
 		}
-		if len(bookings) > 0 {
+		// Removing every court calls the game off, so it is always confirmed.
+		if len(bookings) > 0 || courts == "" {
 			// Collect unique booked labels for the prompt.
 			seen := make(map[string]bool)
 			var bookedLabels []string
@@ -733,6 +730,13 @@ func (b *Bot) handleManageCourtsConfirm(ctx context.Context, cb *tgbotapi.Callba
 				newCourts:    courts,
 				bookedLabels: bookedLabels,
 				venueCourts:  state.venueCourts,
+			}
+			if courts == "" {
+				promptState.removeAll = true
+				promptState.removedCourts = removedCourts
+				promptState.sport = game.Sport
+				promptState.gameDate = game.GameDate
+				promptState.messageID = game.MessageID
 			}
 			b.pendingManageCourtsCancelPrompt.Store(cb.Message.Chat.ID, promptState)
 			b.answerCallback(cb.ID, "")
@@ -786,7 +790,15 @@ func courtsBeingRemoved(currentCSV, newCSV string) []string {
 func (b *Bot) renderCourtCancelPrompt(chatID int64, messageID int, state *manageCourtsCancelPromptState, lz *i18n.Localizer) {
 	labels := strings.Join(state.bookedLabels, ", ")
 	var text string
-	if len(state.bookedLabels) == 1 {
+	if state.removeAll {
+		unit := gameformat.UnitName(state.sport, lz)
+		removed := escapeMarkdown(strings.Join(state.removedCourts, ", "))
+		if len(state.bookedLabels) > 0 {
+			text = lz.Tf(i18n.MsgCourtRemoveAllPromptBooked, unit, removed, escapeMarkdown(labels))
+		} else {
+			text = lz.Tf(i18n.MsgCourtRemoveAllPrompt, unit, removed)
+		}
+	} else if len(state.bookedLabels) == 1 {
 		text = lz.Tf(i18n.MsgCourtCancelPromptSingle, labels)
 	} else {
 		text = lz.Tf(i18n.MsgCourtCancelPromptMulti, labels)
@@ -861,6 +873,11 @@ func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.
 
 	b.scheduleGameMessageEdit(gameID)
 
+	if state.removeAll {
+		// The empty court list is persisted even when some cancellations failed.
+		b.notifyGroupAllCourtsRemoved(ctx, state)
+	}
+
 	if len(failed) > 0 {
 		var failedLabels []string
 		for _, f := range failed {
@@ -869,7 +886,29 @@ func (b *Bot) handleManageCourtsCancelConfirm(ctx context.Context, cb *tgbotapi.
 		b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtCancelPartial, state.newCourts, strings.Join(failedLabels, ", ")), nil)
 		return
 	}
+	if state.removeAll {
+		b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgAllCourtsRemoved, gameformat.UnitName(state.sport, lz)), nil)
+		return
+	}
 	b.sendText(cb.Message.Chat.ID, lz.Tf(i18n.MsgCourtCancelSuccess, state.newCourts), nil)
+}
+
+// notifyGroupAllCourtsRemoved tells the group, in its language and timezone, that the
+// game will not happen, replying to the announcement. Unpublished games were never
+// announced, so the group is not notified about them.
+func (b *Bot) notifyGroupAllCourtsRemoved(ctx context.Context, state *manageCourtsCancelPromptState) {
+	if state.messageID == nil {
+		return
+	}
+	glz := b.groupLocalizer(ctx, state.groupID)
+	gameDateTime := state.gameDate.In(b.groupLocation(ctx, state.groupID)).Format("02.01 15:04")
+	text := glz.Tf(i18n.SchedReminderAllCanceled, gameformat.UnitName(state.sport, glz),
+		strings.Join(state.removedCourts, ", "), gameDateTime)
+	msg := tgbotapi.NewMessage(state.groupID, text)
+	msg.ReplyToMessageID = int(*state.messageID)
+	if _, err := b.api.Send(msg); err != nil {
+		slog.Error("notifyGroupAllCourtsRemoved: send", "err", err, "game_id", state.gameID, "group_id", state.groupID)
+	}
 }
 
 // handleManageCourtsCancelAbort discards the cancellation prompt and returns to the court-toggle picker.

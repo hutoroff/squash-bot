@@ -28,6 +28,7 @@ Use current signatures/routes from those files, not a copied inventory. New busi
 - Internal bearer authentication is a trusted-transport boundary, not proof that arbitrary user-supplied actor headers are authentic. Web/bot must establish caller identity and group access before invoking privileged actions.
 - [AuditService](../../cmd/management/service/audit_service.go) is best-effort: logging errors must not fail the business operation. Existing handlers often omit user audit when actor ID is zero; some system operations have explicit system events. Follow the relevant event's semantics rather than applying a blanket zero-actor rule.
 - Mutating actor fields are overwritten from authenticated transport identity, not trusted from client bodies. Audit visibility is filtered by management, with owner authority read live.
+- A manual court edit records `game.courts_reserved`. An edit to an empty court list calls the game off and records `game.canceled` instead. Scheduler cancellations record one `court.canceled` system event per released court. When they release the last court of a game nobody registered for, they also record a system `game.canceled`.
 - Event strings live in [audit_event.go](../../internal/models/audit_event.go). When changing them update frontend types/labels and run [the drift test](../../web/frontend/src/auditEvents.test.ts).
 
 ## Games, venues, and credentials

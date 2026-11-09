@@ -220,6 +220,10 @@ func (j *CancellationReminderJob) cancelUsingBookingEntries(
 		j.logger.Error("court cancellation: update game courts", "game_id", game.ID, "err", err)
 		return nil, fmt.Errorf("persist updated courts: %w", err)
 	}
+	// Jobs free only courts nobody needs, so zero remaining courts means zero players.
+	if newCount == 0 && j.auditSvc != nil {
+		j.auditSvc.RecordGameCanceledBySystem(ctx, game.ID, game.ChatID)
+	}
 
 	return &courtCancellationResult{
 		canceledCourts:  canceledLabels,

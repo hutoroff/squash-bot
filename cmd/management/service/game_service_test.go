@@ -203,3 +203,22 @@ func TestGameService_UpdateCourts(t *testing.T) {
 		t.Errorf("CourtsCount: got %d, want 3", updated.CourtsCount)
 	}
 }
+
+// Removing every court persists courts_count = 0, so capacity drops to zero.
+func TestGameService_UpdateCourts_EmptyMeansZeroCourts(t *testing.T) {
+	ctx := context.Background()
+	if err := testutil.Truncate(ctx, testPool); err != nil {
+		t.Fatal(err)
+	}
+	svc := service.NewGameService(storage.NewGameRepo(testPool), storage.NewVenueRepo(testPool), nil, nil, nil, nil, nil, time.UTC, nil, nil, nil, nil, nil, 14)
+
+	game, _ := svc.CreateGame(ctx, -1, time.Now().Add(24*time.Hour), "1", nil)
+	if err := svc.UpdateCourts(ctx, game.ID, ""); err != nil {
+		t.Fatalf("UpdateCourts: %v", err)
+	}
+
+	updated, _ := svc.GetByID(ctx, game.ID)
+	if updated.Courts != "" || updated.CourtsCount != 0 || updated.Capacity() != 0 {
+		t.Errorf("got courts=%q count=%d capacity=%d, want empty/0/0", updated.Courts, updated.CourtsCount, updated.Capacity())
+	}
+}
