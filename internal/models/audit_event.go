@@ -18,6 +18,7 @@ const (
 	// Event types.
 	AuditEventGameCreated                          AuditEventType = "game.created"
 	AuditEventCourtsReserved                       AuditEventType = "game.courts_reserved"
+	AuditEventGameCanceled                         AuditEventType = "game.canceled"
 	AuditEventPlayerJoined                         AuditEventType = "participation.joined"
 	AuditEventPlayerSkipped                        AuditEventType = "participation.skipped"
 	AuditEventGuestAdded                           AuditEventType = "participation.guest_added"

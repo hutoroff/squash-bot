@@ -306,3 +306,18 @@ func TestRecordBotAddedToGroup_Description(t *testing.T) {
 		t.Errorf("Description: got %q, want %q", repo.inserted[0].Description, want)
 	}
 }
+
+func TestRecordGameCanceled(t *testing.T) {
+	svc, repo := newCaptureAuditSvc()
+	svc.RecordGameCanceled(context.Background(), 10, 20, 99, "@alice")
+
+	if len(repo.inserted) != 1 {
+		t.Fatalf("want 1 event, got %d", len(repo.inserted))
+	}
+	evt := repo.inserted[0]
+	assertEventBase(t, evt, models.AuditEventGameCanceled, models.AuditVisibilityGroupAdmin, models.AuditSubjectGame)
+	assertUserActor(t, evt, 99, "@alice")
+	if evt.SubjectID != "10" || evt.GroupID == nil || *evt.GroupID != 20 {
+		t.Errorf("subject/group: got %q/%v, want 10/20", evt.SubjectID, evt.GroupID)
+	}
+}

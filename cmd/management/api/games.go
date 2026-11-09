@@ -173,7 +173,7 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.ActorUserID != 0 {
-			h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
+			h.recordCourtsUpdated(r, id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
 		}
 		if len(cancelErrors) > 0 {
 			type failureItem struct {
@@ -204,9 +204,18 @@ func (h *Handler) updateCourts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ActorUserID != 0 {
-		h.auditSvc.RecordCourtsReserved(r.Context(), id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
+		h.recordCourtsUpdated(r, id, req.GroupID, req.ActorUserID, req.ActorDisplay, req.Courts)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordCourtsUpdated audits a manual court edit. An empty court list calls the game off.
+func (h *Handler) recordCourtsUpdated(r *http.Request, gameID, groupID, actorUserID int64, actorDisplay, courts string) {
+	if strings.TrimSpace(courts) == "" {
+		h.auditSvc.RecordGameCanceled(r.Context(), gameID, groupID, actorUserID, actorDisplay)
+		return
+	}
+	h.auditSvc.RecordCourtsReserved(r.Context(), gameID, groupID, actorUserID, actorDisplay, courts)
 }
 
 // listActiveCourtBookings handles GET /api/v1/games/{id}/active-court-bookings?courts=1,2

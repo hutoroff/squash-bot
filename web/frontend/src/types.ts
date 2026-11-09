@@ -23,6 +23,7 @@ export type AuditActorKind = 'user' | 'system'
 export type AuditEventType =
   | 'game.created'
   | 'game.courts_reserved'
+  | 'game.canceled'
   | 'game.published'
   | 'game.courts_auto_booked'
   | 'game.result_submitted'
