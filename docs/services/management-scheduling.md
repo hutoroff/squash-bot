@@ -48,6 +48,8 @@ Scheduler selection uses reverse preferred order, then consecutive groups. Succe
 
 Manual removal in [GameService](../../cmd/management/service/game_service.go) differs: it computes a multiset diff, scopes active bookings, attempts cancellation, and persists the requested new courts even when some cancellations fail. The API can return partial-success details; Telegram presents a pre-flight confirmation. Preserve this distinction rather than treating manual and scheduled cancellation as identical.
 
+An empty court list is valid and is how a game is called off: `courts = ''` with `courts_count = 0`, so capacity is zero. Both manual removal and scheduled cancellation can produce it. The cancellation reminder, halfway check and final check skip zero-court games without a message and mark them handled, because the group was already told when the last court went away.
+
 Manual booking also returns requested/booked/failure details and edits the existing announcement asynchronously. Publishing a game and editing an existing announcement are separate operations.
 
 ## Reliable caller integration status

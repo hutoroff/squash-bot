@@ -45,6 +45,7 @@ Callback dispatch splits `action:rawID` at the first colon; individual handlers 
 - Venue edits use shared toggle/confirm and free-text state patterns. Preserve unrelated sport settings and the Web-only preventive cancellation fraction.
 - Credential entry deletes the password message before API work; do not log or echo it. Credential controls depend on booking configuration and management encryption support.
 - Court removal with active bookings requires pre-flight confirmation; read/lookup failures must not silently fall through to destructive edits. Partial cancellation has a distinct user outcome.
+- Deselecting every court in **Edit Courts** calls the game off. It always goes through the same confirmation prompt and `manage_courts_cancel_*` callbacks, with or without bookings. After the update, a published game gets a group notice in group language and timezone, replying to the announcement. The new-game wizard and the free-text court editor still require at least one court.
 - Existing legacy kick callbacks have a fallback mapping the old Telegram-ID target to the current roster's player ID. Do not remove it as an unused ID convention without considering old keyboards.
 
 ## Rendering and message updates

@@ -395,7 +395,7 @@ crontab -e
 | `/mygame`   | Anyone          | Show your next registered game with a link       |
 | `/result`   | Game participants | Submit a 1-v-1 game result (winner / draw + optional score). Opponent gets an approval DM with **Approve / Reject** buttons; left untouched for 48 h → auto-approved. Approved results update the group's Glicko-2 leaderboard. |
 | `/leaderboard` | Anyone with a rating | DM the leaderboard for a group in which the player has played a rated game. Auto-picks the group when there is exactly one; shows a picker otherwise. |
-| `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. |
+| `/games`    | Group admins    | List upcoming games you manage; edit/manage them. Unpublished games (not yet announced to the group) are marked with `📝`. Tap "Manage" → "📢 Publish" to send the announcement immediately. To call a game off, open "Edit Courts", deselect every court and confirm; bookings are cancelled and the group is notified. |
 | `/newgame`  | Group admins    | Create a new game for your group (wizard)        |
 | `/venues`   | Group admins    | Manage venues (sports, units, time slots, address, game days, preferred time, auto-booking courts, grace period, booking opens days) |
 | `/groups`   | Group admins    | Configure a group's settings: language (en/de/ru), timezone, changelog notifications, leaderboard notifications |

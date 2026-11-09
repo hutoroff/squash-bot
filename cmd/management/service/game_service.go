@@ -183,7 +183,7 @@ func (s *GameService) GetNextGameForUser(ctx context.Context, userID int64) (*mo
 }
 
 func (s *GameService) UpdateCourts(ctx context.Context, gameID int64, courts string) error {
-	courtsCount := len(strings.Split(courts, ","))
+	courtsCount := len(splitCourts(courts)) // "" means every court was removed: count 0, not 1
 	return s.gameRepo.UpdateCourts(ctx, gameID, courts, courtsCount)
 }
 

@@ -108,6 +108,12 @@ func (j *FinalCourtCheckJob) processFinalCheck(ctx context.Context, game *models
 		return
 	}
 
+	if game.CourtsCount == 0 {
+		j.logger.Info("final court check: skipping game without courts", "game_id", game.ID)
+		j.markDone(ctx, game.ID)
+		return
+	}
+
 	count := registeredCount + guestCount
 	capacity := game.Capacity()
 	playersPerCourt := capacity / game.CourtsCount

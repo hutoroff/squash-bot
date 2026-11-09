@@ -174,6 +174,12 @@ type manageCourtsCancelPromptState struct {
 	newCourts    string   // the courts string the admin wants to apply
 	bookedLabels []string // court labels that have active bookings
 	venueCourts  []string // all venue courts (for the "back" re-render)
+	// removeAll is set when the admin deselected every court; confirming calls the game off.
+	removeAll     bool
+	removedCourts []string  // courts being removed (for the prompt and the group notice)
+	sport         string    // game sport, for the unit noun
+	gameDate      time.Time // game date, for the group notice
+	messageID     *int64    // group announcement to reply to
 }
 
 // manageBookCountState holds context while the admin is choosing how many courts

@@ -118,6 +118,15 @@ func (j *CancellationReminderJob) processCancellationReminder(ctx context.Contex
 		return
 	}
 
+	if game.CourtsCount == 0 {
+		// Every court was removed and the group was already told the game will not happen.
+		j.logger.Info("cancellation reminder: skipping game without courts", "game_id", game.ID)
+		if err := j.gameRepo.MarkNotifiedDayBefore(ctx, game.ID); err != nil {
+			j.logger.Error("cancellation reminder: mark notified", "game_id", game.ID, "err", err)
+		}
+		return
+	}
+
 	count := registeredCount + guestCount
 	capacity := game.Capacity()
 	playersPerCourt := capacity / game.CourtsCount

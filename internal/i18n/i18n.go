@@ -380,6 +380,14 @@ const (
 	MsgCourtCancelSuccess = "msg.court_cancel_success"
 	// MsgCourtCancelPartial: Args: %s = final courts string, %s = failed court labels
 	MsgCourtCancelPartial = "msg.court_cancel_partial"
+	// BtnRemoveAllCourts: confirm button label in the court picker when nothing is selected.
+	BtnRemoveAllCourts = "btn.remove_all_courts"
+	// MsgCourtRemoveAllPrompt: Args: %s = unit noun, %s = removed unit labels
+	MsgCourtRemoveAllPrompt = "msg.court_remove_all_prompt"
+	// MsgCourtRemoveAllPromptBooked: Args: %s = unit noun, %s = removed unit labels, %s = booked labels
+	MsgCourtRemoveAllPromptBooked = "msg.court_remove_all_prompt_booked"
+	// MsgAllCourtsRemoved: Args: %s = unit noun
+	MsgAllCourtsRemoved = "msg.all_courts_removed"
 
 	// Publish-game UX
 	BtnPublishGame = "btn.publish_game"
@@ -835,12 +843,16 @@ var translations = map[Lang]map[string]string{
 		MsgBookCanceled:                "Cancelled",
 
 		// Court cancellation confirmation
-		MsgCourtCancelPromptSingle: "Court *%s* has an active booking. To remove it the booking must be cancelled.\n\nProceed?",
-		MsgCourtCancelPromptMulti:  "Courts *%s* have active bookings. To remove them the bookings must be cancelled.\n\nProceed?",
-		BtnCourtCancelConfirm:      "Cancel booking & remove",
-		BtnCourtCancelAbort:        "← Back to selection",
-		MsgCourtCancelSuccess:      "Booking(s) cancelled. Courts updated to: %s ✓",
-		MsgCourtCancelPartial:      "Courts updated to: %s, but failed to cancel bookings for: %s",
+		MsgCourtCancelPromptSingle:    "Court *%s* has an active booking. To remove it the booking must be cancelled.\n\nProceed?",
+		MsgCourtCancelPromptMulti:     "Courts *%s* have active bookings. To remove them the bookings must be cancelled.\n\nProceed?",
+		BtnCourtCancelConfirm:         "Cancel booking & remove",
+		BtnCourtCancelAbort:           "← Back to selection",
+		MsgCourtCancelSuccess:         "Booking(s) cancelled. Courts updated to: %s ✓",
+		MsgCourtCancelPartial:         "Courts updated to: %s, but failed to cancel bookings for: %s",
+		BtnRemoveAllCourts:            "🗑 Remove all",
+		MsgCourtRemoveAllPrompt:       "This removes all %s (*%s*). The game will have no capacity and will not happen. The group will be notified.\n\nProceed?",
+		MsgCourtRemoveAllPromptBooked: "This removes all %s (*%s*). Active bookings for *%s* will be cancelled. The game will not happen and the group will be notified.\n\nProceed?",
+		MsgAllCourtsRemoved:           "All %s removed. The group has been notified that the game will not happen ✓",
 
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Publish",
@@ -1228,12 +1240,16 @@ var translations = map[Lang]map[string]string{
 		MsgBookCanceled:                "Abgebrochen",
 
 		// Court cancellation confirmation
-		MsgCourtCancelPromptSingle: "Platz *%s* hat eine aktive Buchung. Um ihn zu entfernen, muss die Buchung storniert werden.\n\nFortfahren?",
-		MsgCourtCancelPromptMulti:  "Plätze *%s* haben aktive Buchungen. Um sie zu entfernen, müssen die Buchungen storniert werden.\n\nFortfahren?",
-		BtnCourtCancelConfirm:      "Buchung stornieren & entfernen",
-		BtnCourtCancelAbort:        "← Zurück zur Auswahl",
-		MsgCourtCancelSuccess:      "Buchung(en) storniert. Plätze aktualisiert auf: %s ✓",
-		MsgCourtCancelPartial:      "Plätze aktualisiert auf: %s, aber Buchungen konnten nicht storniert werden für: %s",
+		MsgCourtCancelPromptSingle:    "Platz *%s* hat eine aktive Buchung. Um ihn zu entfernen, muss die Buchung storniert werden.\n\nFortfahren?",
+		MsgCourtCancelPromptMulti:     "Plätze *%s* haben aktive Buchungen. Um sie zu entfernen, müssen die Buchungen storniert werden.\n\nFortfahren?",
+		BtnCourtCancelConfirm:         "Buchung stornieren & entfernen",
+		BtnCourtCancelAbort:           "← Zurück zur Auswahl",
+		MsgCourtCancelSuccess:         "Buchung(en) storniert. Plätze aktualisiert auf: %s ✓",
+		MsgCourtCancelPartial:         "Plätze aktualisiert auf: %s, aber Buchungen konnten nicht storniert werden für: %s",
+		BtnRemoveAllCourts:            "🗑 Alle entfernen",
+		MsgCourtRemoveAllPrompt:       "Damit werden alle %s (*%s*) entfernt. Das Spiel hat keine Kapazität mehr und findet nicht statt. Die Gruppe wird benachrichtigt.\n\nFortfahren?",
+		MsgCourtRemoveAllPromptBooked: "Damit werden alle %s (*%s*) entfernt. Aktive Buchungen für *%s* werden storniert. Das Spiel findet nicht statt und die Gruppe wird benachrichtigt.\n\nFortfahren?",
+		MsgAllCourtsRemoved:           "Alle %s entfernt. Die Gruppe wurde benachrichtigt, dass das Spiel nicht stattfindet ✓",
 
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Veröffentlichen",
@@ -1621,12 +1637,16 @@ var translations = map[Lang]map[string]string{
 		MsgBookCanceled:                "Отменено",
 
 		// Court cancellation confirmation
-		MsgCourtCancelPromptSingle: "Корт *%s* имеет активное бронирование. Для его удаления необходимо отменить бронирование.\n\nПродолжить?",
-		MsgCourtCancelPromptMulti:  "Корты *%s* имеют активные бронирования. Для их удаления необходимо отменить бронирования.\n\nПродолжить?",
-		BtnCourtCancelConfirm:      "Отменить бронирование и удалить",
-		BtnCourtCancelAbort:        "← Назад к выбору",
-		MsgCourtCancelSuccess:      "Бронирование(я) отменено. Корты обновлены: %s ✓",
-		MsgCourtCancelPartial:      "Корты обновлены: %s, но не удалось отменить бронирования для: %s",
+		MsgCourtCancelPromptSingle:    "Корт *%s* имеет активное бронирование. Для его удаления необходимо отменить бронирование.\n\nПродолжить?",
+		MsgCourtCancelPromptMulti:     "Корты *%s* имеют активные бронирования. Для их удаления необходимо отменить бронирования.\n\nПродолжить?",
+		BtnCourtCancelConfirm:         "Отменить бронирование и удалить",
+		BtnCourtCancelAbort:           "← Назад к выбору",
+		MsgCourtCancelSuccess:         "Бронирование(я) отменено. Корты обновлены: %s ✓",
+		MsgCourtCancelPartial:         "Корты обновлены: %s, но не удалось отменить бронирования для: %s",
+		BtnRemoveAllCourts:            "🗑 Убрать все",
+		MsgCourtRemoveAllPrompt:       "Будут убраны все %s (*%s*). У игры не останется мест, и она не состоится. Группа получит уведомление.\n\nПродолжить?",
+		MsgCourtRemoveAllPromptBooked: "Будут убраны все %s (*%s*). Активные бронирования для *%s* будут отменены. Игра не состоится, группа получит уведомление.\n\nПродолжить?",
+		MsgAllCourtsRemoved:           "Все %s убраны. Группа уведомлена, что игра не состоится ✓",
 
 		// Publish-game UX
 		BtnPublishGame:                   "📢 Опубликовать",
