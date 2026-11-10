@@ -348,7 +348,7 @@ Deployments follow a two-step process — release, then promote:
 
 2. **Promote** — trigger the **Promote to Stable** workflow, select the service (or `all`), and optionally enter the version tag (defaults to `latest`). This re-tags the chosen image as `:stable` on Docker Hub using a manifest copy — no layer re-upload.
 
-3. **Auto-deploy** — [Watchtower](https://containrrr.dev/watchtower/) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
+3. **Auto-deploy** — [Watchtower](https://watchtower.nickfedor.com/) (maintained `nickfedor/watchtower` fork) detects the updated `:stable` digest within 5 minutes and restarts the affected service automatically. No SSH or manual steps needed.
 
 `postgres`, `db-backup` and pinned `prometheus` are excluded from Watchtower auto-updates. Watchtower authenticates with Docker Hub using `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` from `.env` to avoid anonymous pull rate limits.
 

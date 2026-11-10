@@ -290,7 +290,8 @@ services:
       - internal
 
   watchtower:
-    image: containrrr/watchtower
+    # Maintained fork of the archived containrrr/watchtower (pinned to Docker API 1.25, rejected by current daemons).
+    image: nickfedor/watchtower:1.23.2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
