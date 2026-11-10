@@ -417,6 +417,31 @@ func (s *GameService) bookGameCourts(ctx context.Context, gameID int64, count in
 // using time-slot scoping when the game is linked to an auto-booking result.
 // This prevents false matches when a venue hosts multiple sessions on the same date
 // that share the same court labels.
+// unlinkedCourtCancelErrors reports removed courts that were booked by the bot
+// but never linked to a provider match, so they cannot be cancelled here and
+// would otherwise disappear from the game while staying booked.
+func (s *GameService) unlinkedCourtCancelErrors(ctx context.Context, game *models.Game, remainingQuota map[string]int) []CourtCancelError {
+	if s.reliableBooking == nil {
+		return nil
+	}
+	labels, err := s.reliableBooking.intents.ListUnlinkedCreateCourtLabels(ctx, game.Venue.ID, game.GameDate)
+	if err != nil {
+		s.logger.Error("RemoveCourtsAndCancelBookings: list unlinked court bookings", "game_id", game.ID, "err", err)
+		return nil
+	}
+	var cancelErrors []CourtCancelError
+	for _, label := range labels {
+		if remainingQuota[label] <= 0 {
+			continue
+		}
+		remainingQuota[label]--
+		cancelErrors = append(cancelErrors, CourtCancelError{CourtLabel: label, Err: errCourtBookedWithoutMatch})
+	}
+	return cancelErrors
+}
+
+var errCourtBookedWithoutMatch = fmt.Errorf("court was booked without a provider match and must be cancelled manually")
+
 func (s *GameService) activeBookingsByLabels(ctx context.Context, game *models.Game, labels []string) ([]*models.CourtBooking, error) {
 	var gameTime string
 	if s.autoBookingResultRepo != nil {
@@ -616,6 +641,8 @@ func (s *GameService) removeCourtsAndCancelBookings(ctx context.Context, gameID 
 		}
 		canceledLabels = append(canceledLabels, entry.CourtLabel)
 	}
+
+	cancelErrors = append(cancelErrors, s.unlinkedCourtCancelErrors(ctx, game, cancelQuota)...)
 
 	if cancellationIntent != nil {
 		operations, listErr := s.reliableBooking.intents.ListOperations(ctx, cancellationIntent.ID)

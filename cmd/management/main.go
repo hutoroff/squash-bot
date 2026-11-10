@@ -302,6 +302,7 @@ func main() {
 	dayAfterJob := service.NewDayAfterCleanupJob(tgAPI, gameRepo, participationRepo, guestRepo, groupRepo, loc, logger, courtBookingRepo)
 	autoBookingJob := service.NewAutoBookingJob(tgAPI, groupRepo, venueRepo, gameRepo, bookingClient, venueCredService, autoBookingResultRepo, courtBookingRepo, auditSvc, loc, logger, cfg.CredentialErrorCooldown)
 	autoBookingJob.SetReliableBooking(bookingIntentSvc, reliableBookingExecutor, bookingScope)
+	autoBookingJob.SetReliableBookingNotifier(reliableBookingNotifier)
 	autoApproveResultsJob := service.NewAutoApproveResultsJob(tgAPI, pool, gameResultRepo, playerRepo, auditSvc, logger)
 	autoApproveResultsJob.SetRatingService(ratingSvc)
 	postLeaderboardJob := service.NewPostLeaderboardJob(tgAPI, groupRepo, gameRepo, gameResultRepo, ratingSvc, loc, logger)

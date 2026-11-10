@@ -151,10 +151,27 @@ func main() {
 	}
 
 	if cfg.DiscoveryMode != config.DiscoveryModeRegistry {
-		mgmtVersion, versionErr := mgmtClient.GetVersion(ctx)
-		if versionErr != nil {
-			slog.Error("check management service version", "err", versionErr)
-			os.Exit(1)
+		// Management may still be starting (compose no longer orders startup), so
+		// wait for it instead of crash-looping; only a version mismatch is fatal.
+		var mgmtVersion string
+		for {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
+			version, versionErr := mgmtClient.GetVersion(checkCtx)
+			checkCancel()
+			if versionErr == nil {
+				mgmtVersion = version
+				break
+			}
+			if ctx.Err() != nil {
+				cancelAdmin()
+				<-errCh
+				return
+			}
+			logger.Warn("waiting for management service", "err", versionErr)
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
 		}
 		if majorPart(Version) != majorPart(mgmtVersion) {
 			slog.Error("management service major version mismatch", "bot_version", Version, "management_version", mgmtVersion)

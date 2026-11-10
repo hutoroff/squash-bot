@@ -216,6 +216,10 @@ func appendReliableBookingResult(ctx context.Context, deps bookingDeps, result *
 		deps.auditSvc.RecordCourtBooked(ctx, venue.ID, chatID, venue.Name, operation.CourtLabel, gameDate)
 	}
 	if operation.MatchID == "" {
+		if deps.logger != nil {
+			deps.logger.Warn("reliable booking: court booked without match ID; automatic cancellation unavailable",
+				"venue_id", venue.ID, "operation_id", operation.OperationID, "court_label", operation.CourtLabel)
+		}
 		result.Failures = append(result.Failures, BookingFailure{Reason: "booking succeeded without a cancellable match ID"})
 		return
 	}

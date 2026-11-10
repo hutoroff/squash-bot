@@ -194,6 +194,13 @@ func (s *BookingIntentService) ListOperations(ctx context.Context, intentID int6
 	return s.repository.ListOperationsByIntent(ctx, intentID)
 }
 
+// ListUnlinkedCreateCourtLabels returns court labels of succeeded create
+// operations for the venue and date that have no match ID: the court is booked
+// at the provider but cannot be cancelled automatically.
+func (s *BookingIntentService) ListUnlinkedCreateCourtLabels(ctx context.Context, venueID int64, gameDate time.Time) ([]string, error) {
+	return s.repository.ListUnlinkedCreateCourtLabels(ctx, venueID, gameDate)
+}
+
 func (s *BookingIntentService) FinalizeIntent(ctx context.Context, intentID int64, state models.BookingIntentState) error {
 	if intentID <= 0 {
 		return fmt.Errorf("management booking intent ID is required")

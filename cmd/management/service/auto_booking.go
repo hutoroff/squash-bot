@@ -36,11 +36,20 @@ type AutoBookingJob struct {
 	logger                *slog.Logger
 	credCooldown          time.Duration
 	reliableBooking       *reliableBookingDeps
+	reliableNotifier      interface{ RunOnce(context.Context) error }
 }
 
 func (j *AutoBookingJob) SetReliableBooking(intents *BookingIntentService, executor *ReliableBookingExecutor, scope bookingapi.Scope) {
 	if intents != nil && executor != nil {
 		j.reliableBooking = &reliableBookingDeps{intents: intents, executor: executor, scope: scope}
+	}
+}
+
+// SetReliableBookingNotifier makes each reliable slot deliver its operator
+// notifications immediately instead of waiting for the next recovery poll.
+func (j *AutoBookingJob) SetReliableBookingNotifier(notifier *ReliableBookingNotifier) {
+	if notifier != nil {
+		j.reliableNotifier = notifier
 	}
 }
 
@@ -242,6 +251,10 @@ func (j *AutoBookingJob) processTimeSlot(
 		return false
 	}
 
+	if j.reliableBooking != nil {
+		return j.finishReliableSlot(ctx, chatID, venue, gameDateStr, gameTime, courtsCount, res, lz)
+	}
+
 	// Check if failures contain a credential error that warrants per-cred notifications.
 	// bookFreeCourts already called MarkError for each failing cred.
 	// We need to surface notifyCredentialError for the first cred-specific failure
@@ -274,13 +287,6 @@ func (j *AutoBookingJob) processTimeSlot(
 		return false
 	}
 
-	// Reliable scheduled results and unpublished games are materialized atomically
-	// with terminal intent projection, so restart/status replay cannot duplicate them.
-	if j.reliableBooking != nil {
-		j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, gameTime, len(res.BookedLabels), lz)
-		return true
-	}
-
 	// Persist legacy result and eagerly create the unpublished game record.
 	courtsStr := strings.Join(res.BookedLabels, ",")
 	bookedCount := len(res.BookedLabels)
@@ -293,6 +299,51 @@ func (j *AutoBookingJob) processTimeSlot(
 
 	j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, gameTime, bookedCount, lz)
 	return true
+}
+
+// finishReliableSlot sends at most one success and one shortfall DM per slot.
+// Per-operation problems (booking without match ID, unknown outcome, rejected
+// action) are reported once per intent by ReliableBookingNotifier, which runs
+// right after the slot so both arrive together. Reliable scheduled results and
+// unpublished games are materialized atomically with terminal intent
+// projection, so restart/status replay cannot duplicate them.
+func (j *AutoBookingJob) finishReliableSlot(
+	ctx context.Context,
+	chatID int64,
+	venue *models.Venue,
+	gameDateStr, gameTime string,
+	courtsCount int,
+	res *BookFreeCourtsResult,
+	lz *i18n.Localizer,
+) bool {
+	booked := len(res.BookedLabels)
+	j.logger.Info("auto-booking: slot finished", "venue_id", venue.ID, "game_date", gameDateStr, "game_time", gameTime,
+		"requested", courtsCount, "booked", booked, "courts", strings.Join(res.BookedLabels, ","),
+		"failure_reasons", distinctFailureReasons(res.Failures))
+	if booked > 0 {
+		j.notifyAutoBookingSuccess(ctx, chatID, venue, gameDateStr, gameTime, booked, lz)
+	}
+	if booked < courtsCount {
+		j.notifyAutoBookingFailure(ctx, chatID, venue, gameDateStr, gameTime, booked, courtsCount, lz)
+	}
+	if j.reliableNotifier != nil {
+		if err := j.reliableNotifier.RunOnce(ctx); err != nil {
+			j.logger.Warn("auto-booking: reliable booking notifications incomplete", "venue_id", venue.ID, "err", err)
+		}
+	}
+	return booked > 0
+}
+
+func distinctFailureReasons(failures []BookingFailure) []string {
+	seen := make(map[string]bool)
+	var reasons []string
+	for _, failure := range failures {
+		if !seen[failure.Reason] {
+			seen[failure.Reason] = true
+			reasons = append(reasons, failure.Reason)
+		}
+	}
+	return reasons
 }
 
 // createUnpublishedGame creates a games row with message_id=NULL immediately after booking succeeds.

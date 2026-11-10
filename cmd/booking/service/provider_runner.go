@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"time"
 
 	"github.com/hutoroff/squash-bot/cmd/booking/eversports"
@@ -31,6 +33,15 @@ type ProviderClient interface {
 	CancelMatchOnce(context.Context, string) (*eversports.CancellationResult, error)
 }
 
+// MatchLookupClient is the optional read-only capability used to recover a
+// match ID from the provider calendar after match attachment fails.
+type MatchLookupClient interface {
+	GetCourts(context.Context, string, string, string, string, string, string, string) ([]eversports.Court, error)
+	GetSlots(context.Context, string, []string, string) ([]eversports.Slot, error)
+}
+
+var _ MatchLookupClient = (*eversports.Client)(nil)
+
 type StepJournal interface {
 	AppendStepIntent(context.Context, bookingapi.OperationID, bookingapi.OperationPhase, int, bookingapi.OperationID) (*storage.Step, error)
 	AppendStepEvidence(context.Context, bookingapi.OperationID, bookingapi.OperationPhase, int, string, string, any, bookingapi.OperationID) (*storage.Step, error)
@@ -45,6 +56,11 @@ type ProviderRunnerConfig struct {
 	IdentityKey        []byte
 	SportUUID          string
 	PersistenceTimeout time.Duration
+	// SportID and SportName enable the read-only match lookup after a failed
+	// attachment; the lookup is skipped when either is empty.
+	SportID   string
+	SportName string
+	Logger    *slog.Logger
 }
 
 type ProviderRunner struct {
@@ -52,7 +68,10 @@ type ProviderRunner struct {
 	evidence           ProviderEvidenceStore
 	identityKey        []byte
 	sportUUID          string
+	sportID            string
+	sportName          string
 	persistenceTimeout time.Duration
+	logger             *slog.Logger
 }
 
 func NewProviderRunner(steps StepJournal, evidence ProviderEvidenceStore, cfg ProviderRunnerConfig) (*ProviderRunner, error) {
@@ -70,10 +89,14 @@ func NewProviderRunner(steps StepJournal, evidence ProviderEvidenceStore, cfg Pr
 	} else if cfg.PersistenceTimeout < 0 {
 		return nil, fmt.Errorf("booking provider persistence timeout must be positive")
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	return &ProviderRunner{
 		steps: steps, evidence: evidence,
 		identityKey: append([]byte(nil), cfg.IdentityKey...), sportUUID: cfg.SportUUID,
-		persistenceTimeout: cfg.PersistenceTimeout,
+		sportID: cfg.SportID, sportName: cfg.SportName,
+		persistenceTimeout: cfg.PersistenceTimeout, logger: cfg.Logger,
 	}, nil
 }
 
@@ -219,17 +242,26 @@ func (r *ProviderRunner) runCreate(ctx context.Context, execution Execution, cli
 	if err := r.intent(ctx, execution, bookingapi.PhaseMatchAttachment, 1); err != nil {
 		return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, false), err
 	}
+	attachedCode := "match_attached"
 	matchID, attachErr := client.AttachMatch(ctx, reservation.BookingUUID)
 	if attachErr != nil {
 		effect, code, _ := mutationDetails(attachErr, eversports.MutationPhaseMatchAttachment)
-		journalErr := r.appendEvidence(ctx, execution, bookingapi.PhaseMatchAttachment, 1, effect, code, reserveEvidence)
-		return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, effect == string(eversports.MutationUnknown)),
-			persistenceOrProviderError(bookingapi.PhaseMatchAttachment, code, journalErr, attachErr)
+		lookupID, lookupResult := r.lookupMatch(ctx, operation, client, reservation.BookingID)
+		if lookupID == "" {
+			r.logger.Warn("booking match attachment failed; booking is confirmed without match",
+				"operation_id", operation.OperationID, "code", code, "lookup", lookupResult)
+			journalErr := r.appendEvidence(ctx, execution, bookingapi.PhaseMatchAttachment, 1, effect, code, reserveEvidence)
+			return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, effect == string(eversports.MutationUnknown)),
+				persistenceOrProviderError(bookingapi.PhaseMatchAttachment, code, journalErr, attachErr)
+		}
+		r.logger.Info("booking match attachment failed; match resolved by calendar lookup",
+			"operation_id", operation.OperationID, "code", code)
+		matchID, attachedCode = lookupID, "match_resolved_by_lookup"
 	}
 	bookingEvidence.MatchID = matchID
 	attachmentEvidence := reserveEvidence
 	attachmentEvidence.MatchID = matchID
-	stepErr = r.appendEvidence(ctx, execution, bookingapi.PhaseMatchAttachment, 1, confirmedEffect, "match_attached", attachmentEvidence)
+	stepErr = r.appendEvidence(ctx, execution, bookingapi.PhaseMatchAttachment, 1, confirmedEffect, attachedCode, attachmentEvidence)
 	_, bookingErr = r.upsertProviderBooking(bookingEvidence, execution.ExecutorID)
 	if stepErr != nil || bookingErr != nil {
 		return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, false), persistenceExecutionError(bookingapi.PhaseMatchAttachment, stepErr, bookingErr)
@@ -238,9 +270,72 @@ func (r *ProviderRunner) runCreate(ctx context.Context, execution Execution, cli
 		return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, true), sanitizedExecutionError(bookingapi.PhaseMatchAttachment, "tracking_skipped")
 	}
 	if err := client.CompleteBookingTracking(ctx, reservation.BookingID, operation.Scope.FacilityUUID); err != nil {
+		r.logger.Warn("booking tracking failed after confirmed booking", "operation_id", operation.OperationID, "err", err)
 		return succeededWithWarningAt(bookingapi.PhaseMatchAttachment, true), sanitizedExecutionError(bookingapi.PhaseMatchAttachment, "tracking_failed")
 	}
 	return Completion{State: bookingapi.StateSucceeded, Outcome: bookingapi.OutcomeSuccess, Phase: bookingapi.PhaseMatchAttachment}, nil
+}
+
+// lookupMatch reads the provider calendar for the operation's court and start
+// and returns the match ID only when exactly one slot owned by this account
+// carries a match and, when the slot reports a booking ID, it is ours. It
+// never sends a provider mutation. result is a short sanitized reason for logs.
+func (r *ProviderRunner) lookupMatch(ctx context.Context, operation *storage.Operation, client ProviderClient, bookingID int) (matchID, result string) {
+	reader, ok := client.(MatchLookupClient)
+	if !ok || r.sportID == "" || r.sportName == "" {
+		return "", "unavailable"
+	}
+	if ctx.Err() != nil {
+		return "", "context_done"
+	}
+	start, err := time.Parse("2006-01-02T15:04:05.000Z07:00", operation.StartProvider)
+	if err != nil {
+		return "", "invalid_start"
+	}
+	date := start.Format("2006-01-02")
+	scope := operation.Scope
+	courts, err := reader.GetCourts(ctx, scope.FacilityID, scope.FacilitySlug, r.sportID, scope.Sport, r.sportName, r.sportUUID, date)
+	if err != nil {
+		return "", "courts_read_failed"
+	}
+	courtID := ""
+	for _, court := range courts {
+		if court.UUID == operation.CourtUUID && court.ID != "" {
+			if courtID != "" {
+				return "", "court_ambiguous"
+			}
+			courtID = court.ID
+		}
+	}
+	if courtID == "" {
+		return "", "court_not_found"
+	}
+	slots, err := reader.GetSlots(ctx, scope.FacilityID, []string{courtID}, date)
+	if err != nil {
+		return "", "slots_read_failed"
+	}
+	return ownedSlotMatch(slots, courtID, date, start.Format("1504"), bookingID)
+}
+
+func ownedSlotMatch(slots []eversports.Slot, courtID, date, start string, bookingID int) (string, string) {
+	found := ""
+	for _, slot := range slots {
+		if slot.Date != date || slot.Start != start || fmt.Sprint(slot.Court) != courtID ||
+			!slot.IsUserBookingOwner || slot.Match == nil || slot.Match.UUID == "" {
+			continue
+		}
+		if slot.Booking != nil && *slot.Booking != bookingID {
+			continue
+		}
+		if found != "" {
+			return "", "slot_ambiguous"
+		}
+		found = slot.Match.UUID
+	}
+	if found == "" {
+		return "", "slot_not_found"
+	}
+	return found, "resolved"
 }
 
 func (r *ProviderRunner) reserve(ctx context.Context, execution Execution, client ProviderClient, attempt int) (*eversports.ReservationResult, *providerExecutionError) {

@@ -30,6 +30,9 @@ func (*captureBookingIntentRepository) GetIntentByRequestKey(context.Context, st
 func (*captureBookingIntentRepository) GetIntent(context.Context, int64) (*models.BookingIntent, error) {
 	return nil, nil
 }
+func (*captureBookingIntentRepository) ListUnlinkedCreateCourtLabels(context.Context, int64, time.Time) ([]string, error) {
+	return nil, nil
+}
 func (*captureBookingIntentRepository) ListOperationsByIntent(context.Context, int64) ([]*models.ManagementBookingOperation, error) {
 	return nil, nil
 }
