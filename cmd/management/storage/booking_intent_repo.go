@@ -375,6 +375,16 @@ func (r *BookingIntentRepo) ApplyOperationStatus(ctx context.Context, status *bo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the intent before the operation, matching AdmitOperation's order;
+	// the reverse order deadlocks against concurrent admission replays.
+	var lockedIntentID int64
+	if err := tx.QueryRow(ctx, `
+		SELECT i.id FROM management_booking_intents i
+		JOIN management_booking_operations o ON o.intent_id = i.id
+		WHERE o.operation_id = $1 FOR UPDATE OF i`, operationID).Scan(&lockedIntentID); err != nil {
+		return nil, false, fmt.Errorf("lock management booking intent for status: %w", err)
+	}
+
 	current, err := scanManagementBookingOperation(tx.QueryRow(ctx, `
 		SELECT operation_id::text, intent_id, dedup_key, request_fingerprint, kind,
 			COALESCE(court_uuid,''), court_label, COALESCE(start_provider,''), COALESCE(end_provider,''),
