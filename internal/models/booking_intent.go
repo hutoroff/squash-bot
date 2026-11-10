@@ -81,8 +81,13 @@ type ManagementBookingNotification struct {
 	OperationID bookingapi.OperationID
 	Revision    int64
 	Kind        ManagementBookingNotificationKind
+	IntentID    int64
+	Source      BookingIntentSource
 	GroupID     int64
 	VenueID     int64
+	VenueName   string
+	Language    string
+	CourtLabel  string
 	GameDate    time.Time
 	GameTime    string
 	CreatedAt   time.Time

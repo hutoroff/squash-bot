@@ -414,6 +414,15 @@ const (
 	// Args: %s = venue name
 	SchedAutoBookingNoCredentials = "sched.auto_booking_no_credentials"
 
+	// Reliable booking operator notifications: one DM per booking intent and kind.
+	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = game time (HH:MM), %d = affected courts, %s = court labels (comma-separated)
+	BookingAttentionSuccessWarning    = "booking.attention.success_warning"
+	BookingAttentionOutcomeUnknown    = "booking.attention.outcome_unknown"
+	BookingAttentionMissedAction      = "booking.attention.missed_action"
+	BookingAttentionPossibleDuplicate = "booking.attention.possible_duplicate"
+	// Args: %s = venue name, %s = game date (YYYY-MM-DD), %s = game time (HH:MM)
+	BookingAttentionPartial = "booking.attention.partial"
+
 	// Game message — venue line
 	GameVenueLine = "game.venue_line"
 
@@ -828,6 +837,13 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredExhausted: "⚠️ Auto-booking for *%s*: all credentials exhausted. Booked %d of %d courts. Please book the remaining courts manually.",
 		SchedAutoBookingNoCredentials: "⚠️ Auto-booking for *%s* skipped: no usable credentials available. Add credentials or wait for the cooldown to expire.",
 
+		// Reliable booking operator notifications
+		BookingAttentionSuccessWarning:    "⚠️ %s on %s at %s: %d court(s) booked but not linked to a match (courts: %s). The bot cannot cancel them automatically — cancel unused courts in Eversports.",
+		BookingAttentionOutcomeUnknown:    "⚠️ %s on %s at %s: booking result is unknown for %d court(s) (courts: %s). Check Eversports before booking or cancelling manually.",
+		BookingAttentionMissedAction:      "⚠️ %s on %s at %s: %d booking action(s) were not performed (courts: %s). Check Eversports and book or cancel manually.",
+		BookingAttentionPossibleDuplicate: "⚠️ %s on %s at %s: possible duplicate booking for %d court(s) (courts: %s). Check Eversports and cancel any duplicate.",
+		BookingAttentionPartial:           "⚠️ %s on %s at %s: booking finished partially. Check Eversports and book the remaining courts manually.",
+
 		// Auto-book on edit-courts
 		BtnEditCourtsAutoBook:          "🤖 Auto-book courts",
 		BtnEditCourtsManual:            "✏️ Edit manually",
@@ -1225,6 +1241,13 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredExhausted: "⚠️ Automatische Buchung für *%s*: Alle Konten ausgeschöpft. %d von %d Plätzen gebucht. Bitte die restlichen Plätze manuell buchen.",
 		SchedAutoBookingNoCredentials: "⚠️ Automatische Buchung für *%s* übersprungen: Keine verwendbaren Konten verfügbar. Füge Konten hinzu oder warte auf das Ende der Abklingzeit.",
 
+		// Reliable booking operator notifications
+		BookingAttentionSuccessWarning:    "⚠️ %s am %s um %s: %d Platz/Plätze gebucht, aber nicht mit einem Match verknüpft (Plätze: %s). Der Bot kann sie nicht automatisch stornieren — storniere ungenutzte Plätze in Eversports.",
+		BookingAttentionOutcomeUnknown:    "⚠️ %s am %s um %s: Buchungsergebnis für %d Platz/Plätze unbekannt (Plätze: %s). Prüfe Eversports, bevor du manuell buchst oder stornierst.",
+		BookingAttentionMissedAction:      "⚠️ %s am %s um %s: %d Buchungsaktion(en) wurden nicht ausgeführt (Plätze: %s). Prüfe Eversports und buche oder storniere manuell.",
+		BookingAttentionPossibleDuplicate: "⚠️ %s am %s um %s: mögliche Doppelbuchung für %d Platz/Plätze (Plätze: %s). Prüfe Eversports und storniere Duplikate.",
+		BookingAttentionPartial:           "⚠️ %s am %s um %s: Buchung nur teilweise abgeschlossen. Prüfe Eversports und buche die restlichen Plätze manuell.",
+
 		// Auto-book on edit-courts
 		BtnEditCourtsAutoBook:          "🤖 Plätze automatisch buchen",
 		BtnEditCourtsManual:            "✏️ Manuell bearbeiten",
@@ -1621,6 +1644,13 @@ var translations = map[Lang]map[string]string{
 		SchedAutoBookingCredError:     "⚠️ Автобронирование для *%s*: аккаунт *%s* вернул ошибку:\n%s\n\nАккаунт не будет использоваться в течение %s.",
 		SchedAutoBookingCredExhausted: "⚠️ Автобронирование для *%s*: все аккаунты исчерпаны. Забронировано %d из %d кортов. Пожалуйста, забронируйте оставшиеся корты вручную.",
 		SchedAutoBookingNoCredentials: "⚠️ Автобронирование для *%s* пропущено: нет доступных аккаунтов. Добавьте аккаунты или подождите окончания периода блокировки.",
+
+		// Reliable booking operator notifications
+		BookingAttentionSuccessWarning:    "⚠️ %s, %s в %s: забронировано кортов без привязки к матчу: %d (корты: %s). Бот не сможет отменить их автоматически — отмените неиспользуемые корты в Eversports.",
+		BookingAttentionOutcomeUnknown:    "⚠️ %s, %s в %s: неизвестен результат бронирования для кортов: %d (корты: %s). Проверьте Eversports, прежде чем бронировать или отменять вручную.",
+		BookingAttentionMissedAction:      "⚠️ %s, %s в %s: не выполнено действий с бронированием: %d (корты: %s). Проверьте Eversports и забронируйте или отмените вручную.",
+		BookingAttentionPossibleDuplicate: "⚠️ %s, %s в %s: возможное двойное бронирование кортов: %d (корты: %s). Проверьте Eversports и отмените дубликаты.",
+		BookingAttentionPartial:           "⚠️ %s, %s в %s: бронирование выполнено частично. Проверьте Eversports и забронируйте оставшиеся корты вручную.",
 
 		// Auto-book on edit-courts
 		BtnEditCourtsAutoBook:          "🤖 Автоматически забронировать корты",

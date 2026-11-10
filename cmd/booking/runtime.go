@@ -131,6 +131,7 @@ func buildReliableRuntimeWithFactory(ctx context.Context, cfg *config.BookingCon
 	}
 	runner, err := bookingservice.NewProviderRunner(operations, evidence, bookingservice.ProviderRunnerConfig{
 		IdentityKey: identityKey, SportUUID: cfg.EversportsSquashUUID, PersistenceTimeout: cfg.FinalizationTimeout,
+		SportID: squashSportID, SportName: squashSportName, Logger: logger,
 	})
 	if err != nil {
 		sessions.Close()

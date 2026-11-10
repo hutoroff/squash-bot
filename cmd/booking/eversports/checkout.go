@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -155,6 +156,9 @@ func (c *Client) PayOffline(ctx context.Context, paymentID int) error {
 
 // AttachMatch performs exactly one session-dependent match attachment request.
 // It does not retry; callers decide whether its failure is an optional warning.
+// Any 2xx with a valid matchId is accepted. A same-origin 301/302/303 is
+// resolved by one read-only GET of its Location, which is what pre-v2 redirect
+// following did; 307/308 are never followed so the POST cannot be replayed.
 func (c *Client) AttachMatch(ctx context.Context, bookingUUID string) (string, error) {
 	body, err := json.Marshal(createMatchRequest{BookingID: bookingUUID})
 	if err != nil {
@@ -169,20 +173,85 @@ func (c *Client) AttachMatch(ctx context.Context, bookingUUID string) (string, e
 	if err != nil {
 		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeResponseReadFailed, false, err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	if location, ok := c.sameOriginReadRedirect(resp); ok {
+		return c.readRedirectedMatch(ctx, resp.StatusCode, location)
+	}
+	return c.parseAttachResponse(resp, respBytes)
+}
+
+// sameOriginReadRedirect returns the absolute Location of a 301/302/303
+// response when it stays on the provider origin.
+func (c *Client) sameOriginReadRedirect(resp *http.Response) (string, bool) {
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther:
+	default:
+		return "", false
+	}
+	location, err := resp.Location()
+	if err != nil {
+		return "", false
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil || location.Scheme != base.Scheme || location.Host != base.Host {
+		return "", false
+	}
+	return location.String(), true
+}
+
+func (c *Client) readRedirectedMatch(ctx context.Context, redirectStatus int, location string) (string, error) {
+	resp, err := c.doAuthedMutation(ctx, http.MethodGet, location, nil)
+	if err != nil {
+		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeTransportError, false, err)
+	}
+	defer resp.Body.Close()
+	respBytes, err := readProviderResponse(resp.Body)
+	if err != nil {
+		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeResponseReadFailed, false, err)
+	}
+	matchID, err := c.parseAttachResponse(resp, respBytes)
+	if err == nil {
+		c.logger.Info("eversports: create-from-booking resolved through redirect", "redirectStatus", redirectStatus)
+	}
+	return matchID, err
+}
+
+func (c *Client) parseAttachResponse(resp *http.Response, respBytes []byte) (string, error) {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		c.logUnexpectedAttachResponse(resp, respBytes, "status")
 		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeHTTPError, false,
 			fmt.Errorf("create-from-booking HTTP %d: %s", resp.StatusCode, bodySnippet(respBytes)))
 	}
 	if isHTMLResponse(respBytes) {
+		c.logUnexpectedAttachResponse(resp, respBytes, "html")
 		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeInvalidResponse, false,
 			fmt.Errorf("create-from-booking returned HTML: %s", bodySnippet(respBytes)))
 	}
 	var matchResp createMatchResponse
 	if err := json.Unmarshal(respBytes, &matchResp); err != nil || !validProviderIdentifier(matchResp.MatchID) {
+		c.logUnexpectedAttachResponse(resp, respBytes, "invalid_body")
 		return "", mutationFailure(MutationPhaseMatchAttachment, MutationUnknown, MutationCodeInvalidResponse, false,
 			fmt.Errorf("create-from-booking returned invalid response: %s", bodySnippet(respBytes)))
 	}
+	if resp.StatusCode != http.StatusOK {
+		c.logger.Info("eversports: create-from-booking accepted non-200 success", "status", resp.StatusCode)
+	}
 	return matchResp.MatchID, nil
+}
+
+// logUnexpectedAttachResponse records response metadata only: no body text and
+// no Location query string, which may carry provider tokens.
+func (c *Client) logUnexpectedAttachResponse(resp *http.Response, respBytes []byte, reason string) {
+	locationPath := ""
+	if location, err := resp.Location(); err == nil {
+		locationPath = location.Host + location.Path
+	}
+	c.logger.Warn("eversports: create-from-booking unexpected response",
+		"reason", reason,
+		"status", resp.StatusCode,
+		"contentType", resp.Header.Get("Content-Type"),
+		"locationPath", locationPath,
+		"bodyBytes", len(respBytes),
+	)
 }
 
 // CompleteBookingTracking performs the two bounded best-effort tracking calls.

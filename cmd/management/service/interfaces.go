@@ -146,6 +146,7 @@ type BookingIntentRepository interface {
 	GetOperation(context.Context, bookingapi.OperationID) (*models.ManagementBookingOperation, error)
 	GetOperationByIntentDedup(context.Context, int64, string) (*models.ManagementBookingOperation, error)
 	ApplyOperationStatus(context.Context, *bookingapi.OperationStatus) (*models.ManagementBookingOperation, bool, error)
+	ListUnlinkedCreateCourtLabels(context.Context, int64, time.Time) ([]string, error)
 }
 
 // CourtBookingRepository is the data access interface for per-court booking records.

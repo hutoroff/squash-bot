@@ -213,7 +213,7 @@ func TestRemoveCourtsAndCancelBookings_NoCredentials(t *testing.T) {
 	bc := &mockBookingClient{}
 	svc := newCourtsGameSvc(gameRepo, cbRepo, bc, nil, nil)
 
-	_, cancelErrs, err := svc.RemoveCourtsAndCancelBookings(context.Background(), game.ID, "Court 1")
+	_, cancelErrs, err := svc.RemoveCourtsAndCancelBookingsWithRequestKey(context.Background(), game.ID, "Court 1", "manual:remove-courts:test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,5 +378,37 @@ func TestListActiveCourtBookings_HappyPath(t *testing.T) {
 	r := result[0]
 	if r.CourtLabel != "Court 1" || r.MatchID != "m1" || r.GameTime != "10:00" {
 		t.Errorf("unexpected result fields: %+v", r)
+	}
+}
+
+type unlinkedCourtIntentRepository struct {
+	captureBookingIntentRepository
+	labels []string
+}
+
+func (r *unlinkedCourtIntentRepository) ListUnlinkedCreateCourtLabels(context.Context, int64, time.Time) ([]string, error) {
+	return r.labels, nil
+}
+
+func TestRemoveCourtsAndCancelBookings_ReportsCourtBookedWithoutMatch(t *testing.T) {
+	game := gameWithVenueAndCourts("Court 1,Court 2,Court 3", 1)
+	gameRepo := &mockGameRepo{getByIDResult: game}
+	bc := &mockBookingClient{}
+	svc := newCourtsGameSvc(gameRepo, &mockCourtBookingRepo{}, bc, nil, nil)
+	intents, err := NewBookingIntentService(&unlinkedCourtIntentRepository{labels: []string{"Court 2", "Court 9"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.reliableBooking = &reliableBookingDeps{intents: intents}
+
+	_, cancelErrs, err := svc.RemoveCourtsAndCancelBookingsWithRequestKey(context.Background(), game.ID, "Court 1", "manual:remove-courts:test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cancelErrs) != 1 || cancelErrs[0].CourtLabel != "Court 2" || !errors.Is(cancelErrs[0].Err, errCourtBookedWithoutMatch) {
+		t.Fatalf("cancel errors = %+v, want one unlinked error for Court 2", cancelErrs)
+	}
+	if len(bc.cancelCalls) != 0 {
+		t.Fatalf("CancelMatch calls = %v, want none", bc.cancelCalls)
 	}
 }

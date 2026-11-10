@@ -350,11 +350,18 @@ func (c *Coordinator) execute(ctx context.Context, operation *storage.Operation,
 	if completion.Phase == "" {
 		completion.Phase = operation.Phase
 	}
+	executionDuration := time.Since(executionStarted)
 	if c.cfg.Observer != nil {
-		c.cfg.Observer.ObserveExternalExecution(operation.Kind, completion.Outcome, time.Since(executionStarted))
+		c.cfg.Observer.ObserveExternalExecution(operation.Kind, completion.Outcome, executionDuration)
 	}
 	if err != nil {
-		c.logger.Error("booking execution failed", "operation_id", operation.OperationID, "phase", completion.Phase, "err", err)
+		c.logger.Error("booking execution failed", "operation_id", operation.OperationID, "kind", operation.Kind,
+			"state", completion.State, "outcome", completion.Outcome, "phase", completion.Phase,
+			"duration_ms", executionDuration.Milliseconds(), "err", err)
+	} else {
+		c.logger.Info("booking operation finished", "operation_id", operation.OperationID, "kind", operation.Kind,
+			"state", completion.State, "outcome", completion.Outcome, "phase", completion.Phase,
+			"duration_ms", executionDuration.Milliseconds())
 	}
 	if completion.DiscardSession {
 		lease.Discard()

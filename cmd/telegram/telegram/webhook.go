@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -58,7 +57,8 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 		return fmt.Errorf("bind webhook port %s: %w", opts.ListenPort, err)
 	}
 
-	if err := b.registerWebhook(opts.PublicURL, opts.Secret); err != nil {
+	lastErrorDate, err := b.registerWebhook(opts.PublicURL, opts.Secret)
+	if err != nil {
 		ln.Close()
 		return fmt.Errorf("register webhook: %w", err)
 	}
@@ -69,8 +69,9 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 	// Channel sized to absorb a burst while processUpdate goroutines spin up.
 	ch := make(chan tgbotapi.Update, 100)
 
+	requestLog := newWebhookRequestLog(b.logger)
 	mux := http.NewServeMux()
-	var handler http.Handler = webhookHandler(opts.Secret, opts.AdmitUpdate, ch)
+	var handler http.Handler = newWebhookHandler(opts.Secret, opts.AdmitUpdate, ch, requestLog)
 	if opts.HTTPMetrics != nil {
 		handler = opts.HTTPMetrics.WrapNamed("POST /telegram/webhook", handler)
 	}
@@ -78,6 +79,10 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok")) //nolint:errcheck
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		requestLog.rejected("unknown_path", http.StatusNotFound)
+		http.NotFound(w, r)
 	})
 	srv := &http.Server{
 		Handler:      mux,
@@ -92,6 +97,8 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 			b.logger.Error("webhook server error", "err", serveErr)
 		}
 	}()
+
+	go b.monitorWebhookHealth(ctx, &webhookHealth{expectedURL: opts.PublicURL, lastErrorDate: lastErrorDate}, 5*time.Minute)
 
 	b.runUpdateLoop(ctx, ch)
 
@@ -108,7 +115,9 @@ func (b *Bot) StartWebhook(ctx context.Context, opts WebhookOptions) error {
 // registerWebhook calls setWebhook manually via MakeRequest to support the
 // secret_token parameter, which is absent from the typed tgbotapi.WebhookConfig
 // in v5.5.1.
-func (b *Bot) registerWebhook(publicURL, secret string) error {
+// It returns the last delivery error timestamp reported after registration so
+// the health monitor only reports newer errors.
+func (b *Bot) registerWebhook(publicURL, secret string) (int, error) {
 	params := tgbotapi.Params{
 		"url":                  publicURL,
 		"drop_pending_updates": "false",
@@ -123,24 +132,25 @@ func (b *Bot) registerWebhook(publicURL, secret string) error {
 
 	resp, err := b.api.MakeRequest("setWebhook", params)
 	if err != nil {
-		return fmt.Errorf("setWebhook API call: %w", err)
+		return 0, fmt.Errorf("setWebhook API call: %w", err)
 	}
 	if !resp.Ok {
-		return fmt.Errorf("setWebhook returned ok=false: %s", resp.Description)
+		return 0, fmt.Errorf("setWebhook returned ok=false: %s", resp.Description)
 	}
 
 	info, err := b.api.GetWebhookInfo()
 	if err != nil {
-		return fmt.Errorf("getWebhookInfo: %w", err)
+		return 0, fmt.Errorf("getWebhookInfo: %w", err)
 	}
 	if !info.IsSet() {
-		return fmt.Errorf("webhook not set after registration (getWebhookInfo reports unset)")
+		return 0, fmt.Errorf("webhook not set after registration (getWebhookInfo reports unset)")
 	}
 	if info.LastErrorMessage != "" {
-		slog.Warn("webhook registered but has a previous error", "last_error", info.LastErrorMessage)
+		b.logger.Warn("webhook registered but has a previous error", "last_error", info.LastErrorMessage,
+			"last_error_at", time.Unix(int64(info.LastErrorDate), 0).UTC(), "pending_updates", info.PendingUpdateCount)
 	}
 	b.logger.Info("webhook registered", "url", publicURL)
-	return nil
+	return info.LastErrorDate, nil
 }
 
 // maxWebhookBodyBytes bounds the Update body to guard against memory/CPU
@@ -152,9 +162,15 @@ const maxWebhookBodyBytes = 1 << 20
 // header, decodes the Update body, and enqueues it on ch.
 // Factored out of StartWebhook so it can be tested without a live BotAPI.
 func webhookHandler(secret string, admitUpdate func() bool, ch chan<- tgbotapi.Update) http.HandlerFunc {
+	return newWebhookHandler(secret, admitUpdate, ch, nil)
+}
+
+// newWebhookHandler is webhookHandler with optional rate-limited diagnostics.
+func newWebhookHandler(secret string, admitUpdate func() bool, ch chan<- tgbotapi.Update, requestLog *webhookRequestLog) http.HandlerFunc {
 	secretBytes := []byte(secret)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			requestLog.rejected("method_not_allowed", http.StatusMethodNotAllowed)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -162,11 +178,13 @@ func webhookHandler(secret string, admitUpdate func() bool, ch chan<- tgbotapi.U
 		if secret != "" {
 			got := []byte(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"))
 			if subtle.ConstantTimeCompare(got, secretBytes) != 1 {
+				requestLog.rejected("secret_mismatch", http.StatusUnauthorized)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 		}
 		if admitUpdate != nil && !admitUpdate() {
+			requestLog.rejected("management_unavailable", http.StatusServiceUnavailable)
 			http.Error(w, "management service unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -174,14 +192,17 @@ func webhookHandler(secret string, admitUpdate func() bool, ch chan<- tgbotapi.U
 		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
 		var update tgbotapi.Update
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			requestLog.rejected("invalid_body", http.StatusBadRequest)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 
 		select {
 		case ch <- update:
+			requestLog.accepted()
 			w.WriteHeader(http.StatusOK)
 		case <-r.Context().Done():
+			requestLog.rejected("enqueue_cancelled", 0)
 		}
 	}
 }

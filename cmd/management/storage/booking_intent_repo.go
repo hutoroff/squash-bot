@@ -559,10 +559,13 @@ func (r *BookingIntentRepo) ClaimPendingNotifications(ctx context.Context, limit
 			FROM selected s WHERE n.id = s.id
 			RETURNING n.id, n.operation_id, n.revision, n.kind, n.created_at
 		)
-		SELECT c.id, c.operation_id::text, c.revision, c.kind, i.group_id, i.venue_id, i.game_date, i.game_time, c.created_at
+		SELECT c.id, c.operation_id::text, c.revision, c.kind, i.id, i.source, i.group_id, i.venue_id,
+			COALESCE(v.name, ''), COALESCE(g.language, ''), o.court_label, i.game_date, i.game_time, c.created_at
 		FROM claimed c
 		JOIN management_booking_operations o ON o.operation_id = c.operation_id
 		JOIN management_booking_intents i ON i.id = o.intent_id
+		LEFT JOIN venues v ON v.id = i.venue_id
+		LEFT JOIN bot_groups g ON g.chat_id = i.group_id
 		ORDER BY c.created_at, c.id`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claim management booking notifications: %w", err)
@@ -572,7 +575,9 @@ func (r *BookingIntentRepo) ClaimPendingNotifications(ctx context.Context, limit
 	for rows.Next() {
 		var notification models.ManagementBookingNotification
 		if err := rows.Scan(&notification.ID, &notification.OperationID, &notification.Revision, &notification.Kind,
-			&notification.GroupID, &notification.VenueID, &notification.GameDate, &notification.GameTime, &notification.CreatedAt); err != nil {
+			&notification.IntentID, &notification.Source, &notification.GroupID, &notification.VenueID,
+			&notification.VenueName, &notification.Language, &notification.CourtLabel,
+			&notification.GameDate, &notification.GameTime, &notification.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan management booking notification: %w", err)
 		}
 		notifications = append(notifications, &notification)
@@ -584,6 +589,31 @@ func (r *BookingIntentRepo) ClaimPendingNotifications(ctx context.Context, limit
 		return nil, fmt.Errorf("commit management booking notification claim: %w", err)
 	}
 	return notifications, nil
+}
+
+// ListUnlinkedCreateCourtLabels returns court labels of succeeded create
+// operations for the venue and game date whose match ID is still empty.
+func (r *BookingIntentRepo) ListUnlinkedCreateCourtLabels(ctx context.Context, venueID int64, gameDate time.Time) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT o.court_label
+		FROM management_booking_operations o
+		JOIN management_booking_intents i ON i.id = o.intent_id
+		WHERE i.venue_id = $1 AND i.game_date = $2
+		  AND o.kind = 'create' AND o.state = 'succeeded' AND o.match_id = ''
+		ORDER BY o.created_at, o.operation_id`, venueID, gameDate)
+	if err != nil {
+		return nil, fmt.Errorf("list unlinked management booking creates: %w", err)
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, fmt.Errorf("scan unlinked management booking create: %w", err)
+		}
+		labels = append(labels, label)
+	}
+	return labels, rows.Err()
 }
 
 func (r *BookingIntentRepo) MarkNotificationDelivered(ctx context.Context, id int64) error {
